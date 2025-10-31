@@ -8,6 +8,12 @@ import { CourseEntity } from './infrastructure/database/entities/course.entity';
 import { ModuleEntity } from './infrastructure/database/entities/module.entity';
 import { LessonEntity } from './infrastructure/database/entities/lesson.entity';
 import { UserLessonProgressEntity } from './infrastructure/database/entities/user-lesson-progress.entity';
+import { FaqEntity } from './infrastructure/database/entities/faq.entity';
+import { SystemStatusEntity } from './infrastructure/database/entities/system-status.entity';
+import { UserSettingsEntity } from './infrastructure/database/entities/user-settings.entity';
+import { UserActivityLogEntity } from './infrastructure/database/entities/user-activity-log.entity';
+import { UserSessionEntity } from './infrastructure/database/entities/user-session.entity';
+import { PlanEntity } from './infrastructure/database/entities/plan.entity';
 
 class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
   columnName(propertyName: string, customName: string, embeddedPrefixes: string[]): string {
@@ -33,7 +39,7 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity],
+        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity],
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),

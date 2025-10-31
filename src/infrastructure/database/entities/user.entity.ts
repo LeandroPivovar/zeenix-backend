@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { PlanEntity } from './plan.entity';
 
 @Entity('users')
 export class UserEntity {
@@ -13,6 +14,12 @@ export class UserEntity {
 
   @Column({ type: 'varchar', length: 255 })
   password: string;
+
+  @Column({ type: 'char', length: 36, nullable: true, name: 'plan_id' })
+  planId?: string | null;
+
+  @Column({ type: 'datetime', nullable: true, name: 'plan_activated_at' })
+  planActivatedAt?: Date | null;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   derivLoginId?: string | null;
@@ -32,4 +39,8 @@ export class UserEntity {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @ManyToOne(() => PlanEntity, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'plan_id' })
+  plan?: PlanEntity | null;
 }

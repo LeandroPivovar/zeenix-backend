@@ -42,6 +42,10 @@ export class AuthService {
     return { token };
   }
 
+  async findUserByEmail(email: string) {
+    return await this.userRepository.findByEmail(email);
+  }
+
   private async signToken(sub: string, email: string): Promise<string> {
     return await this.jwtService.signAsync({ sub, email });
   }
