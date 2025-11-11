@@ -21,23 +21,23 @@ export class UserEntity {
   @Column({ type: 'datetime', nullable: true, name: 'plan_activated_at' })
   planActivatedAt?: Date | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true })
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'deriv_login_id' })
   derivLoginId?: string | null;
 
-  @Column({ type: 'varchar', length: 10, nullable: true })
+  @Column({ type: 'varchar', length: 10, nullable: true, name: 'deriv_currency' })
   derivCurrency?: string | null;
 
   // suportar cripto (ex.: BTC com muitas casas decimais)
-  @Column({ type: 'decimal', precision: 36, scale: 18, nullable: true })
+  @Column({ type: 'decimal', precision: 36, scale: 18, nullable: true, name: 'deriv_balance' })
   derivBalance?: string | null;
 
-  @Column({ type: 'json', nullable: true })
+  @Column({ type: 'json', nullable: true, name: 'deriv_raw' })
   derivRaw?: any | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
   @ManyToOne(() => PlanEntity, { nullable: true, onDelete: 'SET NULL' })

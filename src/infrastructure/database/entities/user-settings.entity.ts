@@ -27,6 +27,9 @@ export class UserSettingsEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'two_factor_secret' })
   twoFactorSecret?: string | null;
 
+  @Column({ type: 'varchar', length: 10, default: 'USD', name: 'trade_currency' })
+  tradeCurrency: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
@@ -37,4 +40,7 @@ export class UserSettingsEntity {
   @JoinColumn({ name: 'user_id' })
   user?: UserEntity;
 }
+
+
+
 

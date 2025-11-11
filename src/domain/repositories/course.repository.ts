@@ -6,3 +6,6 @@ export interface CourseRepository {
   findByIdWithLessons(id: string): Promise<Course | null>;
 }
 
+
+
+

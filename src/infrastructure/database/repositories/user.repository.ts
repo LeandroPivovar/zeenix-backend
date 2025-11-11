@@ -44,12 +44,50 @@ export class TypeOrmUserRepository implements UserRepository {
   }
 
   async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any }): Promise<void> {
-    await this.userRepository.update(userId, {
+    const updateData: any = {
       derivLoginId: info.loginId,
-      derivCurrency: info.currency ?? null,
-      derivBalance: info.balance != null ? String(info.balance) : null,
-      derivRaw: info.raw ?? null,
+    };
+    
+    // Só atualizar currency se foi fornecido explicitamente
+    if (info.currency !== undefined) {
+      updateData.derivCurrency = info.currency;
+    }
+    
+    // Só atualizar balance se foi fornecido explicitamente
+    if (info.balance !== undefined) {
+      updateData.derivBalance = String(info.balance);
+    }
+    
+    // Só atualizar raw se foi fornecido explicitamente
+    if (info.raw !== undefined) {
+      updateData.derivRaw = info.raw;
+    }
+    
+    await this.userRepository.update(userId, updateData);
+  }
+
+  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any } | null> {
+    const userEntity = await this.userRepository.findOne({ 
+      where: { id: userId },
+      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw']
     });
+    if (!userEntity) return null;
+    return {
+      loginId: userEntity.derivLoginId ?? null,
+      currency: userEntity.derivCurrency ?? null,
+      balance: userEntity.derivBalance ?? null,
+      raw: userEntity.derivRaw ?? null,
+    };
+  }
+
+  async clearDerivInfo(userId: string): Promise<void> {
+    const updateData: any = {
+      derivLoginId: null,
+      derivCurrency: null,
+      derivBalance: null,
+      derivRaw: null,
+    };
+    await this.userRepository.update(userId, updateData);
   }
 
   private toDomain(entity: UserEntity): User {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -9,8 +9,13 @@ import { UserSettingsEntity } from '../infrastructure/database/entities/user-set
 import { UserActivityLogEntity } from '../infrastructure/database/entities/user-activity-log.entity';
 import { UserSessionEntity } from '../infrastructure/database/entities/user-session.entity';
 
+const TRADE_CURRENCY_OPTIONS = ['USD', 'BTC', 'DEMO'] as const;
+type TradeCurrency = (typeof TRADE_CURRENCY_OPTIONS)[number];
+
 @Injectable()
 export class SettingsService {
+  private readonly logger = new Logger(SettingsService.name);
+
   constructor(
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     @InjectRepository(UserSettingsEntity)
@@ -28,14 +33,18 @@ export class SettingsService {
     let settings = await this.settingsRepository.findOne({ where: { userId } });
     if (!settings) {
       // Criar configurações padrão se não existirem
-      settings = this.settingsRepository.create({
+      const newSettings = this.settingsRepository.create({
         id: uuidv4(),
         userId,
         language: 'pt-BR',
         timezone: 'America/Sao_Paulo',
+        tradeCurrency: 'USD',
         emailNotifications: true,
         twoFactorEnabled: false,
       });
+      settings = await this.settingsRepository.save(newSettings);
+    } else if (!settings.tradeCurrency) {
+      settings.tradeCurrency = 'USD';
       await this.settingsRepository.save(settings);
     }
 
@@ -46,6 +55,7 @@ export class SettingsService {
       profilePictureUrl: settings.profilePictureUrl,
       language: settings.language,
       timezone: settings.timezone,
+      tradeCurrency: settings.tradeCurrency ?? 'USD',
       emailNotifications: settings.emailNotifications,
       twoFactorEnabled: settings.twoFactorEnabled,
     };
@@ -116,6 +126,7 @@ export class SettingsService {
       profilePictureUrl?: string;
       language?: string;
       timezone?: string;
+      tradeCurrency?: TradeCurrency;
       emailNotifications?: boolean;
     },
     ipAddress?: string,
@@ -123,24 +134,96 @@ export class SettingsService {
   ) {
     let settings = await this.settingsRepository.findOne({ where: { userId } });
     if (!settings) {
-      settings = this.settingsRepository.create({
+      const newSettings = this.settingsRepository.create({
         id: uuidv4(),
         userId,
-        ...updates,
+        language: 'pt-BR',
+        timezone: 'America/Sao_Paulo',
+        tradeCurrency: 'USD',
+        emailNotifications: true,
+        twoFactorEnabled: false,
       });
-    } else {
-      Object.assign(settings, updates);
+      settings = await this.settingsRepository.save(newSettings);
     }
+
+    const normalizedUpdates = { ...updates };
+    const previousState = {
+      language: settings.language,
+      timezone: settings.timezone,
+      tradeCurrency: settings.tradeCurrency,
+      profilePictureUrl: settings.profilePictureUrl,
+      emailNotifications: settings.emailNotifications,
+    };
+
+    if (normalizedUpdates.tradeCurrency) {
+      normalizedUpdates.tradeCurrency = normalizedUpdates.tradeCurrency.toUpperCase() as TradeCurrency;
+      if (!TRADE_CURRENCY_OPTIONS.includes(normalizedUpdates.tradeCurrency)) {
+        throw new BadRequestException('Moeda padrão inválida');
+      }
+    }
+
+    Object.assign(settings, normalizedUpdates);
 
     await this.settingsRepository.save(settings);
 
     // Log das mudanças
     const changes: string[] = [];
-    if (updates.language) changes.push(`Alterou idioma para ${updates.language}`);
-    if (updates.timezone) changes.push(`Alterou fuso horário para ${updates.timezone}`);
-    if (updates.profilePictureUrl) changes.push('Atualizou foto de perfil');
-    if (updates.emailNotifications !== undefined) {
-      changes.push(`Alterou notificações por email para ${updates.emailNotifications ? 'ativado' : 'desativado'}`);
+
+    if (
+      normalizedUpdates.language &&
+      normalizedUpdates.language !== previousState.language
+    ) {
+      changes.push(`Alterou idioma para ${normalizedUpdates.language}`);
+    }
+
+    if (
+      normalizedUpdates.timezone &&
+      normalizedUpdates.timezone !== previousState.timezone
+    ) {
+      changes.push(`Alterou fuso horário para ${normalizedUpdates.timezone}`);
+    }
+
+    if (
+      normalizedUpdates.tradeCurrency &&
+      normalizedUpdates.tradeCurrency !== previousState.tradeCurrency
+    ) {
+      changes.push(`Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`);
+      
+      // Atualizar também a coluna deriv_currency na tabela users
+      // Se for DEMO, manter a moeda base (USD) na deriv_currency
+      const currencyForDeriv = normalizedUpdates.tradeCurrency === 'DEMO' ? 'USD' : normalizedUpdates.tradeCurrency;
+      
+      // Buscar o loginId atual para não sobrescrever
+      const currentDerivInfo = await this.userRepository.getDerivInfo(userId);
+      const currentLoginId = currentDerivInfo?.loginId || userId;
+      
+      // Atualizar deriv_currency na tabela users
+      this.logger.log(`[SettingsService] Atualizando deriv_currency para ${currencyForDeriv} na tabela users para userId: ${userId}`);
+      await this.userRepository.updateDerivInfo(userId, {
+        loginId: currentLoginId,
+        currency: currencyForDeriv,
+        balance: currentDerivInfo?.balance ? parseFloat(currentDerivInfo.balance) : undefined,
+        raw: currentDerivInfo?.raw,
+      });
+      this.logger.log(`[SettingsService] deriv_currency atualizado com sucesso`);
+    }
+
+    if (
+      normalizedUpdates.profilePictureUrl &&
+      normalizedUpdates.profilePictureUrl !== previousState.profilePictureUrl
+    ) {
+      changes.push('Atualizou foto de perfil');
+    }
+
+    if (
+      normalizedUpdates.emailNotifications !== undefined &&
+      normalizedUpdates.emailNotifications !== previousState.emailNotifications
+    ) {
+      changes.push(
+        `Alterou notificações por email para ${
+          normalizedUpdates.emailNotifications ? 'ativado' : 'desativado'
+        }`,
+      );
     }
 
     if (changes.length > 0) {

@@ -14,10 +14,17 @@ import { UserSettingsEntity } from './infrastructure/database/entities/user-sett
 import { UserActivityLogEntity } from './infrastructure/database/entities/user-activity-log.entity';
 import { UserSessionEntity } from './infrastructure/database/entities/user-session.entity';
 import { PlanEntity } from './infrastructure/database/entities/plan.entity';
+import { TradeEntity } from './infrastructure/database/entities/trade.entity';
 
 class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
   columnName(propertyName: string, customName: string, embeddedPrefixes: string[]): string {
-    return customName ? customName : snakeCase(propertyName);
+    // Se um nome customizado foi fornecido, use-o exatamente como está (sem conversão)
+    // O TypeORM passa o valor do parâmetro 'name' do decorator @Column como customName
+    if (customName && customName.trim() !== '') {
+      return customName;
+    }
+    // Caso contrário, converte para snake_case
+    return snakeCase(propertyName);
   }
   relationName(propertyName: string): string {
     return snakeCase(propertyName);
@@ -39,7 +46,7 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity],
+        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity],
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),

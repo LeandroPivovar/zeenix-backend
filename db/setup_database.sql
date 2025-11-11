@@ -50,16 +50,73 @@ CREATE TABLE IF NOT EXISTS `plans` (
 
 -- Adicionar colunas de plano na tabela users (ignora erro se já existir)
 -- Nota: Se as colunas já existirem, você verá um erro que pode ser ignorado
-ALTER TABLE `users` 
-ADD COLUMN `plan_id` char(36) DEFAULT NULL AFTER `password`,
-ADD COLUMN `plan_activated_at` datetime(6) DEFAULT NULL AFTER `plan_id`;
+SET @plan_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'plan_id'
+);
+
+SET @sql_add_plan_id := IF(
+  @plan_id_exists = 0,
+  'ALTER TABLE `users` ADD COLUMN `plan_id` char(36) DEFAULT NULL AFTER `password`;',
+  'SELECT 1;'
+);
+PREPARE stmt_add_plan_id FROM @sql_add_plan_id;
+EXECUTE stmt_add_plan_id;
+DEALLOCATE PREPARE stmt_add_plan_id;
+
+SET @plan_activated_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'plan_activated_at'
+);
+
+SET @sql_add_plan_activated := IF(
+  @plan_activated_exists = 0,
+  'ALTER TABLE `users` ADD COLUMN `plan_activated_at` datetime(6) DEFAULT NULL AFTER `plan_id`;',
+  'SELECT 1;'
+);
+PREPARE stmt_add_plan_activated FROM @sql_add_plan_activated;
+EXECUTE stmt_add_plan_activated;
+DEALLOCATE PREPARE stmt_add_plan_activated;
 
 -- Adicionar foreign key (ignora erro se já existir)
-ALTER TABLE `users`
-ADD KEY `FK_user_plan` (`plan_id`);
+SET @fk_plan_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND INDEX_NAME = 'FK_user_plan'
+);
 
-ALTER TABLE `users`
-ADD CONSTRAINT `FK_user_plan` FOREIGN KEY (`plan_id`) REFERENCES `plans` (`id`) ON DELETE SET NULL;
+SET @sql_add_plan_index := IF(
+  @fk_plan_exists = 0,
+  'ALTER TABLE `users` ADD KEY `FK_user_plan` (`plan_id`);',
+  'SELECT 1;'
+);
+PREPARE stmt_add_plan_index FROM @sql_add_plan_index;
+EXECUTE stmt_add_plan_index;
+DEALLOCATE PREPARE stmt_add_plan_index;
+
+SET @fk_constraint_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND CONSTRAINT_NAME = 'FK_user_plan'
+);
+
+SET @sql_add_plan_fk := IF(
+  @fk_constraint_exists = 0,
+  'ALTER TABLE `users` ADD CONSTRAINT `FK_user_plan` FOREIGN KEY (`plan_id`) REFERENCES `plans` (`id`) ON DELETE SET NULL;',
+  'SELECT 1;'
+);
+PREPARE stmt_add_plan_fk FROM @sql_add_plan_fk;
+EXECUTE stmt_add_plan_fk;
+DEALLOCATE PREPARE stmt_add_plan_fk;
 
 -- Inserir planos iniciais
 INSERT IGNORE INTO `plans` (`id`, `name`, `slug`, `price`, `currency`, `billing_period`, `features`, `is_popular`, `is_recommended`, `is_active`, `display_order`) VALUES
@@ -101,6 +158,7 @@ CREATE TABLE IF NOT EXISTS `user_settings` (
   `profile_picture_url` varchar(500) DEFAULT NULL,
   `language` varchar(10) DEFAULT 'pt-BR',
   `timezone` varchar(50) DEFAULT 'America/Sao_Paulo',
+  `trade_currency` varchar(10) DEFAULT 'USD',
   `email_notifications` tinyint(1) DEFAULT 1,
   `two_factor_enabled` tinyint(1) DEFAULT 0,
   `two_factor_secret` varchar(255) DEFAULT NULL,
@@ -111,6 +169,24 @@ CREATE TABLE IF NOT EXISTS `user_settings` (
   KEY `FK_settings_user` (`user_id`),
   CONSTRAINT `FK_settings_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Garantir coluna de moeda de operação (ignorar erro se já existir)
+SET @trade_currency_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'user_settings'
+    AND COLUMN_NAME = 'trade_currency'
+);
+
+SET @sql_add_trade_currency := IF(
+  @trade_currency_exists = 0,
+  'ALTER TABLE `user_settings` ADD COLUMN `trade_currency` varchar(10) DEFAULT ''USD'' AFTER `timezone`;',
+  'SELECT 1;'
+);
+PREPARE stmt_add_trade_currency FROM @sql_add_trade_currency;
+EXECUTE stmt_add_trade_currency;
+DEALLOCATE PREPARE stmt_add_trade_currency;
 
 -- Tabela de logs de atividade do usuário
 CREATE TABLE IF NOT EXISTS `user_activity_logs` (
@@ -273,6 +349,30 @@ INSERT IGNORE INTO `system_status` (`id`, `service_name`, `status`, `message`) V
 ('00000000-0000-0000-0000-000000000202', 'API Deriv', 'operational', 'Conexão com Deriv estável.'),
 ('00000000-0000-0000-0000-000000000203', 'IA Zenix', 'operational', 'Serviços de IA funcionando normalmente.'),
 ('00000000-0000-0000-0000-000000000204', 'Copy Trading', 'operational', 'Serviço de Copy Trading ativo.');
+
+-- ===================================================================
+-- 6. TABELAS DE TRADES/OPERAÇÕES
+-- ===================================================================
+-- Tabela de trades (operações manuais e automáticas)
+CREATE TABLE IF NOT EXISTS `trades` (
+  `id` char(36) NOT NULL,
+  `user_id` char(36) NOT NULL,
+  `contract_type` varchar(50) NOT NULL,
+  `time_type` varchar(20) NOT NULL,
+  `duration` varchar(20) NOT NULL,
+  `multiplier` decimal(10, 2) NOT NULL DEFAULT 1.00,
+  `entry_value` decimal(10, 2) NOT NULL,
+  `trade_type` enum('BUY', 'SELL') NOT NULL,
+  `status` enum('pending', 'won', 'lost') NOT NULL DEFAULT 'pending',
+  `profit` decimal(10, 2) DEFAULT NULL,
+  `deriv_transaction_id` varchar(255) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  KEY `FK_trades_user` (`user_id`),
+  KEY `idx_user_created` (`user_id`, `created_at`),
+  CONSTRAINT `FK_trades_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================================================================
 -- SETUP COMPLETO!

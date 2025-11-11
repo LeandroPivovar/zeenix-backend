@@ -24,3 +24,6 @@ export class FaqEntity {
   updatedAt: Date;
 }
 
+
+
+

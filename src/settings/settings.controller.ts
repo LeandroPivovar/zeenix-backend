@@ -1,7 +1,13 @@
 import { Controller, Get, Put, Body, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsOptional, IsBoolean, IsEmail, MinLength } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsEmail, MinLength, IsEnum } from 'class-validator';
 import { SettingsService } from './settings.service';
+
+enum TradeCurrency {
+  USD = 'USD',
+  BTC = 'BTC',
+  DEMO = 'DEMO',
+}
 
 class UpdateNameDto {
   @IsString()
@@ -39,6 +45,10 @@ class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   emailNotifications?: boolean;
+
+  @IsOptional()
+  @IsEnum(TradeCurrency)
+  tradeCurrency?: TradeCurrency;
 }
 
 @Controller('settings')

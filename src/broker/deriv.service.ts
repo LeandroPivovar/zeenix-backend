@@ -1,23 +1,153 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
+
+type CurrencyAccountEntry = { value: number; loginid: string; isDemo?: boolean };
+
+type AggregatedBalances = {
+  by_type: Record<string, {
+    real: Record<string, number>;
+    demo: Record<string, number>;
+  }>;
+  global: {
+    real: Record<string, number>;
+    demo: Record<string, number>;
+  };
+  warnings: string[];
+};
+
+type DerivAccountResult = {
+  loginid: string;
+  currency: string;
+  balance: { value: number; currency: string };
+  balancesByCurrency: Record<string, number>;
+  balancesByCurrencyDemo?: Record<string, number>;
+  balancesByCurrencyReal?: Record<string, number>;
+  accountsByCurrency: Record<string, CurrencyAccountEntry[]>;
+  aggregatedBalances?: AggregatedBalances;
+};
 
 @Injectable()
 export class DerivService {
+  private readonly logger = new Logger(DerivService.name);
   private sessionStore = new Map<string, any>();
-  async connectAndGetAccount(token: string, appId: number) {
+
+  /**
+   * Agrupa saldos por type, mode (real/demo) e currency
+   * Usa converted_amount se disponível, senão balance
+   * Ignora loginid/ID das contas na lógica de agregação
+   */
+  private aggregateBalances(accounts: Record<string, any>): AggregatedBalances {
+    this.logger.log(`[DerivService] aggregateBalances chamado com ${Object.keys(accounts).length} contas`);
+    const totais: Record<string, { real: Record<string, number>; demo: Record<string, number> }> = {};
+    const warnings: string[] = [];
+
+    for (const accountId in accounts) {
+      const account = accounts[accountId];
+      
+      // Normalizar demo_account: 0 ou false = real, 1 ou true = demo
+      const demoFlag = account.demo_account;
+      const isDemo = demoFlag === 1 || demoFlag === true || demoFlag === '1';
+      const mode = isDemo ? 'demo' : 'real';
+      
+      // Obter type (deriv, mt5, etc) ou "unknown" se ausente
+      const type = account.type || 'unknown';
+      
+      // Normalizar currency para uppercase
+      const currency = (account.currency || 'UNKNOWN').toUpperCase();
+      if (currency === 'UNKNOWN') {
+        warnings.push(`Conta ${accountId} sem currency definida`);
+      }
+      
+      // Usar converted_amount se existir e for numérico, senão usar balance
+      let value = 0;
+      if (account.converted_amount !== null && account.converted_amount !== undefined) {
+        const converted = parseFloat(account.converted_amount);
+        if (!isNaN(converted)) {
+          value = converted;
+        } else if (account.balance !== null && account.balance !== undefined) {
+          const balance = parseFloat(account.balance);
+          if (!isNaN(balance)) {
+            value = balance;
+          } else {
+            warnings.push(`Conta ${accountId} sem valor numérico válido (converted_amount e balance inválidos)`);
+          }
+        } else {
+          warnings.push(`Conta ${accountId} sem valor numérico válido`);
+        }
+      } else if (account.balance !== null && account.balance !== undefined) {
+        const balance = parseFloat(account.balance);
+        if (!isNaN(balance)) {
+          value = balance;
+        } else {
+          warnings.push(`Conta ${accountId} sem valor numérico válido`);
+        }
+      } else {
+        warnings.push(`Conta ${accountId} sem valor numérico válido`);
+      }
+      
+      // Inicializar níveis do dicionário se necessário
+      if (!totais[type]) {
+        totais[type] = { real: {}, demo: {} };
+      }
+      if (!totais[type][mode][currency]) {
+        totais[type][mode][currency] = 0;
+      }
+      
+      // Somar valor
+      totais[type][mode][currency] += value;
+    }
+    
+    // Calcular totais globais por mode/currency
+    const global: { real: Record<string, number>; demo: Record<string, number> } = {
+      real: {},
+      demo: {},
+    };
+    
+    for (const typeKey in totais) {
+      for (const modeKey of ['real', 'demo'] as const) {
+        for (const currencyKey in totais[typeKey][modeKey]) {
+          if (!global[modeKey][currencyKey]) {
+            global[modeKey][currencyKey] = 0;
+          }
+          global[modeKey][currencyKey] += totais[typeKey][modeKey][currencyKey];
+        }
+      }
+    }
+    
+    const result = {
+      by_type: totais,
+      global,
+      warnings,
+    };
+    
+    this.logger.log(`[DerivService] aggregateBalances resultado - global.real: ${JSON.stringify(global.real)}, global.demo: ${JSON.stringify(global.demo)}`);
+    
+    return result;
+  }
+  
+  async connectAndGetAccount(token: string, appId: number, targetCurrency?: string): Promise<DerivAccountResult> {
     if (!token) throw new UnauthorizedException('Token ausente');
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
     const ws = new WebSocket(url, {
       headers: {
-        // Alguns endpoints do Deriv exigem um Origin válido
         Origin: 'https://app.deriv.com',
       },
     });
 
     const send = (msg: unknown) => ws.send(JSON.stringify(msg));
 
-    const result = await new Promise<any>((resolve, reject) => {
+    const result = await new Promise<DerivAccountResult>((resolve, reject) => {
       let authorized = false;
+      let tryingAllAccounts = true;
+      let fallbackInProgress = false;
+
+      const sendBalanceRequest = () => {
+        const payload: Record<string, any> = { balance: 1 };
+        if (tryingAllAccounts) {
+          payload.account = 'all';
+        }
+        send(payload);
+      };
 
       ws.on('open', () => {
         send({ authorize: token });
@@ -27,43 +157,330 @@ export class DerivService {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.error) {
+            if (
+              tryingAllAccounts &&
+              !fallbackInProgress &&
+              (msg.error.code === 'PermissionDenied' ||
+                msg.error.message?.toLowerCase().includes('all accounts'))
+            ) {
+              this.logger.warn(
+                '[DerivService] Permissão negada para balance account:all. Tentando fallback simples.',
+              );
+              tryingAllAccounts = false;
+              fallbackInProgress = true;
+              sendBalanceRequest();
+              return;
+            }
+            this.logger.error(`Erro na API Deriv: ${JSON.stringify(msg.error)}`);
             reject(new UnauthorizedException(msg.error.message || 'Erro na API Deriv'));
             ws.close();
             return;
           }
           if (msg.msg_type === 'authorize') {
             authorized = true;
-            send({ balance: 1 });
+            sendBalanceRequest();
           } else if (authorized && msg.msg_type === 'balance') {
-            resolve({
-              loginid: msg.balance.loginid,
-              currency: msg.balance.currency,
-              balance: { value: msg.balance.balance, currency: msg.balance.currency },
-            });
+            this.logger.log(
+              `[DerivService] Resposta completa da API Deriv: ${JSON.stringify(msg, null, 2)}`,
+            );
+            this.logger.log(
+              `[DerivService] Estrutura do balance: ${JSON.stringify(msg.balance, null, 2)}`,
+            );
+
+            const balanceData = msg.balance;
+            const desiredCurrency = targetCurrency?.toUpperCase();
+            
+            // Agregar saldos usando a nova lógica
+            this.logger.log(`[DerivService] DEBUG - balanceData.accounts existe? ${!!balanceData.accounts}`);
+            this.logger.log(`[DerivService] DEBUG - balanceData.accounts keys: ${balanceData.accounts ? Object.keys(balanceData.accounts).join(', ') : 'N/A'}`);
+            
+            const aggregatedBalances = balanceData.accounts 
+              ? this.aggregateBalances(balanceData.accounts)
+              : { by_type: {}, global: { real: {}, demo: {} }, warnings: [] };
+            
+            // Log dos warnings se houver
+            if (aggregatedBalances.warnings.length > 0) {
+              this.logger.warn(`[DerivService] Warnings ao processar contas: ${aggregatedBalances.warnings.join(', ')}`);
+            }
+            
+            // Log da estrutura agregada
+            this.logger.log(
+              `[DerivService] Saldos agregados: ${JSON.stringify(aggregatedBalances, null, 2)}`,
+            );
+            this.logger.log(
+              `[DerivService] DEBUG - aggregatedBalances.global.real: ${JSON.stringify(aggregatedBalances.global.real)}`,
+            );
+            this.logger.log(
+              `[DerivService] DEBUG - aggregatedBalances.global.demo: ${JSON.stringify(aggregatedBalances.global.demo)}`,
+            );
+            
+            // Manter estrutura antiga para compatibilidade (accountsByCurrency)
+            const accountsByCurrency: Record<string, CurrencyAccountEntry[]> = {};
+            const allDemoAccounts: CurrencyAccountEntry[] = [];
+            const allRealAccounts: CurrencyAccountEntry[] = [];
+
+            if (balanceData.accounts) {
+              for (const accountId in balanceData.accounts) {
+                const account = balanceData.accounts[accountId];
+                const currencyCode = (account.currency || '').toUpperCase();
+                if (!currencyCode) continue;
+                
+                // Usar converted_amount se disponível, senão balance
+                const numericBalance = account.converted_amount !== null && account.converted_amount !== undefined
+                  ? parseFloat(account.converted_amount)
+                  : parseFloat(account.balance ?? 0);
+                
+                // Identificar se é conta demo: usar demo_account como fonte primária
+                const isDemoAccount = 
+                  account.demo_account === 1 || 
+                  account.demo_account === true;
+                
+                const accountEntry = {
+                  value: numericBalance,
+                  loginid: accountId,
+                  isDemo: isDemoAccount,
+                };
+                
+                if (!accountsByCurrency[currencyCode]) {
+                  accountsByCurrency[currencyCode] = [];
+                }
+                accountsByCurrency[currencyCode].push(accountEntry);
+                
+                // Separar contas demo e reais para facilitar seleção
+                if (isDemoAccount) {
+                  allDemoAccounts.push(accountEntry);
+                } else {
+                  allRealAccounts.push(accountEntry);
+                }
+                
+                this.logger.log(
+                  `[DerivService] Conta ${accountId}: moeda ${currencyCode}, saldo ${numericBalance}, tipo: ${isDemoAccount ? 'DEMO' : 'REAL'}, demo_account: ${account.demo_account}, type: ${account.type || 'unknown'}`,
+                );
+              }
+            }
+
+            const mainCurrency = (balanceData.currency || desiredCurrency || 'USD').toUpperCase();
+            const mainBalanceValue = parseFloat(balanceData.balance ?? 0);
+            // Usar demo_account como fonte primária para identificar se é demo
+            const mainIsDemo = balanceData.demo_account === 1 || balanceData.demo_account === true;
+            
+            if (!accountsByCurrency[mainCurrency] || !accountsByCurrency[mainCurrency].length) {
+              accountsByCurrency[mainCurrency] = [
+                { value: mainBalanceValue, loginid: balanceData.loginid || '', isDemo: mainIsDemo },
+              ];
+            }
+
+            // Se o usuário configurou DEMO, buscar contas demo (priorizando USD demo)
+            // Se configurou USD/BTC, priorizar contas reais (CR), mas usar demo se não houver
+            let selectedEntry;
+            let selectedCurrency;
+            
+            if (desiredCurrency === 'DEMO') {
+              // Para DEMO, buscar contas demo (verificar propriedade isDemo)
+              // Priorizar USD demo se disponível, senão usar qualquer conta demo
+              const usdDemoAccounts = accountsByCurrency['USD']?.filter(acc => acc.isDemo === true) || [];
+              if (usdDemoAccounts.length > 0) {
+                selectedEntry = usdDemoAccounts[0];
+                selectedCurrency = 'USD';
+              } else if (allDemoAccounts.length > 0) {
+                // Se não houver USD demo, usar a primeira conta demo disponível
+                selectedEntry = allDemoAccounts[0];
+                // Determinar a moeda da conta demo selecionada
+                for (const [currency, accounts] of Object.entries(accountsByCurrency)) {
+                  if (accounts.some(acc => acc.loginid === selectedEntry.loginid)) {
+                    selectedCurrency = currency;
+                    break;
+                  }
+                }
+                selectedCurrency = selectedCurrency || 'USD';
+              } else {
+                // Fallback: usar conta principal se não houver contas demo
+                selectedEntry = { value: mainBalanceValue, loginid: balanceData.loginid, isDemo: false };
+                selectedCurrency = mainCurrency;
+              }
+            } else {
+              // Para USD/BTC, priorizar contas reais (não demo), mas usar demo se não houver
+              const desiredEntries = desiredCurrency ? accountsByCurrency[desiredCurrency] : undefined;
+              const currencyEntries =
+                desiredEntries && desiredEntries.length
+                  ? desiredEntries
+                  : accountsByCurrency[mainCurrency] ?? [];
+
+              selectedEntry =
+                currencyEntries.find(entry => entry.isDemo === false || entry.isDemo === undefined) ||
+                currencyEntries[0] ||
+                { value: mainBalanceValue, loginid: balanceData.loginid, isDemo: false };
+
+              selectedCurrency =
+                desiredCurrency && desiredEntries && desiredEntries.length
+                  ? desiredCurrency
+                  : mainCurrency;
+            }
+
+            const flattenedBalances = Object.fromEntries(
+              Object.entries(accountsByCurrency).map(([currencyKey, entries]) => [
+                currencyKey,
+                entries.reduce((sum, entry) => sum + entry.value, 0),
+              ]),
+            );
+
+            // Usar dados agregados para balancesByCurrencyDemo e balancesByCurrencyReal
+            // Isso garante que usamos converted_amount quando disponível e agrupamos corretamente
+            const balancesByCurrencyDemo: Record<string, number> = { ...aggregatedBalances.global.demo };
+            const balancesByCurrencyReal: Record<string, number> = { ...aggregatedBalances.global.real };
+            
+            // Log para debug - verificar se os dados estão sendo criados
+            this.logger.log(
+              `[DerivService] DEBUG - aggregatedBalances.global.demo: ${JSON.stringify(aggregatedBalances.global.demo)}`,
+            );
+            this.logger.log(
+              `[DerivService] DEBUG - aggregatedBalances.global.real: ${JSON.stringify(aggregatedBalances.global.real)}`,
+            );
+            this.logger.log(
+              `[DerivService] DEBUG - balancesByCurrencyDemo criado: ${JSON.stringify(balancesByCurrencyDemo)}`,
+            );
+            this.logger.log(
+              `[DerivService] DEBUG - balancesByCurrencyReal criado: ${JSON.stringify(balancesByCurrencyReal)}`,
+            );
+
+            const accountData: DerivAccountResult = {
+              loginid: selectedEntry.loginid || balanceData.loginid,
+              currency: selectedCurrency || mainCurrency,
+              balance: {
+                value: selectedEntry.value,
+                currency: selectedCurrency,
+              },
+              balancesByCurrency: flattenedBalances,
+              balancesByCurrencyDemo,
+              balancesByCurrencyReal,
+              accountsByCurrency,
+              aggregatedBalances,
+            };
+
+            this.logger.log(
+              `[DerivService] Retorno da Deriv - LoginID: ${accountData.loginid}, Currency: ${accountData.currency}, Balance: ${accountData.balance.value}`,
+            );
+            this.logger.log(
+              `[DerivService] Saldos separados - Demo: ${JSON.stringify(accountData.balancesByCurrencyDemo)}, Real: ${JSON.stringify(accountData.balancesByCurrencyReal)}`,
+            );
+            this.logger.log(
+              `[DerivService] Retorno completo: ${JSON.stringify({ 
+                loginid: accountData.loginid, 
+                currency: accountData.currency, 
+                balance: accountData.balance,
+                balancesByCurrency: accountData.balancesByCurrency,
+                balancesByCurrencyDemo: accountData.balancesByCurrencyDemo,
+                balancesByCurrencyReal: accountData.balancesByCurrencyReal
+              })}`,
+            );
+            
+            // Log do objeto completo antes de resolver
+            this.logger.log(`[DerivService] DEBUG - accountData completo antes de resolve: ${JSON.stringify(accountData)}`);
+
+            resolve(accountData);
             ws.close();
           }
-        } catch (e) {
-          reject(e);
+        } catch (error) {
+          this.logger.error(`Erro ao processar mensagem da API Deriv: ${error.message}`);
+          reject(new UnauthorizedException('Erro ao processar mensagem da API Deriv'));
           ws.close();
         }
       });
 
-      ws.on('error', (err) => reject(err));
+      ws.on('error', error => {
+        this.logger.error(`Erro de conexão WebSocket: ${error.message}`);
+        reject(new UnauthorizedException('Erro de conexão WebSocket'));
+      });
+
       ws.on('close', () => {
-        // noop
+        this.logger.warn('[DerivService] Conexão WebSocket fechada.');
       });
     });
 
     return result;
   }
 
+  async refreshBalance(token: string, appId: number = 1089, targetCurrency?: string) {
+    this.logger.log(`Buscando saldo atualizado da Deriv para token...`);
+    try {
+      return await this.connectAndGetAccount(token, appId, targetCurrency);
+    } catch (error) {
+      this.logger.error(`Erro ao atualizar saldo da Deriv: ${error.message}`);
+      throw error;
+    }
+  }
+
+  pickAccountForCurrency(account: DerivAccountResult, currency: string): DerivAccountResult {
+    const desiredCurrency = currency.toUpperCase();
+    
+    // Se o usuário configurou DEMO, buscar contas demo (priorizando USD demo)
+    // Se configurou USD/BTC, priorizar contas reais (CR), mas usar demo se não houver
+    let selectedEntry;
+    let selectedCurrency;
+    
+    if (desiredCurrency === 'DEMO') {
+      // Para DEMO, buscar contas demo em todas as moedas (verificar propriedade isDemo)
+      // Priorizar USD demo se disponível
+      const allAccounts = Object.values(account.accountsByCurrency ?? {}).flat();
+      const usdDemoAccounts = (account.accountsByCurrency?.['USD'] ?? []).filter(
+        acc => acc.isDemo === true
+      );
+      
+      if (usdDemoAccounts.length > 0) {
+        selectedEntry = usdDemoAccounts[0];
+        selectedCurrency = 'USD';
+      } else {
+        // Buscar qualquer conta demo
+        const demoAccounts = allAccounts.filter(acc => acc.isDemo === true);
+        if (demoAccounts.length > 0) {
+          selectedEntry = demoAccounts[0];
+          // Determinar a moeda da conta demo selecionada
+          for (const [curr, accounts] of Object.entries(account.accountsByCurrency ?? {})) {
+            if (accounts.some(acc => acc.loginid === selectedEntry.loginid)) {
+              selectedCurrency = curr;
+              break;
+            }
+          }
+          selectedCurrency = selectedCurrency || 'USD';
+        } else {
+          // Fallback
+          selectedEntry = { value: 0, loginid: account.loginid, isDemo: false };
+          selectedCurrency = account.currency || 'USD';
+        }
+      }
+    } else {
+      // Para USD/BTC, priorizar contas reais (não demo), mas usar demo se não houver
+      const accounts = account.accountsByCurrency?.[desiredCurrency] ?? [];
+      selectedEntry =
+        accounts.find(entry => entry.isDemo === false || entry.isDemo === undefined) ||
+        accounts[0] ||
+        { value: 0, loginid: account.loginid, isDemo: false };
+      selectedCurrency = desiredCurrency;
+    }
+
+    return {
+      loginid: selectedEntry.loginid || account.loginid,
+      currency: selectedCurrency || account.currency || 'USD',
+      balance: {
+        value: selectedEntry.value ?? account.balance?.value ?? 0,
+        currency: selectedCurrency || account.currency || 'USD',
+      },
+      balancesByCurrency: account.balancesByCurrency ?? {},
+      balancesByCurrencyDemo: account.balancesByCurrencyDemo ?? {},
+      balancesByCurrencyReal: account.balancesByCurrencyReal ?? {},
+      accountsByCurrency: account.accountsByCurrency ?? {},
+    };
+  }
+
   setSession(userId: string, data: any) {
-    this.sessionStore.set(userId, data);
+    if (data === null || data === undefined) {
+      this.sessionStore.delete(userId);
+    } else {
+      this.sessionStore.set(userId, data);
+    }
   }
 
   getSession(userId: string) {
     return this.sessionStore.get(userId);
   }
 }
-
-
