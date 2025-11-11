@@ -159,10 +159,12 @@ export class DerivController {
       balancesByCurrencyDemo: account?.balancesByCurrencyDemo ?? {},
       balancesByCurrencyReal: account?.balancesByCurrencyReal ?? {},
       aggregatedBalances: account?.aggregatedBalances ?? null,
+      // Sempre incluir tokensByLoginId, mesmo que vazio
+      tokensByLoginId: (account && 'tokensByLoginId' in account && account.tokensByLoginId) ? account.tokensByLoginId : {},
     };
     
     // Log para debug - verificar se os campos estão presentes
-    this.logger.log(`[DerivController] buildResponse - balancesByCurrencyDemo: ${JSON.stringify(response.balancesByCurrencyDemo)}, balancesByCurrencyReal: ${JSON.stringify(response.balancesByCurrencyReal)}`);
+    this.logger.log(`[DerivController] buildResponse - balancesByCurrencyDemo: ${JSON.stringify(response.balancesByCurrencyDemo)}, balancesByCurrencyReal: ${JSON.stringify(response.balancesByCurrencyReal)}, hasTokensByLoginId: ${!!response.tokensByLoginId}`);
     
     return response;
   }
@@ -414,9 +416,29 @@ export class DerivController {
         source: 'CONNECT-OAUTH',
       });
 
+      // Armazenar tokens mapeados por loginid no raw para uso futuro
+      const tokensByLoginId: Record<string, string> = {};
+      normalizedAccounts.forEach(account => {
+        if (account.loginid && account.token) {
+          tokensByLoginId[account.loginid] = account.token;
+        }
+      });
+
+      // Atualizar o raw com os tokens
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      if (derivInfo?.raw) {
+        derivInfo.raw.tokensByLoginId = tokensByLoginId;
+        await this.userRepository.updateDerivInfo(userId, {
+          loginId: derivInfo.loginId || result.loginid || selectedAccount.loginid,
+          raw: derivInfo.raw,
+        });
+        this.logger.log(`[CONNECT-OAUTH] Tokens armazenados para ${Object.keys(tokensByLoginId).length} contas`);
+      }
+
       return {
         ...result,
         loginid: result.loginid ?? selectedAccount.loginid,
+        tokensByLoginId, // Retornar tokens para o frontend também
       };
     } catch (error) {
       const isUnauthorized =
@@ -463,8 +485,19 @@ export class DerivController {
           balancesByCurrencyReal: account.balancesByCurrencyReal
         })}`);
         this.logger.log(`[STATUS] DEBUG - account completo recebido do service: ${JSON.stringify(account)}`);
+        
+        // Buscar tokens do raw antes de criar sessionPayload
+        const derivInfoForTokens = await this.userRepository.getDerivInfo(userId);
+        const tokensByLoginIdForAccount = derivInfoForTokens?.raw?.tokensByLoginId || {};
+        
+        // Adicionar tokensByLoginId ao account antes de passar para buildResponse
+        const accountWithTokens = {
+          ...account,
+          tokensByLoginId: tokensByLoginIdForAccount,
+        };
+        
         const sessionPayload = {
-          ...this.buildResponse(account, preferredCurrency),
+          ...this.buildResponse(accountWithTokens, preferredCurrency),
           appId: appIdToUse,
         };
         this.logger.log(`[STATUS] SessionPayload após buildResponse: ${JSON.stringify({
@@ -491,19 +524,38 @@ export class DerivController {
           balancesByCurrencyDemo: sessionPayload.balancesByCurrencyDemo,
           balancesByCurrencyReal: sessionPayload.balancesByCurrencyReal
         })}`);
+        // Buscar tokens do raw se disponíveis
+        const derivInfo = await this.userRepository.getDerivInfo(userId);
+        const tokensByLoginId = derivInfo?.raw?.tokensByLoginId || {};
+        
+        this.logger.log(`[STATUS] Tokens encontrados no banco: ${JSON.stringify({
+          hasRaw: !!derivInfo?.raw,
+          hasTokensByLoginId: !!derivInfo?.raw?.tokensByLoginId,
+          tokensByLoginIdKeys: Object.keys(tokensByLoginId),
+          tokensByLoginIdCount: Object.keys(tokensByLoginId).length
+        })}`);
+
         // Garantir que os campos estejam presentes na resposta final
         const finalResponse = {
           ...sessionPayload,
           balancesByCurrency: sessionPayload.balancesByCurrency ?? {},
           balancesByCurrencyDemo: sessionPayload.balancesByCurrencyDemo ?? {},
           balancesByCurrencyReal: sessionPayload.balancesByCurrencyReal ?? {},
+          tokensByLoginId, // Incluir tokens mapeados por loginid
           source: 'deriv_api',
         };
         this.logger.log(`[STATUS] Resposta final retornada: ${JSON.stringify({
           balancesByCurrency: finalResponse.balancesByCurrency,
           balancesByCurrencyDemo: finalResponse.balancesByCurrencyDemo,
-          balancesByCurrencyReal: finalResponse.balancesByCurrencyReal
+          balancesByCurrencyReal: finalResponse.balancesByCurrencyReal,
+          hasTokensByLoginId: !!finalResponse.tokensByLoginId,
+          tokensByLoginIdKeys: Object.keys(finalResponse.tokensByLoginId || {}),
+          tokensByLoginId: finalResponse.tokensByLoginId
         })}`);
+        // Garantir que tokensByLoginId sempre esteja presente, mesmo que vazio
+        if (!finalResponse.tokensByLoginId) {
+          finalResponse.tokensByLoginId = {};
+        }
         return finalResponse;
       } catch (error) {
         this.logger.error(`[STATUS] Erro ao buscar saldo da Deriv: ${error.message}`);
@@ -521,19 +573,37 @@ export class DerivController {
         balancesByCurrencyReal: session?.balancesByCurrencyReal,
         balancesByCurrency: session?.balancesByCurrency
       })}`);
+      // Buscar tokens do raw se disponíveis
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      const tokensByLoginId = derivInfo?.raw?.tokensByLoginId || {};
+      
+      this.logger.log(`[STATUS] Tokens encontrados no banco (sessão): ${JSON.stringify({
+        hasRaw: !!derivInfo?.raw,
+        hasTokensByLoginId: !!derivInfo?.raw?.tokensByLoginId,
+        tokensByLoginIdKeys: Object.keys(tokensByLoginId),
+        tokensByLoginIdCount: Object.keys(tokensByLoginId).length
+      })}`);
+
       // Garantir que os campos estejam presentes mesmo se não estiverem na sessão
       const sessionResponse = {
         ...session,
         balancesByCurrency: session?.balancesByCurrency ?? {},
         balancesByCurrencyDemo: session?.balancesByCurrencyDemo ?? {},
         balancesByCurrencyReal: session?.balancesByCurrencyReal ?? {},
+        tokensByLoginId, // Incluir tokens mapeados por loginid
         source: 'session',
       };
       this.logger.log(`[STATUS] DEBUG - sessionResponse final: ${JSON.stringify({
         balancesByCurrency: sessionResponse.balancesByCurrency,
         balancesByCurrencyDemo: sessionResponse.balancesByCurrencyDemo,
-        balancesByCurrencyReal: sessionResponse.balancesByCurrencyReal
+        balancesByCurrencyReal: sessionResponse.balancesByCurrencyReal,
+        hasTokensByLoginId: !!sessionResponse.tokensByLoginId,
+        tokensByLoginIdKeys: Object.keys(sessionResponse.tokensByLoginId || {})
       })}`);
+      // Garantir que tokensByLoginId sempre esteja presente, mesmo que vazio
+      if (!sessionResponse.tokensByLoginId) {
+        sessionResponse.tokensByLoginId = {};
+      }
       return sessionResponse;
     }
 
@@ -586,27 +656,44 @@ export class DerivController {
         balancesByCurrency: formatted.balancesByCurrency
       })}`);
       
+      // Buscar tokens do raw se disponíveis
+      const tokensByLoginId = derivInfo.raw?.tokensByLoginId || {};
+      
+      this.logger.log(`[STATUS] Tokens encontrados no banco (db): ${JSON.stringify({
+        hasRaw: !!derivInfo.raw,
+        hasTokensByLoginId: !!derivInfo.raw?.tokensByLoginId,
+        tokensByLoginIdKeys: Object.keys(tokensByLoginId),
+        tokensByLoginIdCount: Object.keys(tokensByLoginId).length
+      })}`);
+
       // Garantir que os campos estejam presentes na resposta final
       const dbResponse = {
         ...formatted,
         balancesByCurrency: formatted.balancesByCurrency ?? {},
         balancesByCurrencyDemo: formatted.balancesByCurrencyDemo ?? {},
         balancesByCurrencyReal: formatted.balancesByCurrencyReal ?? {},
+        tokensByLoginId, // Incluir tokens mapeados por loginid
         source: 'db',
       };
       
       this.logger.log(`[STATUS] DEBUG - dbResponse final: ${JSON.stringify({
         balancesByCurrency: dbResponse.balancesByCurrency,
         balancesByCurrencyDemo: dbResponse.balancesByCurrencyDemo,
-        balancesByCurrencyReal: dbResponse.balancesByCurrencyReal
+        balancesByCurrencyReal: dbResponse.balancesByCurrencyReal,
+        hasTokensByLoginId: !!dbResponse.tokensByLoginId,
+        tokensByLoginIdKeys: Object.keys(dbResponse.tokensByLoginId || {})
       })}`);
-
+      // Garantir que tokensByLoginId sempre esteja presente, mesmo que vazio
+      if (!dbResponse.tokensByLoginId) {
+        dbResponse.tokensByLoginId = {};
+      }
       return dbResponse;
     }
 
     this.logger.log(`[STATUS] Nenhuma conexão Deriv encontrada para usuário ${userId}`);
     return {
       loginid: null,
+      tokensByLoginId: {}, // Sempre retornar, mesmo que vazio
       currency: null,
       balance: null,
       preferredCurrency,
