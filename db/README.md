@@ -23,6 +23,7 @@ Se preferir executar scripts separados, siga esta ordem:
 3. `settings_tables.sql` - Cria tabelas de configurações
 4. `reset_and_populate_courses.sql` - Cria e popula tabelas de cursos
 5. `support_tables.sql` - Cria tabelas de suporte (FAQs e status)
+6. `add_trade_currency_to_user_settings.sql` - Adiciona coluna trade_currency (se necessário)
 
 ## 📋 Estrutura do Banco de Dados
 
@@ -38,7 +39,7 @@ Se preferir executar scripts separados, siga esta ordem:
 
 #### `user_settings`
 - Configurações pessoais do usuário
-- Idioma, fuso horário, notificações, 2FA
+- Idioma, fuso horário, notificações, 2FA, trade_currency (moeda preferida para trading)
 
 #### `user_activity_logs`
 - Histórico de ações do usuário
@@ -105,6 +106,13 @@ Certifique-se de executar os scripts na ordem correta. O script unificado já fa
 
 ### Erro: "Unknown column 'plan_id'"
 Se você executou `create_database.sql` antes e depois `plans_tables.sql`, o campo já deve existir. Se não, execute novamente o `setup_database.sql` completo.
+
+### Erro: "Unknown column 'trade_currency'"
+Se você receber este erro ao acessar as configurações do usuário, execute o script:
+```bash
+mysql -u seu_usuario -p nome_do_banco < add_trade_currency_to_user_settings.sql
+```
+Ou execute diretamente no MySQL Workbench/phpMyAdmin. Se a coluna já existir, você receberá um erro "Duplicate column name" que pode ser ignorado.
 
 ## 📚 Referências
 
