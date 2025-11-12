@@ -1,6 +1,6 @@
 import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { GeminiService } from './gemini.service';
-import { JwtAuthGuard } from '../auth/jwt.strategy';
 
 interface TickDto {
   value: number;
@@ -16,7 +16,7 @@ export class GeminiController {
   constructor(private readonly geminiService: GeminiService) {}
 
   @Post('recommendation')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(AuthGuard('jwt'))
   async getRecommendation(@Body() body: GetRecommendationDto) {
     if (!body.ticks || !Array.isArray(body.ticks) || body.ticks.length === 0) {
       return {
