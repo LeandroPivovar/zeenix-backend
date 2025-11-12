@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class GeminiService {
   private readonly GEMINI_API_KEY = 'AIzaSyDEe-kanGsyCuwau8hYCog6-Z5cR_OXnqE';
-  private readonly GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  private readonly GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
   async getTradingRecommendation(ticks: Array<{ value: number; epoch: number }>): Promise<{
     action: 'CALL' | 'PUT';
