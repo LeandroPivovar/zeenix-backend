@@ -112,6 +112,11 @@ export class DerivController {
     }
   }
 
+  private normalizePreferredCurrency(currency?: string): string {
+    const upper = (currency || 'USD').toUpperCase();
+    return upper === 'DEMO' ? 'USD' : upper;
+  }
+
   private async getPreferredCurrency(userId: string, source: string): Promise<string> {
     try {
       const settings = await this.settingsService.getSettings(userId);
@@ -177,8 +182,9 @@ export class DerivController {
     source: string;
   }) {
     const { userId, token, appId, currencyOverride, source } = params;
-    const preferredCurrency = await this.getPreferredCurrency(userId, source);
-    const targetCurrency = (currencyOverride || preferredCurrency).toUpperCase();
+    const preferredCurrencyRaw = await this.getPreferredCurrency(userId, source);
+    const normalizedPreferredCurrency = this.normalizePreferredCurrency(preferredCurrencyRaw);
+    const targetCurrency = (currencyOverride ? currencyOverride : normalizedPreferredCurrency).toUpperCase();
 
     this.logger.log(`[${source}] Iniciando conexão Deriv para usuário ${userId}`);
     const account = await this.derivService.connectAndGetAccount(token, appId, targetCurrency);
@@ -189,13 +195,19 @@ export class DerivController {
     // Se targetCurrency for DEMO, não verificar se existe "DEMO" nas moedas
     // pois DEMO não é uma moeda, mas sim um tipo de conta (demo em USD, BTC, etc)
     if (targetCurrency !== 'DEMO' && balancesByCurrency[targetCurrency] === undefined) {
-      this.logger.warn(
-        `[${source}] Moeda preferida (${targetCurrency}) não encontrada entre as contas retornadas: ${JSON.stringify(balancesByCurrency)}`,
-      );
-      throw new BadRequestException(
-        `Nenhuma conta Deriv retornada corresponde à moeda preferida (${targetCurrency}). ` +
-          'Ajuste a preferência de moeda ou selecione a conta correta ao autorizar o OAuth.',
-      );
+      if (!currencyOverride && targetCurrency === 'USD') {
+        this.logger.warn(
+          `[${source}] Conta USD real não encontrada; mantendo fallback automático. Contas disponíveis: ${JSON.stringify(balancesByCurrency)}`,
+        );
+      } else {
+        this.logger.warn(
+          `[${source}] Moeda preferida (${targetCurrency}) não encontrada entre as contas retornadas: ${JSON.stringify(balancesByCurrency)}`,
+        );
+        throw new BadRequestException(
+          `Nenhuma conta Deriv retornada corresponde à moeda preferida (${targetCurrency}). ` +
+            'Ajuste a preferência de moeda ou selecione a conta correta ao autorizar o OAuth.',
+        );
+      }
     }
     
     // Se for DEMO, verificar se há pelo menos uma conta demo disponível
@@ -224,7 +236,7 @@ export class DerivController {
     };
 
     const sessionPayload = {
-      ...this.buildResponse(accountForCurrency, preferredCurrency),
+      ...this.buildResponse(accountForCurrency, normalizedPreferredCurrency),
       appId,
     };
 
@@ -260,7 +272,7 @@ export class DerivController {
       );
 
       const refreshedSessionPayload = {
-        ...this.buildResponse(refreshedAccount, preferredCurrency),
+        ...this.buildResponse(refreshedAccount, normalizedPreferredCurrency),
         appId,
       };
 
@@ -466,8 +478,9 @@ export class DerivController {
   async status(@Body() body: StatusDto, @Req() req: any) {
     const userId = req.user.userId as string;
     const { token, appId, currency } = body;
-    const preferredCurrency = await this.getPreferredCurrency(userId, 'STATUS');
-    const targetCurrency = (currency || preferredCurrency).toUpperCase();
+    const preferredCurrencyRaw = await this.getPreferredCurrency(userId, 'STATUS');
+    const normalizedPreferredCurrency = this.normalizePreferredCurrency(preferredCurrencyRaw);
+    const targetCurrency = (currency ? currency : normalizedPreferredCurrency).toUpperCase();
     const appIdToUse = appId ?? this.defaultAppId;
 
     if (token) {
@@ -497,7 +510,7 @@ export class DerivController {
         };
         
         const sessionPayload = {
-          ...this.buildResponse(accountWithTokens, preferredCurrency),
+          ...this.buildResponse(accountWithTokens, normalizedPreferredCurrency),
           appId: appIdToUse,
         };
         this.logger.log(`[STATUS] SessionPayload após buildResponse: ${JSON.stringify({
@@ -618,7 +631,7 @@ export class DerivController {
         balance: derivInfo.balance
           ? {
               value: parseFloat(derivInfo.balance),
-              currency: derivInfo.currency ?? preferredCurrency,
+              currency: derivInfo.currency ?? normalizedPreferredCurrency,
             }
           : null,
       };
@@ -645,7 +658,7 @@ export class DerivController {
       }
       
       const formatted = {
-        ...this.buildResponse(accountData, preferredCurrency),
+        ...this.buildResponse(accountData, normalizedPreferredCurrency),
         appId: appIdToUse,
       };
       
@@ -696,9 +709,9 @@ export class DerivController {
       tokensByLoginId: {}, // Sempre retornar, mesmo que vazio
       currency: null,
       balance: null,
-      preferredCurrency,
-      currencyPrefix: this.getCurrencyPrefix(preferredCurrency),
-      preferredCurrencyPrefix: this.getCurrencyPrefix(preferredCurrency),
+      preferredCurrency: normalizedPreferredCurrency,
+      currencyPrefix: this.getCurrencyPrefix(normalizedPreferredCurrency),
+      preferredCurrencyPrefix: this.getCurrencyPrefix(normalizedPreferredCurrency),
       appId: appIdToUse,
     };
   }
