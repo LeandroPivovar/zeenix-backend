@@ -27,7 +27,6 @@ import { Type } from 'class-transformer';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { DerivService } from './deriv.service';
-import { SettingsService } from '../settings/settings.service';
 
 class ConnectDto {
   @IsString()
@@ -90,7 +89,6 @@ export class DerivController {
     private readonly derivService: DerivService,
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: UserRepository,
-    private readonly settingsService: SettingsService,
     private readonly configService: ConfigService,
   ) {
     this.defaultAppId = Number(this.configService.get('DERIV_APP_ID') ?? 1089);
@@ -109,23 +107,6 @@ export class DerivController {
         return 'D$';
       default:
         return currency ? `${currency} ` : '';
-    }
-  }
-
-  private normalizePreferredCurrency(currency?: string): string {
-    const upper = (currency || 'USD').toUpperCase();
-    return upper === 'DEMO' ? 'USD' : upper;
-  }
-
-  private async getPreferredCurrency(userId: string, source: string): Promise<string> {
-    try {
-      const settings = await this.settingsService.getSettings(userId);
-      return settings.tradeCurrency ?? 'USD';
-    } catch (error) {
-      this.logger.warn(
-        `[${source}] Não foi possível obter tradeCurrency de ${userId}: ${error.message}`,
-      );
-      return 'USD';
     }
   }
 
@@ -182,8 +163,7 @@ export class DerivController {
     source: string;
   }) {
     const { userId, token, appId, currencyOverride, source } = params;
-    const preferredCurrencyRaw = await this.getPreferredCurrency(userId, source);
-    const normalizedPreferredCurrency = this.normalizePreferredCurrency(preferredCurrencyRaw);
+    const normalizedPreferredCurrency = 'USD';
     const targetCurrency = (currencyOverride ? currencyOverride : normalizedPreferredCurrency).toUpperCase();
 
     this.logger.log(`[${source}] Iniciando conexão Deriv para usuário ${userId}`);
@@ -201,11 +181,11 @@ export class DerivController {
         );
       } else {
         this.logger.warn(
-          `[${source}] Moeda preferida (${targetCurrency}) não encontrada entre as contas retornadas: ${JSON.stringify(balancesByCurrency)}`,
+          `[${source}] Moeda (${targetCurrency}) não encontrada entre as contas retornadas: ${JSON.stringify(balancesByCurrency)}`,
         );
         throw new BadRequestException(
-          `Nenhuma conta Deriv retornada corresponde à moeda preferida (${targetCurrency}). ` +
-            'Ajuste a preferência de moeda ou selecione a conta correta ao autorizar o OAuth.',
+          `Nenhuma conta Deriv retornada corresponde à moeda ${targetCurrency}. ` +
+            'Selecione a conta USD real correta ao autorizar o OAuth.',
         );
       }
     }
@@ -400,22 +380,21 @@ export class DerivController {
     const userId = req.user.userId as string;
     const appId = body.appId ?? this.defaultAppId;
 
-    const preferredCurrency = await this.getPreferredCurrency(userId, 'CONNECT-OAUTH');
     const normalizedAccounts = body.accounts.map(account => ({
       loginid: account.loginid,
       token: account.token,
       currency: account.currency?.toUpperCase() || 'USD',
     }));
 
-    const expectedCurrency = preferredCurrency.toUpperCase();
+    const expectedCurrency = 'USD';
     const selectedAccount = normalizedAccounts.find(
       account => account.currency === expectedCurrency,
     );
 
     if (!selectedAccount) {
       throw new BadRequestException(
-        `Nenhuma conta OAuth retornada corresponde à moeda preferida (${expectedCurrency}). ` +
-          'Selecione a conta correta na Deriv ou ajuste sua preferência nas configurações.',
+        `Nenhuma conta OAuth retornada corresponde à moeda ${expectedCurrency}. ` +
+          'Selecione a conta USD real na Deriv antes de autorizar o OAuth.',
       );
     }
 
@@ -478,8 +457,7 @@ export class DerivController {
   async status(@Body() body: StatusDto, @Req() req: any) {
     const userId = req.user.userId as string;
     const { token, appId, currency } = body;
-    const preferredCurrencyRaw = await this.getPreferredCurrency(userId, 'STATUS');
-    const normalizedPreferredCurrency = this.normalizePreferredCurrency(preferredCurrencyRaw);
+    const normalizedPreferredCurrency = 'USD';
     const targetCurrency = (currency ? currency : normalizedPreferredCurrency).toUpperCase();
     const appIdToUse = appId ?? this.defaultAppId;
 
