@@ -14,6 +14,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SettingsService } from '../settings/settings.service';
 import {
   ArrayMinSize,
   IsArray,
@@ -89,6 +90,7 @@ export class DerivController {
     private readonly derivService: DerivService,
     @Inject(USER_REPOSITORY_TOKEN)
     private readonly userRepository: UserRepository,
+    private readonly settingsService: SettingsService,
     private readonly configService: ConfigService,
   ) {
     this.defaultAppId = Number(this.configService.get('DERIV_APP_ID') ?? 1089);
@@ -155,6 +157,18 @@ export class DerivController {
     return response;
   }
 
+  private async getPreferredCurrency(userId: string, source: string): Promise<string> {
+    try {
+      const settings = await this.settingsService.getSettings(userId);
+      return (settings.tradeCurrency || 'USD').toUpperCase();
+    } catch (error) {
+      this.logger.warn(
+        `[${source}] Não foi possível obter tradeCurrency de ${userId}: ${error.message}`,
+      );
+      return 'USD';
+    }
+  }
+
   private async performConnection(params: {
     userId: string;
     token: string;
@@ -163,8 +177,8 @@ export class DerivController {
     source: string;
   }) {
     const { userId, token, appId, currencyOverride, source } = params;
-    const normalizedPreferredCurrency = 'USD';
-    const targetCurrency = (currencyOverride ? currencyOverride : normalizedPreferredCurrency).toUpperCase();
+    const preferredCurrency = await this.getPreferredCurrency(userId, source);
+    const targetCurrency = (currencyOverride ? currencyOverride : 'USD').toUpperCase();
 
     this.logger.log(`[${source}] Iniciando conexão Deriv para usuário ${userId}`);
     const account = await this.derivService.connectAndGetAccount(token, appId, targetCurrency);
@@ -216,7 +230,7 @@ export class DerivController {
     };
 
     const sessionPayload = {
-      ...this.buildResponse(accountForCurrency, normalizedPreferredCurrency),
+      ...this.buildResponse(accountForCurrency, preferredCurrency),
       appId,
     };
 
@@ -252,7 +266,7 @@ export class DerivController {
       );
 
       const refreshedSessionPayload = {
-        ...this.buildResponse(refreshedAccount, normalizedPreferredCurrency),
+        ...this.buildResponse(refreshedAccount, preferredCurrency),
         appId,
       };
 
@@ -457,8 +471,8 @@ export class DerivController {
   async status(@Body() body: StatusDto, @Req() req: any) {
     const userId = req.user.userId as string;
     const { token, appId, currency } = body;
-    const normalizedPreferredCurrency = 'USD';
-    const targetCurrency = (currency ? currency : normalizedPreferredCurrency).toUpperCase();
+    const preferredCurrency = await this.getPreferredCurrency(userId, 'STATUS');
+    const targetCurrency = (currency ? currency : preferredCurrency).toUpperCase();
     const appIdToUse = appId ?? this.defaultAppId;
 
     if (token) {
@@ -488,7 +502,7 @@ export class DerivController {
         };
         
         const sessionPayload = {
-          ...this.buildResponse(accountWithTokens, normalizedPreferredCurrency),
+          ...this.buildResponse(accountWithTokens, preferredCurrency),
           appId: appIdToUse,
         };
         this.logger.log(`[STATUS] SessionPayload após buildResponse: ${JSON.stringify({
@@ -609,7 +623,7 @@ export class DerivController {
         balance: derivInfo.balance
           ? {
               value: parseFloat(derivInfo.balance),
-              currency: derivInfo.currency ?? normalizedPreferredCurrency,
+              currency: derivInfo.currency ?? preferredCurrency,
             }
           : null,
       };
@@ -636,7 +650,7 @@ export class DerivController {
       }
       
       const formatted = {
-        ...this.buildResponse(accountData, normalizedPreferredCurrency),
+        ...this.buildResponse(accountData, preferredCurrency),
         appId: appIdToUse,
       };
       
@@ -687,9 +701,9 @@ export class DerivController {
       tokensByLoginId: {}, // Sempre retornar, mesmo que vazio
       currency: null,
       balance: null,
-      preferredCurrency: normalizedPreferredCurrency,
-      currencyPrefix: this.getCurrencyPrefix(normalizedPreferredCurrency),
-      preferredCurrencyPrefix: this.getCurrencyPrefix(normalizedPreferredCurrency),
+      preferredCurrency: preferredCurrency,
+      currencyPrefix: this.getCurrencyPrefix(preferredCurrency),
+      preferredCurrencyPrefix: this.getCurrencyPrefix(preferredCurrency),
       appId: appIdToUse,
     };
   }
