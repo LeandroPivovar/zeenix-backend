@@ -11,9 +11,10 @@ import { SettingsModule } from './settings/settings.module';
 import { PlansModule } from './plans/plans.module';
 import { TradesModule } from './trades/trades.module';
 import { GeminiModule } from './gemini/gemini.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
-  imports: [DatabaseModule, UserModule, AuthModule, BrokerModule, CoursesModule, SupportModule, SettingsModule, PlansModule, TradesModule, GeminiModule],
+  imports: [DatabaseModule, UserModule, AuthModule, BrokerModule, CoursesModule, SupportModule, SettingsModule, PlansModule, TradesModule, GeminiModule, AiModule],
   controllers: [AppController],
   providers: [AppService],
 })
