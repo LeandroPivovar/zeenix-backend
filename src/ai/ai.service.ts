@@ -468,5 +468,69 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
   getIsTrading(): boolean {
     return this.isTrading;
   }
+
+  async getSessionStats(userId: number) {
+    // Buscar todas as trades do usuário da sessão atual (hoje)
+    const query = `
+      SELECT 
+        COUNT(*) as totalTrades,
+        SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
+        SUM(COALESCE(profit_loss, 0)) as totalProfitLoss
+      FROM ai_trades
+      WHERE user_id = ? 
+        AND DATE(created_at) = CURDATE()
+        AND status IN ('WON', 'LOST')
+    `;
+
+    const result = await this.dataSource.query(query, [userId]);
+    const stats = result[0];
+
+    return {
+      totalTrades: parseInt(stats.totalTrades) || 0,
+      wins: parseInt(stats.wins) || 0,
+      losses: parseInt(stats.losses) || 0,
+      profitLoss: parseFloat(stats.totalProfitLoss) || 0,
+    };
+  }
+
+  async getTradeHistory(userId: number, limit: number = 20) {
+    // Buscar histórico de trades do usuário (últimas 20 por padrão)
+    const query = `
+      SELECT 
+        id,
+        gemini_signal as signal,
+        entry_price as entryPrice,
+        exit_price as exitPrice,
+        stake_amount as stakeAmount,
+        profit_loss as profitLoss,
+        gemini_duration as duration,
+        gemini_reasoning as reasoning,
+        status,
+        created_at as createdAt,
+        closed_at as closedAt
+      FROM ai_trades
+      WHERE user_id = ? 
+        AND status IN ('WON', 'LOST')
+      ORDER BY closed_at DESC
+      LIMIT ?
+    `;
+
+    const result = await this.dataSource.query(query, [userId, limit]);
+
+    return result.map((trade: any) => ({
+      id: trade.id,
+      signal: trade.signal,
+      entryPrice: parseFloat(trade.entryPrice),
+      exitPrice: parseFloat(trade.exitPrice),
+      stakeAmount: parseFloat(trade.stakeAmount),
+      profitLoss: parseFloat(trade.profitLoss),
+      duration: trade.duration,
+      reasoning: trade.reasoning,
+      status: trade.status,
+      createdAt: trade.createdAt,
+      closedAt: trade.closedAt,
+    }));
+  }
 }
 

@@ -3,6 +3,7 @@ import {
   Get, 
   Post, 
   Body,
+  Param,
   HttpException, 
   HttpStatus 
 } from '@nestjs/common';
@@ -184,6 +185,46 @@ export class AiController {
         isTrading: this.aiService.getIsTrading(),
       },
     };
+  }
+
+  @Get('session-stats/:userId')
+  async getSessionStats(@Param('userId') userId: string) {
+    try {
+      const stats = await this.aiService.getSessionStats(parseInt(userId));
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas da sessão',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('trade-history/:userId')
+  async getTradeHistory(@Param('userId') userId: string) {
+    try {
+      const history = await this.aiService.getTradeHistory(parseInt(userId));
+      return {
+        success: true,
+        data: history,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar histórico de trades',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
 
