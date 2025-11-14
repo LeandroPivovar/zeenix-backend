@@ -228,5 +228,101 @@ export class AiController {
       );
     }
   }
+
+  // ========== ENDPOINTS PARA IA EM BACKGROUND ==========
+
+  @Post('activate')
+  async activateAI(
+    @Body() body: {
+      userId: number;
+      stakeAmount: number;
+      derivToken: string;
+      currency: string;
+    },
+  ) {
+    try {
+      await this.aiService.activateUserAI(
+        body.userId,
+        body.stakeAmount,
+        body.derivToken,
+        body.currency,
+      );
+      return {
+        success: true,
+        message: 'IA ativada com sucesso. Executando em background.',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao ativar IA',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('deactivate')
+  async deactivateAI(@Body() body: { userId: number }) {
+    try {
+      await this.aiService.deactivateUserAI(body.userId);
+      return {
+        success: true,
+        message: 'IA desativada com sucesso',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao desativar IA',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('config/:userId')
+  async getAIConfig(@Param('userId') userId: string) {
+    try {
+      const config = await this.aiService.getUserAIConfig(Number(userId));
+      return {
+        success: true,
+        data: config,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar configuração da IA',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('active-users')
+  async getActiveUsers() {
+    try {
+      const activeUsers = await this.aiService.getActiveUsersCount();
+      return {
+        success: true,
+        data: {
+          count: activeUsers,
+        },
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar usuários ativos',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

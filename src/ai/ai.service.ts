@@ -852,5 +852,248 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       closedAt: trade.closedAt,
     }));
   }
+
+  // ========== MÉTODOS PARA IA EM BACKGROUND ==========
+
+  /**
+   * Ativa a IA para um usuário (salva configuração no banco)
+   */
+  async activateUserAI(
+    userId: number,
+    stakeAmount: number,
+    derivToken: string,
+    currency: string,
+  ): Promise<void> {
+    this.logger.log(`Ativando IA para usuário ${userId}`);
+
+    // Verificar se já existe configuração
+    const existing = await this.dataSource.query(
+      'SELECT id FROM ai_user_config WHERE user_id = ?',
+      [userId],
+    );
+
+    const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora
+
+    if (existing.length > 0) {
+      // Atualizar configuração existente
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET is_active = TRUE, 
+             stake_amount = ?, 
+             deriv_token = ?, 
+             currency = ?,
+             next_trade_at = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [stakeAmount, derivToken, currency, nextTradeAt, userId],
+      );
+    } else {
+      // Criar nova configuração
+      await this.dataSource.query(
+        `INSERT INTO ai_user_config 
+         (user_id, is_active, stake_amount, deriv_token, currency, next_trade_at) 
+         VALUES (?, TRUE, ?, ?, ?, ?)`,
+        [userId, stakeAmount, derivToken, currency, nextTradeAt],
+      );
+    }
+
+    this.logger.log(`IA ativada para usuário ${userId}`);
+  }
+
+  /**
+   * Desativa a IA para um usuário
+   */
+  async deactivateUserAI(userId: number): Promise<void> {
+    this.logger.log(`Desativando IA para usuário ${userId}`);
+
+    await this.dataSource.query(
+      'UPDATE ai_user_config SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+      [userId],
+    );
+
+    this.logger.log(`IA desativada para usuário ${userId}`);
+  }
+
+  /**
+   * Busca configuração da IA de um usuário
+   */
+  async getUserAIConfig(userId: number): Promise<any> {
+    const result = await this.dataSource.query(
+      `SELECT 
+        id,
+        user_id as userId,
+        is_active as isActive,
+        stake_amount as stakeAmount,
+        currency,
+        last_trade_at as lastTradeAt,
+        next_trade_at as nextTradeAt,
+        total_trades as totalTrades,
+        total_wins as totalWins,
+        total_losses as totalLosses,
+        created_at as createdAt,
+        updated_at as updatedAt
+       FROM ai_user_config 
+       WHERE user_id = ?`,
+      [userId],
+    );
+
+    if (result.length === 0) {
+      return {
+        userId,
+        isActive: false,
+        stakeAmount: 10,
+        currency: 'USD',
+        totalTrades: 0,
+        totalWins: 0,
+        totalLosses: 0,
+      };
+    }
+
+    return result[0];
+  }
+
+  /**
+   * Conta quantos usuários têm IA ativa
+   */
+  async getActiveUsersCount(): Promise<number> {
+    const result = await this.dataSource.query(
+      'SELECT COUNT(*) as count FROM ai_user_config WHERE is_active = TRUE',
+    );
+    return result[0]?.count || 0;
+  }
+
+  /**
+   * Processa IAs em background (chamado pelo scheduler)
+   * Verifica todos os usuários com IA ativa e executa operações quando necessário
+   */
+  async processBackgroundAIs(): Promise<void> {
+    try {
+      // Buscar usuários com IA ativa e que já passaram do tempo da próxima operação
+      const usersToProcess = await this.dataSource.query(
+        `SELECT 
+          user_id as userId,
+          stake_amount as stakeAmount,
+          deriv_token as derivToken,
+          currency,
+          next_trade_at as nextTradeAt
+         FROM ai_user_config 
+         WHERE is_active = TRUE 
+         AND (next_trade_at IS NULL OR next_trade_at <= NOW())
+         LIMIT 10`,
+      );
+
+      if (usersToProcess.length === 0) {
+        return;
+      }
+
+      this.logger.log(
+        `[Background AI] Processando ${usersToProcess.length} usuários`,
+      );
+
+      // Processar cada usuário
+      for (const user of usersToProcess) {
+        try {
+          await this.processUserAI(user);
+        } catch (error) {
+          this.logger.error(
+            `[Background AI] Erro ao processar usuário ${user.userId}:`,
+            error,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error('[Background AI] Erro no processamento:', error);
+    }
+  }
+
+  /**
+   * Processa a IA de um único usuário
+   */
+  private async processUserAI(user: any): Promise<void> {
+    const { userId, stakeAmount, derivToken, currency } = user;
+
+    this.logger.log(`[Background AI] Processando usuário ${userId}`);
+
+    // Verificar se já há operação ativa deste usuário
+    const activeTrade = await this.dataSource.query(
+      'SELECT id FROM ai_trades WHERE user_id = ? AND status IN (?, ?) LIMIT 1',
+      [userId, 'PENDING', 'ACTIVE'],
+    );
+
+    if (activeTrade.length > 0) {
+      this.logger.log(
+        `[Background AI] Usuário ${userId} já tem operação ativa, pulando`,
+      );
+      return;
+    }
+
+    try {
+      // Inicializar conexão se necessário
+      if (!this.ws || this.ws.readyState !== 1) {
+        await this.initialize();
+      }
+
+      // Aguardar ter pelo menos 20 ticks
+      let attempts = 0;
+      while (this.ticks.length < 20 && attempts < 30) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      if (this.ticks.length < 20) {
+        this.logger.warn(
+          `[Background AI] Não há ticks suficientes para usuário ${userId}`,
+        );
+        // Reagendar para daqui 1 minuto
+        await this.dataSource.query(
+          'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 1 MINUTE) WHERE user_id = ?',
+          [userId],
+        );
+        return;
+      }
+
+      // Analisar com Gemini
+      const signal = await this.analyzeWithGemini();
+
+      // Executar trade
+      const tradeId = await this.executeTrade(
+        userId,
+        signal,
+        stakeAmount,
+        derivToken,
+        currency,
+      );
+
+      this.logger.log(
+        `[Background AI] Trade ${tradeId} iniciado para usuário ${userId}`,
+      );
+
+      // Atualizar estatísticas e agendar próxima operação (5 minutos depois)
+      const nextTradeAt = new Date(
+        Date.now() + signal.duration * 1000 + 300000,
+      ); // Duração + 5 minutos
+
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET last_trade_at = NOW(),
+             next_trade_at = ?,
+             total_trades = total_trades + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [nextTradeAt, userId],
+      );
+    } catch (error) {
+      this.logger.error(
+        `[Background AI] Erro ao executar trade para usuário ${userId}:`,
+        error,
+      );
+
+      // Reagendar para daqui 2 minutos em caso de erro
+      await this.dataSource.query(
+        'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 2 MINUTE) WHERE user_id = ?',
+        [userId],
+      );
+    }
+  }
 }
 
