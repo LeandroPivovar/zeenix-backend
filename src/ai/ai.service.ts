@@ -24,6 +24,8 @@ export interface TradeResult {
   currentPrice?: number;
   profitLoss?: number;
   timeRemaining?: number;
+  stakeAmount?: number;
+  signal?: string;
 }
 
 @Injectable()
@@ -38,6 +40,13 @@ export class AiService {
   private subscriptionId: string | null = null;
   private activeTradeId: number | null = null;
   private isTrading = false;
+  
+  // WebSocket para monitorar contrato ativo
+  private contractWs: WebSocket.WebSocket | null = null;
+  private contractSubscriptionId: string | null = null;
+  private activeContractId: string | null = null;
+  private realTimeProfit: number | null = null;
+  private realTimeCurrentPrice: number | null = null;
 
   constructor(@InjectDataSource() private dataSource: DataSource) {
     this.appId = process.env.DERIV_APP_ID || '111346';
@@ -339,16 +348,12 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       throw new Error('Preço atual não disponível');
     }
 
-    // Simular payout real da Deriv (normalmente entre 0.80 e 0.95)
-    // TODO: Quando integrar com Deriv API real, pegar o payout do contrato
-    const simulatedPayout = stakeAmount * 0.85; // 85% de retorno
-    
-    // Salvar trade no banco
+    // Salvar trade inicial no banco
     const query = `
       INSERT INTO ai_trades (
         user_id, analysis_data, gemini_signal, gemini_duration, 
-        gemini_reasoning, entry_price, stake_amount, payout, contract_type, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        gemini_reasoning, entry_price, stake_amount, contract_type, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const values = [
@@ -359,7 +364,6 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       signal.reasoning,
       currentPrice,
       stakeAmount,
-      simulatedPayout,
       signal.signal === 'CALL' ? 'CALL' : 'PUT',
       'PENDING',
     ];
@@ -370,68 +374,363 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     this.activeTradeId = tradeId;
     this.isTrading = true;
 
-    this.logger.log(`Trade criado com ID: ${tradeId}, Payout: $${simulatedPayout.toFixed(2)}`);
+    this.logger.log(`Trade criado com ID: ${tradeId}`);
 
-    // Executar trade na Deriv (simular por enquanto)
-    // TODO: Integrar com Deriv API para executar trade real
-    setTimeout(async () => {
-      await this.finalizeTrade(tradeId, derivToken);
-    }, signal.duration * 1000);
+    // Executar trade real na Deriv
+    try {
+      await this.executeBuyOnDeriv(tradeId, signal, stakeAmount, derivToken);
+    } catch (error) {
+      this.logger.error('Erro ao executar trade na Deriv:', error);
+      
+      // Marcar trade como erro no banco
+      await this.dataSource.query(
+        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+        ['ERROR', error.message, tradeId]
+      );
+      
+      this.isTrading = false;
+      this.activeTradeId = null;
+      throw error;
+    }
 
     return tradeId;
   }
 
-  private async finalizeTrade(tradeId: number, derivToken: string) {
-    const exitPrice = this.getCurrentPrice();
+  /**
+   * Executa a compra do contrato na Deriv API
+   * Baseado no método do OperationChart.vue
+   */
+  private async executeBuyOnDeriv(
+    tradeId: number,
+    signal: GeminiSignal,
+    stakeAmount: number,
+    derivToken: string,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.logger.log('Conectando à Deriv para executar trade...');
+      
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const buyWs = new WebSocket(endpoint);
+      
+      let proposalId: string | null = null;
+      let proposalPrice: number | null = null;
+      let isCompleted = false;
+      
+      // Timeout de segurança (60 segundos)
+      const timeout = setTimeout(() => {
+        if (!isCompleted) {
+          isCompleted = true;
+          this.logger.error('Timeout ao executar trade na Deriv');
+          buyWs.close();
+          reject(new Error('Timeout ao executar trade'));
+        }
+      }, 60000);
+
+      buyWs.on('open', () => {
+        this.logger.log('WebSocket conectado, autorizando...');
+        buyWs.send(JSON.stringify({ authorize: derivToken }));
+      });
+
+      buyWs.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          
+          if (msg.error) {
+            if (!isCompleted) {
+              isCompleted = true;
+              clearTimeout(timeout);
+              this.logger.error('Erro da Deriv:', msg.error);
+              buyWs.close();
+              reject(new Error(msg.error.message || 'Erro ao executar trade'));
+            }
+            return;
+          }
+
+          // 1. Após autorização, fazer proposal
+          if (msg.msg_type === 'authorize') {
+            this.logger.log('Autorizado, enviando proposal...');
+            
+            const proposalPayload = {
+              proposal: 1,
+              amount: stakeAmount,
+              basis: 'stake',
+              contract_type: signal.signal,
+              currency: 'USD', // TODO: Pegar moeda do usuário
+              duration: signal.duration,
+              duration_unit: 's', // segundos
+              symbol: this.symbol,
+            };
+            
+            this.logger.log('Proposal payload:', proposalPayload);
+            buyWs.send(JSON.stringify(proposalPayload));
+          }
+
+          // 2. Receber proposal e fazer buy
+          if (msg.msg_type === 'proposal') {
+            const proposal = msg.proposal;
+            if (!proposal || !proposal.id) {
+              if (!isCompleted) {
+                isCompleted = true;
+                clearTimeout(timeout);
+                buyWs.close();
+                reject(new Error('Proposta inválida da Deriv'));
+              }
+              return;
+            }
+
+            proposalId = proposal.id;
+            proposalPrice = Number(proposal.ask_price);
+            const payout = Number(proposal.payout || 0);
+            
+            this.logger.log('Proposal recebido:', {
+              id: proposalId,
+              price: proposalPrice,
+              payout: payout
+            });
+
+            // Atualizar payout no banco
+            await this.dataSource.query(
+              'UPDATE ai_trades SET payout = ? WHERE id = ?',
+              [payout - stakeAmount, tradeId] // payout é o retorno líquido
+            );
+
+            // Fazer buy
+            const buyPayload = {
+              buy: proposalId,
+              price: proposalPrice,
+            };
+            
+            this.logger.log('Executando buy...', buyPayload);
+            buyWs.send(JSON.stringify(buyPayload));
+          }
+
+          // 3. Receber confirmação de buy e subscrever ao contrato
+          if (msg.msg_type === 'buy') {
+            const buy = msg.buy;
+            if (!buy || !buy.contract_id) {
+              if (!isCompleted) {
+                isCompleted = true;
+                clearTimeout(timeout);
+                buyWs.close();
+                reject(new Error('Compra não confirmada pela Deriv'));
+              }
+              return;
+            }
+
+            const contractId = buy.contract_id;
+            const buyPrice = Number(buy.buy_price);
+            const entrySpot = Number(buy.entry_spot || this.getCurrentPrice());
+            
+            this.logger.log('Compra confirmada!', {
+              contractId,
+              buyPrice,
+              entrySpot
+            });
+
+            // Atualizar trade no banco
+            await this.dataSource.query(
+              `UPDATE ai_trades 
+               SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
+               WHERE id = ?`,
+              [contractId, entrySpot, tradeId]
+            );
+
+            // Fechar este WebSocket e abrir um novo para monitorar o contrato
+            buyWs.close();
+            clearTimeout(timeout);
+
+            // Subscrever ao contrato para monitoramento
+            await this.subscribeToContract(contractId, derivToken);
+            
+            if (!isCompleted) {
+              isCompleted = true;
+              resolve();
+            }
+          }
+        } catch (error) {
+          if (!isCompleted) {
+            isCompleted = true;
+            clearTimeout(timeout);
+            this.logger.error('Erro ao processar mensagem:', error);
+            buyWs.close();
+            reject(error);
+          }
+        }
+      });
+
+      buyWs.on('error', (error) => {
+        if (!isCompleted) {
+          isCompleted = true;
+          clearTimeout(timeout);
+          this.logger.error('Erro no WebSocket:', error);
+          reject(error);
+        }
+      });
+
+      buyWs.on('close', () => {
+        if (!isCompleted) {
+          isCompleted = true;
+          clearTimeout(timeout);
+          reject(new Error('WebSocket fechado inesperadamente'));
+        }
+      });
+    });
+  }
+
+  // Método finalizeTrade removido - agora a finalização é feita automaticamente
+  // pelo WebSocket quando recebe is_sold === 1 (ver handleContractFinalized)
+
+  /**
+   * Conecta ao WebSocket da Deriv para monitorar um contrato em tempo real
+   * Similar ao que é feito no OperationChart.vue
+   */
+  private async subscribeToContract(contractId: string, derivToken: string): Promise<void> {
+    this.logger.log(`Conectando ao WebSocket para monitorar contrato: ${contractId}`);
     
-    if (!exitPrice) {
-      this.logger.error('Preço de saída não disponível');
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+    
+    this.contractWs = new WebSocket(endpoint);
+    this.activeContractId = contractId;
+    this.realTimeProfit = null;
+    this.realTimeCurrentPrice = null;
+
+    this.contractWs.on('open', () => {
+      this.logger.log('WebSocket do contrato conectado, autorizando...');
+      
+      // Autorizar com o token do usuário
+      this.contractWs.send(JSON.stringify({ authorize: derivToken }));
+    });
+
+    this.contractWs.on('message', (data: Buffer) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        this.processContractMessage(msg);
+      } catch (error) {
+        this.logger.error('Erro ao processar mensagem do contrato:', error);
+      }
+    });
+
+    this.contractWs.on('error', (error) => {
+      this.logger.error('Erro no WebSocket do contrato:', error);
+    });
+
+    this.contractWs.on('close', () => {
+      this.logger.log('WebSocket do contrato fechado');
+      this.contractWs = null;
+      this.contractSubscriptionId = null;
+    });
+  }
+
+  /**
+   * Processa mensagens do WebSocket do contrato
+   */
+  private processContractMessage(msg: any): void {
+    // Log apenas para mensagens importantes
+    if (msg.msg_type === 'authorize' || msg.msg_type === 'proposal_open_contract') {
+      this.logger.debug(`Mensagem do contrato: ${msg.msg_type}`);
+    }
+
+    if (msg.error) {
+      this.logger.error('Erro no WebSocket do contrato:', msg.error);
       return;
     }
 
-    // Buscar trade do banco
-    const tradeQuery = 'SELECT * FROM ai_trades WHERE id = ?';
-    const tradeResult = await this.dataSource.query(tradeQuery, [tradeId]);
-    const trade = tradeResult[0];
+    switch (msg.msg_type) {
+      case 'authorize':
+        // Após autorização, subscrever ao contrato
+        if (this.activeContractId) {
+          this.logger.log(`Autorizado, subscrevendo ao contrato ${this.activeContractId}`);
+          this.contractWs.send(JSON.stringify({
+            proposal_open_contract: 1,
+            contract_id: this.activeContractId,
+            subscribe: 1
+          }));
+        }
+        break;
 
-    if (!trade) {
-      this.logger.error(`Trade ${tradeId} não encontrado`);
+      case 'proposal_open_contract':
+        // Armazenar ID da subscription
+        if (msg.subscription?.id) {
+          this.contractSubscriptionId = msg.subscription.id;
+        }
+
+        const contract = msg.proposal_open_contract;
+        if (contract) {
+          // Atualizar profit em tempo real (mesmo método do OperationChart.vue)
+          if (contract.profit !== undefined && contract.profit !== null) {
+            this.realTimeProfit = Number(contract.profit);
+            this.logger.debug(`Profit atualizado: ${this.realTimeProfit}`);
+          }
+
+          // Atualizar preço atual
+          if (contract.current_spot !== undefined && contract.current_spot !== null) {
+            this.realTimeCurrentPrice = Number(contract.current_spot);
+          }
+
+          // Se o contrato foi vendido/expirou, finalizar
+          if (contract.is_sold === 1) {
+            this.logger.log('Contrato finalizado pela Deriv');
+            this.handleContractFinalized(contract);
+          }
+        }
+        break;
+    }
+  }
+
+  /**
+   * Trata a finalização de um contrato pela Deriv
+   */
+  private async handleContractFinalized(contract: any): Promise<void> {
+    if (!this.activeTradeId) {
       return;
     }
 
-    // Calcular lucro/perda (simplificado)
-    let profitLoss = 0;
-    let status = 'LOST';
+    const finalProfit = contract.profit !== undefined ? Number(contract.profit) : 0;
+    const exitPrice = contract.exit_spot || contract.current_spot || this.getCurrentPrice();
+    const status = finalProfit >= 0 ? 'WON' : 'LOST';
 
-    if (trade.gemini_signal === 'CALL') {
-      if (exitPrice > trade.entry_price) {
-        profitLoss = trade.stake_amount * 0.85; // 85% de retorno
-        status = 'WON';
-      } else {
-        profitLoss = -trade.stake_amount;
-      }
-    } else {
-      if (exitPrice < trade.entry_price) {
-        profitLoss = trade.stake_amount * 0.85;
-        status = 'WON';
-      } else {
-        profitLoss = -trade.stake_amount;
-      }
-    }
+    this.logger.log(`Contrato finalizado - Status: ${status}, Profit: ${finalProfit}`);
 
-    // Atualizar trade no banco
+    // Atualizar no banco
     const updateQuery = `
       UPDATE ai_trades 
       SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
       WHERE id = ?
     `;
 
-    await this.dataSource.query(updateQuery, [exitPrice, profitLoss, status, tradeId]);
+    await this.dataSource.query(updateQuery, [exitPrice, finalProfit, status, this.activeTradeId]);
 
-    this.logger.log(`Trade ${tradeId} finalizado: ${status}, P/L: ${profitLoss}`);
-
+    // Limpar estado
+    this.disconnectFromContract();
     this.isTrading = false;
     this.activeTradeId = null;
+  }
+
+  /**
+   * Desconecta do WebSocket do contrato
+   */
+  private disconnectFromContract(): void {
+    if (this.contractSubscriptionId && this.contractWs) {
+      try {
+        this.contractWs.send(JSON.stringify({ forget: this.contractSubscriptionId }));
+      } catch (error) {
+        this.logger.warn('Erro ao desinscrever do contrato:', error);
+      }
+    }
+
+    if (this.contractWs) {
+      try {
+        this.contractWs.close();
+      } catch (error) {
+        this.logger.warn('Erro ao fechar WebSocket do contrato:', error);
+      }
+      this.contractWs = null;
+    }
+
+    this.contractSubscriptionId = null;
+    this.activeContractId = null;
+    this.realTimeProfit = null;
+    this.realTimeCurrentPrice = null;
   }
 
   async getActiveTrade(): Promise<TradeResult | null> {
@@ -454,35 +753,31 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     }
 
     const trade = result[0];
-    const currentPrice = this.getCurrentPrice();
     
     // Calcular tempo restante
     const startTime = trade.started_at || trade.created_at;
     const elapsedSeconds = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
     const timeRemaining = Math.max(0, trade.gemini_duration - elapsedSeconds);
 
-    // Calcular lucro estimado em tempo real
-    let estimatedProfit = 0;
-    if (currentPrice && trade.entry_price) {
-      const isWinning = (trade.gemini_signal === 'CALL' && currentPrice > trade.entry_price) ||
-                        (trade.gemini_signal === 'PUT' && currentPrice < trade.entry_price);
-      
-      if (isWinning) {
-        // Se está ganhando, retorna o payout
-        estimatedProfit = trade.payout ? parseFloat(trade.payout) : 0;
-      } else {
-        // Se está perdendo, retorna o negativo do stake
-        estimatedProfit = trade.stake_amount ? -parseFloat(trade.stake_amount) : 0;
-      }
+    // Usar o profit real do WebSocket (mesmo método do OperationChart.vue)
+    // Se já temos profit_loss no banco (trade finalizado), usar ele
+    // Senão, usar o realTimeProfit do WebSocket
+    let profitToReturn = 0;
+    if (trade.profit_loss !== null && trade.profit_loss !== undefined) {
+      profitToReturn = parseFloat(trade.profit_loss);
+    } else if (this.realTimeProfit !== null) {
+      profitToReturn = this.realTimeProfit;
     }
 
     return {
       id: trade.id,
       status: trade.status,
       entryPrice: parseFloat(trade.entry_price),
-      currentPrice: currentPrice || undefined,
-      profitLoss: trade.profit_loss ? parseFloat(trade.profit_loss) : estimatedProfit,
+      currentPrice: this.realTimeCurrentPrice || this.getCurrentPrice() || undefined,
+      profitLoss: profitToReturn,
       timeRemaining,
+      stakeAmount: trade.stake_amount ? parseFloat(trade.stake_amount) : undefined,
+      signal: trade.gemini_signal,
     };
   }
 
