@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import WebSocket from 'ws';
+import { Pool } from 'pg';
 
 export interface Tick {
   value: number;
@@ -7,18 +8,36 @@ export interface Tick {
   timestamp: string;
 }
 
+export interface GeminiSignal {
+  signal: 'CALL' | 'PUT';
+  duration: number; // em segundos (máximo 120)
+  reasoning: string;
+  confidence: number; // 0-100
+}
+
+export interface TradeResult {
+  id: number;
+  status: string;
+  entryPrice: number;
+  currentPrice?: number;
+  profitLoss?: number;
+  timeRemaining?: number;
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
-  private maxTicks = 10;
+  private maxTicks = 20; // Aumentado para 20 para análise
   private appId: string;
   private symbol = 'R_100';
   private isConnected = false;
   private subscriptionId: string | null = null;
+  private activeTradeId: number | null = null;
+  private isTrading = false;
 
-  constructor() {
+  constructor(@Inject('DATABASE_POOL') private pool: Pool) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
@@ -136,7 +155,7 @@ export class AiService {
 
     this.ticks.push(newTick);
 
-    // Manter apenas os últimos 10 ticks
+    // Manter apenas os últimos 20 ticks
     if (this.ticks.length > this.maxTicks) {
       this.ticks.shift();
     }
@@ -199,6 +218,229 @@ export class AiService {
     }
     this.isConnected = false;
     this.ticks = [];
+  }
+
+  // Métodos para IA de Trading
+
+  async analyzeWithGemini(userId: number): Promise<GeminiSignal> {
+    if (this.ticks.length < 20) {
+      throw new Error('Não há dados suficientes para análise (mínimo 20 ticks)');
+    }
+
+    const prices = this.ticks.map(t => t.value);
+    
+    this.logger.log(`Enviando ${prices.length} preços para análise do Gemini`);
+
+    try {
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+      const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
+
+Últimos 20 preços (do mais antigo ao mais recente):
+${prices.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+
+Preço atual: ${prices[prices.length - 1]}
+
+Com base nesta sequência de preços, você deve:
+1. Identificar se a tendência é de alta (CALL) ou baixa (PUT)
+2. Recomendar uma duração de contrato entre 30 e 120 segundos
+3. Fornecer um raciocínio breve (máximo 2 linhas)
+4. Indicar o nível de confiança (0-100)
+
+Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras):
+{
+  "signal": "CALL" ou "PUT",
+  "duration": número entre 30 e 120,
+  "reasoning": "explicação breve",
+  "confidence": número entre 0 e 100
+}`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      this.logger.log(`Resposta do Gemini: ${text}`);
+
+      // Tentar fazer parse da resposta
+      let parsedResponse;
+      try {
+        // Remover possíveis markdown code blocks
+        const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        parsedResponse = JSON.parse(cleanText);
+      } catch (e) {
+        this.logger.error('Erro ao fazer parse da resposta do Gemini:', e);
+        throw new Error('Resposta do Gemini em formato inválido');
+      }
+
+      // Validar resposta
+      if (!parsedResponse.signal || !['CALL', 'PUT'].includes(parsedResponse.signal)) {
+        throw new Error('Sinal inválido do Gemini');
+      }
+
+      if (!parsedResponse.duration || parsedResponse.duration < 30 || parsedResponse.duration > 120) {
+        this.logger.warn(`Duração inválida: ${parsedResponse.duration}, ajustando para 60s`);
+        parsedResponse.duration = 60;
+      }
+
+      return {
+        signal: parsedResponse.signal,
+        duration: parsedResponse.duration,
+        reasoning: parsedResponse.reasoning || 'Análise técnica',
+        confidence: parsedResponse.confidence || 70,
+      };
+
+    } catch (error) {
+      this.logger.error('Erro ao analisar com Gemini:', error);
+      throw error;
+    }
+  }
+
+  async executeTrade(
+    userId: number,
+    signal: GeminiSignal,
+    stakeAmount: number,
+    derivToken: string,
+  ): Promise<number> {
+    if (this.isTrading) {
+      throw new Error('Já existe uma operação em andamento');
+    }
+
+    const currentPrice = this.getCurrentPrice();
+    if (!currentPrice) {
+      throw new Error('Preço atual não disponível');
+    }
+
+    // Salvar trade no banco
+    const query = `
+      INSERT INTO ai_trades (
+        user_id, analysis_data, gemini_signal, gemini_duration, 
+        gemini_reasoning, entry_price, stake_amount, contract_type, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id
+    `;
+
+    const values = [
+      userId,
+      JSON.stringify(this.ticks),
+      signal.signal,
+      signal.duration,
+      signal.reasoning,
+      currentPrice,
+      stakeAmount,
+      signal.signal === 'CALL' ? 'CALL' : 'PUT',
+      'PENDING',
+    ];
+
+    const result = await this.pool.query(query, values);
+    const tradeId = result.rows[0].id;
+
+    this.activeTradeId = tradeId;
+    this.isTrading = true;
+
+    this.logger.log(`Trade criado com ID: ${tradeId}`);
+
+    // Executar trade na Deriv (simular por enquanto)
+    // TODO: Integrar com Deriv API para executar trade real
+    setTimeout(async () => {
+      await this.finalizeTrade(tradeId, derivToken);
+    }, signal.duration * 1000);
+
+    return tradeId;
+  }
+
+  private async finalizeTrade(tradeId: number, derivToken: string) {
+    const exitPrice = this.getCurrentPrice();
+    
+    if (!exitPrice) {
+      this.logger.error('Preço de saída não disponível');
+      return;
+    }
+
+    // Buscar trade do banco
+    const tradeQuery = 'SELECT * FROM ai_trades WHERE id = $1';
+    const tradeResult = await this.pool.query(tradeQuery, [tradeId]);
+    const trade = tradeResult.rows[0];
+
+    if (!trade) {
+      this.logger.error(`Trade ${tradeId} não encontrado`);
+      return;
+    }
+
+    // Calcular lucro/perda (simplificado)
+    let profitLoss = 0;
+    let status = 'LOST';
+
+    if (trade.gemini_signal === 'CALL') {
+      if (exitPrice > trade.entry_price) {
+        profitLoss = trade.stake_amount * 0.85; // 85% de retorno
+        status = 'WON';
+      } else {
+        profitLoss = -trade.stake_amount;
+      }
+    } else {
+      if (exitPrice < trade.entry_price) {
+        profitLoss = trade.stake_amount * 0.85;
+        status = 'WON';
+      } else {
+        profitLoss = -trade.stake_amount;
+      }
+    }
+
+    // Atualizar trade no banco
+    const updateQuery = `
+      UPDATE ai_trades 
+      SET exit_price = $1, profit_loss = $2, status = $3, closed_at = NOW()
+      WHERE id = $4
+    `;
+
+    await this.pool.query(updateQuery, [exitPrice, profitLoss, status, tradeId]);
+
+    this.logger.log(`Trade ${tradeId} finalizado: ${status}, P/L: ${profitLoss}`);
+
+    this.isTrading = false;
+    this.activeTradeId = null;
+  }
+
+  async getActiveTrade(): Promise<TradeResult | null> {
+    if (!this.activeTradeId) {
+      return null;
+    }
+
+    const query = `
+      SELECT id, status, entry_price, exit_price, profit_loss, 
+             gemini_duration, started_at, created_at
+      FROM ai_trades 
+      WHERE id = $1
+    `;
+
+    const result = await this.pool.query(query, [this.activeTradeId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const trade = result.rows[0];
+    const currentPrice = this.getCurrentPrice();
+    
+    // Calcular tempo restante
+    const startTime = trade.started_at || trade.created_at;
+    const elapsedSeconds = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
+    const timeRemaining = Math.max(0, trade.gemini_duration - elapsedSeconds);
+
+    return {
+      id: trade.id,
+      status: trade.status,
+      entryPrice: parseFloat(trade.entry_price),
+      currentPrice: currentPrice || undefined,
+      profitLoss: trade.profit_loss ? parseFloat(trade.profit_loss) : undefined,
+      timeRemaining,
+    };
+  }
+
+  getIsTrading(): boolean {
+    return this.isTrading;
   }
 }
 

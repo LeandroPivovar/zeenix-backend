@@ -1,4 +1,11 @@
-import { Controller, Get, Post, HttpException, HttpStatus } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body,
+  HttpException, 
+  HttpStatus 
+} from '@nestjs/common';
 import { AiService, Tick } from './ai.service';
 
 @Controller('ai')
@@ -88,6 +95,93 @@ export class AiController {
       data: {
         currentPrice,
         timestamp: new Date().toISOString(),
+      },
+    };
+  }
+
+  @Post('analyze')
+  async analyzeAndGetSignal(@Body() body: { userId: number }) {
+    try {
+      const signal = await this.aiService.analyzeWithGemini(body.userId);
+      return {
+        success: true,
+        data: signal,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao analisar com Gemini',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('execute-trade')
+  async executeTrade(
+    @Body() body: { 
+      userId: number; 
+      signal: any; 
+      stakeAmount: number; 
+      derivToken: string 
+    }
+  ) {
+    try {
+      const tradeId = await this.aiService.executeTrade(
+        body.userId,
+        body.signal,
+        body.stakeAmount,
+        body.derivToken,
+      );
+
+      return {
+        success: true,
+        data: {
+          tradeId,
+          message: 'Trade executado com sucesso',
+        },
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao executar trade',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('active-trade')
+  async getActiveTrade() {
+    try {
+      const trade = await this.aiService.getActiveTrade();
+      
+      return {
+        success: true,
+        data: trade,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar trade ativo',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('trading-status')
+  getTradingStatus() {
+    return {
+      success: true,
+      data: {
+        isTrading: this.aiService.getIsTrading(),
       },
     };
   }
