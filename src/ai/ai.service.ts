@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as WebSocket from 'ws';
 
-interface Tick {
+export interface Tick {
   value: number;
   epoch: number;
   timestamp: string;

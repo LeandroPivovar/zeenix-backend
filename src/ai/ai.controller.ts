@@ -1,5 +1,5 @@
 import { Controller, Get, Post, HttpException, HttpStatus } from '@nestjs/common';
-import { AiService } from './ai.service';
+import { AiService, Tick } from './ai.service';
 
 @Controller('ai')
 export class AiController {
@@ -36,7 +36,15 @@ export class AiController {
   }
 
   @Get('ticks')
-  getTicks() {
+  getTicks(): {
+    success: boolean;
+    data: {
+      ticks: Tick[];
+      currentPrice: number | null;
+      statistics: any;
+      status: any;
+    };
+  } {
     const ticks = this.aiService.getTicks();
     const currentPrice = this.aiService.getCurrentPrice();
     const statistics = this.aiService.getStatistics();
