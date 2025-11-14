@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export interface Tick {
   value: number;
@@ -233,7 +234,6 @@ export class AiService {
     this.logger.log(`Enviando ${prices.length} preços para análise do Gemini`);
 
     try {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
       const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
