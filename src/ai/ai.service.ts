@@ -499,7 +499,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     const query = `
       SELECT 
         id,
-        gemini_signal as signal,
+        gemini_signal as \`signal\`,
         entry_price as entryPrice,
         exit_price as exitPrice,
         stake_amount as stakeAmount,
