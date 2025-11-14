@@ -339,12 +339,16 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       throw new Error('Preço atual não disponível');
     }
 
+    // Simular payout real da Deriv (normalmente entre 0.80 e 0.95)
+    // TODO: Quando integrar com Deriv API real, pegar o payout do contrato
+    const simulatedPayout = stakeAmount * 0.85; // 85% de retorno
+    
     // Salvar trade no banco
     const query = `
       INSERT INTO ai_trades (
         user_id, analysis_data, gemini_signal, gemini_duration, 
-        gemini_reasoning, entry_price, stake_amount, contract_type, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        gemini_reasoning, entry_price, stake_amount, payout, contract_type, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const values = [
@@ -355,6 +359,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       signal.reasoning,
       currentPrice,
       stakeAmount,
+      simulatedPayout,
       signal.signal === 'CALL' ? 'CALL' : 'PUT',
       'PENDING',
     ];
@@ -365,7 +370,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     this.activeTradeId = tradeId;
     this.isTrading = true;
 
-    this.logger.log(`Trade criado com ID: ${tradeId}`);
+    this.logger.log(`Trade criado com ID: ${tradeId}, Payout: $${simulatedPayout.toFixed(2)}`);
 
     // Executar trade na Deriv (simular por enquanto)
     // TODO: Integrar com Deriv API para executar trade real
@@ -436,7 +441,8 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
 
     const query = `
       SELECT id, status, entry_price, exit_price, profit_loss, 
-             gemini_duration, started_at, created_at
+             gemini_duration, gemini_signal, stake_amount, payout,
+             started_at, created_at
       FROM ai_trades 
       WHERE id = ?
     `;
@@ -455,12 +461,27 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     const elapsedSeconds = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
     const timeRemaining = Math.max(0, trade.gemini_duration - elapsedSeconds);
 
+    // Calcular lucro estimado em tempo real
+    let estimatedProfit = 0;
+    if (currentPrice && trade.entry_price) {
+      const isWinning = (trade.gemini_signal === 'CALL' && currentPrice > trade.entry_price) ||
+                        (trade.gemini_signal === 'PUT' && currentPrice < trade.entry_price);
+      
+      if (isWinning) {
+        // Se está ganhando, retorna o payout
+        estimatedProfit = trade.payout ? parseFloat(trade.payout) : 0;
+      } else {
+        // Se está perdendo, retorna o negativo do stake
+        estimatedProfit = trade.stake_amount ? -parseFloat(trade.stake_amount) : 0;
+      }
+    }
+
     return {
       id: trade.id,
       status: trade.status,
       entryPrice: parseFloat(trade.entry_price),
       currentPrice: currentPrice || undefined,
-      profitLoss: trade.profit_loss ? parseFloat(trade.profit_loss) : undefined,
+      profitLoss: trade.profit_loss ? parseFloat(trade.profit_loss) : estimatedProfit,
       timeRemaining,
     };
   }
