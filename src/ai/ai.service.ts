@@ -1,6 +1,7 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
-import { Pool } from 'pg';
+import { DataSource } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 
 export interface Tick {
   value: number;
@@ -37,7 +38,7 @@ export class AiService {
   private activeTradeId: number | null = null;
   private isTrading = false;
 
-  constructor(@Inject('DATABASE_POOL') private pool: Pool) {
+  constructor(@InjectDataSource() private dataSource: DataSource) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
@@ -317,8 +318,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       INSERT INTO ai_trades (
         user_id, analysis_data, gemini_signal, gemini_duration, 
         gemini_reasoning, entry_price, stake_amount, contract_type, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const values = [
@@ -333,8 +333,8 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       'PENDING',
     ];
 
-    const result = await this.pool.query(query, values);
-    const tradeId = result.rows[0].id;
+    const result = await this.dataSource.query(query, values);
+    const tradeId = result.insertId;
 
     this.activeTradeId = tradeId;
     this.isTrading = true;
@@ -359,9 +359,9 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     }
 
     // Buscar trade do banco
-    const tradeQuery = 'SELECT * FROM ai_trades WHERE id = $1';
-    const tradeResult = await this.pool.query(tradeQuery, [tradeId]);
-    const trade = tradeResult.rows[0];
+    const tradeQuery = 'SELECT * FROM ai_trades WHERE id = ?';
+    const tradeResult = await this.dataSource.query(tradeQuery, [tradeId]);
+    const trade = tradeResult[0];
 
     if (!trade) {
       this.logger.error(`Trade ${tradeId} não encontrado`);
@@ -391,11 +391,11 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     // Atualizar trade no banco
     const updateQuery = `
       UPDATE ai_trades 
-      SET exit_price = $1, profit_loss = $2, status = $3, closed_at = NOW()
-      WHERE id = $4
+      SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+      WHERE id = ?
     `;
 
-    await this.pool.query(updateQuery, [exitPrice, profitLoss, status, tradeId]);
+    await this.dataSource.query(updateQuery, [exitPrice, profitLoss, status, tradeId]);
 
     this.logger.log(`Trade ${tradeId} finalizado: ${status}, P/L: ${profitLoss}`);
 
@@ -412,16 +412,16 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       SELECT id, status, entry_price, exit_price, profit_loss, 
              gemini_duration, started_at, created_at
       FROM ai_trades 
-      WHERE id = $1
+      WHERE id = ?
     `;
 
-    const result = await this.pool.query(query, [this.activeTradeId]);
+    const result = await this.dataSource.query(query, [this.activeTradeId]);
     
-    if (result.rows.length === 0) {
+    if (result.length === 0) {
       return null;
     }
 
-    const trade = result.rows[0];
+    const trade = result[0];
     const currentPrice = this.getCurrentPrice();
     
     // Calcular tempo restante
