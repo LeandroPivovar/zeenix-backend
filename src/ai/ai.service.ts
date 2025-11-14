@@ -858,13 +858,31 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
   /**
    * Ativa a IA para um usuário (salva configuração no banco)
    */
+  /**
+   * Calcula o tempo de espera entre operações baseado no modo
+   * @param mode - fast (1 min), moderate (5 min), slow (10 min)
+   * @returns Tempo em milissegundos
+   */
+  private getWaitTimeByMode(mode: string): number {
+    switch (mode) {
+      case 'fast':
+        return 60000; // 1 minuto
+      case 'slow':
+        return 600000; // 10 minutos
+      case 'moderate':
+      default:
+        return 300000; // 5 minutos (padrão)
+    }
+  }
+
   async activateUserAI(
     userId: number,
     stakeAmount: number,
     derivToken: string,
     currency: string,
+    mode: string = 'moderate',
   ): Promise<void> {
-    this.logger.log(`Ativando IA para usuário ${userId}`);
+    this.logger.log(`Ativando IA para usuário ${userId} no modo ${mode}`);
 
     // Verificar se já existe configuração
     const existing = await this.dataSource.query(
@@ -872,7 +890,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       [userId],
     );
 
-    const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora
+    const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
 
     if (existing.length > 0) {
       // Atualizar configuração existente
@@ -882,22 +900,23 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
              stake_amount = ?, 
              deriv_token = ?, 
              currency = ?,
+             mode = ?,
              next_trade_at = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE user_id = ?`,
-        [stakeAmount, derivToken, currency, nextTradeAt, userId],
+        [stakeAmount, derivToken, currency, mode, nextTradeAt, userId],
       );
     } else {
       // Criar nova configuração
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, stake_amount, deriv_token, currency, next_trade_at) 
-         VALUES (?, TRUE, ?, ?, ?, ?)`,
-        [userId, stakeAmount, derivToken, currency, nextTradeAt],
+         (user_id, is_active, stake_amount, deriv_token, currency, mode, next_trade_at) 
+         VALUES (?, TRUE, ?, ?, ?, ?, ?)`,
+        [userId, stakeAmount, derivToken, currency, mode, nextTradeAt],
       );
     }
 
-    this.logger.log(`IA ativada para usuário ${userId}`);
+    this.logger.log(`IA ativada para usuário ${userId} no modo ${mode}`);
   }
 
   /**
@@ -925,6 +944,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
         is_active as isActive,
         stake_amount as stakeAmount,
         currency,
+        mode,
         last_trade_at as lastTradeAt,
         next_trade_at as nextTradeAt,
         total_trades as totalTrades,
@@ -943,6 +963,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
         isActive: false,
         stakeAmount: 10,
         currency: 'USD',
+        mode: 'moderate',
         totalTrades: 0,
         totalWins: 0,
         totalLosses: 0,
@@ -975,6 +996,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
           stake_amount as stakeAmount,
           deriv_token as derivToken,
           currency,
+          mode,
           next_trade_at as nextTradeAt
          FROM ai_user_config 
          WHERE is_active = TRUE 
@@ -1010,9 +1032,9 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
    * Processa a IA de um único usuário
    */
   private async processUserAI(user: any): Promise<void> {
-    const { userId, stakeAmount, derivToken, currency } = user;
+    const { userId, stakeAmount, derivToken, currency, mode } = user;
 
-    this.logger.log(`[Background AI] Processando usuário ${userId}`);
+    this.logger.log(`[Background AI] Processando usuário ${userId} (modo: ${mode || 'moderate'})`);
 
     // Verificar se já há operação ativa deste usuário
     const activeTrade = await this.dataSource.query(
@@ -1068,10 +1090,15 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
         `[Background AI] Trade ${tradeId} iniciado para usuário ${userId}`,
       );
 
-      // Atualizar estatísticas e agendar próxima operação (5 minutos depois)
+      // Calcular tempo de espera baseado no modo
+      const waitTime = this.getWaitTimeByMode(mode || 'moderate');
       const nextTradeAt = new Date(
-        Date.now() + signal.duration * 1000 + 300000,
-      ); // Duração + 5 minutos
+        Date.now() + signal.duration * 1000 + waitTime,
+      ); // Duração do contrato + tempo de espera do modo
+
+      this.logger.log(
+        `[Background AI] Próxima operação agendada para ${nextTradeAt.toISOString()} (modo: ${mode || 'moderate'})`,
+      );
 
       await this.dataSource.query(
         `UPDATE ai_user_config 

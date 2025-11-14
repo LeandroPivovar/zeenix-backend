@@ -238,6 +238,7 @@ export class AiController {
       stakeAmount: number;
       derivToken: string;
       currency: string;
+      mode?: string;
     },
   ) {
     try {
@@ -246,10 +247,11 @@ export class AiController {
         body.stakeAmount,
         body.derivToken,
         body.currency,
+        body.mode || 'moderate',
       );
       return {
         success: true,
-        message: 'IA ativada com sucesso. Executando em background.',
+        message: `IA ativada com sucesso no modo ${body.mode || 'moderate'}. Executando em background.`,
       };
     } catch (error) {
       throw new HttpException(
