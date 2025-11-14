@@ -233,16 +233,21 @@ export class AiService {
     
     this.logger.log(`Enviando ${prices.length} preços para análise do Gemini`);
 
-    try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error('GEMINI_API_KEY não está configurada no arquivo .env');
-      }
-      
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY não está configurada no arquivo .env');
+    }
 
-      const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
+    // Retry logic: tentar até 3 vezes em caso de erro 503
+    const maxRetries = 3;
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+        const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
 
 Últimos 20 preços (do mais antigo ao mais recente):
 ${prices.map((p, i) => `${i + 1}. ${p}`).join('\n')}
@@ -263,44 +268,60 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
   "confidence": número entre 0 e 100
 }`;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      this.logger.log(`Resposta do Gemini: ${text}`);
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        
+        this.logger.log(`Resposta do Gemini (tentativa ${attempt}): ${text}`);
 
-      // Tentar fazer parse da resposta
-      let parsedResponse;
-      try {
-        // Remover possíveis markdown code blocks
-        const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        parsedResponse = JSON.parse(cleanText);
-      } catch (e) {
-        this.logger.error('Erro ao fazer parse da resposta do Gemini:', e);
-        throw new Error('Resposta do Gemini em formato inválido');
+        // Tentar fazer parse da resposta
+        let parsedResponse;
+        try {
+          // Remover possíveis markdown code blocks
+          const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          parsedResponse = JSON.parse(cleanText);
+        } catch (e) {
+          this.logger.error('Erro ao fazer parse da resposta do Gemini:', e);
+          throw new Error('Resposta do Gemini em formato inválido');
+        }
+
+        // Validar resposta
+        if (!parsedResponse.signal || !['CALL', 'PUT'].includes(parsedResponse.signal)) {
+          throw new Error('Sinal inválido do Gemini');
+        }
+
+        if (!parsedResponse.duration || parsedResponse.duration < 30 || parsedResponse.duration > 120) {
+          this.logger.warn(`Duração inválida: ${parsedResponse.duration}, ajustando para 60s`);
+          parsedResponse.duration = 60;
+        }
+
+        // Sucesso! Retornar resultado
+        return {
+          signal: parsedResponse.signal,
+          duration: parsedResponse.duration,
+          reasoning: parsedResponse.reasoning || 'Análise técnica',
+          confidence: parsedResponse.confidence || 70,
+        };
+
+      } catch (error: any) {
+        lastError = error;
+        
+        // Se for erro 503 (overloaded) e ainda tiver tentativas, aguardar e tentar novamente
+        if (error.status === 503 && attempt < maxRetries) {
+          const waitTime = attempt * 2000; // 2s, 4s
+          this.logger.warn(`Gemini sobrecarregado (503). Tentativa ${attempt}/${maxRetries}. Aguardando ${waitTime}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+        
+        // Se não for 503 ou não tiver mais tentativas, lançar erro
+        this.logger.error(`Erro ao analisar com Gemini (tentativa ${attempt}/${maxRetries}):`, error);
+        break;
       }
-
-      // Validar resposta
-      if (!parsedResponse.signal || !['CALL', 'PUT'].includes(parsedResponse.signal)) {
-        throw new Error('Sinal inválido do Gemini');
-      }
-
-      if (!parsedResponse.duration || parsedResponse.duration < 30 || parsedResponse.duration > 120) {
-        this.logger.warn(`Duração inválida: ${parsedResponse.duration}, ajustando para 60s`);
-        parsedResponse.duration = 60;
-      }
-
-      return {
-        signal: parsedResponse.signal,
-        duration: parsedResponse.duration,
-        reasoning: parsedResponse.reasoning || 'Análise técnica',
-        confidence: parsedResponse.confidence || 70,
-      };
-
-    } catch (error) {
-      this.logger.error('Erro ao analisar com Gemini:', error);
-      throw error;
     }
+
+    // Se chegou aqui, todas as tentativas falharam
+    throw lastError;
   }
 
   async executeTrade(
