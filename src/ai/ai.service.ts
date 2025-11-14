@@ -1053,7 +1053,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
       }
 
       // Analisar com Gemini
-      const signal = await this.analyzeWithGemini();
+      const signal = await this.analyzeWithGemini(userId);
 
       // Executar trade
       const tradeId = await this.executeTrade(
