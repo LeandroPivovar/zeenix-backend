@@ -126,7 +126,8 @@ export class AiController {
       userId: number; 
       signal: any; 
       stakeAmount: number; 
-      derivToken: string 
+      derivToken: string;
+      currency?: string;
     }
   ) {
     try {
@@ -135,6 +136,7 @@ export class AiController {
         body.signal,
         body.stakeAmount,
         body.derivToken,
+        body.currency || 'USD', // Usar USD como padrão se não for fornecido
       );
 
       return {

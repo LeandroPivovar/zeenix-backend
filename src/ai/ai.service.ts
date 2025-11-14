@@ -338,6 +338,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     signal: GeminiSignal,
     stakeAmount: number,
     derivToken: string,
+    currency: string = 'USD',
   ): Promise<number> {
     if (this.isTrading) {
       throw new Error('Já existe uma operação em andamento');
@@ -347,6 +348,8 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     if (!currentPrice) {
       throw new Error('Preço atual não disponível');
     }
+
+    this.logger.log(`Executando trade com moeda: ${currency}`);
 
     // Salvar trade inicial no banco
     const query = `
@@ -378,7 +381,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
 
     // Executar trade real na Deriv
     try {
-      await this.executeBuyOnDeriv(tradeId, signal, stakeAmount, derivToken);
+      await this.executeBuyOnDeriv(tradeId, signal, stakeAmount, derivToken, currency);
     } catch (error) {
       this.logger.error('Erro ao executar trade na Deriv:', error);
       
@@ -405,6 +408,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     signal: GeminiSignal,
     stakeAmount: number,
     derivToken: string,
+    currency: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       this.logger.log('Conectando à Deriv para executar trade...');
@@ -446,24 +450,24 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
             return;
           }
 
-          // 1. Após autorização, fazer proposal
-          if (msg.msg_type === 'authorize') {
-            this.logger.log('Autorizado, enviando proposal...');
-            
-            const proposalPayload = {
-              proposal: 1,
-              amount: stakeAmount,
-              basis: 'stake',
-              contract_type: signal.signal,
-              currency: 'USD', // TODO: Pegar moeda do usuário
-              duration: signal.duration,
-              duration_unit: 's', // segundos
-              symbol: this.symbol,
-            };
-            
-            this.logger.log('Proposal payload:', proposalPayload);
-            buyWs.send(JSON.stringify(proposalPayload));
-          }
+              // 1. Após autorização, fazer proposal
+              if (msg.msg_type === 'authorize') {
+                this.logger.log('Autorizado, enviando proposal...');
+                
+                const proposalPayload = {
+                  proposal: 1,
+                  amount: stakeAmount,
+                  basis: 'stake',
+                  contract_type: signal.signal,
+                  currency: currency, // Usar moeda passada (USD, BTC, etc)
+                  duration: signal.duration,
+                  duration_unit: 's', // segundos
+                  symbol: this.symbol,
+                };
+                
+                this.logger.log('Proposal payload:', proposalPayload);
+                buyWs.send(JSON.stringify(proposalPayload));
+              }
 
           // 2. Receber proposal e fazer buy
           if (msg.msg_type === 'proposal') {
