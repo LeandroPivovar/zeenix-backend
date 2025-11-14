@@ -234,7 +234,12 @@ export class AiService {
     this.logger.log(`Enviando ${prices.length} preços para análise do Gemini`);
 
     try {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('GEMINI_API_KEY não está configurada no arquivo .env');
+      }
+      
+      const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
       const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
