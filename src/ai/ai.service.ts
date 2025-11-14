@@ -245,7 +245,7 @@ export class AiService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
         const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
 
