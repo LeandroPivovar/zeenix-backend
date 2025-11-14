@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as WebSocket from 'ws';
+import WebSocket from 'ws';
 
 export interface Tick {
   value: number;
@@ -10,7 +10,7 @@ export interface Tick {
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
-  private ws: WebSocket | null = null;
+  private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
   private maxTicks = 10;
   private appId: string;
@@ -32,7 +32,7 @@ export class AiService {
       this.logger.log('Inicializando conexão com Deriv API...');
 
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      this.ws = new WebSocket(endpoint);
+      this.ws = new WebSocket.WebSocket(endpoint);
 
       this.ws.on('open', () => {
         this.logger.log('✅ Conexão WebSocket estabelecida');
