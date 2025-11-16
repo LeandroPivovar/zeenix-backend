@@ -13,6 +13,7 @@ import { PlansModule } from './plans/plans.module';
 import { TradesModule } from './trades/trades.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { AiModule } from './ai/ai.module';
+import { ClientsModule } from './clients/clients.module';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { AiModule } from './ai/ai.module';
     PlansModule, 
     TradesModule, 
     GeminiModule, 
-    AiModule
+    AiModule,
+    ClientsModule
   ],
   controllers: [AppController],
   providers: [AppService],
