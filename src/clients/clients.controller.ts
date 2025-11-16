@@ -1,11 +1,11 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/jwt.strategy';
+import { AuthGuard } from '@nestjs/passport';
 import { ClientsService } from './clients.service';
 import { ClientMetricsDto } from './dto/client-metrics.dto';
 import { ClientListResponseDto } from './dto/client-list.dto';
 
 @Controller('clients')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AuthGuard('jwt'))
 export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
 
