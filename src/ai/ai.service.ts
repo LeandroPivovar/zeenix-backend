@@ -1185,34 +1185,107 @@ export class AiService {
   /**
    * Processa a IA de um único usuário
    */
-  private async processUserAI(user: any): Promise<void> {
+ private async processUserAI(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency, mode } = user;
-
     const normalizedMode = (mode || 'moderate').toLowerCase();
+    
     this.logger.log(
-      `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
+        `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
     );
 
     if (normalizedMode === 'veloz') {
-      await this.prepareVelozUser(user);
-      return;
+        await this.prepareVelozUser(user);
+        return;
     }
 
     if (normalizedMode === 'fast') {
-      await this.processFastMode(user);
-      return;
+        await this.processFastMode(user);
+        return;
     }
 
     this.logger.warn(
-      `[Background AI] Modo ${normalizedMode} não suportado`,
+        `[Background AI] Modo ${normalizedMode} não suportado`,
     );
 
     await this.dataSource.query(
-      'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
-      [userId],
+        'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
+        [userId],
     );
-  }
+}
+private async processFastMode(user: any): Promise<void> {
+    const { userId, stakeAmount, derivToken, currency } = user;
+    
+    try {
+        // Garantir que temos dados suficientes
+        await this.ensureTickStreamReady(FAST_MODE_CONFIG.minTicks);
+        
+        // Obter os últimos ticks
+        const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
+        
+        // Verificar se temos ticks suficientes
+        if (windowTicks.length < FAST_MODE_CONFIG.window) {
+            this.logger.warn(`[Fast] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
+            return;
+        }
+        
+        // Contar pares e ímpares na janela
+        const evenCount = windowTicks.filter(t => t.parity === 'PAR').length;
+        const oddCount = FAST_MODE_CONFIG.window - evenCount;
+        
+        // Determinar operação proposta
+        let proposedOperation: DigitParity | null = null;
+        if (evenCount === FAST_MODE_CONFIG.window) {
+            proposedOperation = 'IMPAR';
+        } else if (oddCount === FAST_MODE_CONFIG.window) {
+            proposedOperation = 'PAR';
+        }
+        
+        if (!proposedOperation) {
+            this.logger.debug(`[Fast] Janela mista: ${windowTicks.map(t => t.parity).join('-')} - aguardando`);
+            return;
+        }
+        
+        // Calcular DVX
+        const dvx = this.calculateDVX(this.ticks);
+        if (dvx > FAST_MODE_CONFIG.dvxMax) {
+            this.logger.warn(`[Fast] DVX alto (${dvx}) - operação bloqueada`);
+            return;
+        }
+        
+        // Executar operação
+        this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx}`);
+        
+        const betAmount = Number(stakeAmount) * FAST_MODE_CONFIG.betPercent;
+        const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+        
+        const result = await this.executeTrade(userId, {
+            contract_type: contractType,
+            amount: betAmount,
+            symbol: 'R_10',
+            duration: 1,
+            duration_unit: 't',
+            currency: currency || 'USD',
+            token: derivToken
+        });
+        
+        if (!result.success) {
+            this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
+            return;
+        }
 
+        this.logger.log(`[Fast] Operação executada com sucesso: ${result.tradeId}`);
+    } catch (error) {
+        this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
+    } finally {
+        // Agendar próxima verificação em 10 segundos
+        const nextCheck = new Date(Date.now() + 10000);
+        await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ?`,
+            [nextCheck, userId],
+        );
+    }
  // In the processFastMode method, update the trade execution part:
 const result = await this.executeTrade(userId, {
     contract_type: contractType,
@@ -1243,7 +1316,6 @@ if (!result.success) {
             timestamp: new Date().toISOString()
         });
 
-        // Log request details
         const requestParams = {
             proposal: 1,
             subscribe: 1,
@@ -1279,11 +1351,65 @@ if (!result.success) {
         });
         const requestDuration = Date.now() - startTime;
 
-        // Rest of the code remains the same...
-        // ... (keep the existing response handling code)
+        // Log response status
+        this.logger.debug(`[${tradeId}] Resposta recebida`, {
+            status: response.status,
+            statusText: response.statusText,
+            duration: `${requestDuration}ms`
+        });
 
+        const responseText = await response.text();
+        let data: any = {};
+
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch (e) {
+            throw new Error(`Resposta inválida da API: ${responseText?.substring(0, 200)}...`);
+        }
+
+        if (!response.ok || data.error) {
+            const errorMsg = data.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+            throw new Error(errorMsg);
+        }
+
+        // Registrar a operação no banco de dados
+        await this.recordTrade({
+            userId,
+            contractType: params.contract_type,
+            amount: params.amount,
+            symbol: params.symbol,
+            status: 'PENDING',
+            entryPrice: this.ticks[this.ticks.length - 1]?.value || 0
+        });
+
+        return { 
+            success: true, 
+            tradeId: data.id || tradeId 
+        };
+        
     } catch (error) {
-        // ... (keep the existing error handling code)
+        this.logger.error(`[${tradeId}] Falha na execução do trade: ${error.message}`, error.stack);
+        
+        // Tenta registrar a falha no banco de dados
+        try {
+            await this.recordTrade({
+                userId,
+                contractType: params.contract_type,
+                amount: params.amount,
+                symbol: params.symbol,
+                status: 'ERROR',
+                entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
+                error: error.message.substring(0, 255)
+            });
+        } catch (dbError) {
+            this.logger.error(`[${tradeId}] Falha ao registrar erro no banco de dados: ${dbError.message}`);
+        }
+
+        return { 
+            success: false, 
+            error: error.message || 'Erro desconhecido ao executar trade',
+            tradeId
+        };
     }
 }
   private async recordTrade(trade: any): Promise<void> {
