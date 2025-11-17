@@ -1277,15 +1277,14 @@ private async processFastMode(user: any): Promise<void> {
     } catch (error) {
         this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
     } finally {
-        // Agendar próxima verificação em 10 segundos
-        const nextCheck = new Date(Date.now() + 10000);
-        await this.dataSource.query(
-            `UPDATE ai_user_config 
-             SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ?`,
-            [nextCheck, userId],
-        );
-    }
+    // Remove the delay by setting next_trade_at to the current time
+    await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET next_trade_at = NOW(), updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [userId],
+    );
+}
 }
 
  private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
