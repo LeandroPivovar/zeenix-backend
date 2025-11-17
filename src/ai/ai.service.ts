@@ -42,6 +42,16 @@ const VELOZ_CONFIG = {
   martingaleMultiplier: 2.5,
 };
 
+const FAST_MODE_CONFIG = {
+  window: 3, // Janela de análise de 3 ticks
+  dvxMax: 70, // DVX máximo permitido
+  lossVirtualTarget: 2, // Número de perdas virtuais necessárias
+  betPercent: 0.01, // 1% do capital por operação
+  martingaleMax: 2, // Máximo de martingales
+  martingaleMultiplier: 2.5, // Multiplicador do martingale
+  minTicks: 100, // Mínimo de ticks para análise
+};
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -1188,13 +1198,159 @@ export class AiService {
       return;
     }
 
+    if (normalizedMode === 'fast') {
+      await this.processFastMode(user);
+      return;
+    }
+
     this.logger.warn(
-      `[Background AI] Modo ${normalizedMode} ainda não suportado após remoção do Gemini`,
+      `[Background AI] Modo ${normalizedMode} não suportado`,
     );
 
     await this.dataSource.query(
       'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
       [userId],
+    );
+  }
+
+  private async processFastMode(user: any): Promise<void> {
+    const { userId, stakeAmount, derivToken, currency } = user;
+    
+    try {
+      // Garantir que temos dados suficientes
+      await this.ensureTickStreamReady(FAST_MODE_CONFIG.minTicks);
+      
+      // Obter os últimos ticks
+      const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
+      
+      // Verificar se temos ticks suficientes
+      if (windowTicks.length < FAST_MODE_CONFIG.window) {
+        this.logger.warn(`[Fast] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
+        return;
+      }
+      
+      // Contar pares e ímpares na janela
+      const evenCount = windowTicks.filter(t => t.parity === 'PAR').length;
+      const oddCount = FAST_MODE_CONFIG.window - evenCount;
+      
+      // Determinar operação proposta
+      let proposedOperation: DigitParity | null = null;
+      if (evenCount === FAST_MODE_CONFIG.window) {
+        proposedOperation = 'IMPAR';
+      } else if (oddCount === FAST_MODE_CONFIG.window) {
+        proposedOperation = 'PAR';
+      }
+      
+      if (!proposedOperation) {
+        this.logger.debug(`[Fast] Janela mista: ${windowTicks.map(t => t.parity).join('-')} - aguardando`);
+        return;
+      }
+      
+      // Calcular DVX
+      const dvx = this.calculateDVX(this.ticks);
+      if (dvx > FAST_MODE_CONFIG.dvxMax) {
+        this.logger.warn(`[Fast] DVX alto (${dvx}) - operação bloqueada`);
+        return;
+      }
+      
+      // Executar operação
+      this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx}`);
+      
+      const betAmount = Number(stakeAmount) * FAST_MODE_CONFIG.betPercent;
+      const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+      
+      // Aqui você implementaria a lógica para enviar a ordem para a corretora
+      // Exemplo simplificado:
+      const result = await this.executeTrade(userId, {
+        contract_type: contractType,
+        amount: betAmount,
+        symbol: 'R_10',
+        duration: 1,
+        duration_unit: 't',
+        currency: currency || 'USD',
+        token: derivToken
+      });
+      
+      if (result.success) {
+        this.logger.log(`[Fast] Operação executada com sucesso: ${result.tradeId}`);
+      } else {
+        this.logger.error(`[Fast] Erro na operação: ${result.error}`);
+      }
+      
+    } catch (error) {
+      this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
+    } finally {
+      // Agendar próxima verificação em 1 minuto
+      const nextCheck = new Date(Date.now() + 60000);
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [nextCheck, userId],
+      );
+    }
+  }
+
+  private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
+    // Implementação da lógica de execução de trade
+    // Isso deve ser adaptado para a API da sua corretora
+    try {
+      // Exemplo de implementação com a API da Deriv
+      const response = await fetch('https://api.deriv.com/ticks_history', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${params.token}`
+        },
+        body: JSON.stringify({
+          proposal: 1,
+          subscribe: 1,
+          amount: params.amount,
+          basis: 'stake',
+          contract_type: params.contract_type,
+          currency: params.currency,
+          duration: params.duration,
+          duration_unit: params.duration_unit,
+          symbol: params.symbol
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        return { success: false, error: data.error.message };
+      }
+      
+      // Registrar a operação no banco de dados
+      await this.recordTrade({
+        userId,
+        contractType: params.contract_type,
+        amount: params.amount,
+        symbol: params.symbol,
+        status: 'PENDING',
+        entryPrice: this.ticks[this.ticks.length - 1]?.value || 0
+      });
+      
+      return { success: true, tradeId: data.id };
+      
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+  
+  private async recordTrade(trade: any): Promise<void> {
+    // Implemente a lógica para salvar a operação no banco de dados
+    await this.dataSource.query(
+      `INSERT INTO ai_trades 
+       (user_id, gemini_signal, entry_price, stake_amount, status, created_at)
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [
+        trade.userId,
+        trade.contractType,
+        trade.entryPrice,
+        trade.amount,
+        trade.status
+      ]
     );
   }
 
@@ -1220,8 +1376,8 @@ export class AiService {
 
     await this.dataSource.query(
       `UPDATE ai_user_config 
-         SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
+       SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`,
       [nextTradeAt, userId],
     );
 

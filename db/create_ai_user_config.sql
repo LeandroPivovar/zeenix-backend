@@ -29,3 +29,6 @@ CREATE TABLE IF NOT EXISTS ai_user_config (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='Configuração de IA de trading por usuário - permite execução em background';
 
+
+
+

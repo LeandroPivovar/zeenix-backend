@@ -198,3 +198,6 @@ DERIV_TOKEN=seu_token_aqui  # Opcional, funciona sem autenticação
 Este projeto é parte do sistema Zeenix.
 
 
+
+
+
