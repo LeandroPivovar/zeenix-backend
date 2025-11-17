@@ -1315,7 +1315,7 @@ private async processFastMode(user: any): Promise<void> {
 }
 }
 
- private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
+private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
     const tradeStartTime = Date.now();
     const tradeId = `trade_${userId}_${tradeStartTime}`;
     
@@ -1328,40 +1328,33 @@ private async processFastMode(user: any): Promise<void> {
             timestamp: new Date().toISOString()
         });
 
-        const requestParams = {
-            buy: '1',  // Changed from proposal to buy
-            price: params.amount,
-            amount: '1',  // 1 contract
-            currency: params.currency || 'USD',
-            symbol: params.symbol,
+        const requestBody = {
+            proposal: 1,
+            subscribe: 1,
+            amount: params.amount,
+            basis: 'stake',
             contract_type: params.contract_type,
+            currency: params.currency || 'USD',
             duration: params.duration || 1,
             duration_unit: params.duration_unit || 't',
-            basis: 'stake'
+            symbol: params.symbol
         };
 
-        const queryString = new URLSearchParams();
-        Object.entries(requestParams).forEach(([key, value]) => {
-            if (value !== undefined) {
-                queryString.append(key, String(value));
-            }
-        });
-
-        const url = `https://api.deriv.com/buy?${queryString.toString()}`;
-
         this.logger.debug(`[${tradeId}] Enviando requisição para a API`, {
-            url: 'https://api.deriv.com/buy',
-            method: 'GET',
-            params: requestParams
+            url: 'https://api.deriv.com/v1/buy',
+            method: 'POST',
+            body: requestBody
         });
 
         const startTime = Date.now();
-        const response = await fetch(url, {
-            method: 'GET',
+        const response = await fetch('https://api.deriv.com/v1/buy', {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${params.token}`
-            }
+                'Authorization': `Bearer ${params.token}`,
+                'App-Id': process.env.DERIV_APP_ID || '111346'
+            },
+            body: JSON.stringify(requestBody)
         });
         const requestDuration = Date.now() - startTime;
 
@@ -1371,18 +1364,10 @@ private async processFastMode(user: any): Promise<void> {
             duration: `${requestDuration}ms`
         });
 
-        const responseText = await response.text();
-        let data: any = {};
-
-        try {
-            data = responseText ? JSON.parse(responseText) : {};
-        } catch (e) {
-            throw new Error(`Resposta inválida da API: ${responseText?.substring(0, 200)}...`);
-        }
+        const data = await response.json();
 
         if (!response.ok || data.error) {
-            const errorMsg = data.error?.message || `HTTP ${response.status}: ${response.statusText}`;
-            throw new Error(errorMsg);
+            throw new Error(data.error?.message || `HTTP ${response.status}: ${response.statusText}`);
         }
 
         // Registrar a operação no banco de dados
@@ -1398,14 +1383,13 @@ private async processFastMode(user: any): Promise<void> {
         });
 
         return { 
-            success: true, 
+            success: true,
             tradeId: data.buy?.contract_id || tradeId 
         };
-        
     } catch (error) {
-        this.logger.error(`[${tradeId}] Falha na execução do trade: ${error.message}`, error.stack);
-        
-        // Tenta registrar a falha no banco de dados
+        const errorMessage = error.message || 'Erro desconhecido';
+        this.logger.error(`[${tradeId}] Falha na execução do trade: ${errorMessage}`, error);
+
         try {
             await this.recordTrade({
                 userId,
@@ -1414,7 +1398,7 @@ private async processFastMode(user: any): Promise<void> {
                 symbol: params.symbol,
                 status: 'ERROR',
                 entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
-                error: error.message.substring(0, 255),
+                error: errorMessage.substring(0, 255),
                 duration: params.duration || 1,
                 durationUnit: params.duration_unit || 't'
             });
@@ -1423,9 +1407,8 @@ private async processFastMode(user: any): Promise<void> {
         }
 
         return { 
-            success: false, 
-            error: error.message || 'Erro desconhecido ao executar trade',
-            tradeId
+            success: false,
+            error: errorMessage
         };
     }
 }
