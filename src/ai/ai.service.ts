@@ -1245,7 +1245,7 @@ private async processFastMode(user: any): Promise<void> {
     
     try {
         // Garantir que temos dados suficientes
-        await this.ensureTickStreamReady(FAST_MODE_CONFIG.minTicks);
+        await this.ensureTickStreamReady(FAST_MODE_CONFIG.window);
         
         // Obter os últimos ticks
         const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
@@ -1260,16 +1260,19 @@ private async processFastMode(user: any): Promise<void> {
         const evenCount = windowTicks.filter(t => t.parity === 'PAR').length;
         const oddCount = FAST_MODE_CONFIG.window - evenCount;
         
-        // Determinar operação proposta
+        // Determinar operação proposta baseada na maioria
         let proposedOperation: DigitParity | null = null;
-        if (evenCount === FAST_MODE_CONFIG.window) {
+        
+        // Se há mais pares, propõe ímpar e vice-versa
+        if (evenCount > oddCount) {
             proposedOperation = 'IMPAR';
-        } else if (oddCount === FAST_MODE_CONFIG.window) {
+        } else if (oddCount > evenCount) {
             proposedOperation = 'PAR';
         }
         
+        // Se estiver equilibrado, não faz nada
         if (!proposedOperation) {
-            this.logger.debug(`[Fast] Janela mista: ${windowTicks.map(t => t.parity).join('-')} - aguardando`);
+            this.logger.debug(`[Fast] Janela equilibrada: ${windowTicks.map(t => t.parity).join('-')} - aguardando desequilíbrio`);
             return;
         }
         
@@ -1281,20 +1284,20 @@ private async processFastMode(user: any): Promise<void> {
         }
         
         // Executar operação
-        this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx}`);
+        this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx} | Janela: ${windowTicks.map(t => t.parity).join('-')}`);
         
         const betAmount = Number(stakeAmount) * FAST_MODE_CONFIG.betPercent;
         const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
         
         const result = await this.executeTrade(userId, {
-    contract_type: contractType,
-    amount: betAmount,
-    symbol: 'R_10',
-    duration: 1,
-    duration_unit: 't',
-    currency: currency || 'USD',
-    token: derivToken
-});
+            contract_type: contractType,
+            amount: betAmount,
+            symbol: 'R_10',
+            duration: 1,
+            duration_unit: 't',
+            currency: currency || 'USD',
+            token: derivToken
+        });
         
         if (!result.success) {
             this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
@@ -1305,14 +1308,14 @@ private async processFastMode(user: any): Promise<void> {
     } catch (error) {
         this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
     } finally {
-    // Remove the delay by setting next_trade_at to the current time
-    await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET next_trade_at = NOW(), updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
-        [userId],
-    );
-}
+        // Removido o atraso para processamento contínuo
+        await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET next_trade_at = NOW(), updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ?`,
+            [userId],
+        );
+    }
 }
 
 private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
