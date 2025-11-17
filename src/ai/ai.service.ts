@@ -1286,21 +1286,6 @@ private async processFastMode(user: any): Promise<void> {
             [nextCheck, userId],
         );
     }
- // In the processFastMode method, update the trade execution part:
-const result = await this.executeTrade(userId, {
-    contract_type: contractType,
-    amount: betAmount,
-    symbol: 'R_10',
-    duration: 1,
-    duration_unit: 't',
-    currency: currency || 'USD',
-    token: derivToken
-});
-
-if (!result.success) {
-    this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
-    // You might want to implement a retry mechanism here
-    return;
 }
 
  private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
