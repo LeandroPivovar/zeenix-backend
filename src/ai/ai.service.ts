@@ -2,51 +2,57 @@ import { Injectable, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+
+export type DigitParity = 'PAR' | 'IMPAR';
 
 export interface Tick {
   value: number;
   epoch: number;
   timestamp: string;
+  digit: number;
+  parity: DigitParity;
 }
 
-export interface GeminiSignal {
-  signal: 'CALL' | 'PUT';
-  duration: number; // em segundos (máximo 120)
-  reasoning: string;
-  confidence: number; // 0-100
+interface VelozUserState {
+  userId: number;
+  derivToken: string;
+  currency: string;
+  capital: number;
+  virtualCapital: number;
+  lossVirtualActive: boolean;
+  lossVirtualCount: number;
+  lossVirtualOperation: DigitParity | null;
+  isOperationActive: boolean;
+  martingaleStep: number;
 }
 
-export interface TradeResult {
-  id: number;
-  status: string;
-  entryPrice: number;
-  currentPrice?: number;
-  profitLoss?: number;
-  timeRemaining?: number;
-  stakeAmount?: number;
-  signal?: string;
+interface DigitTradeResult {
+  profitLoss: number;
+  status: 'WON' | 'LOST';
+  exitPrice: number;
+  contractId: string;
 }
+
+const VELOZ_CONFIG = {
+  window: 3,
+  dvxMax: 70,
+  lossVirtualTarget: 2,
+  betPercent: 0.005, // 0.5% do capital
+  martingaleMax: 2,
+  martingaleMultiplier: 2.5,
+};
 
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
-  private maxTicks = 20; // Aumentado para 20 para análise
+  private maxTicks = 100; // Armazena os últimos 100 preços
   private appId: string;
-  private symbol = 'R_100';
+  private symbol = 'R_10';
   private isConnected = false;
   private subscriptionId: string | null = null;
-  private activeTradeId: number | null = null;
-  private isTrading = false;
-  
-  // WebSocket para monitorar contrato ativo
-  private contractWs: WebSocket.WebSocket | null = null;
-  private contractSubscriptionId: string | null = null;
-  private activeContractId: string | null = null;
-  private realTimeProfit: number | null = null;
-  private realTimeCurrentPrice: number | null = null;
+  private velozUsers = new Map<number, VelozUserState>();
 
   constructor(@InjectDataSource() private dataSource: DataSource) {
     this.appId = process.env.DERIV_APP_ID || '111346';
@@ -140,13 +146,21 @@ export class AiService {
 
     this.logger.log('Histórico recebido');
 
-    this.ticks = history.prices.map((price: string, index: number) => ({
-      value: parseFloat(price),
+    this.ticks = history.prices.map((price: string, index: number) => {
+      const value = parseFloat(price);
+      const digit = this.extractLastDigit(value);
+      const parity = this.getParityFromDigit(digit);
+
+      return {
+        value,
       epoch: history.times ? history.times[index] : Date.now() / 1000,
       timestamp: history.times
         ? new Date(history.times[index] * 1000).toLocaleTimeString('pt-BR')
         : new Date().toLocaleTimeString('pt-BR'),
-    }));
+        digit,
+        parity,
+      };
+    });
 
     this.logger.log(`${this.ticks.length} ticks carregados`);
   }
@@ -156,12 +170,18 @@ export class AiService {
       return;
     }
 
+    const value = parseFloat(tick.quote);
+    const digit = this.extractLastDigit(value);
+    const parity = this.getParityFromDigit(digit);
+
     const newTick: Tick = {
-      value: parseFloat(tick.quote),
+      value,
       epoch: tick.epoch || Date.now() / 1000,
       timestamp: new Date(
         (tick.epoch || Date.now() / 1000) * 1000,
       ).toLocaleTimeString('pt-BR'),
+      digit,
+      parity,
     };
 
     this.ticks.push(newTick);
@@ -171,7 +191,601 @@ export class AiService {
       this.ticks.shift();
     }
 
-    this.logger.debug(`Novo tick: ${newTick.value}`);
+    this.logger.debug(
+      `[Tick] valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+    );
+
+    this.processVelozStrategies(newTick);
+  }
+
+  private extractLastDigit(value: number): number {
+    const numeric = Math.abs(value);
+    const normalized = numeric.toString().replace('.', '').replace('-', '');
+    const lastChar = normalized.charAt(normalized.length - 1);
+    const digit = parseInt(lastChar, 10);
+    return Number.isNaN(digit) ? 0 : digit;
+  }
+
+  private getParityFromDigit(digit: number): DigitParity {
+    return digit % 2 === 0 ? 'PAR' : 'IMPAR';
+  }
+
+  private processVelozStrategies(latestTick: Tick) {
+    if (this.velozUsers.size === 0) {
+      return;
+    }
+
+    const windowTicks = this.ticks.slice(-VELOZ_CONFIG.window);
+    if (windowTicks.length < VELOZ_CONFIG.window) {
+      this.logger.debug(
+        `[Veloz] Aguardando preencher janela (${windowTicks.length}/${VELOZ_CONFIG.window})`,
+      );
+      return;
+    }
+
+    const evenCount = windowTicks.filter((t) => t.parity === 'PAR').length;
+    const oddCount = VELOZ_CONFIG.window - evenCount;
+
+    let proposal: DigitParity | null = null;
+    if (evenCount === VELOZ_CONFIG.window) {
+      proposal = 'IMPAR';
+    } else if (oddCount === VELOZ_CONFIG.window) {
+      proposal = 'PAR';
+    } else {
+      this.logger.debug(
+        `[Veloz] Janela mista ${windowTicks
+          .map((t) => t.parity)
+          .join('-')} - aguardando desequilíbrio`,
+      );
+      return;
+    }
+
+    const dvx = this.calculateDVX(this.ticks);
+    this.logger.log(
+      `[Veloz] Janela ${windowTicks
+        .map((t) => t.parity)
+        .join('-')} | Proposta: ${proposal} | DVX: ${dvx}`,
+    );
+
+    if (dvx > VELOZ_CONFIG.dvxMax) {
+      this.logger.warn(
+        `[Veloz] DVX alto (${dvx}) > ${VELOZ_CONFIG.dvxMax} - bloqueando operação`,
+      );
+      return;
+    }
+
+    for (const state of this.velozUsers.values()) {
+      if (!this.canProcessVelozState(state)) {
+        continue;
+      }
+      this.handleLossVirtualState(state, proposal, latestTick, dvx);
+    }
+  }
+
+  private calculateDVX(ticks: Tick[]): number {
+    const relevantTicks = ticks.slice(-Math.min(100, ticks.length));
+    if (relevantTicks.length === 0) {
+      return 0;
+    }
+
+    const frequencies = new Array(10).fill(0);
+    for (const item of relevantTicks) {
+      const digit =
+        typeof item.digit === 'number' ? item.digit : this.extractLastDigit(item.value);
+      frequencies[digit]++;
+    }
+
+    const mean = relevantTicks.length / 10;
+    if (mean === 0) {
+      return 0;
+    }
+
+    let sumSquares = 0;
+    for (const freq of frequencies) {
+      sumSquares += Math.pow(freq - mean, 2);
+    }
+
+    const variance = sumSquares / 10;
+    const dvx = Math.min(100, (variance / mean) * 10);
+    return Math.round(dvx);
+  }
+
+  private canProcessVelozState(state: VelozUserState): boolean {
+    if (state.isOperationActive) {
+      this.logger.debug(
+        `[Veloz][${state.userId}] Operação em andamento - aguardando finalização`,
+      );
+      return false;
+    }
+    if (!state.derivToken) {
+      this.logger.warn(
+        `[Veloz][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
+      );
+      return false;
+    }
+    if ((state.virtualCapital || state.capital) <= 0) {
+      this.logger.warn(
+        `[Veloz][${state.userId}] Usuário sem capital configurado - ignorando`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  private handleLossVirtualState(
+    state: VelozUserState,
+    proposal: DigitParity,
+    tick: Tick,
+    dvx: number,
+  ) {
+    if (!state.lossVirtualActive || state.lossVirtualOperation !== proposal) {
+      state.lossVirtualActive = true;
+      state.lossVirtualOperation = proposal;
+      state.lossVirtualCount = 0;
+      this.logger.debug(
+        `[Veloz][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
+      );
+    }
+
+    const simulatedWin = tick.parity === proposal;
+
+    if (simulatedWin) {
+      if (state.lossVirtualCount > 0) {
+        this.logger.debug(
+          `[Veloz][${state.userId}] Simulação venceria | Resetando contador`,
+        );
+      }
+      state.lossVirtualCount = 0;
+      return;
+    }
+
+    state.lossVirtualCount += 1;
+    this.logger.log(
+      `[Veloz][${state.userId}] Loss virtual ${state.lossVirtualCount}/${VELOZ_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tick.parity}) | proposta=${proposal} | DVX=${dvx}`,
+    );
+
+    if (state.lossVirtualCount < VELOZ_CONFIG.lossVirtualTarget) {
+      return;
+    }
+
+    state.lossVirtualActive = false;
+    state.lossVirtualCount = 0;
+
+    this.logger.log(
+      `[Veloz][${state.userId}] ✅ Loss virtual completo -> executando operação ${proposal}`,
+    );
+
+    this.executeVelozOperation(state, proposal).catch((error) => {
+      this.logger.error(
+        `[Veloz] Erro ao executar operação para usuário ${state.userId}:`,
+        error,
+      );
+    });
+  }
+
+  private calculateVelozStake(state: VelozUserState, entry: number): number {
+    const baseCapital = state.virtualCapital || state.capital || 0;
+    const baseStake = Math.max(
+      1,
+      Number((baseCapital * VELOZ_CONFIG.betPercent).toFixed(2)),
+    );
+
+    if (entry <= 1) {
+      return baseStake;
+    }
+
+    const stake =
+      baseStake * Math.pow(VELOZ_CONFIG.martingaleMultiplier, entry - 1);
+    return Number(stake.toFixed(2));
+  }
+
+  private async executeVelozOperation(
+    state: VelozUserState,
+    proposal: DigitParity,
+    entry: number = 1,
+  ): Promise<number> {
+    if (entry === 1 && state.isOperationActive) {
+      this.logger.warn(`[Veloz] Usuário ${state.userId} já possui operação ativa`);
+      return -1;
+    }
+
+    state.isOperationActive = true;
+    state.martingaleStep = entry;
+
+    const stakeAmount = this.calculateVelozStake(state, entry);
+    const currentPrice = this.getCurrentPrice() || 0;
+
+    const tradeId = await this.createVelozTradeRecord(
+      state.userId,
+      proposal,
+      stakeAmount,
+      currentPrice,
+    );
+
+    this.logger.log(
+      `[Veloz][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
+    );
+
+    try {
+      const result = await this.executeDigitTradeOnDeriv({
+        tradeId,
+        derivToken: state.derivToken,
+        currency: state.currency || 'USD',
+        stakeAmount,
+        contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+      });
+
+      await this.handleVelozTradeOutcome(
+        state,
+        proposal,
+        tradeId,
+        stakeAmount,
+        result,
+        entry,
+      );
+
+      return tradeId;
+    } catch (error: any) {
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      await this.dataSource.query(
+        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+        ['ERROR', error?.message || 'Erro no modo veloz', tradeId],
+      );
+      throw error;
+    }
+  }
+
+  private async createVelozTradeRecord(
+    userId: number,
+    proposal: DigitParity,
+    stakeAmount: number,
+    fallbackEntryPrice: number,
+  ): Promise<number> {
+    const analysisPayload = {
+      strategy: 'modo_veloz',
+      dvx: this.calculateDVX(this.ticks),
+      window: VELOZ_CONFIG.window,
+      ticks: this.ticks.slice(-this.maxTicks),
+    };
+
+    const insertResult = await this.dataSource.query(
+      `INSERT INTO ai_trades (
+        user_id,
+        analysis_data,
+        gemini_signal,
+        gemini_duration,
+        gemini_reasoning,
+        entry_price,
+        stake_amount,
+        contract_type,
+        status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        JSON.stringify(analysisPayload),
+        proposal,
+        1,
+        'Modo Veloz - desequilíbrio de paridade',
+        fallbackEntryPrice,
+        stakeAmount,
+        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        'PENDING',
+      ],
+    );
+
+    return insertResult.insertId;
+  }
+
+  private async executeDigitTradeOnDeriv(params: {
+    tradeId: number;
+    derivToken: string;
+    currency: string;
+    stakeAmount: number;
+    contractType: 'DIGITEVEN' | 'DIGITODD';
+  }): Promise<DigitTradeResult> {
+    const { tradeId, derivToken, currency, stakeAmount, contractType } = params;
+
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+      
+      let proposalId: string | null = null;
+      let proposalPrice: number | null = null;
+      let contractId: string | null = null;
+      let isCompleted = false;
+      
+      const timeout = setTimeout(() => {
+        if (!isCompleted) {
+          isCompleted = true;
+          ws.close();
+          reject(new Error('Timeout ao executar contrato dígito'));
+        }
+      }, 60000);
+
+      const finalize = async (error?: Error, result?: DigitTradeResult) => {
+        if (isCompleted) {
+          return;
+        }
+        isCompleted = true;
+        clearTimeout(timeout);
+        try {
+          ws.close();
+        } catch (closeError) {
+          this.logger.warn('Erro ao fechar WebSocket do modo veloz:', closeError);
+        }
+        if (error) {
+          reject(error);
+        } else if (result) {
+          resolve(result);
+        }
+      };
+
+      ws.on('open', () => {
+        this.logger.log(
+          `[Veloz] WS conectado para trade ${tradeId} | contrato=${contractType}`,
+        );
+        ws.send(JSON.stringify({ authorize: derivToken }));
+      });
+
+      ws.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          
+          if (msg.error) {
+            await this.dataSource.query(
+              'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+              ['ERROR', msg.error.message || 'Erro da Deriv', tradeId],
+            );
+            finalize(new Error(msg.error.message || 'Erro da Deriv'));
+            return;
+          }
+
+              if (msg.msg_type === 'authorize') {
+                const proposalPayload = {
+                  proposal: 1,
+                  amount: stakeAmount,
+                  basis: 'stake',
+              contract_type: contractType,
+              currency,
+              duration: 1,
+              duration_unit: 't',
+                  symbol: this.symbol,
+                };
+                
+            this.logger.log('[Veloz] Enviando proposal dígito', proposalPayload);
+            ws.send(JSON.stringify(proposalPayload));
+            return;
+              }
+
+          if (msg.msg_type === 'proposal') {
+            const proposal = msg.proposal;
+            if (!proposal || !proposal.id) {
+              finalize(new Error('Proposta inválida para contrato dígito'));
+              return;
+            }
+
+            proposalId = proposal.id;
+            proposalPrice = Number(proposal.ask_price);
+            const payout = Number(proposal.payout || 0);
+            
+            await this.dataSource.query(
+              'UPDATE ai_trades SET payout = ? WHERE id = ?',
+              [payout - stakeAmount, tradeId],
+            );
+
+            ws.send(
+              JSON.stringify({
+              buy: proposalId,
+              price: proposalPrice,
+              }),
+            );
+            return;
+          }
+
+          if (msg.msg_type === 'buy') {
+            const buy = msg.buy;
+            if (!buy || !buy.contract_id) {
+              finalize(new Error('Compra de contrato dígito não confirmada'));
+              return;
+            }
+
+            contractId = buy.contract_id;
+            const buyPrice = Number(buy.buy_price);
+            const entrySpot = Number(buy.entry_spot || this.getCurrentPrice() || 0);
+
+            await this.dataSource.query(
+              `UPDATE ai_trades 
+               SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
+               WHERE id = ?`,
+              [contractId, entrySpot, tradeId],
+            );
+
+            ws.send(
+              JSON.stringify({
+                proposal_open_contract: 1,
+                contract_id: contractId,
+                subscribe: 1,
+              }),
+            );
+            this.logger.log(
+              `[Veloz] Compra confirmada | trade=${tradeId} | contrato=${contractId} | preço=${buyPrice}`,
+            );
+            return;
+          }
+
+          if (msg.msg_type === 'proposal_open_contract') {
+            const contract = msg.proposal_open_contract;
+            if (!contract || contract.is_sold !== 1) {
+              return;
+            }
+
+            const profit = Number(contract.profit || 0);
+            const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+            const status = profit >= 0 ? 'WON' : 'LOST';
+
+            await this.dataSource.query(
+              `UPDATE ai_trades
+               SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+               WHERE id = ?`,
+              [exitPrice, profit, status, tradeId],
+            );
+
+            finalize(undefined, {
+              profitLoss: profit,
+              status,
+              exitPrice,
+              contractId: contract.contract_id || contractId || '',
+            });
+          }
+        } catch (error) {
+          finalize(error as Error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        finalize(error);
+      });
+
+      ws.on('close', () => {
+        if (!isCompleted) {
+          finalize(new Error('WebSocket do contrato dígito fechado inesperadamente'));
+        }
+      });
+    });
+  }
+
+  private async handleVelozTradeOutcome(
+    state: VelozUserState,
+    proposal: DigitParity,
+    tradeId: number,
+    stakeAmount: number,
+    result: DigitTradeResult,
+    entry: number,
+  ): Promise<void> {
+    await this.incrementVelozStats(
+      state.userId,
+      result.status === 'WON',
+      result.profitLoss,
+    );
+
+    state.virtualCapital += result.profitLoss;
+
+    if (result.status === 'WON') {
+      this.logger.log(
+        `[Veloz][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss.toFixed(
+          2,
+        )} | capital virtual: ${state.virtualCapital.toFixed(2)}`,
+      );
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      return;
+    }
+
+    this.logger.warn(
+      `[Veloz][${state.userId}] ❌ Perda | Entrada ${entry} | Valor ${stakeAmount.toFixed(
+        2,
+      )}`,
+    );
+
+    if (entry < VELOZ_CONFIG.martingaleMax) {
+      this.logger.warn(
+        `[Veloz][${state.userId}] 🔁 Martingale ${entry + 1}ª entrada agendada`,
+      );
+      await this.executeVelozOperation(state, proposal, entry + 1);
+      return;
+    }
+
+    state.isOperationActive = false;
+    state.martingaleStep = 0;
+  }
+
+  private async incrementVelozStats(
+    userId: number,
+    won: boolean,
+    profitLoss: number,
+  ): Promise<void> {
+    const column = won ? 'total_wins = total_wins + 1' : 'total_losses = total_losses + 1';
+    await this.dataSource.query(
+      `UPDATE ai_user_config
+       SET total_trades = total_trades + 1,
+           ${column},
+           last_trade_at = NOW(),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`,
+      [userId],
+    );
+  }
+
+  private async syncVelozUsersFromDb(): Promise<void> {
+    const configs = await this.dataSource.query(
+      `SELECT 
+        user_id as userId,
+        stake_amount as stakeAmount,
+        deriv_token as derivToken,
+        currency
+       FROM ai_user_config
+       WHERE is_active = TRUE
+         AND LOWER(mode) = 'veloz'`,
+    );
+
+    const activeIds = new Set<number>();
+
+    for (const config of configs) {
+      activeIds.add(config.userId);
+      this.upsertVelozUserState({
+        userId: config.userId,
+        stakeAmount: Number(config.stakeAmount) || 0,
+        derivToken: config.derivToken,
+        currency: config.currency || 'USD',
+      });
+    }
+
+    for (const existingId of Array.from(this.velozUsers.keys())) {
+      if (!activeIds.has(existingId)) {
+        this.velozUsers.delete(existingId);
+      }
+    }
+  }
+
+  private upsertVelozUserState(params: {
+    userId: number;
+    stakeAmount: number;
+    derivToken: string;
+    currency: string;
+  }) {
+    const { userId, stakeAmount, derivToken, currency } = params;
+    const existing = this.velozUsers.get(userId);
+
+    if (existing) {
+      existing.capital = stakeAmount;
+      existing.derivToken = derivToken;
+      existing.currency = currency;
+      if (existing.virtualCapital <= 0) {
+        existing.virtualCapital = stakeAmount;
+      }
+      this.velozUsers.set(userId, existing);
+      return;
+    }
+
+    this.velozUsers.set(userId, {
+      userId,
+      derivToken,
+      currency,
+      capital: stakeAmount,
+      virtualCapital: stakeAmount,
+      lossVirtualActive: false,
+      lossVirtualCount: 0,
+      lossVirtualOperation: null,
+      isOperationActive: false,
+      martingaleStep: 0,
+    });
+  }
+
+  private removeVelozUserState(userId: number) {
+    if (this.velozUsers.has(userId)) {
+      this.velozUsers.delete(userId);
+    }
   }
 
   getTicks(): Tick[] {
@@ -231,562 +845,76 @@ export class AiService {
     this.ticks = [];
   }
 
-  // Métodos para IA de Trading
-
-  async analyzeWithGemini(userId: number): Promise<GeminiSignal> {
-    if (this.ticks.length < 20) {
-      throw new Error('Não há dados suficientes para análise (mínimo 20 ticks)');
-    }
-
-    const prices = this.ticks.map(t => t.value);
-    
-    this.logger.log(`Enviando ${prices.length} preços para análise do Gemini`);
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY não está configurada no arquivo .env');
-    }
-
-    // Retry logic: tentar até 3 vezes em caso de erro 503
-    const maxRetries = 3;
-    let lastError: any;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-        const prompt = `Você é um especialista em análise técnica de mercado financeiro. Analise os últimos 20 preços do Volatility 100 Index e forneça um sinal de trading.
-
-Últimos 20 preços (do mais antigo ao mais recente):
-${prices.map((p, i) => `${i + 1}. ${p}`).join('\n')}
-
-Preço atual: ${prices[prices.length - 1]}
-
-Com base nesta sequência de preços, você deve:
-1. Identificar se a tendência é de alta (CALL) ou baixa (PUT)
-2. Recomendar uma duração de contrato entre 30 e 120 segundos
-3. Fornecer um raciocínio breve (máximo 2 linhas)
-4. Indicar o nível de confiança (0-100)
-
-Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras):
-{
-  "signal": "CALL" ou "PUT",
-  "duration": número entre 30 e 120,
-  "reasoning": "explicação breve",
-  "confidence": número entre 0 e 100
-}`;
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-        
-        this.logger.log(`Resposta do Gemini (tentativa ${attempt}): ${text}`);
-
-        // Tentar fazer parse da resposta
-        let parsedResponse;
-        try {
-          // Remover possíveis markdown code blocks
-          const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          parsedResponse = JSON.parse(cleanText);
-        } catch (e) {
-          this.logger.error('Erro ao fazer parse da resposta do Gemini:', e);
-          throw new Error('Resposta do Gemini em formato inválido');
-        }
-
-        // Validar resposta
-        if (!parsedResponse.signal || !['CALL', 'PUT'].includes(parsedResponse.signal)) {
-          throw new Error('Sinal inválido do Gemini');
-        }
-
-        if (!parsedResponse.duration || parsedResponse.duration < 30 || parsedResponse.duration > 120) {
-          this.logger.warn(`Duração inválida: ${parsedResponse.duration}, ajustando para 60s`);
-          parsedResponse.duration = 60;
-        }
-
-        // Sucesso! Retornar resultado
-        return {
-          signal: parsedResponse.signal,
-          duration: parsedResponse.duration,
-          reasoning: parsedResponse.reasoning || 'Análise técnica',
-          confidence: parsedResponse.confidence || 70,
-        };
-
-      } catch (error: any) {
-        lastError = error;
-        
-        // Se for erro 503 (overloaded) e ainda tiver tentativas, aguardar e tentar novamente
-        if (error.status === 503 && attempt < maxRetries) {
-          const waitTime = attempt * 2000; // 2s, 4s
-          this.logger.warn(`Gemini sobrecarregado (503). Tentativa ${attempt}/${maxRetries}. Aguardando ${waitTime}ms...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-          continue;
-        }
-        
-        // Se não for 503 ou não tiver mais tentativas, lançar erro
-        this.logger.error(`Erro ao analisar com Gemini (tentativa ${attempt}/${maxRetries}):`, error);
-        break;
-      }
-    }
-
-    // Se chegou aqui, todas as tentativas falharam
-    throw lastError;
-  }
-
-  async executeTrade(
-    userId: number,
-    signal: GeminiSignal,
-    stakeAmount: number,
-    derivToken: string,
-    currency: string = 'USD',
-  ): Promise<number> {
-    if (this.isTrading) {
-      throw new Error('Já existe uma operação em andamento');
-    }
-
-    const currentPrice = this.getCurrentPrice();
-    if (!currentPrice) {
-      throw new Error('Preço atual não disponível');
-    }
-
-    this.logger.log(`Executando trade com moeda: ${currency}`);
-
-    // Salvar trade inicial no banco
-    const query = `
-      INSERT INTO ai_trades (
-        user_id, analysis_data, gemini_signal, gemini_duration, 
-        gemini_reasoning, entry_price, stake_amount, contract_type, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const values = [
-      userId,
-      JSON.stringify(this.ticks),
-      signal.signal,
-      signal.duration,
-      signal.reasoning,
-      currentPrice,
-      stakeAmount,
-      signal.signal === 'CALL' ? 'CALL' : 'PUT',
-      'PENDING',
-    ];
-
-    const result = await this.dataSource.query(query, values);
-    const tradeId = result.insertId;
-
-    this.activeTradeId = tradeId;
-    this.isTrading = true;
-
-    this.logger.log(`Trade criado com ID: ${tradeId}`);
-
-    // Executar trade real na Deriv
-    try {
-      await this.executeBuyOnDeriv(tradeId, signal, stakeAmount, derivToken, currency);
-    } catch (error) {
-      this.logger.error('Erro ao executar trade na Deriv:', error);
-      
-      // Marcar trade como erro no banco
-      await this.dataSource.query(
-        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
-        ['ERROR', error.message, tradeId]
-      );
-      
-      this.isTrading = false;
-      this.activeTradeId = null;
-      throw error;
-    }
-
-    return tradeId;
-  }
-
-  /**
-   * Executa a compra do contrato na Deriv API
-   * Baseado no método do OperationChart.vue
-   */
-  private async executeBuyOnDeriv(
-    tradeId: number,
-    signal: GeminiSignal,
-    stakeAmount: number,
-    derivToken: string,
-    currency: string,
+  private async ensureTickStreamReady(
+    minTicks: number = VELOZ_CONFIG.window,
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.logger.log('Conectando à Deriv para executar trade...');
-      
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const buyWs = new WebSocket(endpoint);
-      
-      let proposalId: string | null = null;
-      let proposalPrice: number | null = null;
-      let isCompleted = false;
-      
-      // Timeout de segurança (60 segundos)
-      const timeout = setTimeout(() => {
-        if (!isCompleted) {
-          isCompleted = true;
-          this.logger.error('Timeout ao executar trade na Deriv');
-          buyWs.close();
-          reject(new Error('Timeout ao executar trade'));
-        }
-      }, 60000);
-
-      buyWs.on('open', () => {
-        this.logger.log('WebSocket conectado, autorizando...');
-        buyWs.send(JSON.stringify({ authorize: derivToken }));
-      });
-
-      buyWs.on('message', async (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          
-          if (msg.error) {
-            if (!isCompleted) {
-              isCompleted = true;
-              clearTimeout(timeout);
-              this.logger.error('Erro da Deriv:', msg.error);
-              buyWs.close();
-              reject(new Error(msg.error.message || 'Erro ao executar trade'));
-            }
-            return;
-          }
-
-              // 1. Após autorização, fazer proposal
-              if (msg.msg_type === 'authorize') {
-                this.logger.log('Autorizado, enviando proposal...');
-                
-                const proposalPayload = {
-                  proposal: 1,
-                  amount: stakeAmount,
-                  basis: 'stake',
-                  contract_type: signal.signal,
-                  currency: currency, // Usar moeda passada (USD, BTC, etc)
-                  duration: signal.duration,
-                  duration_unit: 's', // segundos
-                  symbol: this.symbol,
-                };
-                
-                this.logger.log('Proposal payload:', proposalPayload);
-                buyWs.send(JSON.stringify(proposalPayload));
-              }
-
-          // 2. Receber proposal e fazer buy
-          if (msg.msg_type === 'proposal') {
-            const proposal = msg.proposal;
-            if (!proposal || !proposal.id) {
-              if (!isCompleted) {
-                isCompleted = true;
-                clearTimeout(timeout);
-                buyWs.close();
-                reject(new Error('Proposta inválida da Deriv'));
-              }
-              return;
-            }
-
-            proposalId = proposal.id;
-            proposalPrice = Number(proposal.ask_price);
-            const payout = Number(proposal.payout || 0);
-            
-            this.logger.log('Proposal recebido:', {
-              id: proposalId,
-              price: proposalPrice,
-              payout: payout
-            });
-
-            // Atualizar payout no banco
-            await this.dataSource.query(
-              'UPDATE ai_trades SET payout = ? WHERE id = ?',
-              [payout - stakeAmount, tradeId] // payout é o retorno líquido
-            );
-
-            // Fazer buy
-            const buyPayload = {
-              buy: proposalId,
-              price: proposalPrice,
-            };
-            
-            this.logger.log('Executando buy...', buyPayload);
-            buyWs.send(JSON.stringify(buyPayload));
-          }
-
-          // 3. Receber confirmação de buy e subscrever ao contrato
-          if (msg.msg_type === 'buy') {
-            const buy = msg.buy;
-            if (!buy || !buy.contract_id) {
-              if (!isCompleted) {
-                isCompleted = true;
-                clearTimeout(timeout);
-                buyWs.close();
-                reject(new Error('Compra não confirmada pela Deriv'));
-              }
-              return;
-            }
-
-            const contractId = buy.contract_id;
-            const buyPrice = Number(buy.buy_price);
-            const entrySpot = Number(buy.entry_spot || this.getCurrentPrice());
-            
-            this.logger.log('Compra confirmada!', {
-              contractId,
-              buyPrice,
-              entrySpot
-            });
-
-            // Atualizar trade no banco
-            await this.dataSource.query(
-              `UPDATE ai_trades 
-               SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
-               WHERE id = ?`,
-              [contractId, entrySpot, tradeId]
-            );
-
-            // Fechar este WebSocket e abrir um novo para monitorar o contrato
-            buyWs.close();
-            clearTimeout(timeout);
-
-            // Subscrever ao contrato para monitoramento
-            await this.subscribeToContract(contractId, derivToken);
-            
-            if (!isCompleted) {
-              isCompleted = true;
-              resolve();
-            }
-          }
-        } catch (error) {
-          if (!isCompleted) {
-            isCompleted = true;
-            clearTimeout(timeout);
-            this.logger.error('Erro ao processar mensagem:', error);
-            buyWs.close();
-            reject(error);
-          }
-        }
-      });
-
-      buyWs.on('error', (error) => {
-        if (!isCompleted) {
-          isCompleted = true;
-          clearTimeout(timeout);
-          this.logger.error('Erro no WebSocket:', error);
-          reject(error);
-        }
-      });
-
-      buyWs.on('close', () => {
-        if (!isCompleted) {
-          isCompleted = true;
-          clearTimeout(timeout);
-          reject(new Error('WebSocket fechado inesperadamente'));
-        }
-      });
-    });
-  }
-
-  // Método finalizeTrade removido - agora a finalização é feita automaticamente
-  // pelo WebSocket quando recebe is_sold === 1 (ver handleContractFinalized)
-
-  /**
-   * Conecta ao WebSocket da Deriv para monitorar um contrato em tempo real
-   * Similar ao que é feito no OperationChart.vue
-   */
-  private async subscribeToContract(contractId: string, derivToken: string): Promise<void> {
-    this.logger.log(`Conectando ao WebSocket para monitorar contrato: ${contractId}`);
-    
-    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-    
-    this.contractWs = new WebSocket(endpoint);
-    this.activeContractId = contractId;
-    this.realTimeProfit = null;
-    this.realTimeCurrentPrice = null;
-
-    this.contractWs.on('open', () => {
-      this.logger.log('WebSocket do contrato conectado, autorizando...');
-      
-      // Autorizar com o token do usuário
-      this.contractWs.send(JSON.stringify({ authorize: derivToken }));
-    });
-
-    this.contractWs.on('message', (data: Buffer) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        this.processContractMessage(msg);
-      } catch (error) {
-        this.logger.error('Erro ao processar mensagem do contrato:', error);
-      }
-    });
-
-    this.contractWs.on('error', (error) => {
-      this.logger.error('Erro no WebSocket do contrato:', error);
-    });
-
-    this.contractWs.on('close', () => {
-      this.logger.log('WebSocket do contrato fechado');
-      this.contractWs = null;
-      this.contractSubscriptionId = null;
-    });
-  }
-
-  /**
-   * Processa mensagens do WebSocket do contrato
-   */
-  private processContractMessage(msg: any): void {
-    // Log apenas para mensagens importantes
-    if (msg.msg_type === 'authorize' || msg.msg_type === 'proposal_open_contract') {
-      this.logger.debug(`Mensagem do contrato: ${msg.msg_type}`);
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      await this.initialize();
     }
 
-    if (msg.error) {
-      this.logger.error('Erro no WebSocket do contrato:', msg.error);
-      return;
+    let attempts = 0;
+    while (this.ticks.length < minTicks && attempts < 60) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      attempts++;
     }
 
-    switch (msg.msg_type) {
-      case 'authorize':
-        // Após autorização, subscrever ao contrato
-        if (this.activeContractId) {
-          this.logger.log(`Autorizado, subscrevendo ao contrato ${this.activeContractId}`);
-          this.contractWs.send(JSON.stringify({
-            proposal_open_contract: 1,
-            contract_id: this.activeContractId,
-            subscribe: 1
-          }));
-        }
-        break;
-
-      case 'proposal_open_contract':
-        // Armazenar ID da subscription
-        if (msg.subscription?.id) {
-          this.contractSubscriptionId = msg.subscription.id;
-        }
-
-        const contract = msg.proposal_open_contract;
-        if (contract) {
-          // Atualizar profit em tempo real (mesmo método do OperationChart.vue)
-          if (contract.profit !== undefined && contract.profit !== null) {
-            this.realTimeProfit = Number(contract.profit);
-            this.logger.debug(`Profit atualizado: ${this.realTimeProfit}`);
-          }
-
-          // Atualizar preço atual
-          if (contract.current_spot !== undefined && contract.current_spot !== null) {
-            this.realTimeCurrentPrice = Number(contract.current_spot);
-          }
-
-          // Se o contrato foi vendido/expirou, finalizar
-          if (contract.is_sold === 1) {
-            this.logger.log('Contrato finalizado pela Deriv');
-            this.handleContractFinalized(contract);
-          }
-        }
-        break;
+    if (this.ticks.length < minTicks) {
+      throw new Error(
+        `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
+      );
     }
   }
 
-  /**
-   * Trata a finalização de um contrato pela Deriv
-   */
-  private async handleContractFinalized(contract: any): Promise<void> {
-    if (!this.activeTradeId) {
-      return;
+  async getVelozDiagnostics(userId?: number) {
+    await this.ensureTickStreamReady();
+
+    const dvx = this.calculateDVX(this.ticks);
+    const windowTicks = this.ticks.slice(-VELOZ_CONFIG.window);
+    const evenCount = windowTicks.filter((t) => t.parity === 'PAR').length;
+    const oddCount = VELOZ_CONFIG.window - evenCount;
+
+    let proposal: DigitParity | null = null;
+    if (evenCount === VELOZ_CONFIG.window) {
+      proposal = 'IMPAR';
+    } else if (oddCount === VELOZ_CONFIG.window) {
+      proposal = 'PAR';
     }
 
-    const finalProfit = contract.profit !== undefined ? Number(contract.profit) : 0;
-    const exitPrice = contract.exit_spot || contract.current_spot || this.getCurrentPrice();
-    const status = finalProfit >= 0 ? 'WON' : 'LOST';
-
-    this.logger.log(`Contrato finalizado - Status: ${status}, Profit: ${finalProfit}`);
-
-    // Atualizar no banco
-    const updateQuery = `
-      UPDATE ai_trades 
-      SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-      WHERE id = ?
-    `;
-
-    await this.dataSource.query(updateQuery, [exitPrice, finalProfit, status, this.activeTradeId]);
-
-    // Limpar estado
-    this.disconnectFromContract();
-    this.isTrading = false;
-    this.activeTradeId = null;
-  }
-
-  /**
-   * Desconecta do WebSocket do contrato
-   */
-  private disconnectFromContract(): void {
-    if (this.contractSubscriptionId && this.contractWs) {
-      try {
-        this.contractWs.send(JSON.stringify({ forget: this.contractSubscriptionId }));
-      } catch (error) {
-        this.logger.warn('Erro ao desinscrever do contrato:', error);
-      }
-    }
-
-    if (this.contractWs) {
-      try {
-        this.contractWs.close();
-      } catch (error) {
-        this.logger.warn('Erro ao fechar WebSocket do contrato:', error);
-      }
-      this.contractWs = null;
-    }
-
-    this.contractSubscriptionId = null;
-    this.activeContractId = null;
-    this.realTimeProfit = null;
-    this.realTimeCurrentPrice = null;
-  }
-
-  async getActiveTrade(): Promise<TradeResult | null> {
-    if (!this.activeTradeId) {
-      return null;
-    }
-
-    const query = `
-      SELECT id, status, entry_price, exit_price, profit_loss, 
-             gemini_duration, gemini_signal, stake_amount, payout,
-             started_at, created_at
-      FROM ai_trades 
-      WHERE id = ?
-    `;
-
-    const result = await this.dataSource.query(query, [this.activeTradeId]);
-    
-    if (result.length === 0) {
-      return null;
-    }
-
-    const trade = result[0];
-    
-    // Calcular tempo restante
-    const startTime = trade.started_at || trade.created_at;
-    const elapsedSeconds = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
-    const timeRemaining = Math.max(0, trade.gemini_duration - elapsedSeconds);
-
-    // Usar o profit real do WebSocket (mesmo método do OperationChart.vue)
-    // Se já temos profit_loss no banco (trade finalizado), usar ele
-    // Senão, usar o realTimeProfit do WebSocket
-    let profitToReturn = 0;
-    if (trade.profit_loss !== null && trade.profit_loss !== undefined) {
-      profitToReturn = parseFloat(trade.profit_loss);
-    } else if (this.realTimeProfit !== null) {
-      profitToReturn = this.realTimeProfit;
-    }
+    const userState = userId ? this.velozUsers.get(userId) : undefined;
 
     return {
-      id: trade.id,
-      status: trade.status,
-      entryPrice: parseFloat(trade.entry_price),
-      currentPrice: this.realTimeCurrentPrice || this.getCurrentPrice() || undefined,
-      profitLoss: profitToReturn,
-      timeRemaining,
-      stakeAmount: trade.stake_amount ? parseFloat(trade.stake_amount) : undefined,
-      signal: trade.gemini_signal,
+      totalTicks: this.ticks.length,
+      lastTick: this.ticks[this.ticks.length - 1] || null,
+      windowParities: windowTicks.map((t) => t.parity),
+      dvx,
+      proposal,
+      lossVirtual: userState
+        ? {
+            active: userState.lossVirtualActive,
+            count: userState.lossVirtualCount,
+            operation: userState.lossVirtualOperation,
+          }
+        : null,
     };
   }
 
-  getIsTrading(): boolean {
-    return this.isTrading;
+  async triggerManualVelozOperation(
+    userId: number,
+    proposal: DigitParity,
+  ): Promise<number> {
+    const state = this.velozUsers.get(userId);
+    if (!state) {
+      throw new Error(
+        'Usuário não está com o modo veloz ativo ou não possui configuração carregada',
+      );
+    }
+
+    await this.ensureTickStreamReady();
+    const tradeId = await this.executeVelozOperation(state, proposal);
+    if (tradeId <= 0) {
+      throw new Error('Já existe uma operação ativa para este usuário');
+    }
+    return tradeId;
   }
 
   async getSessionStats(userId: number) {
@@ -865,6 +993,8 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
    */
   private getWaitTimeByMode(mode: string): number {
     switch (mode) {
+      case 'veloz':
+        return 0;
       case 'fast':
         return 60000; // 1 minuto
       case 'slow':
@@ -917,6 +1047,17 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     }
 
     this.logger.log(`IA ativada para usuário ${userId} no modo ${mode}`);
+
+    if ((mode || '').toLowerCase() === 'veloz') {
+      this.upsertVelozUserState({
+        userId,
+        stakeAmount,
+        derivToken,
+        currency,
+      });
+    } else {
+      this.removeVelozUserState(userId);
+    }
   }
 
   /**
@@ -931,6 +1072,7 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
     );
 
     this.logger.log(`IA desativada para usuário ${userId}`);
+    this.removeVelozUserState(userId);
   }
 
   /**
@@ -989,6 +1131,8 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
    */
   async processBackgroundAIs(): Promise<void> {
     try {
+      await this.syncVelozUsersFromDb();
+
       // Buscar usuários com IA ativa e que já passaram do tempo da próxima operação
       const usersToProcess = await this.dataSource.query(
         `SELECT 
@@ -1034,93 +1178,56 @@ Responda APENAS no seguinte formato JSON (sem markdown, sem explicações extras
   private async processUserAI(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency, mode } = user;
 
-    this.logger.log(`[Background AI] Processando usuário ${userId} (modo: ${mode || 'moderate'})`);
-
-    // Verificar se já há operação ativa deste usuário
-    const activeTrade = await this.dataSource.query(
-      'SELECT id FROM ai_trades WHERE user_id = ? AND status IN (?, ?) LIMIT 1',
-      [userId, 'PENDING', 'ACTIVE'],
+    const normalizedMode = (mode || 'moderate').toLowerCase();
+    this.logger.log(
+      `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
     );
 
-    if (activeTrade.length > 0) {
-      this.logger.log(
-        `[Background AI] Usuário ${userId} já tem operação ativa, pulando`,
-      );
+    if (normalizedMode === 'veloz') {
+      await this.prepareVelozUser(user);
       return;
     }
 
+    this.logger.warn(
+      `[Background AI] Modo ${normalizedMode} ainda não suportado após remoção do Gemini`,
+    );
+
+    await this.dataSource.query(
+      'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
+      [userId],
+    );
+  }
+
+  private async prepareVelozUser(user: any): Promise<void> {
+    const { userId, stakeAmount, derivToken, currency } = user;
+
     try {
-      // Inicializar conexão se necessário
-      if (!this.ws || this.ws.readyState !== 1) {
-        await this.initialize();
-      }
-
-      // Aguardar ter pelo menos 20 ticks
-      let attempts = 0;
-      while (this.ticks.length < 20 && attempts < 30) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        attempts++;
-      }
-
-      if (this.ticks.length < 20) {
-        this.logger.warn(
-          `[Background AI] Não há ticks suficientes para usuário ${userId}`,
-        );
-        // Reagendar para daqui 1 minuto
-        await this.dataSource.query(
-          'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 1 MINUTE) WHERE user_id = ?',
-          [userId],
-        );
-        return;
-      }
-
-      // Analisar com Gemini
-      const signal = await this.analyzeWithGemini(userId);
-
-      // Executar trade
-      const tradeId = await this.executeTrade(
-        userId,
-        signal,
-        stakeAmount,
-        derivToken,
-        currency,
-      );
-
-      this.logger.log(
-        `[Background AI] Trade ${tradeId} iniciado para usuário ${userId}`,
-      );
-
-      // Calcular tempo de espera baseado no modo
-      const waitTime = this.getWaitTimeByMode(mode || 'moderate');
-      const nextTradeAt = new Date(
-        Date.now() + signal.duration * 1000 + waitTime,
-      ); // Duração do contrato + tempo de espera do modo
-
-      this.logger.log(
-        `[Background AI] Próxima operação agendada para ${nextTradeAt.toISOString()} (modo: ${mode || 'moderate'})`,
-      );
-
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET last_trade_at = NOW(),
-             next_trade_at = ?,
-             total_trades = total_trades + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
-        [nextTradeAt, userId],
-      );
+      await this.ensureTickStreamReady(this.maxTicks);
     } catch (error) {
-      this.logger.error(
-        `[Background AI] Erro ao executar trade para usuário ${userId}:`,
-        error,
-      );
-
-      // Reagendar para daqui 2 minutos em caso de erro
-      await this.dataSource.query(
-        'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 2 MINUTE) WHERE user_id = ?',
-        [userId],
+      this.logger.warn(
+        `[Veloz] Não foi possível garantir histórico completo para usuário ${userId}: ${error.message}`,
       );
     }
+
+    this.upsertVelozUserState({
+      userId,
+      stakeAmount: Number(stakeAmount) || 0,
+      derivToken,
+      currency: currency || 'USD',
+    });
+
+    const nextTradeAt = new Date(Date.now() + 15000); // Reprocessar em 15s
+
+    await this.dataSource.query(
+      `UPDATE ai_user_config 
+         SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+      [nextTradeAt, userId],
+    );
+
+    this.logger.log(
+      `[Veloz] Usuário ${userId} sincronizado | capital=${stakeAmount} | acompanhados=${this.velozUsers.size}`,
+    );
   }
 }
 

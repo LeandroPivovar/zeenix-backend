@@ -8,8 +8,7 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   
   // Configurar prefixo global /api
-  app.setGlobalPrefix('api');
-  
+
   // Configurar validação global
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,

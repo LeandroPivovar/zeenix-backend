@@ -7,7 +7,7 @@ import {
   HttpException, 
   HttpStatus 
 } from '@nestjs/common';
-import { AiService, Tick } from './ai.service';
+import { AiService, DigitParity, Tick } from './ai.service';
 
 @Controller('ai')
 export class AiController {
@@ -32,6 +32,24 @@ export class AiController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  private normalizeOperation(value: string): DigitParity {
+    const sanitized = value
+      .toString()
+      .trim()
+      .toUpperCase()
+      .replace('Í', 'I');
+
+    if (['PAR', 'DIGITEVEN', 'EVEN'].includes(sanitized)) {
+      return 'PAR';
+    }
+
+    if (['IMPAR', 'DIGITODD', 'ODD'].includes(sanitized)) {
+      return 'IMPAR';
+    }
+
+    throw new Error(`Operação inválida (${value}). Utilize PAR ou ÍMPAR.`);
   }
 
   @Post('stop')
@@ -103,16 +121,16 @@ export class AiController {
   @Post('analyze')
   async analyzeAndGetSignal(@Body() body: { userId: number }) {
     try {
-      const signal = await this.aiService.analyzeWithGemini(body.userId);
+      const diagnostics = await this.aiService.getVelozDiagnostics(body.userId);
       return {
         success: true,
-        data: signal,
+        data: diagnostics,
       };
     } catch (error) {
       throw new HttpException(
         {
           success: false,
-          message: 'Erro ao analisar com Gemini',
+          message: 'Erro ao analisar setup veloz',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -124,69 +142,44 @@ export class AiController {
   async executeTrade(
     @Body() body: { 
       userId: number; 
-      signal: any; 
-      stakeAmount: number; 
-      derivToken: string;
-      currency?: string;
+      operation?: DigitParity | 'DIGITEVEN' | 'DIGITODD' | 'even' | 'odd';
+      signal?: { signal?: string; operation?: string };
     }
   ) {
     try {
-      const tradeId = await this.aiService.executeTrade(
+      const requestedOperation =
+        body.operation ||
+        body.signal?.operation ||
+        body.signal?.signal;
+
+      if (!requestedOperation) {
+        throw new Error('operation (PAR/IMPAR) é obrigatório no modo veloz');
+      }
+
+      const normalized = this.normalizeOperation(requestedOperation);
+
+      const tradeId = await this.aiService.triggerManualVelozOperation(
         body.userId,
-        body.signal,
-        body.stakeAmount,
-        body.derivToken,
-        body.currency || 'USD', // Usar USD como padrão se não for fornecido
+        normalized,
       );
 
       return {
         success: true,
         data: {
           tradeId,
-          message: 'Trade executado com sucesso',
+          message: `Operação veloz ${normalized} enviada com sucesso`,
         },
       };
     } catch (error) {
       throw new HttpException(
         {
           success: false,
-          message: 'Erro ao executar trade',
+          message: 'Erro ao executar operação veloz',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
-  }
-
-  @Get('active-trade')
-  async getActiveTrade() {
-    try {
-      const trade = await this.aiService.getActiveTrade();
-      
-      return {
-        success: true,
-        data: trade,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar trade ativo',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('trading-status')
-  getTradingStatus() {
-    return {
-      success: true,
-      data: {
-        isTrading: this.aiService.getIsTrading(),
-      },
-    };
   }
 
   @Get('session-stats/:userId')
