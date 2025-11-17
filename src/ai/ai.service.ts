@@ -1331,33 +1331,41 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
             timestamp: new Date().toISOString()
         });
 
-        const requestBody = {
-            proposal: 1,
-            subscribe: 1,
-            amount: params.amount,
-            basis: 'stake',
-            contract_type: params.contract_type,
+        // Build the request parameters
+        const requestParams = {
+            buy: 1,
+            price: params.amount,
+            amount: 1,  // 1 contract
             currency: params.currency || 'USD',
+            symbol: params.symbol,
+            contract_type: params.contract_type,
             duration: params.duration || 1,
             duration_unit: params.duration_unit || 't',
-            symbol: params.symbol
+            basis: 'stake'
         };
 
+        // Convert to query string
+        const queryParams = new URLSearchParams();
+        Object.entries(requestParams).forEach(([key, value]) => {
+            queryParams.append(key, String(value));
+        });
+
+        const url = `https://api.deriv.com/buy?${queryParams.toString()}`;
+
         this.logger.debug(`[${tradeId}] Enviando requisição para a API`, {
-            url: 'https://api.deriv.com/v1/buy',
-            method: 'POST',
-            body: requestBody
+            url: 'https://api.deriv.com/buy',
+            method: 'GET',
+            params: requestParams
         });
 
         const startTime = Date.now();
-        const response = await fetch('https://api.deriv.com/v1/buy', {
-            method: 'POST',
+        const response = await fetch(url, {
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${params.token}`,
                 'App-Id': process.env.DERIV_APP_ID || '111346'
-            },
-            body: JSON.stringify(requestBody)
+            }
         });
         const requestDuration = Date.now() - startTime;
 
@@ -1367,10 +1375,15 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
             duration: `${requestDuration}ms`
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 200)}`);
+        }
+
         const data = await response.json();
 
-        if (!response.ok || data.error) {
-            throw new Error(data.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+        if (data.error) {
+            throw new Error(data.error.message || 'Erro desconhecido da API');
         }
 
         // Registrar a operação no banco de dados
@@ -1391,7 +1404,7 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
         };
     } catch (error) {
         const errorMessage = error.message || 'Erro desconhecido';
-        this.logger.error(`[${tradeId}] Falha na execução do trade: ${errorMessage}`, error);
+        this.logger.error(`[${tradeId}] Falha na execução do trade: ${errorMessage}`, error.stack);
 
         try {
             await this.recordTrade({
