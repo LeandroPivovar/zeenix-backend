@@ -1280,8 +1280,8 @@ export class AiService {
     } catch (error) {
       this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
     } finally {
-      // Agendar próxima verificação em 1 minuto
-      const nextCheck = new Date(Date.now() + 60000);
+      // Agendar próxima verificação em 10 segundos
+      const nextCheck = new Date(Date.now() + 10000);
       await this.dataSource.query(
         `UPDATE ai_user_config 
          SET next_trade_at = ?, updated_at = CURRENT_TIMESTAMP
