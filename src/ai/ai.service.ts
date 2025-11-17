@@ -1292,51 +1292,169 @@ export class AiService {
   }
 
   private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
-    // Implementação da lógica de execução de trade
-    // Isso deve ser adaptado para a API da sua corretora
+    const tradeStartTime = Date.now();
+    const tradeId = `trade_${userId}_${tradeStartTime}`;
+    
     try {
-      // Exemplo de implementação com a API da Deriv
-      const response = await fetch('https://api.deriv.com/ticks_history', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${params.token}`
-        },
-        body: JSON.stringify({
-          proposal: 1,
-          subscribe: 1,
-          amount: params.amount,
-          basis: 'stake',
-          contract_type: params.contract_type,
-          currency: params.currency,
-          duration: params.duration,
-          duration_unit: params.duration_unit,
-          symbol: params.symbol
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.error) {
-        return { success: false, error: data.error.message };
-      }
-      
-      // Registrar a operação no banco de dados
-      await this.recordTrade({
-        userId,
-        contractType: params.contract_type,
-        amount: params.amount,
-        symbol: params.symbol,
-        status: 'PENDING',
-        entryPrice: this.ticks[this.ticks.length - 1]?.value || 0
-      });
-      
-      return { success: true, tradeId: data.id };
-      
+        this.logger.log(`[${tradeId}] Iniciando execução de trade`, {
+            userId,
+            contractType: params.contract_type,
+            amount: params.amount,
+            symbol: params.symbol,
+            timestamp: new Date().toISOString()
+        });
+
+        // Log request details
+        const requestBody = {
+            proposal: 1,
+            subscribe: 1,
+            amount: params.amount,
+            basis: 'stake',
+            contract_type: params.contract_type,
+            currency: params.currency,
+            duration: params.duration,
+            duration_unit: params.duration_unit,
+            symbol: params.symbol
+        };
+
+        this.logger.debug(`[${tradeId}] Enviando requisição para a API`, {
+            url: 'https://api.deriv.com/ticks_history',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer [REDACTED]' // Não logamos o token por segurança
+            },
+            body: {
+                ...requestBody,
+                token: params.token ? '[REDACTED]' : 'não fornecido'
+            }
+        });
+
+        const startTime = Date.now();
+        const response = await fetch('https://api.deriv.com/ticks_history', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${params.token}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+        const requestDuration = Date.now() - startTime;
+
+        // Log response status
+        this.logger.debug(`[${tradeId}] Resposta recebida`, {
+            status: response.status,
+            statusText: response.statusText,
+            duration: `${requestDuration}ms`,
+            headers: Object.fromEntries(response.headers.entries())
+        });
+
+        const responseText = await response.text();
+        let data: any = {};
+
+        // Tenta fazer parse do JSON
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+            this.logger.debug(`[${tradeId}] Resposta parseada`, {
+                data: data.error ? { error: data.error } : 'Resposta OK'
+            });
+        } catch (e) {
+            this.logger.error(`[${tradeId}] Falha ao fazer parse da resposta`, {
+                error: e.message,
+                responseText: responseText?.substring(0, 500) // Limita o tamanho do log
+            });
+            throw new Error(`Resposta inválida da API: ${responseText?.substring(0, 200)}...`);
+        }
+
+        // Verifica erros na resposta
+        if (!response.ok || data.error) {
+            const errorMsg = data.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+            this.logger.error(`[${tradeId}] Erro na API`, {
+                status: response.status,
+                error: data.error,
+                response: data
+            });
+            throw new Error(errorMsg);
+        }
+
+        // Registra sucesso
+        this.logger.log(`[${tradeId}] Trade executado com sucesso`, {
+            tradeId: data.id,
+            contractType: params.contract_type,
+            amount: params.amount,
+            symbol: params.symbol,
+            duration: `${Date.now() - tradeStartTime}ms`
+        });
+
+        // Registra o trade no banco de dados
+        try {
+            const tradeData = {
+                userId,
+                contractType: params.contract_type,
+                amount: params.amount,
+                symbol: params.symbol,
+                status: 'PENDING',
+                entryPrice: this.ticks[this.ticks.length - 1]?.value || 0
+            };
+
+            await this.recordTrade(tradeData);
+            this.logger.debug(`[${tradeId}] Trade registrado no banco de dados`, tradeData);
+
+            return { 
+                success: true, 
+                tradeId: data.id || tradeId 
+            };
+
+        } catch (dbError) {
+            this.logger.error(`[${tradeId}] Erro ao registrar trade no banco de dados`, {
+                error: dbError.message,
+                stack: dbError.stack
+            });
+            // Não falha a operação principal se apenas o log falhar
+            return { 
+                success: true, 
+                tradeId: data.id || tradeId 
+            };
+        }
+        
     } catch (error) {
-      return { success: false, error: error.message };
+        const errorDetails = {
+            error: error.message,
+            stack: error.stack,
+            params: {
+                ...params,
+                token: params.token ? '[REDACTED]' : 'não fornecido'
+            },
+            duration: `${Date.now() - tradeStartTime}ms`
+        };
+
+        this.logger.error(`[${tradeId}] Falha na execução do trade`, errorDetails);
+
+        // Tenta registrar a falha no banco de dados
+        try {
+            await this.recordTrade({
+                userId,
+                contractType: params.contract_type,
+                amount: params.amount,
+                symbol: params.symbol,
+                status: 'ERROR',
+                entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
+                error: error.message.substring(0, 255) // Limita o tamanho da mensagem de erro
+            });
+        } catch (dbError) {
+            this.logger.error(`[${tradeId}] Falha ao registrar erro no banco de dados`, {
+                error: dbError.message,
+                originalError: error.message
+            });
+        }
+
+        return { 
+            success: false, 
+            error: error.message || 'Erro desconhecido ao executar trade',
+            tradeId: tradeId
+        };
     }
-  }
+}
   
   private async recordTrade(trade: any): Promise<void> {
     // Implemente a lógica para salvar a operação no banco de dados
