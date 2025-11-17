@@ -1139,49 +1139,77 @@ export class AiService {
    * Processa IAs em background (chamado pelo scheduler)
    * Verifica todos os usuários com IA ativa e executa operações quando necessário
    */
-  async processBackgroundAIs(): Promise<void> {
+  // In ai.service.ts, update the processBackgroundAIs method:
+async processBackgroundAIs(): Promise<void> {
     try {
-      await this.syncVelozUsersFromDb();
+        await this.syncVelozUsersFromDb();
 
-      // Buscar usuários com IA ativa e que já passaram do tempo da próxima operação
-      const usersToProcess = await this.dataSource.query(
-        `SELECT 
-          user_id as userId,
-          stake_amount as stakeAmount,
-          deriv_token as derivToken,
-          currency,
-          mode,
-          next_trade_at as nextTradeAt
-         FROM ai_user_config 
-         WHERE is_active = TRUE 
-         AND (next_trade_at IS NULL OR next_trade_at <= NOW())
-         LIMIT 10`,
-      );
+        // Process fast mode users first (no delay between trades)
+        const fastModeUsers = await this.dataSource.query(
+            `SELECT 
+                user_id as userId,
+                stake_amount as stakeAmount,
+                deriv_token as derivToken,
+                currency,
+                mode
+             FROM ai_user_config 
+             WHERE is_active = TRUE 
+             AND LOWER(mode) = 'fast'`
+        );
 
-      if (usersToProcess.length === 0) {
-        return;
-      }
+        if (fastModeUsers.length > 0) {
+            this.logger.log(
+                `[Background AI] Processando ${fastModeUsers.length} usuários em modo rápido`
+            );
 
-      this.logger.log(
-        `[Background AI] Processando ${usersToProcess.length} usuários`,
-      );
-
-      // Processar cada usuário
-      for (const user of usersToProcess) {
-        try {
-          await this.processUserAI(user);
-        } catch (error) {
-          this.logger.error(
-            `[Background AI] Erro ao processar usuário ${user.userId}:`,
-            error,
-          );
+            for (const user of fastModeUsers) {
+                try {
+                    await this.processFastMode(user);
+                } catch (error) {
+                    this.logger.error(
+                        `[Background AI] Erro ao processar usuário ${user.userId} (fast mode):`,
+                        error,
+                    );
+                }
+            }
         }
-      }
-    } catch (error) {
-      this.logger.error('[Background AI] Erro no processamento:', error);
-    }
-  }
 
+        // Then process other users with trade timing logic
+        const usersToProcess = await this.dataSource.query(
+            `SELECT 
+                user_id as userId,
+                stake_amount as stakeAmount,
+                deriv_token as derivToken,
+                currency,
+                mode,
+                next_trade_at as nextTradeAt
+             FROM ai_user_config 
+             WHERE is_active = TRUE 
+             AND LOWER(mode) != 'fast'
+             AND (next_trade_at IS NULL OR next_trade_at <= NOW())
+             LIMIT 10`
+        );
+
+        if (usersToProcess.length > 0) {
+            this.logger.log(
+                `[Background AI] Processando ${usersToProcess.length} usuários agendados`
+            );
+
+            for (const user of usersToProcess) {
+                try {
+                    await this.processUserAI(user);
+                } catch (error) {
+                    this.logger.error(
+                        `[Background AI] Erro ao processar usuário ${user.userId}:`,
+                        error,
+                    );
+                }
+            }
+        }
+    } catch (error) {
+        this.logger.error('[Background AI] Erro no processamento:', error);
+    }
+}
   /**
    * Processa a IA de um único usuário
    */
@@ -1259,14 +1287,14 @@ private async processFastMode(user: any): Promise<void> {
         const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
         
         const result = await this.executeTrade(userId, {
-            contract_type: contractType,
-            amount: betAmount,
-            symbol: 'R_10',
-            duration: 1,
-            duration_unit: 't',
-            currency: currency || 'USD',
-            token: derivToken
-        });
+    contract_type: contractType,
+    amount: betAmount,
+    symbol: 'R_10',
+    duration: 1,
+    duration_unit: 't',
+    currency: currency || 'USD',
+    token: derivToken
+});
         
         if (!result.success) {
             this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
@@ -1301,26 +1329,28 @@ private async processFastMode(user: any): Promise<void> {
         });
 
         const requestParams = {
-            proposal: 1,
-            subscribe: 1,
-            amount: params.amount,
-            basis: 'stake',
-            contract_type: params.contract_type,
+            buy: '1',  // Changed from proposal to buy
+            price: params.amount,
+            amount: '1',  // 1 contract
             currency: params.currency || 'USD',
+            symbol: params.symbol,
+            contract_type: params.contract_type,
             duration: params.duration || 1,
             duration_unit: params.duration_unit || 't',
-            symbol: params.symbol
+            basis: 'stake'
         };
 
         const queryString = new URLSearchParams();
         Object.entries(requestParams).forEach(([key, value]) => {
-            queryString.append(key, String(value));
+            if (value !== undefined) {
+                queryString.append(key, String(value));
+            }
         });
 
-        const url = `https://api.deriv.com/ticks_history?${queryString.toString()}`;
+        const url = `https://api.deriv.com/buy?${queryString.toString()}`;
 
         this.logger.debug(`[${tradeId}] Enviando requisição para a API`, {
-            url: 'https://api.deriv.com/ticks_history',
+            url: 'https://api.deriv.com/buy',
             method: 'GET',
             params: requestParams
         });
@@ -1335,7 +1365,6 @@ private async processFastMode(user: any): Promise<void> {
         });
         const requestDuration = Date.now() - startTime;
 
-        // Log response status
         this.logger.debug(`[${tradeId}] Resposta recebida`, {
             status: response.status,
             statusText: response.statusText,
@@ -1363,12 +1392,14 @@ private async processFastMode(user: any): Promise<void> {
             amount: params.amount,
             symbol: params.symbol,
             status: 'PENDING',
-            entryPrice: this.ticks[this.ticks.length - 1]?.value || 0
+            entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
+            duration: params.duration || 1,
+            durationUnit: params.duration_unit || 't'
         });
 
         return { 
             success: true, 
-            tradeId: data.id || tradeId 
+            tradeId: data.buy?.contract_id || tradeId 
         };
         
     } catch (error) {
@@ -1383,7 +1414,9 @@ private async processFastMode(user: any): Promise<void> {
                 symbol: params.symbol,
                 status: 'ERROR',
                 entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
-                error: error.message.substring(0, 255)
+                error: error.message.substring(0, 255),
+                duration: params.duration || 1,
+                durationUnit: params.duration_unit || 't'
             });
         } catch (dbError) {
             this.logger.error(`[${tradeId}] Falha ao registrar erro no banco de dados: ${dbError.message}`);
@@ -1396,21 +1429,26 @@ private async processFastMode(user: any): Promise<void> {
         };
     }
 }
-  private async recordTrade(trade: any): Promise<void> {
+
+private async recordTrade(trade: any): Promise<void> {
     await this.dataSource.query(
         `INSERT INTO ai_trades 
-         (user_id, gemini_signal, entry_price, stake_amount, status, created_at, analysis_data)
-         VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
+         (user_id, gemini_signal, entry_price, stake_amount, status, 
+          gemini_duration, gemini_duration_unit, created_at, analysis_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
         [
             trade.userId,
             trade.contractType,
             trade.entryPrice,
             trade.amount,
             trade.status,
+            trade.duration || 1,
+            trade.durationUnit || 't',
             JSON.stringify({ 
                 mode: 'fast',
                 timestamp: new Date().toISOString(),
-                dvx: this.calculateDVX(this.ticks) // Assuming this method exists
+                dvx: this.calculateDVX(this.ticks),
+                ...(trade.error && { error: trade.error })
             })
         ]
     );
