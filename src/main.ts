@@ -20,8 +20,9 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
   
-  // Configurar prefixo global /api (comentado porque nginx já faz proxy)
-  // app.setGlobalPrefix('api');
+  // Configurar prefixo global /api
+  // Nginx faz proxy de /api/ para o backend, então precisamos do prefixo
+  app.setGlobalPrefix('api');
 
   // Configurar validação global
   app.useGlobalPipes(new ValidationPipe({
