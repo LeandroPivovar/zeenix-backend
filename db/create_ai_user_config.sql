@@ -35,3 +35,4 @@ COMMENT='Configuração de IA de trading por usuário - permite execução em ba
 
 
 
+

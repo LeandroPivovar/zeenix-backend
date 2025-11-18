@@ -69,6 +69,19 @@ export class AuthController {
     
     return { token };
   }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body: { email: string }, @Req() req: any) {
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    return await this.authService.forgotPassword(body.email, frontendUrl);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body: { token: string; password: string }) {
+    return await this.authService.resetPassword(body.token, body.password);
+  }
 }
 
 
