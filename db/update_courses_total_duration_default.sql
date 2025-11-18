@@ -3,3 +3,4 @@ ALTER TABLE `courses`
 MODIFY COLUMN `total_duration` VARCHAR(20) NOT NULL DEFAULT '0 min';
 
 
+

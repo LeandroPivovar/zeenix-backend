@@ -6,3 +6,4 @@ MODIFY COLUMN `social_image` LONGTEXT NULL,
 MODIFY COLUMN `cover_image` LONGTEXT NULL;
 
 
+

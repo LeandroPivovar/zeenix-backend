@@ -66,3 +66,4 @@ UNION ALL
 SELECT 
     'courses' AS tabela, COUNT(*) AS registros FROM `courses`;
 
+

@@ -18,3 +18,4 @@ SELECT 'materials', COUNT(*) FROM `materials`
 UNION ALL
 SELECT 'user_lesson_progress', COUNT(*) FROM `user_lesson_progress`;
 
+
