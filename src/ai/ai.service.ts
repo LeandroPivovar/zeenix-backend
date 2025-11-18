@@ -1334,8 +1334,8 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
             timestamp: new Date().toISOString()
         });
 
-        // Build the request parameters
-        const requestParams = {
+        // Use WebSocket to execute the trade
+        const result = await this.executeTradeViaWebSocket(params.token, {
             buy: 1,
             price: params.amount,
             amount: 1,  // 1 contract
@@ -1345,48 +1345,10 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
             duration: params.duration || 1,
             duration_unit: params.duration_unit || 't',
             basis: 'stake'
-        };
+        }, tradeId);
 
-        // Convert to query string
-        const queryParams = new URLSearchParams();
-        Object.entries(requestParams).forEach(([key, value]) => {
-            queryParams.append(key, String(value));
-        });
-
-        const url = `https://api.deriv.com/buy?${queryParams.toString()}`;
-
-        this.logger.debug(`[${tradeId}] Enviando requisição para a API`, {
-            url: 'https://api.deriv.com/buy',
-            method: 'GET',
-            params: requestParams
-        });
-
-        const startTime = Date.now();
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${params.token}`,
-                'App-Id': process.env.DERIV_APP_ID || '111346'
-            }
-        });
-        const requestDuration = Date.now() - startTime;
-
-        this.logger.debug(`[${tradeId}] Resposta recebida`, {
-            status: response.status,
-            statusText: response.statusText,
-            duration: `${requestDuration}ms`
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 200)}`);
-        }
-
-        const data = await response.json();
-
-        if (data.error) {
-            throw new Error(data.error.message || 'Erro desconhecido da API');
+        if (result.error) {
+            throw new Error(result.error);
         }
 
         // Registrar a operação no banco de dados
@@ -1403,7 +1365,7 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
 
         return { 
             success: true,
-            tradeId: data.buy?.contract_id || tradeId 
+            tradeId: result.contract_id || tradeId 
         };
     } catch (error) {
         const errorMessage = error.message || 'Erro desconhecido';
@@ -1432,12 +1394,93 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
     }
 }
 
+private async executeTradeViaWebSocket(token: string, buyParams: any, tradeId: string): Promise<{contract_id?: string; error?: string}> {
+    return new Promise((resolve, reject) => {
+        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        const ws = new WebSocket.WebSocket(endpoint, {
+            headers: {
+                Origin: 'https://app.deriv.com',
+            },
+        });
+
+        let authorized = false;
+        const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error('Timeout ao executar trade'));
+        }, 30000); // 30 seconds timeout
+
+        ws.on('open', () => {
+            this.logger.debug(`[${tradeId}] WebSocket conectado, autorizando...`);
+            ws.send(JSON.stringify({ authorize: token }));
+        });
+
+        ws.on('message', (data: Buffer) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                
+                if (msg.authorize) {
+                    if (msg.authorize.error) {
+                        clearTimeout(timeout);
+                        ws.close();
+                        reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
+                        return;
+                    }
+                    authorized = true;
+                    this.logger.debug(`[${tradeId}] Autorizado, enviando buy request...`);
+                    ws.send(JSON.stringify(buyParams));
+                    return;
+                }
+
+                if (msg.buy) {
+                    clearTimeout(timeout);
+                    ws.close();
+                    
+                    if (msg.buy.error) {
+                        reject(new Error(msg.buy.error.message || 'Erro ao executar trade'));
+                        return;
+                    }
+                    
+                    this.logger.debug(`[${tradeId}] Trade executado com sucesso`, {
+                        contract_id: msg.buy.contract_id,
+                        buy_price: msg.buy.buy_price
+                    });
+                    
+                    resolve({ contract_id: msg.buy.contract_id });
+                    return;
+                }
+
+                if (msg.error) {
+                    clearTimeout(timeout);
+                    ws.close();
+                    reject(new Error(msg.error.message || 'Erro desconhecido'));
+                    return;
+                }
+            } catch (error) {
+                this.logger.error(`[${tradeId}] Erro ao processar mensagem: ${error.message}`);
+            }
+        });
+
+        ws.on('error', (error) => {
+            clearTimeout(timeout);
+            this.logger.error(`[${tradeId}] Erro no WebSocket: ${error.message}`);
+            reject(new Error(`Erro de conexão: ${error.message}`));
+        });
+
+        ws.on('close', () => {
+            clearTimeout(timeout);
+            if (!authorized) {
+                reject(new Error('Conexão fechada antes da autorização'));
+            }
+        });
+    });
+}
+
 private async recordTrade(trade: any): Promise<void> {
     await this.dataSource.query(
         `INSERT INTO ai_trades 
          (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, created_at, analysis_data)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          gemini_duration, contract_type, created_at, analysis_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
         [
             trade.userId,
             trade.contractType,
@@ -1445,6 +1488,7 @@ private async recordTrade(trade: any): Promise<void> {
             trade.amount,
             trade.status,
             trade.duration || 1,
+            trade.contractType,
             JSON.stringify({ 
                 mode: 'fast',
                 timestamp: new Date().toISOString(),
