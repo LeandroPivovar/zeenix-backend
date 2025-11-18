@@ -27,11 +27,11 @@ export class UpdateCourseDto {
   keywords?: string[];
 
   @IsOptional()
-  @IsString({ skipEmptyString: true })
+  @IsString()
   coverImage?: string | null;
 
   @IsOptional()
-  @IsString({ skipEmptyString: true })
+  @IsString()
   socialImage?: string | null;
 
   @IsOptional()
