@@ -1136,15 +1136,10 @@ export class AiService {
   }
 
   /**
-   * Processa IAs em background (chamado pelo scheduler)
-   * Verifica todos os usuários com IA ativa e executa operações quando necessário
+   * Processa apenas usuários em modo fast (chamado a cada 5 segundos para operação contínua)
    */
-  // In ai.service.ts, update the processBackgroundAIs method:
-async processBackgroundAIs(): Promise<void> {
+  async processFastModeUsers(): Promise<void> {
     try {
-        await this.syncVelozUsersFromDb();
-
-        // Process fast mode users first (no delay between trades)
         const fastModeUsers = await this.dataSource.query(
             `SELECT 
                 user_id as userId,
@@ -1158,23 +1153,31 @@ async processBackgroundAIs(): Promise<void> {
         );
 
         if (fastModeUsers.length > 0) {
-            this.logger.log(
-                `[Background AI] Processando ${fastModeUsers.length} usuários em modo rápido`
-            );
-
             for (const user of fastModeUsers) {
                 try {
                     await this.processFastMode(user);
                 } catch (error) {
                     this.logger.error(
-                        `[Background AI] Erro ao processar usuário ${user.userId} (fast mode):`,
+                        `[Fast Mode] Erro ao processar usuário ${user.userId}:`,
                         error,
                     );
                 }
             }
         }
+    } catch (error) {
+        this.logger.error('[Fast Mode] Erro no processamento:', error);
+    }
+  }
 
-        // Then process other users with trade timing logic
+  /**
+   * Processa IAs em background (chamado pelo scheduler)
+   * Verifica todos os usuários com IA ativa e executa operações quando necessário
+   */
+  async processBackgroundAIs(): Promise<void> {
+    try {
+        await this.syncVelozUsersFromDb();
+
+        // Process other users with trade timing logic (fast mode is handled separately)
         const usersToProcess = await this.dataSource.query(
             `SELECT 
                 user_id as userId,
@@ -1433,8 +1436,8 @@ private async recordTrade(trade: any): Promise<void> {
     await this.dataSource.query(
         `INSERT INTO ai_trades 
          (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, gemini_duration_unit, created_at, analysis_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          gemini_duration, created_at, analysis_data)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
         [
             trade.userId,
             trade.contractType,
@@ -1442,11 +1445,11 @@ private async recordTrade(trade: any): Promise<void> {
             trade.amount,
             trade.status,
             trade.duration || 1,
-            trade.durationUnit || 't',
             JSON.stringify({ 
                 mode: 'fast',
                 timestamp: new Date().toISOString(),
                 dvx: this.calculateDVX(this.ticks),
+                duration_unit: trade.durationUnit || 't',
                 ...(trade.error && { error: trade.error })
             })
         ]

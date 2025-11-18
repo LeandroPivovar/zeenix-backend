@@ -9,7 +9,7 @@ export class AiScheduler {
   constructor(private readonly aiService: AiService) {}
 
   /**
-   * Executa a cada 1 minuto
+   * Executa a cada 1 minuto para modos normais
    * Processa IAs em background para todos os usuários com IA ativa
    */
   @Cron(CronExpression.EVERY_MINUTE, {
@@ -22,6 +22,21 @@ export class AiScheduler {
       await this.aiService.processBackgroundAIs();
     } catch (error) {
       this.logger.error('Erro ao processar IAs em background:', error);
+    }
+  }
+
+  /**
+   * Executa a cada 5 segundos para modo fast (sem delay)
+   * Processa apenas usuários em modo fast para operação contínua
+   */
+  @Cron('*/5 * * * * *', {
+    name: 'process-fast-mode-ais',
+  })
+  async handleFastModeAIs() {
+    try {
+      await this.aiService.processFastModeUsers();
+    } catch (error) {
+      this.logger.error('Erro ao processar modo fast:', error);
     }
   }
 }

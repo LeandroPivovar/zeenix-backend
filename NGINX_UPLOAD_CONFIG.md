@@ -51,6 +51,18 @@ server {
     proxy_connect_timeout 300s;
     proxy_send_timeout 300s;
     
+    # Servir arquivos de upload diretamente (ANTES do proxy /api)
+    # Isso é mais eficiente e evita 404 para imagens/vídeos
+    location /api/uploads {
+        alias /var/www/zeenix/backend/uploads;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+        
+        # Permitir acesso a arquivos estáticos
+        try_files $uri =404;
+    }
+    
     # Proxy para aplicação NestJS
     location /api {
         proxy_pass http://localhost:3000;
@@ -134,6 +146,29 @@ location /api/courses/lessons/upload/video {
 ## Verificação
 
 Após configurar, teste o upload com um arquivo de vídeo. O erro 413 não deve mais aparecer.
+
+## Servir Arquivos de Upload Estáticos
+
+Para evitar erros 404 ao acessar imagens e vídeos enviados, configure o Nginx para servir os arquivos de upload diretamente ANTES do proxy `/api`:
+
+```nginx
+# Servir arquivos de upload diretamente (ANTES do proxy /api)
+# Isso é mais eficiente e evita 404 para imagens/vídeos
+location /api/uploads {
+    alias /var/www/zeenix/backend/uploads;
+    expires 30d;
+    add_header Cache-Control "public, immutable";
+    access_log off;
+    
+    # Permitir acesso a arquivos estáticos
+    try_files $uri =404;
+}
+```
+
+**Importante:** 
+- Ajuste o caminho `alias /var/www/zeenix/backend/uploads;` para o caminho correto onde os uploads estão armazenados no servidor
+- Esta configuração deve vir ANTES do `location /api` no nginx
+- O caminho no alias deve apontar para o diretório `uploads` do backend
 
 ## Limites Configurados
 
