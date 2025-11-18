@@ -1,14 +1,22 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
 import { v4 as uuidv4 } from 'uuid';
+import { AuthService } from '../auth/auth.service';
+import { EmailService } from '../auth/email.service';
+import { randomBytes } from 'crypto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class ExpertsService {
   constructor(
     @InjectRepository(ExpertEntity)
     private readonly expertRepository: Repository<ExpertEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly authService: AuthService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll() {
@@ -83,7 +91,57 @@ export class ExpertsService {
 
     const savedExpert = await this.expertRepository.save(expert);
 
+    // Criar usuário e enviar email de ativação
+    try {
+      await this.createUserAndSendActivationEmail(data.email, data.name);
+    } catch (error) {
+      // Log do erro mas não falha a criação do expert
+      console.error(`Erro ao criar usuário/enviar email para expert ${savedExpert.id}:`, error);
+    }
+
     return this.formatExpert(savedExpert);
+  }
+
+  private async createUserAndSendActivationEmail(email: string, name: string): Promise<void> {
+    // Verificar se usuário já existe
+    const existingUser = await this.authService.findUserByEmail(email);
+    if (existingUser) {
+      // Se já existe, apenas envia email de recuperação de senha
+      const frontendUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+      await this.authService.forgotPassword(email, frontendUrl);
+      return;
+    }
+
+    // Criar usuário com senha temporária (será alterada no primeiro login)
+    const tempPassword = randomBytes(16).toString('hex');
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    const userId = uuidv4();
+
+    await this.dataSource.query(
+      `INSERT INTO users (id, name, email, password, created_at, updated_at)
+       VALUES (?, ?, ?, ?, NOW(), NOW())`,
+      [userId, name, email, hashedPassword]
+    );
+
+    // Gerar token de reset de senha
+    const resetToken = randomBytes(32).toString('hex');
+    const resetTokenExpiry = new Date();
+    resetTokenExpiry.setHours(resetTokenExpiry.getHours() + 1); // Expira em 1 hora
+
+    // Salvar token no banco de dados
+    await this.dataSource.query(
+      `UPDATE users 
+       SET reset_token = ?, reset_token_expiry = ? 
+       WHERE id = ?`,
+      [resetToken, resetTokenExpiry, userId]
+    );
+
+    // Construir URL de reset
+    const frontendUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    // Enviar email de ativação
+    await this.emailService.sendAccountActivationEmail(email, name, resetToken, resetUrl);
   }
 
   async update(
