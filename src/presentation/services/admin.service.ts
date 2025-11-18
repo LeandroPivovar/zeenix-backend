@@ -1,9 +1,11 @@
 import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, In } from 'typeorm';
+import { Repository, Not, IsNull, In, DataSource } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { UserEntity } from '../../infrastructure/database/entities/user.entity';
 import { PlanEntity } from '../../infrastructure/database/entities/plan.entity';
 import { UserActivityLogEntity } from '../../infrastructure/database/entities/user-activity-log.entity';
+import { ExpertEntity } from '../../infrastructure/database/entities/expert.entity';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -16,6 +18,10 @@ export class AdminService {
     private readonly planRepository: Repository<PlanEntity>,
     @InjectRepository(UserActivityLogEntity)
     private readonly activityLogRepository: Repository<UserActivityLogEntity>,
+    @InjectRepository(ExpertEntity)
+    private readonly expertRepository: Repository<ExpertEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -30,6 +36,23 @@ export class AdminService {
       },
     });
 
+    // Buscar admins ativos (usuários com role de admin e isActive = true)
+    const activeAdminsCount = await this.userRepository.count({
+      where: {
+        role: In(['admin', 'super_admin', 'editor', 'suporte', 'visualizador']),
+        isActive: true,
+      },
+    });
+
+    // Buscar IAs em operação (usuários com IA ativa)
+    const iasInOperationResult = await this.dataSource.query(
+      'SELECT COUNT(*) as count FROM ai_user_config WHERE is_active = TRUE',
+    );
+    const iasInOperation = parseInt(iasInOperationResult[0]?.count || '0', 10);
+
+    // Buscar experts cadastrados
+    const registeredExpertsCount = await this.expertRepository.count();
+
     // Buscar volume gerenciado (soma dos saldos de contas não-demo)
     const managedVolume = await this.getManagedVolume();
 
@@ -43,13 +66,17 @@ export class AdminService {
 
     // Estatísticas básicas
     return {
-      activeAdmins: 8, // TODO: Implementar contagem real de admins
+      activeAdmins: activeAdminsCount,
       activeUsers: activeUsersCount,
+      iasInOperation: iasInOperation,
+      registeredExperts: registeredExpertsCount,
       totalUsers,
       usersWithActivePlans,
       managedVolume: managedVolume.total,
+      managedVolumeFormatted: managedVolume.totalFormatted,
       managedVolumeByCurrency: managedVolume.byCurrency,
       totalCommission: managedVolume.estimatedCommission,
+      totalCommissionFormatted: managedVolume.estimatedCommissionFormatted,
     };
   }
 

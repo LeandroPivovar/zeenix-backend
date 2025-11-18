@@ -6,10 +6,11 @@ import { AdminService } from './services/admin.service';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 import { UserActivityLogEntity } from '../infrastructure/database/entities/user-activity-log.entity';
+import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity, PlanEntity, UserActivityLogEntity]),
+    TypeOrmModule.forFeature([UserEntity, PlanEntity, UserActivityLogEntity, ExpertEntity]),
     PassportModule,
   ],
   controllers: [AdminController],
