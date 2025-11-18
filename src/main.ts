@@ -16,11 +16,13 @@ async function bootstrap() {
   app.use(urlencoded({ limit: '2gb', extended: true })); // Aumentado para suportar uploads grandes
 
   // Servir arquivos estáticos enviados pelos usuários
+  // Servir em /uploads/ (nginx faz proxy de /api/uploads/ -> /uploads/)
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
   });
   
-  // Configurar prefixo global /api
+  // Configurar prefixo global /api (comentado porque nginx já faz proxy)
+  // app.setGlobalPrefix('api');
 
   // Configurar validação global
   app.useGlobalPipes(new ValidationPipe({
