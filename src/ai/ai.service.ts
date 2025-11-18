@@ -50,6 +50,7 @@ const FAST_MODE_CONFIG = {
   martingaleMax: 2, // Máximo de martingales
   martingaleMultiplier: 2.5, // Multiplicador do martingale
   minTicks: 100, // Mínimo de ticks para análise
+  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
 };
 
 @Injectable()
@@ -1289,7 +1290,20 @@ private async processFastMode(user: any): Promise<void> {
         // Executar operação
         this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx} | Janela: ${windowTicks.map(t => t.parity).join('-')}`);
         
-        const betAmount = Number(stakeAmount) * FAST_MODE_CONFIG.betPercent;
+        // Calcular valor da aposta: usar stakeAmount diretamente ou calcular percentual, garantindo mínimo
+        let betAmount = Number(stakeAmount);
+        
+        // Se stakeAmount parece ser capital (valor alto), calcular percentual
+        if (betAmount > 10) {
+            betAmount = betAmount * FAST_MODE_CONFIG.betPercent;
+        }
+        
+        // Garantir valor mínimo da Deriv
+        if (betAmount < FAST_MODE_CONFIG.minStake) {
+            betAmount = FAST_MODE_CONFIG.minStake;
+            this.logger.warn(`[Fast] Valor da aposta ajustado para o mínimo: ${betAmount}`);
+        }
+        
         const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
         
         const result = await this.executeTrade(userId, {
@@ -1349,7 +1363,7 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
         }
 
         // Registrar a operação no banco de dados
-        await this.recordTrade({
+        const tradeRecordId = await this.recordTrade({
             userId,
             contractType: params.contract_type,
             amount: params.amount,
@@ -1357,8 +1371,16 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
             status: 'PENDING',
             entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
             duration: params.duration || 1,
-            durationUnit: params.duration_unit || 't'
+            durationUnit: params.duration_unit || 't',
+            contractId: result.contract_id
         });
+
+        // Iniciar monitoramento do contrato
+        if (result.contract_id && tradeRecordId) {
+            this.monitorContract(result.contract_id, tradeRecordId, params.token).catch(error => {
+                this.logger.error(`[${tradeId}] Erro ao iniciar monitoramento do contrato: ${error.message}`);
+            });
+        }
 
         return { 
             success: true,
@@ -1555,12 +1577,12 @@ private async executeTradeViaWebSocket(token: string, contractParams: any, trade
     });
 }
 
-private async recordTrade(trade: any): Promise<void> {
-    await this.dataSource.query(
+private async recordTrade(trade: any): Promise<number | null> {
+    const insertResult: any = await this.dataSource.query(
         `INSERT INTO ai_trades 
          (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, contract_type, created_at, analysis_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          gemini_duration, contract_type, contract_id, created_at, analysis_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
         [
             trade.userId,
             trade.contractType,
@@ -1569,6 +1591,7 @@ private async recordTrade(trade: any): Promise<void> {
             trade.status,
             trade.duration || 1,
             trade.contractType,
+            trade.contractId || null,
             JSON.stringify({ 
                 mode: 'fast',
                 timestamp: new Date().toISOString(),
@@ -1578,6 +1601,138 @@ private async recordTrade(trade: any): Promise<void> {
             })
         ]
     );
+    
+    // TypeORM pode retornar array ou objeto direto
+    const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+    return result?.insertId || null;
+}
+
+private async monitorContract(contractId: string, tradeId: number, token: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        const ws = new WebSocket.WebSocket(endpoint, {
+            headers: {
+                Origin: 'https://app.deriv.com',
+            },
+        });
+
+        let authorized = false;
+        let contractSubscriptionId: string | null = null;
+        const timeout = setTimeout(() => {
+            if (contractSubscriptionId) {
+                try {
+                    ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+                } catch (e) {
+                    // Ignore
+                }
+            }
+            ws.close();
+            reject(new Error('Timeout ao monitorar contrato'));
+        }, 120000); // 2 minutes timeout (contratos de 1 tick duram pouco)
+
+        ws.on('open', () => {
+            this.logger.debug(`[Monitor] Conectando para monitorar contrato ${contractId}...`);
+            ws.send(JSON.stringify({ authorize: token }));
+        });
+
+        ws.on('message', async (data: Buffer) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                
+                if (msg.authorize) {
+                    if (msg.authorize.error) {
+                        clearTimeout(timeout);
+                        ws.close();
+                        reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
+                        return;
+                    }
+                    authorized = true;
+                    this.logger.debug(`[Monitor] Autorizado, subscrevendo contrato ${contractId}...`);
+                    
+                    // Subscribe to contract
+                    ws.send(JSON.stringify({
+                        proposal_open_contract: 1,
+                        contract_id: contractId,
+                        subscribe: 1,
+                    }));
+                    return;
+                }
+
+                if (msg.proposal_open_contract) {
+                    const contract = msg.proposal_open_contract;
+                    
+                    if (msg.subscription?.id) {
+                        contractSubscriptionId = msg.subscription.id;
+                    }
+                    
+                    // Check if contract is sold
+                    if (contract.is_sold === 1) {
+                        clearTimeout(timeout);
+                        
+                        const profit = Number(contract.profit || 0);
+                        const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+                        const status = profit >= 0 ? 'WON' : 'LOST';
+                        
+                        this.logger.debug(`[Monitor] Contrato ${contractId} fechado`, {
+                            status,
+                            profit,
+                            exitPrice
+                        });
+                        
+                        // Update database
+                        await this.dataSource.query(
+                            `UPDATE ai_trades
+                             SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                             WHERE id = ?`,
+                            [exitPrice, profit, status, tradeId],
+                        );
+                        
+                        // Unsubscribe
+                        if (contractSubscriptionId) {
+                            try {
+                                ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+                            } catch (e) {
+                                // Ignore
+                            }
+                        }
+                        
+                        ws.close();
+                        resolve();
+                        return;
+                    }
+                }
+
+                if (msg.error) {
+                    clearTimeout(timeout);
+                    if (contractSubscriptionId) {
+                        try {
+                            ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+                        } catch (e) {
+                            // Ignore
+                        }
+                    }
+                    ws.close();
+                    reject(new Error(msg.error.message || 'Erro desconhecido'));
+                    return;
+                }
+            } catch (error) {
+                this.logger.error(`[Monitor] Erro ao processar mensagem: ${error.message}`);
+            }
+        });
+
+        ws.on('error', (error) => {
+            clearTimeout(timeout);
+            this.logger.error(`[Monitor] Erro no WebSocket: ${error.message}`);
+            reject(new Error(`Erro de conexão: ${error.message}`));
+        });
+
+        ws.on('close', () => {
+            clearTimeout(timeout);
+            if (!authorized) {
+                reject(new Error('Conexão fechada antes da autorização'));
+            }
+        });
+    });
 }
 
   private async prepareVelozUser(user: any): Promise<void> {
