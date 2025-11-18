@@ -1021,7 +1021,9 @@ export class AiService {
     stakeAmount: number,
     derivToken: string,
     currency: string,
-    mode: string = 'moderate',
+    mode: string = 'veloz',
+    profitTarget?: number,
+    lossLimit?: number,
   ): Promise<void> {
     this.logger.log(`Ativando IA para usuário ${userId} no modo ${mode}`);
 
@@ -1042,18 +1044,20 @@ export class AiService {
              deriv_token = ?, 
              currency = ?,
              mode = ?,
+             profit_target = ?,
+             loss_limit = ?,
              next_trade_at = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE user_id = ?`,
-        [stakeAmount, derivToken, currency, mode, nextTradeAt, userId],
+        [stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt, userId],
       );
     } else {
       // Criar nova configuração
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, stake_amount, deriv_token, currency, mode, next_trade_at) 
-         VALUES (?, TRUE, ?, ?, ?, ?, ?)`,
-        [userId, stakeAmount, derivToken, currency, mode, nextTradeAt],
+         (user_id, is_active, stake_amount, deriv_token, currency, mode, profit_target, loss_limit, next_trade_at) 
+         VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt],
       );
     }
 
@@ -1098,6 +1102,8 @@ export class AiService {
         stake_amount as stakeAmount,
         currency,
         mode,
+        profit_target as profitTarget,
+        loss_limit as lossLimit,
         last_trade_at as lastTradeAt,
         next_trade_at as nextTradeAt,
         total_trades as totalTrades,
@@ -1116,7 +1122,9 @@ export class AiService {
         isActive: false,
         stakeAmount: 10,
         currency: 'USD',
-        mode: 'moderate',
+        mode: 'veloz',
+        profitTarget: null,
+        lossLimit: null,
         totalTrades: 0,
         totalWins: 0,
         totalLosses: 0,
