@@ -14,6 +14,8 @@ import { TradesModule } from './trades/trades.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { AiModule } from './ai/ai.module';
 import { ClientsModule } from './clients/clients.module';
+import { AdminModule } from './presentation/admin.module';
+import { ExpertsModule } from './experts/experts.module';
 
 @Module({
   imports: [
@@ -29,7 +31,9 @@ import { ClientsModule } from './clients/clients.module';
     TradesModule, 
     GeminiModule, 
     AiModule,
-    ClientsModule
+    ClientsModule,
+    AdminModule,
+    ExpertsModule
   ],
   controllers: [AppController],
   providers: [AppService],

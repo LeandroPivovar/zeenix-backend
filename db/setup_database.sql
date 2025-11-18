@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS `courses` (
   `description` text NOT NULL,
   `image_placeholder` varchar(100) DEFAULT NULL,
   `total_lessons` int NOT NULL DEFAULT 0,
-  `total_duration` varchar(20) NOT NULL,
+  `total_duration` varchar(20) NOT NULL DEFAULT '0 min',
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`)

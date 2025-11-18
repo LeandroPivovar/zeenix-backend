@@ -15,6 +15,15 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 255 })
   password: string;
 
+  @Column({ type: 'varchar', length: 50, default: 'user' })
+  role: string;
+
+  @Column({ type: 'boolean', default: true, name: 'is_active' })
+  isActive: boolean;
+
+  @Column({ type: 'datetime', nullable: true, name: 'last_login_at' })
+  lastLoginAt?: Date | null;
+
   @Column({ type: 'char', length: 36, nullable: true, name: 'plan_id' })
   planId?: string | null;
 

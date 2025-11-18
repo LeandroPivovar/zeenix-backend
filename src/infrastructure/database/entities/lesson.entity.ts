@@ -19,6 +19,21 @@ export class LessonEntity {
   @Column({ type: 'text', nullable: true })
   description?: string | null;
 
+  @Column({ type: 'enum', enum: ['Video', 'Text', 'PDF', 'Link'], default: 'Video', name: 'content_type' })
+  contentType?: string;
+
+  @Column({ type: 'varchar', length: 500, nullable: true, name: 'content_link' })
+  contentLink?: string | null;
+
+  @Column({ type: 'enum', enum: ['Imediata', 'Agendada'], default: 'Imediata', name: 'release_type' })
+  releaseType?: string;
+
+  @Column({ type: 'datetime', nullable: true, name: 'release_date' })
+  releaseDate?: Date | null;
+
+  @Column({ type: 'boolean', default: true, name: 'is_active' })
+  isActive?: boolean;
+
   @Column({ type: 'varchar', length: 20 })
   duration: string;
 

@@ -13,6 +13,12 @@ export class ModuleEntity {
   @Column({ type: 'varchar', length: 255 })
   title: string;
 
+  @Column({ type: 'text', nullable: true, name: 'short_description' })
+  shortDescription?: string | null;
+
+  @Column({ type: 'enum', enum: ['draft', 'published', 'archived'], default: 'published' })
+  status?: string;
+
   @Column({ type: 'int', default: 0, name: 'order_index' })
   orderIndex: number;
 

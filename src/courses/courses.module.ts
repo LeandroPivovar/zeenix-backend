@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { CourseEntity } from '../infrastructure/database/entities/course.entity';
 import { LessonEntity } from '../infrastructure/database/entities/lesson.entity';
 import { ModuleEntity } from '../infrastructure/database/entities/module.entity';
+import { MaterialEntity } from '../infrastructure/database/entities/material.entity';
 import { UserLessonProgressEntity } from '../infrastructure/database/entities/user-lesson-progress.entity';
 import { TypeOrmCourseRepository } from '../infrastructure/database/repositories/course.repository';
 import { TypeOrmLessonRepository } from '../infrastructure/database/repositories/lesson.repository';
@@ -13,7 +14,7 @@ import { CoursesService } from './courses.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CourseEntity, LessonEntity, ModuleEntity, UserLessonProgressEntity]),
+    TypeOrmModule.forFeature([CourseEntity, LessonEntity, ModuleEntity, MaterialEntity, UserLessonProgressEntity]),
     JwtModule,
   ],
   controllers: [CoursesController],
