@@ -105,7 +105,7 @@ export class EmailService {
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: 'Bem-vindo! Complete seu cadastro - ULTRA Academy',
+      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ULTRA Academy',
       html: `
         <!DOCTYPE html>
         <html>
@@ -114,57 +114,99 @@ export class EmailService {
           <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #22C55E; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .header { background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white; padding: 30px 20px; text-align: center; border-radius: 8px 8px 0 0; }
             .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
-            .button { display: inline-block; padding: 12px 30px; background-color: #22C55E; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+            .welcome-box { background-color: #E8F5E9; border-left: 4px solid #22C55E; padding: 20px; margin: 20px 0; border-radius: 5px; }
+            .button { display: inline-block; padding: 14px 35px; background-color: #22C55E; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+            .button:hover { background-color: #16A34A; }
             .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-            .token { background-color: #fff; padding: 15px; border-radius: 5px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+            .token { background-color: #fff; padding: 15px; border-radius: 5px; margin: 20px 0; font-family: monospace; word-break: break-all; border: 1px solid #E5E5E5; }
+            .highlight { color: #22C55E; font-weight: bold; }
           </style>
         </head>
         <body>
           <div class="container">
             <div class="header">
-              <h1>Bem-vindo à ULTRA Academy!</h1>
+              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ULTRA Academy!</h1>
+              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.95;">Sua jornada como Expert começa agora</p>
             </div>
             <div class="content">
-              <p>Olá ${name},</p>
-              <p>Uma conta de Expert foi criada para você na plataforma ULTRA Academy.</p>
-              <p>Para concluir seu cadastro e acessar a plataforma, você precisa definir uma senha. Clique no botão abaixo para criar sua senha:</p>
+              <p style="font-size: 18px; margin-bottom: 10px;"><strong>Olá ${name},</strong></p>
+              
+              <div class="welcome-box">
+                <p style="margin: 0; font-size: 16px; color: #2E7D32;">
+                  <strong>É um prazer tê-lo conosco!</strong> Sua conta de <span class="highlight">Expert</span> foi criada com sucesso na plataforma ULTRA Academy.
+                </p>
+              </div>
+
+              <p>Estamos muito felizes em tê-lo como parte da nossa comunidade de traders especializados. Como Expert, você terá acesso a recursos exclusivos para compartilhar suas estratégias e ajudar outros traders a alcançarem seus objetivos.</p>
+
+              <p><strong>O que você pode fazer como Expert:</strong></p>
+              <ul style="line-height: 2;">
+                <li>📊 Compartilhar suas estratégias de trading</li>
+                <li>📈 Acompanhar seu desempenho e estatísticas</li>
+                <li>👥 Conectar-se com traders da comunidade</li>
+                <li>💼 Gerenciar seu perfil e especialidades</li>
+                <li>🎯 Aumentar sua visibilidade e reputação</li>
+              </ul>
+
+              <p style="margin-top: 30px;"><strong>Para começar, você precisa definir uma senha para sua conta:</strong></p>
+              
               <p style="text-align: center;">
-                <a href="${resetUrl}" class="button">Definir Minha Senha</a>
+                <a href="${resetUrl}" class="button">🔐 Definir Minha Senha</a>
               </p>
-              <p>Ou copie e cole o link abaixo no seu navegador:</p>
+
+              <p style="text-align: center; color: #666; font-size: 14px;">Ou copie e cole o link abaixo no seu navegador:</p>
               <div class="token">${resetUrl}</div>
-              <p><strong>Este link expira em 1 hora.</strong></p>
-              <p>Após definir sua senha, você poderá fazer login e começar a usar a plataforma.</p>
-              <p>Se você não esperava receber este e-mail, ignore esta mensagem.</p>
-              <p>Atenciosamente,<br>Equipe ULTRA Academy</p>
+              
+              <p style="background-color: #FFF3CD; padding: 15px; border-radius: 5px; border-left: 4px solid #FFC107;">
+                <strong>⏰ Importante:</strong> Este link expira em <strong>1 hora</strong>. Após definir sua senha, você poderá fazer login e começar a usar a plataforma imediatamente.
+              </p>
+
+              <p style="margin-top: 30px;">Estamos ansiosos para ver suas contribuições na comunidade!</p>
+
+              <p style="margin-top: 30px;">
+                Bem-vindo e sucesso em sua jornada!<br>
+                <strong>Equipe ULTRA Academy</strong>
+              </p>
             </div>
             <div class="footer">
               <p>Este é um e-mail automático, por favor não responda.</p>
+              <p style="margin-top: 10px;">Se você não esperava receber este e-mail, ignore esta mensagem.</p>
             </div>
           </div>
         </body>
         </html>
       `,
       text: `
-        Bem-vindo à ULTRA Academy!
+        🎉 Bem-vindo à ULTRA Academy!
         
         Olá ${name},
         
-        Uma conta de Expert foi criada para você na plataforma ULTRA Academy.
+        É um prazer tê-lo conosco! Sua conta de Expert foi criada com sucesso na plataforma ULTRA Academy.
         
-        Para concluir seu cadastro e acessar a plataforma, você precisa definir uma senha. Acesse o link abaixo:
+        Estamos muito felizes em tê-lo como parte da nossa comunidade de traders especializados. Como Expert, você terá acesso a recursos exclusivos para compartilhar suas estratégias e ajudar outros traders a alcançarem seus objetivos.
+        
+        O que você pode fazer como Expert:
+        - Compartilhar suas estratégias de trading
+        - Acompanhar seu desempenho e estatísticas
+        - Conectar-se com traders da comunidade
+        - Gerenciar seu perfil e especialidades
+        - Aumentar sua visibilidade e reputação
+        
+        Para começar, você precisa definir uma senha para sua conta. Acesse o link abaixo:
         ${resetUrl}
         
-        Este link expira em 1 hora.
+        IMPORTANTE: Este link expira em 1 hora. Após definir sua senha, você poderá fazer login e começar a usar a plataforma imediatamente.
         
-        Após definir sua senha, você poderá fazer login e começar a usar a plataforma.
+        Estamos ansiosos para ver suas contribuições na comunidade!
         
-        Se você não esperava receber este e-mail, ignore esta mensagem.
-        
-        Atenciosamente,
+        Bem-vindo e sucesso em sua jornada!
         Equipe ULTRA Academy
+        
+        ---
+        Este é um e-mail automático, por favor não responda.
+        Se você não esperava receber este e-mail, ignore esta mensagem.
       `,
     };
 
