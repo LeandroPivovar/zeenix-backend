@@ -10,7 +10,6 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
   
-  // Configurar limite de payload 
   // Para uploads de vídeo, aumentamos para 2GB (multer já tem limite de 1GB configurado)
   app.use(json({ limit: '50mb' })); // JSON continua em 50MB
   app.use(urlencoded({ limit: '2gb', extended: true })); // Aumentado para suportar uploads grandes
