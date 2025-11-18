@@ -8,10 +8,13 @@ export class EmailService {
 
   constructor() {
     // Configuração SMTP do Gmail
+    const smtpSecure = process.env.SMTP_SECURE || 'tls';
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+    
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'ssl', // true para 465, false para outras portas
+      port: smtpPort,
+      secure: smtpSecure === 'ssl', // true para SSL (porta 465), false para TLS (porta 587)
       auth: {
         user: process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com',
         pass: process.env.SMTP_PASSWORD || 'zgri migf nurw hmqy',
