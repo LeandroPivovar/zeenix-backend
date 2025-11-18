@@ -1336,15 +1336,12 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
 
         // Use WebSocket to execute the trade
         const result = await this.executeTradeViaWebSocket(params.token, {
-            buy: 1,
             price: params.amount,
-            amount: 1,  // 1 contract
             currency: params.currency || 'USD',
             symbol: params.symbol,
             contract_type: params.contract_type,
             duration: params.duration || 1,
             duration_unit: params.duration_unit || 't',
-            basis: 'stake'
         }, tradeId);
 
         if (result.error) {
@@ -1394,7 +1391,7 @@ private async executeTrade(userId: number, params: any): Promise<{success: boole
     }
 }
 
-private async executeTradeViaWebSocket(token: string, buyParams: any, tradeId: string): Promise<{contract_id?: string; error?: string}> {
+private async executeTradeViaWebSocket(token: string, contractParams: any, tradeId: string): Promise<{contract_id?: string; error?: string}> {
     return new Promise((resolve, reject) => {
         const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
         const ws = new WebSocket.WebSocket(endpoint, {
@@ -1404,7 +1401,19 @@ private async executeTradeViaWebSocket(token: string, buyParams: any, tradeId: s
         });
 
         let authorized = false;
+        let proposalReceived = false;
+        let proposalId: string | null = null;
+        let proposalPrice: number | null = null;
+        let proposalSubscriptionId: string | null = null;
+        
         const timeout = setTimeout(() => {
+            if (proposalSubscriptionId) {
+                try {
+                    ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+                } catch (e) {
+                    // Ignore
+                }
+            }
             ws.close();
             reject(new Error('Timeout ao executar trade'));
         }, 30000); // 30 seconds timeout
@@ -1426,13 +1435,77 @@ private async executeTradeViaWebSocket(token: string, buyParams: any, tradeId: s
                         return;
                     }
                     authorized = true;
-                    this.logger.debug(`[${tradeId}] Autorizado, enviando buy request...`);
-                    ws.send(JSON.stringify(buyParams));
+                    this.logger.debug(`[${tradeId}] Autorizado, subscrevendo proposta...`);
+                    
+                    // Subscribe to proposal
+                    const proposalPayload = {
+                        proposal: 1,
+                        amount: contractParams.price,
+                        basis: 'stake',
+                        contract_type: contractParams.contract_type,
+                        currency: contractParams.currency || 'USD',
+                        duration: contractParams.duration || 1,
+                        duration_unit: contractParams.duration_unit || 't',
+                        symbol: contractParams.symbol,
+                        subscribe: 1,
+                    };
+                    
+                    ws.send(JSON.stringify(proposalPayload));
+                    return;
+                }
+
+                if (msg.proposal) {
+                    const proposal = msg.proposal;
+                    if (proposal.error) {
+                        clearTimeout(timeout);
+                        if (proposalSubscriptionId) {
+                            try {
+                                ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+                            } catch (e) {
+                                // Ignore
+                            }
+                        }
+                        ws.close();
+                        reject(new Error(proposal.error.message || 'Erro ao obter proposta'));
+                        return;
+                    }
+                    
+                    proposalId = proposal.id;
+                    proposalPrice = Number(proposal.ask_price);
+                    proposalReceived = true;
+                    
+                    if (msg.subscription?.id) {
+                        proposalSubscriptionId = msg.subscription.id;
+                    }
+                    
+                    this.logger.debug(`[${tradeId}] Proposta recebida`, {
+                        proposal_id: proposalId,
+                        price: proposalPrice
+                    });
+                    
+                    // Now send buy request
+                    const buyPayload = {
+                        buy: proposalId,
+                        price: proposalPrice,
+                    };
+                    
+                    this.logger.debug(`[${tradeId}] Enviando buy request...`);
+                    ws.send(JSON.stringify(buyPayload));
                     return;
                 }
 
                 if (msg.buy) {
                     clearTimeout(timeout);
+                    
+                    // Unsubscribe from proposal
+                    if (proposalSubscriptionId) {
+                        try {
+                            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+                        } catch (e) {
+                            // Ignore
+                        }
+                    }
+                    
                     ws.close();
                     
                     if (msg.buy.error) {
@@ -1451,6 +1524,13 @@ private async executeTradeViaWebSocket(token: string, buyParams: any, tradeId: s
 
                 if (msg.error) {
                     clearTimeout(timeout);
+                    if (proposalSubscriptionId) {
+                        try {
+                            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+                        } catch (e) {
+                            // Ignore
+                        }
+                    }
                     ws.close();
                     reject(new Error(msg.error.message || 'Erro desconhecido'));
                     return;
