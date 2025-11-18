@@ -25,8 +25,14 @@ async function bootstrap() {
   // Configurar validação global
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
-    forbidNonWhitelisted: true,
+    forbidNonWhitelisted: false, // Permitir campos extras para compatibilidade
     transform: true,
+    transformOptions: {
+      enableImplicitConversion: true,
+    },
+    skipMissingProperties: false,
+    skipNullProperties: false,
+    skipUndefinedProperties: true,
   }));
 
   // CORS

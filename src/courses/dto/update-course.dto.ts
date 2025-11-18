@@ -27,12 +27,12 @@ export class UpdateCourseDto {
   keywords?: string[];
 
   @IsOptional()
-  @IsString()
-  coverImage?: string;
+  @IsString({ skipEmptyString: true })
+  coverImage?: string | null;
 
   @IsOptional()
-  @IsString()
-  socialImage?: string;
+  @IsString({ skipEmptyString: true })
+  socialImage?: string | null;
 
   @IsOptional()
   @IsEnum(['1', '2', '3'])

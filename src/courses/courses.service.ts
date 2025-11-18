@@ -238,11 +238,15 @@ export class CoursesService {
     if (updateCourseDto.availableUntil) {
       updateData.availableUntil = new Date(updateCourseDto.availableUntil);
     }
-    if (updateCourseDto.coverImage !== undefined) {
+    if (updateCourseDto.coverImage !== undefined && updateCourseDto.coverImage !== null) {
       updateData.coverImage = this.normalizeMediaPath(updateCourseDto.coverImage);
+    } else if (updateCourseDto.coverImage === null || updateCourseDto.coverImage === '') {
+      updateData.coverImage = null;
     }
-    if (updateCourseDto.socialImage !== undefined) {
+    if (updateCourseDto.socialImage !== undefined && updateCourseDto.socialImage !== null) {
       updateData.socialImage = this.normalizeMediaPath(updateCourseDto.socialImage);
+    } else if (updateCourseDto.socialImage === null || updateCourseDto.socialImage === '') {
+      updateData.socialImage = null;
     }
 
     Object.assign(course, updateData);
