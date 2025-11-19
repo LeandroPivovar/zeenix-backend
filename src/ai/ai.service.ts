@@ -340,9 +340,15 @@ export class AiService implements OnModuleInit {
     );
 
     // Processar estratégias de todos os modos ativos
-    this.processVelozStrategies(newTick);
-    this.processModeradoStrategies(newTick);
-    this.processPrecisoStrategies(newTick);
+    this.processVelozStrategies(newTick).catch((error) => {
+      this.logger.error(`[ProcessVelozStrategies] Erro:`, error);
+    });
+    this.processModeradoStrategies(newTick).catch((error) => {
+      this.logger.error(`[ProcessModeradoStrategies] Erro:`, error);
+    });
+    this.processPrecisoStrategies(newTick).catch((error) => {
+      this.logger.error(`[ProcessPrecisoStrategies] Erro:`, error);
+    });
   }
 
   private extractLastDigit(value: number): number {
@@ -357,7 +363,7 @@ export class AiService implements OnModuleInit {
     return digit % 2 === 0 ? 'PAR' : 'IMPAR';
   }
 
-  private processVelozStrategies(latestTick: Tick) {
+  private async processVelozStrategies(latestTick: Tick) {
     if (this.velozUsers.size === 0) {
       return;
     }
@@ -402,7 +408,8 @@ export class AiService implements OnModuleInit {
     }
 
     for (const state of this.velozUsers.values()) {
-      if (!this.canProcessVelozState(state)) {
+      const canProcess = await this.canProcessVelozState(state);
+      if (!canProcess) {
         continue;
       }
       this.handleLossVirtualState(state, proposal, latestTick, dvx);
@@ -437,7 +444,7 @@ export class AiService implements OnModuleInit {
     return Math.round(dvx);
   }
 
-  private canProcessVelozState(state: VelozUserState): boolean {
+  private async canProcessVelozState(state: VelozUserState): Promise<boolean> {
     if (state.isOperationActive) {
       this.logger.debug(
         `[Veloz][${state.userId}] Operação em andamento - aguardando finalização`,
@@ -456,6 +463,36 @@ export class AiService implements OnModuleInit {
       );
       return false;
     }
+    
+    // Verificar se a sessão foi parada por stop loss/win
+    try {
+      const configResult = await this.dataSource.query(
+        `SELECT session_status, is_active 
+         FROM ai_user_config 
+         WHERE user_id = ?`,
+        [state.userId],
+      );
+      
+      if (configResult && configResult.length > 0) {
+        const config = configResult[0];
+        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+          this.logger.warn(
+            `[Veloz][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+          );
+          return false;
+        }
+        if (!config.is_active) {
+          this.logger.warn(
+            `[Veloz][${state.userId}] IA inativa - não executando novos trades`,
+          );
+          return false;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[Veloz][${state.userId}] Erro ao verificar status da sessão:`, error);
+      return false;
+    }
+    
     return true;
   }
 
@@ -927,12 +964,13 @@ export class AiService implements OnModuleInit {
   
   /**
    * Verifica se os limites de lucro/perda diários foram atingidos e desativa a IA automaticamente
+   * Para imediatamente qualquer trade em andamento e grava o status da sessão
    */
   private async checkAndEnforceLimits(userId: string): Promise<void> {
     try {
       // Buscar configuração do usuário
       const configResult = await this.dataSource.query(
-        `SELECT profit_target, loss_limit, is_active 
+        `SELECT profit_target, loss_limit, is_active, session_status 
          FROM ai_user_config 
          WHERE user_id = ?`,
         [userId],
@@ -944,8 +982,8 @@ export class AiService implements OnModuleInit {
       
       const config = configResult[0];
       
-      // Se já está inativa, não precisa verificar
-      if (!config.is_active) {
+      // Se já está inativa ou já foi parada, não precisa verificar
+      if (!config.is_active || (config.session_status && config.session_status !== 'active')) {
         return;
       }
       
@@ -973,10 +1011,12 @@ export class AiService implements OnModuleInit {
       
       let shouldDeactivate = false;
       let deactivationReason = '';
+      let sessionStatus: string | null = null;
       
       // Verificar se atingiu meta de lucro
       if (profitTarget && totalProfitLoss >= profitTarget) {
         shouldDeactivate = true;
+        sessionStatus = 'stopped_profit';
         deactivationReason = `Meta de lucro diária atingida: $${totalProfitLoss.toFixed(2)} (Meta: $${profitTarget})`;
         this.logger.log(`[CheckLimits][${userId}] 🎯 ${deactivationReason}`);
       }
@@ -984,30 +1024,56 @@ export class AiService implements OnModuleInit {
       // Verificar se atingiu limite de perda
       if (lossLimit && totalProfitLoss <= -lossLimit) {
         shouldDeactivate = true;
+        sessionStatus = 'stopped_loss';
         deactivationReason = `Limite de perda diária atingido: -$${Math.abs(totalProfitLoss).toFixed(2)} (Limite: $${lossLimit})`;
         this.logger.warn(`[CheckLimits][${userId}] 🛑 ${deactivationReason}`);
       }
       
       // Desativar IA se necessário
-      if (shouldDeactivate) {
+      if (shouldDeactivate && sessionStatus) {
+        // Atualizar configuração com status da sessão e desativar
         await this.dataSource.query(
           `UPDATE ai_user_config 
            SET is_active = FALSE, 
+               session_status = ?,
                deactivation_reason = ?,
                deactivated_at = NOW(),
                updated_at = CURRENT_TIMESTAMP
            WHERE user_id = ?`,
-          [deactivationReason, userId],
+          [sessionStatus, deactivationReason, userId],
         );
         
-        // Remover do mapa de usuários Veloz ativos
+        // Parar imediatamente qualquer trade em andamento
+        // Remover do mapa de usuários ativos para impedir novos trades
         if (this.velozUsers.has(userId)) {
+          const state = this.velozUsers.get(userId);
+          if (state) {
+            // Marcar operação como inativa para parar qualquer trade em andamento
+            state.isOperationActive = false;
+          }
           this.velozUsers.delete(userId);
-          this.logger.log(`[CheckLimits][${userId}] IA desativada automaticamente`);
+          this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos`);
+        }
+        
+        // Remover também dos outros modos se estiverem ativos
+        if (this.moderadoUsers.has(userId)) {
+          const state = this.moderadoUsers.get(userId);
+          if (state) {
+            state.isOperationActive = false;
+          }
+          this.moderadoUsers.delete(userId);
+        }
+        
+        if (this.precisoUsers.has(userId)) {
+          const state = this.precisoUsers.get(userId);
+          if (state) {
+            state.isOperationActive = false;
+          }
+          this.precisoUsers.delete(userId);
         }
         
         // Registrar log de desativação automática
-        this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason}`);
+        this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason} | Status: ${sessionStatus}`);
       }
     } catch (error) {
       this.logger.error(`[CheckLimits][${userId}] Erro ao verificar limites:`, error);
@@ -1576,8 +1642,8 @@ export class AiService implements OnModuleInit {
     // 2. Criar nova sessão (sempre INSERT)
     await this.dataSource.query(
       `INSERT INTO ai_user_config 
-       (user_id, is_active, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-       VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+       (user_id, is_active, session_status, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
       [userId, stakeAmount, derivToken, currency, mode, modoMartingale, profitTarget || null, lossLimit || null, nextTradeAt],
     );
 
@@ -2773,7 +2839,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // Processar loss virtual para cada usuário ativo no modo moderado
     for (const state of this.moderadoUsers.values()) {
-      if (!this.canProcessModeradoState(state)) {
+      const canProcess = await this.canProcessModeradoState(state);
+      if (!canProcess) {
         continue;
       }
       await this.handleModeradoLossVirtual(state, proposal, latestTick, dvx);
@@ -2865,7 +2932,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   /**
    * Verifica se pode processar o estado do usuário no modo moderado
    */
-  private canProcessModeradoState(state: ModeradoUserState): boolean {
+  private async canProcessModeradoState(state: ModeradoUserState): Promise<boolean> {
     if (state.isOperationActive) {
       this.logger.debug(
         `[Moderado][${state.userId}] Operação em andamento - aguardando finalização`,
@@ -2884,6 +2951,36 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       );
       return false;
     }
+    
+    // Verificar se a sessão foi parada por stop loss/win
+    try {
+      const configResult = await this.dataSource.query(
+        `SELECT session_status, is_active 
+         FROM ai_user_config 
+         WHERE user_id = ?`,
+        [state.userId],
+      );
+      
+      if (configResult && configResult.length > 0) {
+        const config = configResult[0];
+        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+          this.logger.warn(
+            `[Moderado][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+          );
+          return false;
+        }
+        if (!config.is_active) {
+          this.logger.warn(
+            `[Moderado][${state.userId}] IA inativa - não executando novos trades`,
+          );
+          return false;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[Moderado][${state.userId}] Erro ao verificar status da sessão:`, error);
+      return false;
+    }
+    
     return true;
   }
 
@@ -3352,7 +3449,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // Processar loss virtual para cada usuário ativo no modo preciso
     for (const state of this.precisoUsers.values()) {
-      if (!this.canProcessPrecisoState(state)) {
+      const canProcess = await this.canProcessPrecisoState(state);
+      if (!canProcess) {
         continue;
       }
       await this.handlePrecisoLossVirtual(state, proposal, latestTick, dvx);
@@ -3362,7 +3460,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   /**
    * Verifica se pode processar o estado do usuário no modo preciso
    */
-  private canProcessPrecisoState(state: PrecisoUserState): boolean {
+  private async canProcessPrecisoState(state: PrecisoUserState): Promise<boolean> {
     if (state.isOperationActive) {
       this.logger.debug(
         `[Preciso][${state.userId}] Operação em andamento - aguardando finalização`,
@@ -3381,6 +3479,36 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       );
       return false;
     }
+    
+    // Verificar se a sessão foi parada por stop loss/win
+    try {
+      const configResult = await this.dataSource.query(
+        `SELECT session_status, is_active 
+         FROM ai_user_config 
+         WHERE user_id = ?`,
+        [state.userId],
+      );
+      
+      if (configResult && configResult.length > 0) {
+        const config = configResult[0];
+        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+          this.logger.warn(
+            `[Preciso][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+          );
+          return false;
+        }
+        if (!config.is_active) {
+          this.logger.warn(
+            `[Preciso][${state.userId}] IA inativa - não executando novos trades`,
+          );
+          return false;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[Preciso][${state.userId}] Erro ao verificar status da sessão:`, error);
+      return false;
+    }
+    
     return true;
   }
 
