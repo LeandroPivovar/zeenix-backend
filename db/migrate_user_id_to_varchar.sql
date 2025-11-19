@@ -1,5 +1,9 @@
 -- Script para migrar a coluna user_id de INT para VARCHAR(36)
--- Execute este script se a tabela ai_user_config já existir com user_id INT
+-- Execute este script se as tabelas já existirem com user_id INT
+
+-- ========================================
+-- TABELA: ai_user_config
+-- ========================================
 
 -- 1. Verificar se a tabela existe
 SELECT 
@@ -34,4 +38,40 @@ FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE() 
   AND TABLE_NAME = 'ai_user_config' 
   AND COLUMN_NAME = 'user_id';
+
+-- ========================================
+-- TABELA: ai_trades
+-- ========================================
+
+-- 4. Verificar se a tabela ai_trades existe e tem user_id como INT
+SELECT 
+    COLUMN_NAME, 
+    DATA_TYPE, 
+    CHARACTER_MAXIMUM_LENGTH 
+FROM INFORMATION_SCHEMA.COLUMNS 
+WHERE TABLE_SCHEMA = DATABASE() 
+  AND TABLE_NAME = 'ai_trades' 
+  AND COLUMN_NAME = 'user_id';
+
+-- 5. Se user_id for INT, execute o ALTER TABLE abaixo:
+-- ATENÇÃO: Faça backup antes de executar!
+
+ALTER TABLE ai_trades 
+MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário';
+
+-- 6. Verificar se a alteração foi bem-sucedida
+SELECT 
+    COLUMN_NAME, 
+    DATA_TYPE, 
+    CHARACTER_MAXIMUM_LENGTH 
+FROM INFORMATION_SCHEMA.COLUMNS 
+WHERE TABLE_SCHEMA = DATABASE() 
+  AND TABLE_NAME = 'ai_trades' 
+  AND COLUMN_NAME = 'user_id';
+
+-- ========================================
+-- OU USE O ENDPOINT DA API (RECOMENDADO)
+-- ========================================
+-- POST https://taxafacil.site/api/ai/init-tables
+-- Este endpoint fará todas as migrações automaticamente!
 

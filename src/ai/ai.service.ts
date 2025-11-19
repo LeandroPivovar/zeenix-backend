@@ -1115,6 +1115,28 @@ export class AiService {
       this.logger.log('✅ Coluna loss_limit adicionada');
     }
     
+    // Verificar e migrar tabela ai_trades também
+    const aiTradesUserIdColumn = await this.dataSource.query(`
+      SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'ai_trades'
+      AND COLUMN_NAME = 'user_id'
+    `);
+    
+    // Se user_id em ai_trades for INT, migrar para VARCHAR
+    if (aiTradesUserIdColumn.length > 0 && aiTradesUserIdColumn[0].DATA_TYPE !== 'varchar') {
+      this.logger.warn('🔄 Migrando user_id na tabela ai_trades de INT para VARCHAR(36)...');
+      
+      // Alterar tipo da coluna em ai_trades
+      await this.dataSource.query(`
+        ALTER TABLE ai_trades 
+        MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
+      `);
+      
+      this.logger.log('✅ Migração concluída: ai_trades.user_id agora é VARCHAR(36)');
+    }
+    
     this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
   }
 
