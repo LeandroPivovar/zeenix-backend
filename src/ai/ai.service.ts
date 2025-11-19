@@ -1361,21 +1361,34 @@ export class AiService implements OnModuleInit {
     const sessionBalance = sessionResult.length > 0 ? parseFloat(sessionResult[0].sessionBalance) || 0 : 0;
     const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
 
-    // Calcular lucro da sessão (trades desde o início da sessão)
+    // Calcular estatísticas da sessão (trades desde o início da sessão)
     let sessionProfitLoss = 0;
+    let sessionTrades = 0;
+    let sessionWins = 0;
+    let sessionLosses = 0;
+    let sessionWinrate = 0;
+    
     if (sessionCreatedAt) {
       const sessionTradesQuery = `
-        SELECT SUM(COALESCE(profit_loss, 0)) as sessionProfitLoss
+        SELECT 
+          COUNT(*) as sessionTrades,
+          SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as sessionWins,
+          SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as sessionLosses,
+          SUM(COALESCE(profit_loss, 0)) as sessionProfitLoss
         FROM ai_trades
         WHERE user_id = ? 
           AND created_at >= ?
           AND status IN ('WON', 'LOST')
       `;
       const sessionTradesResult = await this.dataSource.query(sessionTradesQuery, [userId, sessionCreatedAt]);
+      sessionTrades = parseInt(sessionTradesResult[0]?.sessionTrades) || 0;
+      sessionWins = parseInt(sessionTradesResult[0]?.sessionWins) || 0;
+      sessionLosses = parseInt(sessionTradesResult[0]?.sessionLosses) || 0;
       sessionProfitLoss = parseFloat(sessionTradesResult[0]?.sessionProfitLoss) || 0;
+      sessionWinrate = sessionTrades > 0 ? (sessionWins / sessionTrades) * 100 : 0;
     }
 
-    this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%, sessionBalance=${sessionBalance}, sessionProfit=${sessionProfitLoss}`);
+    this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%, sessionBalance=${sessionBalance}, sessionProfit=${sessionProfitLoss}, sessionTrades=${sessionTrades}, sessionWinrate=${sessionWinrate.toFixed(2)}%`);
 
     return {
       totalTrades,
@@ -1386,6 +1399,10 @@ export class AiService implements OnModuleInit {
       winrate: parseFloat(winrate.toFixed(2)),
       sessionBalance,
       sessionProfitLoss,
+      sessionTrades,
+      sessionWins,
+      sessionLosses,
+      sessionWinrate: parseFloat(sessionWinrate.toFixed(2)),
     };
   }
 
