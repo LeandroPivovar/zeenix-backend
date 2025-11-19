@@ -460,5 +460,28 @@ export class AiController {
       );
     }
   }
+
+  @Get('sessions/:userId')
+  async getUserSessions(@Param('userId') userId: string) {
+    try {
+      this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}`);
+      const sessions = await this.aiService.getUserSessions(userId);
+      this.logger.log(`[SessionsHistory] ✅ ${sessions.length} sessões encontradas`);
+      return {
+        success: true,
+        data: sessions,
+      };
+    } catch (error) {
+      this.logger.error(`[SessionsHistory] ❌ Erro ao buscar histórico: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar histórico de sessões',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 
