@@ -381,6 +381,10 @@ export class AiService {
   private calculateVelozStake(state: VelozUserState, entry: number): number {
     // Usar o stake_amount configurado diretamente ao invés de calcular percentual
     const baseStake = state.capital || 0.35; // Valor mínimo da Deriv é 0.35
+    
+    this.logger.debug(
+      `[CalcStake] userId=${state.userId} | capital=${state.capital} | baseStake=${baseStake} | entry=${entry}`,
+    );
 
     if (entry <= 1) {
       return baseStake;
@@ -742,10 +746,19 @@ export class AiService {
          AND LOWER(mode) = 'veloz'`,
     );
 
+    if (configs.length > 0) {
+      this.logger.log(
+        `[SyncVeloz] Sincronizando ${configs.length} usuários do banco`,
+      );
+    }
+
     const activeIds = new Set<string>();
 
     for (const config of configs) {
       activeIds.add(config.userId);
+      this.logger.debug(
+        `[SyncVeloz] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount}`,
+      );
       this.upsertVelozUserState({
         userId: config.userId,
         stakeAmount: Number(config.stakeAmount) || 0,
@@ -768,9 +781,17 @@ export class AiService {
     currency: string;
   }) {
     const { userId, stakeAmount, derivToken, currency } = params;
+    
+    this.logger.log(
+      `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency}`,
+    );
+    
     const existing = this.velozUsers.get(userId);
 
     if (existing) {
+      this.logger.debug(
+        `[UpsertVelozState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${stakeAmount}`,
+      );
       existing.capital = stakeAmount;
       existing.derivToken = derivToken;
       existing.currency = currency;
@@ -781,6 +802,9 @@ export class AiService {
       return;
     }
 
+    this.logger.debug(
+      `[UpsertVelozState] Criando novo usuário | capital=${stakeAmount}`,
+    );
     this.velozUsers.set(userId, {
       userId,
       derivToken,
@@ -1147,7 +1171,9 @@ export class AiService {
     profitTarget?: number,
     lossLimit?: number,
   ): Promise<void> {
-    this.logger.log(`Ativando IA para usuário ${userId} no modo ${mode}`);
+    this.logger.log(
+      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode}`,
+    );
 
     // Verificar se já existe configuração
     const existing = await this.dataSource.query(
@@ -1183,9 +1209,14 @@ export class AiService {
       );
     }
 
-    this.logger.log(`IA ativada para usuário ${userId} no modo ${mode}`);
+    this.logger.log(
+      `[ActivateAI] ✅ IA ativada | userId=${userId} | stake salvo=${stakeAmount} | currency=${currency}`,
+    );
 
     if ((mode || '').toLowerCase() === 'veloz') {
+      this.logger.log(
+        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount}`,
+      );
       this.upsertVelozUserState({
         userId,
         stakeAmount,
