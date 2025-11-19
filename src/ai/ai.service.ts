@@ -956,12 +956,15 @@ export class AiService {
 
   async getSessionStats(userId: string) {
     // Buscar todas as trades do usuário da sessão atual (hoje)
+    this.logger.log(`[GetSessionStats] 📊 Buscando estatísticas do dia para userId=${userId}`);
+    
     const query = `
       SELECT 
         COUNT(*) as totalTrades,
         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
         SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
-        SUM(COALESCE(profit_loss, 0)) as totalProfitLoss
+        SUM(COALESCE(profit_loss, 0)) as totalProfitLoss,
+        SUM(COALESCE(stake_amount, 0)) as totalVolume
       FROM ai_trades
       WHERE user_id = ? 
         AND DATE(created_at) = CURDATE()
@@ -971,11 +974,22 @@ export class AiService {
     const result = await this.dataSource.query(query, [userId]);
     const stats = result[0];
 
+    const totalTrades = parseInt(stats.totalTrades) || 0;
+    const wins = parseInt(stats.wins) || 0;
+    const losses = parseInt(stats.losses) || 0;
+    const profitLoss = parseFloat(stats.totalProfitLoss) || 0;
+    const totalVolume = parseFloat(stats.totalVolume) || 0;
+    const winrate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+
+    this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%`);
+
     return {
-      totalTrades: parseInt(stats.totalTrades) || 0,
-      wins: parseInt(stats.wins) || 0,
-      losses: parseInt(stats.losses) || 0,
-      profitLoss: parseFloat(stats.totalProfitLoss) || 0,
+      totalTrades,
+      wins,
+      losses,
+      profitLoss,
+      totalVolume,
+      winrate: parseFloat(winrate.toFixed(2)),
     };
   }
 
