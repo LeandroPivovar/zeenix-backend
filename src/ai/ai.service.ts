@@ -27,6 +27,19 @@ interface VelozUserState {
   martingaleStep: number;
 }
 
+interface ModeradoUserState {
+  userId: string;
+  derivToken: string;
+  currency: string;
+  capital: number;
+  virtualCapital: number;
+  lossVirtualActive: boolean;
+  lossVirtualCount: number;
+  lossVirtualOperation: DigitParity | null;
+  isOperationActive: boolean;
+  martingaleStep: number;
+}
+
 interface DigitTradeResult {
   profitLoss: number;
   status: 'WON' | 'LOST';
@@ -54,6 +67,24 @@ const FAST_MODE_CONFIG = {
   minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
 };
 
+const MODERADO_CONFIG = {
+  window: 5, // Janela de análise de 5 ticks
+  dvxMax: 60, // DVX máximo permitido (mais restritivo)
+  lossVirtualTarget: 3, // 3 perdas virtuais necessárias
+  betPercent: 0.0075, // 0.75% do capital por operação
+  martingaleMax: 3, // Máximo de 3 entradas (martingale)
+  martingaleMultiplier: 2.5, // Multiplicador do martingale
+  minTicks: 100, // Mínimo de ticks para análise
+  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
+  desequilibrioPercent: 0.80, // 80% para detectar desequilíbrio (4+ de 5)
+  trendWindow: 20, // Janela para análise de tendência
+  trendPercent: 0.60, // 60% para confirmar tendência (12+ de 20)
+  anomalyWindow: 10, // Janela para detecção de anomalias
+  anomalyAlternationMin: 6, // Mínimo de alternâncias para detectar anomalia
+  anomalyRepetitionMin: 6, // Mínimo de repetições para detectar anomalia
+  anomalyHomogeneityMin: 8, // Mínimo de homogeneidade para detectar anomalia
+};
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -65,6 +96,7 @@ export class AiService {
   private isConnected = false;
   private subscriptionId: string | null = null;
   private velozUsers = new Map<string, VelozUserState>();
+  private moderadoUsers = new Map<string, ModeradoUserState>();
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -210,7 +242,9 @@ export class AiService {
       `[Tick] valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
     );
 
+    // Processar estratégias de todos os modos ativos
     this.processVelozStrategies(newTick);
+    this.processModeradoStrategies(newTick);
   }
 
   private extractLastDigit(value: number): number {
@@ -1388,8 +1422,21 @@ export class AiService {
         derivToken,
         currency,
       });
+      this.removeModeradoUserState(userId); // Remover do outro modo
+    } else if ((mode || '').toLowerCase() === 'moderado') {
+      this.logger.log(
+        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount}`,
+      );
+      this.upsertModeradoUserState({
+        userId,
+        stakeAmount,
+        derivToken,
+        currency,
+      });
+      this.removeVelozUserState(userId); // Remover do outro modo
     } else {
       this.removeVelozUserState(userId);
+      this.removeModeradoUserState(userId);
     }
   }
 
@@ -1412,6 +1459,7 @@ export class AiService {
 
     this.logger.log(`IA desativada para usuário ${userId}`);
     this.removeVelozUserState(userId);
+    this.removeModeradoUserState(userId);
   }
 
   /**
@@ -1565,9 +1613,11 @@ export class AiService {
    */
   async processBackgroundAIs(): Promise<void> {
     try {
+        // Sincronizar usuários dos modos em tempo real
         await this.syncVelozUsersFromDb();
+        await this.syncModeradoUsersFromDb();
 
-        // Process other users with trade timing logic (fast mode is handled separately)
+        // Process other users with trade timing logic (fast/moderado modes are handled separately)
         const usersToProcess = await this.dataSource.query(
             `SELECT 
                 user_id as userId,
@@ -2465,6 +2515,567 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         window: VELOZ_CONFIG.window,
         betPercent: VELOZ_CONFIG.betPercent,
       };
+    }
+  }
+
+  // ======================== MODO MODERADO ========================
+
+  /**
+   * Processa estratégias do modo MODERADO para todos os usuários ativos
+   */
+  private async processModeradoStrategies(latestTick: Tick): Promise<void> {
+    if (this.ticks.length < MODERADO_CONFIG.minTicks) {
+      return;
+    }
+
+    // Análise de desequilíbrio (janela de 5 ticks)
+    const windowTicks = this.ticks.slice(-MODERADO_CONFIG.window);
+    const parCount = windowTicks.filter(t => t.parity === 'PAR').length;
+    const imparCount = windowTicks.filter(t => t.parity === 'IMPAR').length;
+
+    const totalInWindow = windowTicks.length;
+    const parPercent = parCount / totalInWindow;
+    const imparPercent = imparCount / totalInWindow;
+
+    // Se não há desequilíbrio >= 80%, aguardar
+    if (parPercent < MODERADO_CONFIG.desequilibrioPercent && 
+        imparPercent < MODERADO_CONFIG.desequilibrioPercent) {
+      this.logger.debug(
+        `[Moderado] Sem desequilíbrio suficiente | PAR: ${(parPercent * 100).toFixed(0)}% | IMPAR: ${(imparPercent * 100).toFixed(0)}%`,
+      );
+      return;
+    }
+
+    // Determinar proposta baseada no desequilíbrio
+    let proposal: DigitParity;
+    if (parPercent >= MODERADO_CONFIG.desequilibrioPercent) {
+      proposal = 'IMPAR'; // Se 80%+ PAR, entrar em ÍMPAR
+    } else {
+      proposal = 'PAR'; // Se 80%+ ÍMPAR, entrar em PAR
+    }
+
+    // Validação DVX
+    const dvx = this.calculateDVX(this.ticks);
+    if (dvx > MODERADO_CONFIG.dvxMax) {
+      this.logger.warn(
+        `[Moderado] DVX alto (${dvx}) > ${MODERADO_CONFIG.dvxMax} - bloqueando operação`,
+      );
+      return;
+    }
+
+    // Detector de Anomalias (10 ticks)
+    const hasAnomaly = this.detectAnomalies(this.ticks.slice(-MODERADO_CONFIG.anomalyWindow));
+    if (hasAnomaly) {
+      this.logger.warn(`[Moderado] Anomalia detectada - bloqueando operação`);
+      return;
+    }
+
+    // Validação de Tendência Geral (20 ticks)
+    const trendValid = this.validateTrend(proposal, this.ticks.slice(-MODERADO_CONFIG.trendWindow));
+    if (!trendValid) {
+      this.logger.warn(`[Moderado] Tendência não confirma proposta ${proposal} - bloqueando`);
+      return;
+    }
+
+    this.logger.log(
+      `[Moderado] Condições OK | Proposta: ${proposal} | DVX: ${dvx} | Deseq: ${(Math.max(parPercent, imparPercent) * 100).toFixed(0)}%`,
+    );
+
+    // Processar loss virtual para cada usuário ativo no modo moderado
+    for (const state of this.moderadoUsers.values()) {
+      if (!this.canProcessModeradoState(state)) {
+        continue;
+      }
+      await this.handleModeradoLossVirtual(state, proposal, latestTick, dvx);
+    }
+  }
+
+  /**
+   * Detecta anomalias nos últimos N ticks
+   */
+  private detectAnomalies(recentTicks: Tick[]): boolean {
+    if (recentTicks.length < MODERADO_CONFIG.anomalyWindow) {
+      return false;
+    }
+
+    // 1. Verificar alternância perfeita (P-I-P-I-P-I...)
+    let alternations = 0;
+    for (let i = 1; i < recentTicks.length; i++) {
+      if (recentTicks[i].parity !== recentTicks[i - 1].parity) {
+        alternations++;
+      }
+    }
+    if (alternations >= MODERADO_CONFIG.anomalyAlternationMin) {
+      this.logger.warn(`[Moderado][Anomalia] Alternância perfeita detectada: ${alternations} alternâncias`);
+      return true;
+    }
+
+    // 2. Verificar repetição excessiva do mesmo dígito
+    const digitCounts = new Map<number, number>();
+    for (const tick of recentTicks) {
+      digitCounts.set(tick.digit, (digitCounts.get(tick.digit) || 0) + 1);
+    }
+    for (const [digit, count] of digitCounts.entries()) {
+      if (count >= MODERADO_CONFIG.anomalyRepetitionMin) {
+        this.logger.warn(`[Moderado][Anomalia] Repetição excessiva: dígito ${digit} apareceu ${count} vezes`);
+        return true;
+      }
+    }
+
+    // 3. Verificar homogeneidade (todos PAR ou todos ÍMPAR)
+    const parCount = recentTicks.filter(t => t.parity === 'PAR').length;
+    const imparCount = recentTicks.filter(t => t.parity === 'IMPAR').length;
+    if (parCount >= MODERADO_CONFIG.anomalyHomogeneityMin || 
+        imparCount >= MODERADO_CONFIG.anomalyHomogeneityMin) {
+      this.logger.warn(`[Moderado][Anomalia] Homogeneidade detectada: PAR=${parCount}, IMPAR=${imparCount}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Valida tendência geral nos últimos N ticks
+   */
+  private validateTrend(proposal: DigitParity, trendTicks: Tick[]): boolean {
+    if (trendTicks.length < MODERADO_CONFIG.trendWindow) {
+      return false;
+    }
+
+    const parCount = trendTicks.filter(t => t.parity === 'PAR').length;
+    const imparCount = trendTicks.filter(t => t.parity === 'IMPAR').length;
+    const total = trendTicks.length;
+
+    const parPercent = parCount / total;
+    const imparPercent = imparCount / total;
+
+    // Se vai entrar em ÍMPAR, precisa ter 60%+ de PAR na tendência
+    if (proposal === 'IMPAR') {
+      if (parPercent >= MODERADO_CONFIG.trendPercent) {
+        this.logger.debug(`[Moderado][Tendência] OK para IMPAR: ${(parPercent * 100).toFixed(0)}% PAR nos últimos ${total} ticks`);
+        return true;
+      }
+      this.logger.warn(`[Moderado][Tendência] Insuficiente para IMPAR: apenas ${(parPercent * 100).toFixed(0)}% PAR`);
+      return false;
+    }
+
+    // Se vai entrar em PAR, precisa ter 60%+ de ÍMPAR na tendência
+    if (proposal === 'PAR') {
+      if (imparPercent >= MODERADO_CONFIG.trendPercent) {
+        this.logger.debug(`[Moderado][Tendência] OK para PAR: ${(imparPercent * 100).toFixed(0)}% IMPAR nos últimos ${total} ticks`);
+        return true;
+      }
+      this.logger.warn(`[Moderado][Tendência] Insuficiente para PAR: apenas ${(imparPercent * 100).toFixed(0)}% IMPAR`);
+      return false;
+    }
+
+    return false;
+  }
+
+  /**
+   * Verifica se pode processar o estado do usuário no modo moderado
+   */
+  private canProcessModeradoState(state: ModeradoUserState): boolean {
+    if (state.isOperationActive) {
+      this.logger.debug(
+        `[Moderado][${state.userId}] Operação em andamento - aguardando finalização`,
+      );
+      return false;
+    }
+    if (!state.derivToken) {
+      this.logger.warn(
+        `[Moderado][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
+      );
+      return false;
+    }
+    if ((state.virtualCapital || state.capital) <= 0) {
+      this.logger.warn(
+        `[Moderado][${state.userId}] Usuário sem capital configurado - ignorando`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Gerencia o sistema de loss virtual do modo moderado (3 perdas)
+   */
+  private async handleModeradoLossVirtual(
+    state: ModeradoUserState,
+    proposal: DigitParity,
+    tick: Tick,
+    dvx: number,
+  ): Promise<void> {
+    // Se ainda não iniciou o ciclo de loss virtual, iniciar agora
+    if (!state.lossVirtualActive) {
+      state.lossVirtualActive = true;
+      state.lossVirtualCount = 0;
+      state.lossVirtualOperation = proposal;
+      this.logger.debug(
+        `[Moderado][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
+      );
+    }
+
+    // Se mudou a proposta, resetar
+    if (state.lossVirtualOperation !== proposal) {
+      state.lossVirtualCount = 0;
+      state.lossVirtualOperation = proposal;
+      this.logger.debug(
+        `[Moderado][${state.userId}] Proposta mudou, resetando loss virtual`,
+      );
+    }
+
+    // Verificar resultado do tick atual contra a proposta
+    const tickResult = tick.parity;
+    const wouldWin = tickResult === proposal;
+
+    if (wouldWin) {
+      // Se venceria, resetar contador
+      this.logger.log(
+        `[Moderado][${state.userId}] Vitória virtual | tick=${tick.value} (${tickResult}) | proposta=${proposal} | resetando contador`,
+      );
+      state.lossVirtualCount = 0;
+      return;
+    }
+
+    // Perdeu virtualmente, incrementar contador
+    state.lossVirtualCount++;
+    this.logger.log(
+      `[Moderado][${state.userId}] Loss virtual ${state.lossVirtualCount}/${MODERADO_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tickResult}) | proposta=${proposal} | DVX: ${dvx}`,
+    );
+
+    // Se atingiu 3 perdas virtuais, executar operação real
+    if (state.lossVirtualCount >= MODERADO_CONFIG.lossVirtualTarget) {
+      this.logger.log(
+        `[Moderado][${state.userId}] ✅ Loss virtual completo -> executando operação ${proposal}`,
+      );
+
+      // Resetar contadores antes de executar
+      state.lossVirtualCount = 0;
+      state.lossVirtualActive = false;
+      state.lossVirtualOperation = null;
+
+      // Executar operação real (async)
+      this.executeModeradoOperation(state, proposal).catch((error) => {
+        this.logger.error(
+          `[Moderado] Erro ao executar operação para usuário ${state.userId}:`,
+          error,
+        );
+      });
+    }
+  }
+
+  /**
+   * Executa operação real no modo moderado
+   */
+  private async executeModeradoOperation(
+    state: ModeradoUserState,
+    proposal: DigitParity,
+    entry: number = 1,
+  ): Promise<number> {
+    if (entry === 1 && state.isOperationActive) {
+      this.logger.warn(`[Moderado] Usuário ${state.userId} já possui operação ativa`);
+      return -1;
+    }
+
+    state.isOperationActive = true;
+    state.martingaleStep = entry;
+
+    const stakeAmount = this.calculateModeradoStake(state);
+    const currentPrice = this.getCurrentPrice() || 0;
+
+    const tradeId = await this.createModeradoTradeRecord(
+      state.userId,
+      proposal,
+      stakeAmount,
+      currentPrice,
+    );
+
+    this.logger.log(
+      `[Moderado][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
+    );
+
+    try {
+      const result = await this.executeDigitTradeOnDeriv({
+        tradeId,
+        derivToken: state.derivToken,
+        currency: state.currency || 'USD',
+        stakeAmount,
+        contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+      });
+
+      await this.handleModeradoTradeOutcome(
+        state,
+        proposal,
+        tradeId,
+        stakeAmount,
+        result,
+        entry,
+      );
+
+      return tradeId;
+    } catch (error: any) {
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      await this.dataSource.query(
+        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+        ['ERROR', error.message || 'Unknown error', tradeId],
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Cria registro de trade do modo moderado no banco
+   */
+  private async createModeradoTradeRecord(
+    userId: string,
+    proposal: DigitParity,
+    stakeAmount: number,
+    entryPrice: number,
+  ): Promise<number> {
+    const analysisData = {
+      strategy: 'modo_moderado',
+      dvx: this.calculateDVX(this.ticks),
+      window: MODERADO_CONFIG.window,
+      ticks: this.ticks.slice(-MODERADO_CONFIG.window).map(t => ({
+        value: t.value,
+        epoch: t.epoch,
+        timestamp: t.timestamp,
+        digit: t.digit,
+        parity: t.parity,
+      })),
+    };
+
+    const result = await this.dataSource.query(
+      `INSERT INTO ai_trades (
+        user_id,
+        analysis_data,
+        gemini_signal,
+        gemini_duration,
+        gemini_reasoning,
+        entry_price,
+        stake_amount,
+        contract_type,
+        status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        JSON.stringify(analysisData),
+        proposal,
+        1,
+        'Modo Moderado - desequilíbrio de paridade + validações',
+        entryPrice,
+        stakeAmount,
+        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        'PENDING',
+      ],
+    );
+
+    return result.insertId;
+  }
+
+  /**
+   * Trata o resultado de um trade do modo moderado
+   */
+  private async handleModeradoTradeOutcome(
+    state: ModeradoUserState,
+    proposal: DigitParity,
+    tradeId: number,
+    stakeAmount: number,
+    result: DigitTradeResult,
+    entry: number,
+  ): Promise<void> {
+    const won = result.status === 'WON';
+
+    this.logger.log(
+      `[Moderado][${state.userId}] ${won ? '✅ Vitória' : '❌ Loss'} | Lucro ${result.profitLoss} | entrada=${entry}`,
+    );
+
+    await this.incrementModeradoStats(state.userId, won, result.profitLoss);
+
+    if (won) {
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      state.virtualCapital += result.profitLoss;
+      this.logger.log(
+        `[Moderado][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss} | capital virtual: ${state.virtualCapital}`,
+      );
+    } else {
+      state.virtualCapital += result.profitLoss;
+
+      if (entry < MODERADO_CONFIG.martingaleMax) {
+        const nextEntry = entry + 1;
+        this.logger.log(
+          `[Moderado][${state.userId}] Aplicando martingale ${nextEntry}/${MODERADO_CONFIG.martingaleMax}`,
+        );
+
+        setTimeout(() => {
+          this.executeModeradoOperation(state, proposal, nextEntry).catch(
+            (error) => {
+              this.logger.error(
+                `[Moderado] Erro no martingale ${nextEntry}:`,
+                error,
+              );
+            },
+          );
+        }, 4000);
+      } else {
+        state.isOperationActive = false;
+        state.martingaleStep = 0;
+        this.logger.warn(
+          `[Moderado][${state.userId}] Martingale esgotado após ${entry} tentativas | capital virtual: ${state.virtualCapital}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Incrementa estatísticas do modo moderado
+   */
+  private async incrementModeradoStats(
+    userId: string,
+    won: boolean,
+    profitLoss: number,
+  ): Promise<void> {
+    const column = won ? 'total_wins' : 'total_losses';
+    await this.dataSource.query(
+      `UPDATE ai_user_config
+       SET total_trades = total_trades + 1,
+           ${column} = ${column} + 1,
+           last_trade_at = NOW(),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`,
+      [userId],
+    );
+
+    // Verificar e enforçar limites após cada trade
+    await this.checkAndEnforceLimits(userId);
+  }
+
+  /**
+   * Calcula stake para o modo moderado (0.75% + martingale)
+   */
+  private calculateModeradoStake(state: ModeradoUserState): number {
+    const baseStake = state.capital * MODERADO_CONFIG.betPercent;
+    
+    this.logger.debug(
+      `[Moderado][CalcStake] userId=${state.userId} | capital=${state.capital} | baseStake=${baseStake} | martingale=${state.martingaleStep}`,
+    );
+
+    if (state.martingaleStep === 0) {
+      return Math.max(MODERADO_CONFIG.minStake, baseStake);
+    }
+
+    const martingaleStake = baseStake * Math.pow(
+      MODERADO_CONFIG.martingaleMultiplier,
+      state.martingaleStep,
+    );
+
+    return Math.max(MODERADO_CONFIG.minStake, martingaleStake);
+  }
+
+  /**
+   * Sincroniza usuários do modo moderado do banco de dados
+   */
+  async syncModeradoUsersFromDb(): Promise<void> {
+    try {
+      const activeUsers = await this.dataSource.query(
+        `SELECT 
+          user_id as userId,
+          stake_amount as stakeAmount,
+          deriv_token as derivToken,
+          currency
+         FROM ai_user_config
+         WHERE is_active = TRUE
+           AND LOWER(mode) = 'moderado'`,
+      );
+
+      this.logger.log(`[SyncModerado] Sincronizando ${activeUsers.length} usuários do banco`);
+
+      const activeIds = new Set(activeUsers.map((u: any) => u.userId));
+
+      // Remover usuários que não estão mais ativos
+      for (const existingId of this.moderadoUsers.keys()) {
+        if (!activeIds.has(existingId)) {
+          this.moderadoUsers.delete(existingId);
+          this.logger.log(`[SyncModerado] Removido usuário ${existingId} (não mais ativo)`);
+        }
+      }
+
+      // Adicionar/atualizar usuários ativos
+      for (const user of activeUsers) {
+        this.logger.debug(
+          `[SyncModerado] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount}`,
+        );
+
+        this.upsertModeradoUserState({
+          userId: user.userId,
+          stakeAmount: parseFloat(user.stakeAmount),
+          derivToken: user.derivToken,
+          currency: user.currency,
+        });
+      }
+    } catch (error) {
+      this.logger.error('[SyncModerado] Erro ao sincronizar usuários:', error);
+    }
+  }
+
+  /**
+   * Adiciona ou atualiza estado de usuário no modo moderado
+   */
+  private upsertModeradoUserState(params: {
+    userId: string;
+    stakeAmount: number;
+    derivToken: string;
+    currency: string;
+  }): void {
+    this.logger.log(
+      `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency}`,
+    );
+
+    const existing = this.moderadoUsers.get(params.userId);
+
+    if (existing) {
+      // Atualizar existente
+      this.logger.debug(
+        `[UpsertModeradoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount}`,
+      );
+
+      existing.capital = params.stakeAmount;
+      existing.derivToken = params.derivToken;
+      existing.currency = params.currency;
+
+      // Resetar capital virtual se necessário
+      if (existing.virtualCapital <= 0) {
+        existing.virtualCapital = params.stakeAmount;
+      }
+    } else {
+      // Criar novo
+      this.logger.debug(`[UpsertModeradoState] Criando novo usuário | capital=${params.stakeAmount}`);
+
+      this.moderadoUsers.set(params.userId, {
+        userId: params.userId,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        capital: params.stakeAmount,
+        virtualCapital: params.stakeAmount,
+        lossVirtualActive: false,
+        lossVirtualCount: 0,
+        lossVirtualOperation: null,
+        isOperationActive: false,
+        martingaleStep: 0,
+      });
+    }
+  }
+
+  /**
+   * Remove usuário do modo moderado
+   */
+  private removeModeradoUserState(userId: string): void {
+    if (this.moderadoUsers.has(userId)) {
+      this.moderadoUsers.delete(userId);
+      this.logger.log(`[Moderado] Estado removido para usuário ${userId}`);
     }
   }
 }
