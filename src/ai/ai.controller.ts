@@ -323,5 +323,75 @@ export class AiController {
       );
     }
   }
+
+  // ========== ENDPOINTS PARA STATSIAS ==========
+
+  @Get('stats-ias')
+  async getStatsIAs() {
+    try {
+      const result = await this.aiService.getStatsIAsData();
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas do StatsIAs',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('trading-params')
+  async getTradingParams() {
+    try {
+      const params = await this.aiService.getAdjustedTradingParams();
+      return {
+        success: true,
+        data: params,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar parâmetros de trading ajustados',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('update-config')
+  async updateAIConfig(
+    @Body() body: {
+      userId: number;
+      stakeAmount?: number;
+    },
+  ) {
+    try {
+      await this.aiService.updateUserAIConfig(
+        body.userId,
+        body.stakeAmount,
+      );
+      return {
+        success: true,
+        message: 'Configuração da IA atualizada com sucesso',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao atualizar configuração da IA',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

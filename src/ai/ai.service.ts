@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { StatsIAsService } from './stats-ias.service';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
@@ -65,7 +66,10 @@ export class AiService {
   private subscriptionId: string | null = null;
   private velozUsers = new Map<number, VelozUserState>();
 
-  constructor(@InjectDataSource() private dataSource: DataSource) {
+  constructor(
+    @InjectDataSource() private dataSource: DataSource,
+    private readonly statsIAsService: StatsIAsService,
+  ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
@@ -1091,6 +1095,57 @@ export class AiService {
   }
 
   /**
+   * Atualiza configuração da IA de um usuário
+   */
+  async updateUserAIConfig(
+    userId: number,
+    stakeAmount?: number,
+  ): Promise<void> {
+    this.logger.log(`Atualizando configuração da IA para usuário ${userId}`);
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (stakeAmount !== undefined) {
+      if (stakeAmount < 0.35) {
+        throw new Error('Valor de entrada deve ser no mínimo $0.35');
+      }
+      updates.push('stake_amount = ?');
+      values.push(stakeAmount);
+    }
+
+    if (updates.length === 0) {
+      throw new Error('Nenhuma configuração fornecida para atualizar');
+    }
+
+    values.push(userId);
+
+    await this.dataSource.query(
+      `UPDATE ai_user_config 
+       SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP 
+       WHERE user_id = ?`,
+      values,
+    );
+
+    // Se a IA está ativa e em modo veloz, atualizar o estado em memória
+    const config = await this.getUserAIConfig(userId);
+    if (config.isActive && (config.mode || '').toLowerCase() === 'veloz') {
+      const state = this.velozUsers.get(userId);
+      if (state && stakeAmount !== undefined) {
+        state.capital = stakeAmount;
+        if (state.virtualCapital <= 0) {
+          state.virtualCapital = stakeAmount;
+        }
+        this.logger.log(
+          `Estado em memória atualizado para usuário ${userId}: capital=${stakeAmount}`,
+        );
+      }
+    }
+
+    this.logger.log(`Configuração da IA atualizada para usuário ${userId}`);
+  }
+
+  /**
    * Busca configuração da IA de um usuário
    */
   async getUserAIConfig(userId: number): Promise<any> {
@@ -1773,6 +1828,109 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     this.logger.log(
       `[Veloz] Usuário ${userId} sincronizado | capital=${stakeAmount} | acompanhados=${this.velozUsers.size}`,
     );
+  }
+
+  /**
+   * Obtém estatísticas do StatsIAs (com fallback para estatísticas locais)
+   */
+  async getStatsIAsData() {
+    try {
+      // Tentar buscar da API externa primeiro
+      const externalStats = await this.statsIAsService.fetchStats();
+      
+      if (externalStats) {
+        return {
+          source: 'external',
+          data: externalStats,
+        };
+      }
+
+      // Fallback para estatísticas locais
+      const localStats = await this.statsIAsService.getLocalAggregatedStats(
+        this.dataSource,
+      );
+      
+      return {
+        source: 'local',
+        data: localStats,
+      };
+    } catch (error) {
+      this.logger.error('Erro ao buscar estatísticas do StatsIAs:', error);
+      
+      // Último recurso: estatísticas locais
+      try {
+        const localStats = await this.statsIAsService.getLocalAggregatedStats(
+          this.dataSource,
+        );
+        return {
+          source: 'local',
+          data: localStats,
+        };
+      } catch (localError) {
+        this.logger.error('Erro ao buscar estatísticas locais:', localError);
+        return {
+          source: 'error',
+          data: null,
+          error: 'Não foi possível obter estatísticas',
+        };
+      }
+    }
+  }
+
+  /**
+   * Usa estatísticas do StatsIAs para ajustar parâmetros de trading
+   * (pode ser usado para ajustar dinamicamente DVX, window, etc.)
+   */
+  async getAdjustedTradingParams(): Promise<{
+    dvxMax: number;
+    window: number;
+    betPercent: number;
+  }> {
+    try {
+      const stats = await this.statsIAsService.fetchStats();
+      
+      if (!stats || !stats.winRate) {
+        // Retornar valores padrão se não houver estatísticas
+        return {
+          dvxMax: VELOZ_CONFIG.dvxMax,
+          window: VELOZ_CONFIG.window,
+          betPercent: VELOZ_CONFIG.betPercent,
+        };
+      }
+
+      // Ajustar parâmetros baseado no win rate
+      // Se win rate está alto (>60%), podemos ser mais agressivos
+      // Se win rate está baixo (<50%), ser mais conservador
+      let dvxMax = VELOZ_CONFIG.dvxMax;
+      let betPercent = VELOZ_CONFIG.betPercent;
+
+      if (stats.winRate > 60) {
+        // Win rate alto: ser mais agressivo
+        dvxMax = Math.min(80, VELOZ_CONFIG.dvxMax + 10);
+        betPercent = Math.min(0.01, VELOZ_CONFIG.betPercent * 1.5);
+      } else if (stats.winRate < 50) {
+        // Win rate baixo: ser mais conservador
+        dvxMax = Math.max(50, VELOZ_CONFIG.dvxMax - 10);
+        betPercent = Math.max(0.003, VELOZ_CONFIG.betPercent * 0.7);
+      }
+
+      this.logger.debug(
+        `Parâmetros ajustados baseados em win rate ${stats.winRate}%: DVX=${dvxMax}, Bet=${betPercent}`,
+      );
+
+      return {
+        dvxMax,
+        window: VELOZ_CONFIG.window,
+        betPercent,
+      };
+    } catch (error) {
+      this.logger.error('Erro ao ajustar parâmetros de trading:', error);
+      return {
+        dvxMax: VELOZ_CONFIG.dvxMax,
+        window: VELOZ_CONFIG.window,
+        betPercent: VELOZ_CONFIG.betPercent,
+      };
+    }
   }
 }
 
