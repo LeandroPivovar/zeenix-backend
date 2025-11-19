@@ -4,6 +4,7 @@ import {
   Post, 
   Body,
   Param,
+  Query,
   HttpException, 
   HttpStatus,
   Logger
@@ -466,10 +467,14 @@ export class AiController {
   }
 
   @Get('sessions/:userId')
-  async getUserSessions(@Param('userId') userId: string) {
+  async getUserSessions(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
-      this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}`);
-      const sessions = await this.aiService.getUserSessions(userId);
+      const limitNumber = limit ? parseInt(limit, 10) : 10;
+      this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}, limit: ${limitNumber}`);
+      const sessions = await this.aiService.getUserSessions(userId, limitNumber);
       this.logger.log(`[SessionsHistory] ✅ ${sessions.length} sessões encontradas`);
       return {
         success: true,
