@@ -379,16 +379,14 @@ export class AiService {
   }
 
   private calculateVelozStake(state: VelozUserState, entry: number): number {
-    const baseCapital = state.virtualCapital || state.capital || 0;
-    const baseStake = Math.max(
-      1,
-      Number((baseCapital * VELOZ_CONFIG.betPercent).toFixed(2)),
-    );
+    // Usar o stake_amount configurado diretamente ao invés de calcular percentual
+    const baseStake = state.capital || 0.35; // Valor mínimo da Deriv é 0.35
 
     if (entry <= 1) {
       return baseStake;
     }
 
+    // Aplicar martingale nas próximas entradas
     const stake =
       baseStake * Math.pow(VELOZ_CONFIG.martingaleMultiplier, entry - 1);
     return Number(stake.toFixed(2));
@@ -1995,6 +1993,110 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         };
       }
     }
+  }
+
+  /**
+   * Busca saldo da conta Deriv via WebSocket
+   */
+  async getDerivBalance(derivToken: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket.WebSocket(endpoint);
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timeout ao buscar saldo da Deriv'));
+      }, 10000);
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: derivToken }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.error) {
+            clearTimeout(timeout);
+            ws.close();
+            reject(new Error(msg.error.message || 'Erro ao buscar saldo'));
+            return;
+          }
+
+          if (msg.authorize) {
+            ws.send(JSON.stringify({ balance: 1, subscribe: 0 }));
+            return;
+          }
+
+          if (msg.balance) {
+            clearTimeout(timeout);
+            ws.close();
+            resolve({
+              balance: Number(msg.balance.balance),
+              currency: msg.balance.currency,
+              loginid: msg.balance.loginid,
+            });
+            return;
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+  }
+
+  /**
+   * Busca estatísticas do dashboard do usuário
+   */
+  async getUserDashboardStats(userId: string): Promise<any> {
+    const config = await this.getUserAIConfig(userId);
+    const sessionStats = await this.getSessionStats(userId);
+
+    // Buscar total de operações (não só do dia)
+    const totalStats = await this.dataSource.query(
+      `SELECT 
+        COUNT(*) as totalTrades,
+        SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as totalWins,
+        SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as totalLosses,
+        SUM(COALESCE(profit_loss, 0)) as totalProfitLoss
+      FROM ai_trades
+      WHERE user_id = ? 
+        AND status IN ('WON', 'LOST')`,
+      [userId],
+    );
+
+    const stats = totalStats[0];
+
+    return {
+      isActive: config.isActive || false,
+      stakeAmount: config.stakeAmount || 0,
+      mode: config.mode || 'veloz',
+      profitTarget: config.profitTarget,
+      lossLimit: config.lossLimit,
+      
+      // Estatísticas do dia
+      today: {
+        trades: sessionStats.totalTrades,
+        profitLoss: sessionStats.profitLoss,
+        wins: sessionStats.wins,
+        losses: sessionStats.losses,
+      },
+      
+      // Estatísticas totais
+      total: {
+        trades: parseInt(stats.totalTrades) || 0,
+        wins: parseInt(stats.totalWins) || 0,
+        losses: parseInt(stats.totalLosses) || 0,
+        profitLoss: parseFloat(stats.totalProfitLoss) || 0,
+      },
+    };
   }
 
   /**

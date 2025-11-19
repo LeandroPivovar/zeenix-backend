@@ -413,5 +413,45 @@ export class AiController {
       );
     }
   }
+
+  @Post('deriv-balance')
+  async getDerivBalance(@Body() body: { derivToken: string }) {
+    try {
+      const balance = await this.aiService.getDerivBalance(body.derivToken);
+      return {
+        success: true,
+        data: balance,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar saldo da Deriv',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('user-dashboard/:userId')
+  async getUserDashboard(@Param('userId') userId: string) {
+    try {
+      const stats = await this.aiService.getUserDashboardStats(userId);
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas do usuário',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 
