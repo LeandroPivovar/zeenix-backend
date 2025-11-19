@@ -224,6 +224,26 @@ export class AiController {
 
   // ========== ENDPOINTS PARA IA EM BACKGROUND ==========
 
+  @Post('init-tables')
+  async initTables() {
+    try {
+      await this.aiService.initializeTables();
+      return {
+        success: true,
+        message: 'Tabelas da IA inicializadas com sucesso',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao inicializar tabelas',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Post('activate')
   async activateAI(
     @Body() body: {

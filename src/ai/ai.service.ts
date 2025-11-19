@@ -1020,6 +1020,72 @@ export class AiService {
     }
   }
 
+  async initializeTables(): Promise<void> {
+    this.logger.log('Inicializando tabelas da IA...');
+    
+    // Criar tabela ai_user_config
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS ai_user_config (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT UNSIGNED NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        stake_amount DECIMAL(10, 2) NOT NULL DEFAULT 10.00,
+        deriv_token TEXT NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+        mode VARCHAR(20) NOT NULL DEFAULT 'veloz' COMMENT 'Modo de operação: veloz, fast, moderate, slow',
+        profit_target DECIMAL(10, 2) NULL COMMENT 'Meta de lucro diária',
+        loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária',
+        
+        last_trade_at TIMESTAMP NULL,
+        next_trade_at TIMESTAMP NULL,
+        
+        total_trades INT UNSIGNED DEFAULT 0,
+        total_wins INT UNSIGNED DEFAULT 0,
+        total_losses INT UNSIGNED DEFAULT 0,
+        
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        
+        UNIQUE KEY idx_user_id (user_id),
+        INDEX idx_is_active (is_active),
+        INDEX idx_next_trade_at (next_trade_at),
+        INDEX idx_mode (mode)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      COMMENT='Configuração de IA de trading por usuário - permite execução em background'
+    `);
+    
+    // Verificar se as colunas profit_target e loss_limit existem antes de adicionar
+    // (Compatível com MySQL 5.7+)
+    const columns = await this.dataSource.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'ai_user_config'
+    `);
+    
+    const columnNames = columns.map((col: any) => col.COLUMN_NAME);
+    
+    // Adicionar profit_target se não existir
+    if (!columnNames.includes('profit_target')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN profit_target DECIMAL(10, 2) NULL COMMENT 'Meta de lucro diária' AFTER mode
+      `);
+      this.logger.log('✅ Coluna profit_target adicionada');
+    }
+    
+    // Adicionar loss_limit se não existir
+    if (!columnNames.includes('loss_limit')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target
+      `);
+      this.logger.log('✅ Coluna loss_limit adicionada');
+    }
+    
+    this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
+  }
+
   async activateUserAI(
     userId: number,
     stakeAmount: number,
