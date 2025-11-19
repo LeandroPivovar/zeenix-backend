@@ -985,6 +985,7 @@ export class AiService {
       SELECT 
         id,
         gemini_signal as \`signal\`,
+        contract_type as contractType,
         entry_price as entryPrice,
         exit_price as exitPrice,
         stake_amount as stakeAmount,
@@ -996,8 +997,7 @@ export class AiService {
         closed_at as closedAt
       FROM ai_trades
       WHERE user_id = ? 
-        AND status IN ('WON', 'LOST')
-      ORDER BY closed_at DESC
+      ORDER BY COALESCE(closed_at, created_at) DESC
       LIMIT ?
     `;
 
@@ -1006,6 +1006,7 @@ export class AiService {
     return result.map((trade: any) => ({
       id: trade.id,
       signal: trade.signal,
+      contractType: trade.contractType,
       entryPrice: parseFloat(trade.entryPrice),
       exitPrice: parseFloat(trade.exitPrice),
       stakeAmount: parseFloat(trade.stakeAmount),
