@@ -1010,7 +1010,8 @@ export class AiService {
         user_id as userId,
         stake_amount as stakeAmount,
         deriv_token as derivToken,
-        currency
+        currency,
+        modo_martingale as modoMartingale
        FROM ai_user_config
        WHERE is_active = TRUE
          AND LOWER(mode) = 'veloz'`,
@@ -1027,13 +1028,14 @@ export class AiService {
     for (const config of configs) {
       activeIds.add(config.userId);
       this.logger.debug(
-        `[SyncVeloz] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount}`,
+        `[SyncVeloz] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | martingale=${config.modoMartingale}`,
       );
       this.upsertVelozUserState({
         userId: config.userId,
         stakeAmount: Number(config.stakeAmount) || 0,
         derivToken: config.derivToken,
         currency: config.currency || 'USD',
+        modoMartingale: config.modoMartingale || 'conservador',
       });
     }
 
@@ -1049,22 +1051,24 @@ export class AiService {
     stakeAmount: number;
     derivToken: string;
     currency: string;
+    modoMartingale?: ModoMartingale;
   }) {
-    const { userId, stakeAmount, derivToken, currency } = params;
+    const { userId, stakeAmount, derivToken, currency, modoMartingale = 'conservador' } = params;
     
     this.logger.log(
-      `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency}`,
+      `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | martingale=${modoMartingale}`,
     );
     
     const existing = this.velozUsers.get(userId);
 
     if (existing) {
       this.logger.debug(
-        `[UpsertVelozState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${stakeAmount}`,
+        `[UpsertVelozState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${stakeAmount} | martingale=${modoMartingale}`,
       );
       existing.capital = stakeAmount;
       existing.derivToken = derivToken;
       existing.currency = currency;
+      existing.modoMartingale = modoMartingale;
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = stakeAmount;
       }
@@ -1073,7 +1077,7 @@ export class AiService {
     }
 
     this.logger.debug(
-      `[UpsertVelozState] Criando novo usuário | capital=${stakeAmount}`,
+      `[UpsertVelozState] Criando novo usuário | capital=${stakeAmount} | martingale=${modoMartingale}`,
     );
     this.velozUsers.set(userId, {
       userId,
@@ -1086,7 +1090,7 @@ export class AiService {
       lossVirtualOperation: null,
       isOperationActive: false,
       martingaleStep: 0,
-      modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+      modoMartingale: modoMartingale,
       perdaAcumulada: 0,
       apostaInicial: 0,
     });
@@ -1453,6 +1457,17 @@ export class AiService {
       this.logger.log('✅ Coluna deactivated_at adicionada');
     }
     
+    // Adicionar modo_martingale se não existir
+    if (!columnNames.includes('modo_martingale')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN modo_martingale VARCHAR(20) NOT NULL DEFAULT 'conservador' 
+        COMMENT 'Modo de martingale: conservador, moderado, agressivo' 
+        AFTER mode
+      `);
+      this.logger.log('✅ Coluna modo_martingale adicionada');
+    }
+    
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
     const indexesResult = await this.dataSource.query(`
       SELECT INDEX_NAME, NON_UNIQUE
@@ -1524,9 +1539,10 @@ export class AiService {
     mode: string = 'veloz',
     profitTarget?: number,
     lossLimit?: number,
+    modoMartingale: ModoMartingale = 'conservador',
   ): Promise<void> {
     this.logger.log(
-      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode}`,
+      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
     );
 
     // 🔄 NOVA LÓGICA: Sempre criar nova sessão (INSERT)
@@ -1544,15 +1560,15 @@ export class AiService {
     this.logger.log(
       `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
-
+    
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
-
+    
     // 2. Criar nova sessão (sempre INSERT)
     await this.dataSource.query(
       `INSERT INTO ai_user_config 
-       (user_id, is_active, stake_amount, deriv_token, currency, mode, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-       VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-      [userId, stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt],
+       (user_id, is_active, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+      [userId, stakeAmount, derivToken, currency, mode, modoMartingale, profitTarget || null, lossLimit || null, nextTradeAt],
     );
 
     this.logger.log(
@@ -3158,7 +3174,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           user_id as userId,
           stake_amount as stakeAmount,
           deriv_token as derivToken,
-          currency
+          currency,
+          modo_martingale as modoMartingale
          FROM ai_user_config
          WHERE is_active = TRUE
            AND LOWER(mode) = 'moderado'`,
@@ -3179,7 +3196,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // Adicionar/atualizar usuários ativos
       for (const user of activeUsers) {
         this.logger.debug(
-          `[SyncModerado] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount}`,
+          `[SyncModerado] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
         );
 
         this.upsertModeradoUserState({
@@ -3187,6 +3204,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           stakeAmount: parseFloat(user.stakeAmount),
           derivToken: user.derivToken,
           currency: user.currency,
+          modoMartingale: user.modoMartingale || 'conservador',
         });
       }
     } catch (error) {
@@ -3202,9 +3220,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     stakeAmount: number;
     derivToken: string;
     currency: string;
+    modoMartingale?: ModoMartingale;
   }): void {
+    const modoMartingale = params.modoMartingale || 'conservador';
+    
     this.logger.log(
-      `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency}`,
+      `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
     );
 
     const existing = this.moderadoUsers.get(params.userId);
@@ -3212,12 +3233,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (existing) {
       // Atualizar existente
       this.logger.debug(
-        `[UpsertModeradoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount}`,
+        `[UpsertModeradoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount} | martingale=${modoMartingale}`,
       );
 
       existing.capital = params.stakeAmount;
       existing.derivToken = params.derivToken;
       existing.currency = params.currency;
+      existing.modoMartingale = modoMartingale;
 
       // Resetar capital virtual se necessário
       if (existing.virtualCapital <= 0) {
@@ -3225,7 +3247,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
     } else {
       // Criar novo
-      this.logger.debug(`[UpsertModeradoState] Criando novo usuário | capital=${params.stakeAmount}`);
+      this.logger.debug(`[UpsertModeradoState] Criando novo usuário | capital=${params.stakeAmount} | martingale=${modoMartingale}`);
 
       this.moderadoUsers.set(params.userId, {
         userId: params.userId,
@@ -3238,7 +3260,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         lossVirtualOperation: null,
         isOperationActive: false,
         martingaleStep: 0,
-        modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+        modoMartingale: modoMartingale,
         perdaAcumulada: 0,
         apostaInicial: 0,
       });
@@ -3649,7 +3671,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           user_id as userId,
           stake_amount as stakeAmount,
           deriv_token as derivToken,
-          currency
+          currency,
+          modo_martingale as modoMartingale
          FROM ai_user_config
          WHERE is_active = TRUE
            AND LOWER(mode) = 'preciso'`,
@@ -3670,7 +3693,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // Adicionar/atualizar usuários ativos
       for (const user of activeUsers) {
         this.logger.debug(
-          `[SyncPreciso] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount}`,
+          `[SyncPreciso] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
         );
 
         this.upsertPrecisoUserState({
@@ -3678,6 +3701,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           stakeAmount: parseFloat(user.stakeAmount),
           derivToken: user.derivToken,
           currency: user.currency,
+          modoMartingale: user.modoMartingale || 'conservador',
         });
       }
     } catch (error) {
@@ -3693,9 +3717,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     stakeAmount: number;
     derivToken: string;
     currency: string;
+    modoMartingale?: ModoMartingale;
   }): void {
+    const modoMartingale = params.modoMartingale || 'conservador';
+    
     this.logger.log(
-      `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency}`,
+      `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
     );
 
     const existing = this.precisoUsers.get(params.userId);
@@ -3703,12 +3730,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (existing) {
       // Atualizar existente
       this.logger.debug(
-        `[UpsertPrecisoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount}`,
+        `[UpsertPrecisoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount} | martingale=${modoMartingale}`,
       );
 
       existing.capital = params.stakeAmount;
       existing.derivToken = params.derivToken;
       existing.currency = params.currency;
+      existing.modoMartingale = modoMartingale;
 
       // Resetar capital virtual se necessário
       if (existing.virtualCapital <= 0) {
@@ -3716,7 +3744,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
     } else {
       // Criar novo
-      this.logger.debug(`[UpsertPrecisoState] Criando novo usuário | capital=${params.stakeAmount}`);
+      this.logger.debug(`[UpsertPrecisoState] Criando novo usuário | capital=${params.stakeAmount} | martingale=${modoMartingale}`);
 
       this.precisoUsers.set(params.userId, {
         userId: params.userId,
@@ -3729,7 +3757,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         lossVirtualOperation: null,
         isOperationActive: false,
         martingaleStep: 0,
-        modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+        modoMartingale: modoMartingale,
         perdaAcumulada: 0,
         apostaInicial: 0,
       });

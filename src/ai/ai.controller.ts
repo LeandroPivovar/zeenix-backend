@@ -261,9 +261,12 @@ export class AiController {
       mode?: string;
       profitTarget?: number;
       lossLimit?: number;
+      modoMartingale?: 'conservador' | 'moderado' | 'agressivo';
     },
   ) {
     try {
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}`);
+      
       await this.aiService.activateUserAI(
         body.userId,
         body.stakeAmount,
@@ -272,10 +275,11 @@ export class AiController {
         body.mode || 'veloz',
         body.profitTarget,
         body.lossLimit,
+        body.modoMartingale || 'conservador',
       );
       return {
         success: true,
-        message: `IA ativada com sucesso no modo ${body.mode || 'veloz'}. Executando em background.`,
+        message: `IA ativada com sucesso | Modo: ${body.mode || 'veloz'} | Martingale: ${body.modoMartingale || 'conservador'}`,
       };
     } catch (error) {
       throw new HttpException(
