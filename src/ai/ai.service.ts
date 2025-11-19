@@ -948,15 +948,31 @@ export class AiService implements OnModuleInit {
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins = total_wins + 1' : 'total_losses = total_losses + 1';
+    
+    // Buscar saldo atual da sessão
+    const currentBalanceResult = await this.dataSource.query(
+      `SELECT COALESCE(session_balance, 0) as currentBalance
+       FROM ai_user_config
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+    
+    const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
+    const newBalance = currentBalance + profitLoss;
+    
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
            ${column},
+           session_balance = ?,
            last_trade_at = NOW(),
            updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`,
-      [userId],
+       WHERE user_id = ? AND is_active = TRUE`,
+      [newBalance, userId],
     );
+    
+    this.logger.debug(`[IncrementVelozStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
     
     // ✅ Verificar limites de lucro/perda após atualizar stats
     await this.checkAndEnforceLimits(userId);
@@ -964,15 +980,16 @@ export class AiService implements OnModuleInit {
   
   /**
    * Verifica se os limites de lucro/perda diários foram atingidos e desativa a IA automaticamente
+   * Usa o session_balance que é atualizado após cada trade
    * Para imediatamente qualquer trade em andamento e grava o status da sessão
    */
   private async checkAndEnforceLimits(userId: string): Promise<void> {
     try {
-      // Buscar configuração do usuário
+      // Buscar configuração do usuário com o saldo atual da sessão
       const configResult = await this.dataSource.query(
-        `SELECT profit_target, loss_limit, is_active, session_status 
+        `SELECT profit_target, loss_limit, is_active, session_status, COALESCE(session_balance, 0) as sessionBalance
          FROM ai_user_config 
-         WHERE user_id = ?`,
+         WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
       
@@ -982,8 +999,8 @@ export class AiService implements OnModuleInit {
       
       const config = configResult[0];
       
-      // Se já está inativa ou já foi parada, não precisa verificar
-      if (!config.is_active || (config.session_status && config.session_status !== 'active')) {
+      // Se já foi parada, não precisa verificar
+      if (config.session_status && config.session_status !== 'active') {
         return;
       }
       
@@ -995,38 +1012,29 @@ export class AiService implements OnModuleInit {
         return;
       }
       
-      // Buscar lucro/prejuízo total do dia
-      const statsResult = await this.dataSource.query(
-        `SELECT SUM(COALESCE(profit_loss, 0)) as totalProfitLoss
-         FROM ai_trades
-         WHERE user_id = ? 
-           AND DATE(created_at) = CURDATE()
-           AND status IN ('WON', 'LOST')`,
-        [userId],
-      );
+      // Usar o session_balance que já está atualizado após cada trade
+      const sessionBalance = parseFloat(config.sessionBalance) || 0;
       
-      const totalProfitLoss = parseFloat(statsResult[0]?.totalProfitLoss) || 0;
-      
-      this.logger.debug(`[CheckLimits][${userId}] P&L: ${totalProfitLoss.toFixed(2)} | Alvo: ${profitTarget} | Limite: ${lossLimit}`);
+      this.logger.debug(`[CheckLimits][${userId}] Saldo: $${sessionBalance.toFixed(2)} | Alvo: ${profitTarget} | Limite: ${lossLimit}`);
       
       let shouldDeactivate = false;
       let deactivationReason = '';
       let sessionStatus: string | null = null;
       
-      // Verificar se atingiu meta de lucro
-      if (profitTarget && totalProfitLoss >= profitTarget) {
+      // Verificar se atingiu meta de lucro (stop win)
+      if (profitTarget && sessionBalance >= profitTarget) {
         shouldDeactivate = true;
         sessionStatus = 'stopped_profit';
-        deactivationReason = `Meta de lucro diária atingida: $${totalProfitLoss.toFixed(2)} (Meta: $${profitTarget})`;
-        this.logger.log(`[CheckLimits][${userId}] 🎯 ${deactivationReason}`);
+        deactivationReason = `Meta de lucro diária atingida: $${sessionBalance.toFixed(2)} (Meta: $${profitTarget})`;
+        this.logger.log(`[CheckLimits][${userId}] 🎯 STOP WIN: ${deactivationReason}`);
       }
       
-      // Verificar se atingiu limite de perda
-      if (lossLimit && totalProfitLoss <= -lossLimit) {
+      // Verificar se atingiu limite de perda (stop loss)
+      if (lossLimit && sessionBalance <= -lossLimit) {
         shouldDeactivate = true;
         sessionStatus = 'stopped_loss';
-        deactivationReason = `Limite de perda diária atingido: -$${Math.abs(totalProfitLoss).toFixed(2)} (Limite: $${lossLimit})`;
-        this.logger.warn(`[CheckLimits][${userId}] 🛑 ${deactivationReason}`);
+        deactivationReason = `Limite de perda diária atingido: -$${Math.abs(sessionBalance).toFixed(2)} (Limite: $${lossLimit})`;
+        this.logger.warn(`[CheckLimits][${userId}] 🛑 STOP LOSS: ${deactivationReason}`);
       }
       
       // Desativar IA se necessário
@@ -1052,7 +1060,7 @@ export class AiService implements OnModuleInit {
             state.isOperationActive = false;
           }
           this.velozUsers.delete(userId);
-          this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos`);
+          this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Veloz)`);
         }
         
         // Remover também dos outros modos se estiverem ativos
@@ -1062,6 +1070,7 @@ export class AiService implements OnModuleInit {
             state.isOperationActive = false;
           }
           this.moderadoUsers.delete(userId);
+          this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Moderado)`);
         }
         
         if (this.precisoUsers.has(userId)) {
@@ -1070,10 +1079,11 @@ export class AiService implements OnModuleInit {
             state.isOperationActive = false;
           }
           this.precisoUsers.delete(userId);
+          this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Preciso)`);
         }
         
         // Registrar log de desativação automática
-        this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason} | Status: ${sessionStatus}`);
+        this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason} | Status: ${sessionStatus} | Saldo final: $${sessionBalance.toFixed(2)}`);
       }
     } catch (error) {
       this.logger.error(`[CheckLimits][${userId}] Erro ao verificar limites:`, error);
@@ -1642,8 +1652,8 @@ export class AiService implements OnModuleInit {
     // 2. Criar nova sessão (sempre INSERT)
     await this.dataSource.query(
       `INSERT INTO ai_user_config 
-       (user_id, is_active, session_status, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-       VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+       (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
       [userId, stakeAmount, derivToken, currency, mode, modoMartingale, profitTarget || null, lossLimit || null, nextTradeAt],
     );
 
@@ -1777,6 +1787,8 @@ export class AiService implements OnModuleInit {
         id,
         user_id as userId,
         is_active as isActive,
+        session_status as sessionStatus,
+        session_balance as sessionBalance,
         stake_amount as stakeAmount,
         currency,
         mode,
@@ -2624,6 +2636,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `SELECT 
         id,
         is_active as isActive,
+        session_status as sessionStatus,
+        session_balance as sessionBalance,
         stake_amount as stakeAmount,
         currency,
         mode,
@@ -2686,6 +2700,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         return {
           sessionId: session.id,
           isActive: Boolean(session.isActive),
+          sessionStatus: session.sessionStatus || 'active',
+          sessionBalance: session.sessionBalance ? parseFloat(session.sessionBalance) : profitLoss, // Usar saldo do banco ou calcular
           stakeAmount: parseFloat(session.stakeAmount),
           currency: session.currency,
           mode: session.mode,
@@ -3226,15 +3242,31 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins' : 'total_losses';
+    
+    // Buscar saldo atual da sessão
+    const currentBalanceResult = await this.dataSource.query(
+      `SELECT COALESCE(session_balance, 0) as currentBalance
+       FROM ai_user_config
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+    
+    const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
+    const newBalance = currentBalance + profitLoss;
+    
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
            ${column} = ${column} + 1,
+           session_balance = ?,
            last_trade_at = NOW(),
            updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`,
-      [userId],
+       WHERE user_id = ? AND is_active = TRUE`,
+      [newBalance, userId],
     );
+    
+    this.logger.debug(`[IncrementModeradoStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
@@ -3754,15 +3786,31 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins' : 'total_losses';
+    
+    // Buscar saldo atual da sessão
+    const currentBalanceResult = await this.dataSource.query(
+      `SELECT COALESCE(session_balance, 0) as currentBalance
+       FROM ai_user_config
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+    
+    const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
+    const newBalance = currentBalance + profitLoss;
+    
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
            ${column} = ${column} + 1,
+           session_balance = ?,
            last_trade_at = NOW(),
            updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`,
-      [userId],
+       WHERE user_id = ? AND is_active = TRUE`,
+      [newBalance, userId],
     );
+    
+    this.logger.debug(`[IncrementPrecisoStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
