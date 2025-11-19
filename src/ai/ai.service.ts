@@ -25,6 +25,9 @@ interface VelozUserState {
   lossVirtualOperation: DigitParity | null;
   isOperationActive: boolean;
   martingaleStep: number;
+  modoMartingale: ModoMartingale;
+  perdaAcumulada: number;
+  apostaInicial: number;
 }
 
 interface ModeradoUserState {
@@ -38,6 +41,25 @@ interface ModeradoUserState {
   lossVirtualOperation: DigitParity | null;
   isOperationActive: boolean;
   martingaleStep: number;
+  modoMartingale: ModoMartingale;
+  perdaAcumulada: number;
+  apostaInicial: number;
+}
+
+interface PrecisoUserState {
+  userId: string;
+  derivToken: string;
+  currency: string;
+  capital: number;
+  virtualCapital: number;
+  lossVirtualActive: boolean;
+  lossVirtualCount: number;
+  lossVirtualOperation: DigitParity | null;
+  isOperationActive: boolean;
+  martingaleStep: number;
+  modoMartingale: ModoMartingale;
+  perdaAcumulada: number;
+  apostaInicial: number;
 }
 
 interface DigitTradeResult {
@@ -85,6 +107,70 @@ const MODERADO_CONFIG = {
   anomalyHomogeneityMin: 8, // Mínimo de homogeneidade para detectar anomalia
 };
 
+const PRECISO_CONFIG = {
+  window: 7, // Janela de análise de 7 ticks
+  dvxMax: 50, // DVX máximo permitido (MAIS rigoroso)
+  lossVirtualTarget: 4, // 4 perdas virtuais necessárias
+  betPercent: 0.01, // 1.0% do capital por operação
+  martingaleMax: 4, // Máximo de 4 entradas (martingale)
+  martingaleMultiplier: 2.5, // Multiplicador do martingale
+  minTicks: 100, // Mínimo de ticks para análise
+  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
+  desequilibrioPercent: 0.857, // 85%+ para detectar desequilíbrio (6+ de 7)
+  trendWindow: 20, // Janela para análise de tendência
+  trendPercent: 0.60, // 60% para confirmar tendência (12+ de 20)
+  anomalyWindow: 10, // Janela para detecção de anomalias
+  anomalyAlternationMin: 6, // Mínimo de alternâncias para detectar anomalia
+  anomalyRepetitionMin: 6, // Mínimo de repetições para detectar anomalia
+  anomalyHomogeneityMin: 8, // Mínimo de homogeneidade para detectar anomalia
+};
+
+// ============================================
+// SISTEMA UNIFICADO DE MARTINGALE
+// ============================================
+type ModoMartingale = 'conservador' | 'moderado' | 'agressivo';
+
+interface ConfigMartingale {
+  maxEntradas: number;
+  multiplicadorLucro: number; // 0 = break-even, 0.5 = 50%, 1.0 = 100%
+}
+
+const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
+  conservador: {
+    maxEntradas: 2,
+    multiplicadorLucro: 0, // Break-even (apenas recupera capital)
+  },
+  moderado: {
+    maxEntradas: 3,
+    multiplicadorLucro: 0.5, // 50% da aposta inicial
+  },
+  agressivo: {
+    maxEntradas: 4,
+    multiplicadorLucro: 1.0, // 100% da aposta inicial
+  },
+};
+
+const PAYOUT_DERIV = 0.98; // Payout padrão da Deriv (98%)
+
+/**
+ * Calcula a próxima aposta baseado no modo de martingale
+ * 
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.98
+ * MODERADO: Próxima Aposta = (Perda Acumulada + 0.5 × Aposta Inicial) / 0.98
+ * AGRESSIVO: Próxima Aposta = (Perda Acumulada + 1.0 × Aposta Inicial) / 0.98
+ */
+function calcularProximaAposta(
+  perdaAcumulada: number,
+  apostaInicial: number,
+  modo: ModoMartingale,
+): number {
+  const config = CONFIGS_MARTINGALE[modo];
+  const lucroDesejado = apostaInicial * config.multiplicadorLucro;
+  const aposta = (perdaAcumulada + lucroDesejado) / PAYOUT_DERIV;
+  
+  return Math.round(aposta * 100) / 100; // 2 casas decimais
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -97,6 +183,7 @@ export class AiService {
   private subscriptionId: string | null = null;
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
+  private precisoUsers = new Map<string, PrecisoUserState>();
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -245,6 +332,7 @@ export class AiService {
     // Processar estratégias de todos os modos ativos
     this.processVelozStrategies(newTick);
     this.processModeradoStrategies(newTick);
+    this.processPrecisoStrategies(newTick);
   }
 
   private extractLastDigit(value: number): number {
@@ -413,21 +501,31 @@ export class AiService {
   }
 
   private calculateVelozStake(state: VelozUserState, entry: number): number {
-    // Usar o stake_amount configurado diretamente ao invés de calcular percentual
     const baseStake = state.capital || 0.35; // Valor mínimo da Deriv é 0.35
     
-    this.logger.debug(
-      `[CalcStake] userId=${state.userId} | capital=${state.capital} | baseStake=${baseStake} | entry=${entry}`,
-    );
-
+    // Se é primeira entrada, usar a aposta base
     if (entry <= 1) {
       return baseStake;
     }
 
-    // Aplicar martingale nas próximas entradas
-    const stake =
-      baseStake * Math.pow(VELOZ_CONFIG.martingaleMultiplier, entry - 1);
-    return Number(stake.toFixed(2));
+    // SISTEMA UNIFICADO DE MARTINGALE
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    const proximaAposta = calcularProximaAposta(
+      state.perdaAcumulada,
+      state.apostaInicial,
+      state.modoMartingale,
+    );
+
+    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
+    
+    this.logger.debug(
+      `[Veloz][Martingale ${state.modoMartingale.toUpperCase()}] ` +
+      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
+      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
+    );
+
+    return Math.max(0.35, proximaAposta); // Mínimo da Deriv: 0.35
   }
 
   private async executeVelozOperation(
@@ -445,6 +543,19 @@ export class AiService {
 
     const stakeAmount = this.calculateVelozStake(state, entry);
     const currentPrice = this.getCurrentPrice() || 0;
+
+    // Se é primeira entrada, inicializar martingale
+    if (entry === 1) {
+      state.apostaInicial = stakeAmount;
+      state.perdaAcumulada = 0;
+      const config = CONFIGS_MARTINGALE[state.modoMartingale];
+      this.logger.log(
+        `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
+        `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
+        `Máx entradas: ${config.maxEntradas} | ` +
+        `Multiplicador lucro: ${(config.multiplicadorLucro * 100).toFixed(0)}%`,
+      );
+    }
 
     const tradeId = await this.createVelozTradeRecord(
       state.userId,
@@ -714,41 +825,74 @@ export class AiService {
     result: DigitTradeResult,
     entry: number,
   ): Promise<void> {
-    await this.incrementVelozStats(
-      state.userId,
-      result.status === 'WON',
-      result.profitLoss,
-    );
+    const won = result.status === 'WON';
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
 
-    state.virtualCapital += result.profitLoss;
+    await this.incrementVelozStats(state.userId, won, result.profitLoss);
 
-    if (result.status === 'WON') {
+    if (won) {
+      // ✅ VITÓRIA
+      state.virtualCapital += result.profitLoss;
+      const lucroLiquido = result.profitLoss - state.perdaAcumulada;
+      
       this.logger.log(
-        `[Veloz][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss.toFixed(
-          2,
-        )} | capital virtual: ${state.virtualCapital.toFixed(2)}`,
+        `[Veloz][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
+        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
+        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
+        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
+        `Capital: $${state.virtualCapital.toFixed(2)}`,
       );
+      
+      // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
+      state.perdaAcumulada = 0;
+      state.apostaInicial = 0;
       return;
     }
 
+    // ❌ PERDA
+    state.virtualCapital += result.profitLoss;
+    state.perdaAcumulada += stakeAmount;
+
     this.logger.warn(
-      `[Veloz][${state.userId}] ❌ Perda | Entrada ${entry} | Valor ${stakeAmount.toFixed(
-        2,
-      )}`,
+      `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
+      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
     );
 
-    if (entry < VELOZ_CONFIG.martingaleMax) {
-      this.logger.warn(
-        `[Veloz][${state.userId}] 🔁 Martingale ${entry + 1}ª entrada agendada`,
+    // Verificar se pode continuar (respeitar o maxEntradas do modo)
+    if (entry < config.maxEntradas) {
+      const proximaAposta = calcularProximaAposta(
+        state.perdaAcumulada,
+        state.apostaInicial,
+        state.modoMartingale,
       );
+      
+      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      
+      this.logger.log(
+        `[Veloz][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
+        (lucroEsperado > 0
+          ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
+          : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
+      );
+      
+      // Executar próxima entrada
       await this.executeVelozOperation(state, proposal, entry + 1);
       return;
     }
 
+    // 🛑 STOP-LOSS DE MARTINGALE
+    this.logger.warn(
+      `[Veloz][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
+      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
+    );
+    
+    // Resetar martingale
     state.isOperationActive = false;
     state.martingaleStep = 0;
+    state.perdaAcumulada = 0;
+    state.apostaInicial = 0;
   }
 
   private async incrementVelozStats(
@@ -942,6 +1086,9 @@ export class AiService {
       lossVirtualOperation: null,
       isOperationActive: false,
       martingaleStep: 0,
+      modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+      perdaAcumulada: 0,
+      apostaInicial: 0,
     });
   }
 
@@ -1422,7 +1569,8 @@ export class AiService {
         derivToken,
         currency,
       });
-      this.removeModeradoUserState(userId); // Remover do outro modo
+      this.removeModeradoUserState(userId);
+      this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'moderado') {
       this.logger.log(
         `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount}`,
@@ -1433,10 +1581,24 @@ export class AiService {
         derivToken,
         currency,
       });
-      this.removeVelozUserState(userId); // Remover do outro modo
+      this.removeVelozUserState(userId);
+      this.removePrecisoUserState(userId);
+    } else if ((mode || '').toLowerCase() === 'preciso') {
+      this.logger.log(
+        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount}`,
+      );
+      this.upsertPrecisoUserState({
+        userId,
+        stakeAmount,
+        derivToken,
+        currency,
+      });
+      this.removeVelozUserState(userId);
+      this.removeModeradoUserState(userId);
     } else {
       this.removeVelozUserState(userId);
       this.removeModeradoUserState(userId);
+      this.removePrecisoUserState(userId);
     }
   }
 
@@ -1460,6 +1622,7 @@ export class AiService {
     this.logger.log(`IA desativada para usuário ${userId}`);
     this.removeVelozUserState(userId);
     this.removeModeradoUserState(userId);
+    this.removePrecisoUserState(userId);
   }
 
   /**
@@ -1616,8 +1779,9 @@ export class AiService {
         // Sincronizar usuários dos modos em tempo real
         await this.syncVelozUsersFromDb();
         await this.syncModeradoUsersFromDb();
+        await this.syncPrecisoUsersFromDb();
 
-        // Process other users with trade timing logic (fast/moderado modes are handled separately)
+        // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
         const usersToProcess = await this.dataSource.query(
             `SELECT 
                 user_id as userId,
@@ -2954,25 +3118,34 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }
 
   /**
-   * Calcula stake para o modo moderado (0.75% + martingale)
+   * Calcula stake para o modo moderado (0.75% + martingale unificado)
    */
   private calculateModeradoStake(state: ModeradoUserState): number {
     const baseStake = state.capital * MODERADO_CONFIG.betPercent;
     
-    this.logger.debug(
-      `[Moderado][CalcStake] userId=${state.userId} | capital=${state.capital} | baseStake=${baseStake} | martingale=${state.martingaleStep}`,
-    );
-
+    // Se é primeira entrada, usar a aposta base
     if (state.martingaleStep === 0) {
       return Math.max(MODERADO_CONFIG.minStake, baseStake);
     }
 
-    const martingaleStake = baseStake * Math.pow(
-      MODERADO_CONFIG.martingaleMultiplier,
-      state.martingaleStep,
+    // SISTEMA UNIFICADO DE MARTINGALE
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    const proximaAposta = calcularProximaAposta(
+      state.perdaAcumulada,
+      state.apostaInicial,
+      state.modoMartingale,
     );
 
-    return Math.max(MODERADO_CONFIG.minStake, martingaleStake);
+    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
+    
+    this.logger.debug(
+      `[Moderado][Martingale ${state.modoMartingale.toUpperCase()}] ` +
+      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
+      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
+    );
+
+    return Math.max(MODERADO_CONFIG.minStake, proximaAposta);
   }
 
   /**
@@ -3065,6 +3238,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         lossVirtualOperation: null,
         isOperationActive: false,
         martingaleStep: 0,
+        modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+        perdaAcumulada: 0,
+        apostaInicial: 0,
       });
     }
   }
@@ -3076,6 +3252,497 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (this.moderadoUsers.has(userId)) {
       this.moderadoUsers.delete(userId);
       this.logger.log(`[Moderado] Estado removido para usuário ${userId}`);
+    }
+  }
+
+  // ======================== MODO PRECISO ========================
+
+  /**
+   * Processa estratégias do modo PRECISO para todos os usuários ativos
+   */
+  private async processPrecisoStrategies(latestTick: Tick): Promise<void> {
+    if (this.ticks.length < PRECISO_CONFIG.minTicks) {
+      return;
+    }
+
+    // Análise de desequilíbrio (janela de 7 ticks)
+    const windowTicks = this.ticks.slice(-PRECISO_CONFIG.window);
+    const parCount = windowTicks.filter(t => t.parity === 'PAR').length;
+    const imparCount = windowTicks.filter(t => t.parity === 'IMPAR').length;
+
+    const totalInWindow = windowTicks.length;
+    const parPercent = parCount / totalInWindow;
+    const imparPercent = imparCount / totalInWindow;
+
+    // Se não há desequilíbrio >= 85%, aguardar
+    if (parPercent < PRECISO_CONFIG.desequilibrioPercent && 
+        imparPercent < PRECISO_CONFIG.desequilibrioPercent) {
+      this.logger.debug(
+        `[Preciso] Sem desequilíbrio suficiente | PAR: ${(parPercent * 100).toFixed(0)}% | IMPAR: ${(imparPercent * 100).toFixed(0)}%`,
+      );
+      return;
+    }
+
+    // Determinar proposta baseada no desequilíbrio
+    let proposal: DigitParity;
+    if (parPercent >= PRECISO_CONFIG.desequilibrioPercent) {
+      proposal = 'IMPAR'; // Se 85%+ PAR (6+ de 7), entrar em ÍMPAR
+    } else {
+      proposal = 'PAR'; // Se 85%+ ÍMPAR (6+ de 7), entrar em PAR
+    }
+
+    // Validação DVX (mais rigoroso: máximo 50)
+    const dvx = this.calculateDVX(this.ticks);
+    if (dvx > PRECISO_CONFIG.dvxMax) {
+      this.logger.warn(
+        `[Preciso] DVX alto (${dvx}) > ${PRECISO_CONFIG.dvxMax} - bloqueando operação`,
+      );
+      return;
+    }
+
+    // Detector de Anomalias (10 ticks) - mesma lógica do moderado
+    const hasAnomaly = this.detectAnomalies(this.ticks.slice(-PRECISO_CONFIG.anomalyWindow));
+    if (hasAnomaly) {
+      this.logger.warn(`[Preciso] Anomalia detectada - bloqueando operação`);
+      return;
+    }
+
+    // Validação de Tendência Geral (20 ticks) - mesma lógica do moderado
+    const trendValid = this.validateTrend(proposal, this.ticks.slice(-PRECISO_CONFIG.trendWindow));
+    if (!trendValid) {
+      this.logger.warn(`[Preciso] Tendência não confirma proposta ${proposal} - bloqueando`);
+      return;
+    }
+
+    this.logger.log(
+      `[Preciso] Condições OK | Proposta: ${proposal} | DVX: ${dvx} | Deseq: ${(Math.max(parPercent, imparPercent) * 100).toFixed(0)}%`,
+    );
+
+    // Processar loss virtual para cada usuário ativo no modo preciso
+    for (const state of this.precisoUsers.values()) {
+      if (!this.canProcessPrecisoState(state)) {
+        continue;
+      }
+      await this.handlePrecisoLossVirtual(state, proposal, latestTick, dvx);
+    }
+  }
+
+  /**
+   * Verifica se pode processar o estado do usuário no modo preciso
+   */
+  private canProcessPrecisoState(state: PrecisoUserState): boolean {
+    if (state.isOperationActive) {
+      this.logger.debug(
+        `[Preciso][${state.userId}] Operação em andamento - aguardando finalização`,
+      );
+      return false;
+    }
+    if (!state.derivToken) {
+      this.logger.warn(
+        `[Preciso][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
+      );
+      return false;
+    }
+    if ((state.virtualCapital || state.capital) <= 0) {
+      this.logger.warn(
+        `[Preciso][${state.userId}] Usuário sem capital configurado - ignorando`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Gerencia o sistema de loss virtual do modo preciso (4 perdas)
+   */
+  private async handlePrecisoLossVirtual(
+    state: PrecisoUserState,
+    proposal: DigitParity,
+    tick: Tick,
+    dvx: number,
+  ): Promise<void> {
+    // Se ainda não iniciou o ciclo de loss virtual, iniciar agora
+    if (!state.lossVirtualActive) {
+      state.lossVirtualActive = true;
+      state.lossVirtualCount = 0;
+      state.lossVirtualOperation = proposal;
+      this.logger.debug(
+        `[Preciso][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
+      );
+    }
+
+    // Se mudou a proposta, resetar
+    if (state.lossVirtualOperation !== proposal) {
+      state.lossVirtualCount = 0;
+      state.lossVirtualOperation = proposal;
+      this.logger.debug(
+        `[Preciso][${state.userId}] Proposta mudou, resetando loss virtual`,
+      );
+    }
+
+    // Verificar resultado do tick atual contra a proposta
+    const tickResult = tick.parity;
+    const wouldWin = tickResult === proposal;
+
+    if (wouldWin) {
+      // Se venceria, resetar contador
+      this.logger.log(
+        `[Preciso][${state.userId}] Vitória virtual | tick=${tick.value} (${tickResult}) | proposta=${proposal} | resetando contador`,
+      );
+      state.lossVirtualCount = 0;
+      return;
+    }
+
+    // Perdeu virtualmente, incrementar contador
+    state.lossVirtualCount++;
+    this.logger.log(
+      `[Preciso][${state.userId}] Loss virtual ${state.lossVirtualCount}/${PRECISO_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tickResult}) | proposta=${proposal} | DVX: ${dvx}`,
+    );
+
+    // Se atingiu 4 perdas virtuais, executar operação real
+    if (state.lossVirtualCount >= PRECISO_CONFIG.lossVirtualTarget) {
+      this.logger.log(
+        `[Preciso][${state.userId}] ✅ Loss virtual completo (4/4) -> executando operação ${proposal}`,
+      );
+
+      // Resetar contadores antes de executar
+      state.lossVirtualCount = 0;
+      state.lossVirtualActive = false;
+      state.lossVirtualOperation = null;
+
+      // Executar operação real (async)
+      this.executePrecisoOperation(state, proposal).catch((error) => {
+        this.logger.error(
+          `[Preciso] Erro ao executar operação para usuário ${state.userId}:`,
+          error,
+        );
+      });
+    }
+  }
+
+  /**
+   * Executa operação real no modo preciso
+   */
+  private async executePrecisoOperation(
+    state: PrecisoUserState,
+    proposal: DigitParity,
+    entry: number = 1,
+  ): Promise<number> {
+    if (entry === 1 && state.isOperationActive) {
+      this.logger.warn(`[Preciso] Usuário ${state.userId} já possui operação ativa`);
+      return -1;
+    }
+
+    state.isOperationActive = true;
+    state.martingaleStep = entry;
+
+    const stakeAmount = this.calculatePrecisoStake(state);
+    const currentPrice = this.getCurrentPrice() || 0;
+
+    const tradeId = await this.createPrecisoTradeRecord(
+      state.userId,
+      proposal,
+      stakeAmount,
+      currentPrice,
+    );
+
+    this.logger.log(
+      `[Preciso][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
+    );
+
+    try {
+      const result = await this.executeDigitTradeOnDeriv({
+        tradeId,
+        derivToken: state.derivToken,
+        currency: state.currency || 'USD',
+        stakeAmount,
+        contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+      });
+
+      await this.handlePrecisoTradeOutcome(
+        state,
+        proposal,
+        tradeId,
+        stakeAmount,
+        result,
+        entry,
+      );
+
+      return tradeId;
+    } catch (error: any) {
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      await this.dataSource.query(
+        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+        ['ERROR', error.message || 'Unknown error', tradeId],
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Cria registro de trade do modo preciso no banco
+   */
+  private async createPrecisoTradeRecord(
+    userId: string,
+    proposal: DigitParity,
+    stakeAmount: number,
+    entryPrice: number,
+  ): Promise<number> {
+    const analysisData = {
+      strategy: 'modo_preciso',
+      dvx: this.calculateDVX(this.ticks),
+      window: PRECISO_CONFIG.window,
+      ticks: this.ticks.slice(-PRECISO_CONFIG.window).map(t => ({
+        value: t.value,
+        epoch: t.epoch,
+        timestamp: t.timestamp,
+        digit: t.digit,
+        parity: t.parity,
+      })),
+    };
+
+    const result = await this.dataSource.query(
+      `INSERT INTO ai_trades (
+        user_id,
+        analysis_data,
+        gemini_signal,
+        gemini_duration,
+        gemini_reasoning,
+        entry_price,
+        stake_amount,
+        contract_type,
+        status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        JSON.stringify(analysisData),
+        proposal,
+        1,
+        'Modo Preciso - desequilíbrio rigoroso + validações múltiplas',
+        entryPrice,
+        stakeAmount,
+        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        'PENDING',
+      ],
+    );
+
+    return result.insertId;
+  }
+
+  /**
+   * Trata o resultado de um trade do modo preciso
+   */
+  private async handlePrecisoTradeOutcome(
+    state: PrecisoUserState,
+    proposal: DigitParity,
+    tradeId: number,
+    stakeAmount: number,
+    result: DigitTradeResult,
+    entry: number,
+  ): Promise<void> {
+    const won = result.status === 'WON';
+
+    this.logger.log(
+      `[Preciso][${state.userId}] ${won ? '✅ Vitória' : '❌ Loss'} | Lucro ${result.profitLoss} | entrada=${entry}`,
+    );
+
+    await this.incrementPrecisoStats(state.userId, won, result.profitLoss);
+
+    if (won) {
+      state.isOperationActive = false;
+      state.martingaleStep = 0;
+      state.virtualCapital += result.profitLoss;
+      this.logger.log(
+        `[Preciso][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss} | capital virtual: ${state.virtualCapital}`,
+      );
+    } else {
+      state.virtualCapital += result.profitLoss;
+
+      if (entry < PRECISO_CONFIG.martingaleMax) {
+        const nextEntry = entry + 1;
+        this.logger.log(
+          `[Preciso][${state.userId}] Aplicando martingale ${nextEntry}/${PRECISO_CONFIG.martingaleMax}`,
+        );
+
+        setTimeout(() => {
+          this.executePrecisoOperation(state, proposal, nextEntry).catch(
+            (error) => {
+              this.logger.error(
+                `[Preciso] Erro no martingale ${nextEntry}:`,
+                error,
+              );
+            },
+          );
+        }, 4000);
+      } else {
+        state.isOperationActive = false;
+        state.martingaleStep = 0;
+        this.logger.warn(
+          `[Preciso][${state.userId}] Martingale esgotado após ${entry} tentativas | capital virtual: ${state.virtualCapital}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Incrementa estatísticas do modo preciso
+   */
+  private async incrementPrecisoStats(
+    userId: string,
+    won: boolean,
+    profitLoss: number,
+  ): Promise<void> {
+    const column = won ? 'total_wins' : 'total_losses';
+    await this.dataSource.query(
+      `UPDATE ai_user_config
+       SET total_trades = total_trades + 1,
+           ${column} = ${column} + 1,
+           last_trade_at = NOW(),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`,
+      [userId],
+    );
+
+    // Verificar e enforçar limites após cada trade
+    await this.checkAndEnforceLimits(userId);
+  }
+
+  /**
+   * Calcula stake para o modo preciso (1.0% + martingale unificado)
+   */
+  private calculatePrecisoStake(state: PrecisoUserState): number {
+    const baseStake = state.capital * PRECISO_CONFIG.betPercent;
+    
+    // Se é primeira entrada, usar a aposta base
+    if (state.martingaleStep === 0) {
+      return Math.max(PRECISO_CONFIG.minStake, baseStake);
+    }
+
+    // SISTEMA UNIFICADO DE MARTINGALE
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    const proximaAposta = calcularProximaAposta(
+      state.perdaAcumulada,
+      state.apostaInicial,
+      state.modoMartingale,
+    );
+
+    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
+    
+    this.logger.debug(
+      `[Preciso][Martingale ${state.modoMartingale.toUpperCase()}] ` +
+      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
+      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
+    );
+
+    return Math.max(PRECISO_CONFIG.minStake, proximaAposta);
+  }
+
+  /**
+   * Sincroniza usuários do modo preciso do banco de dados
+   */
+  async syncPrecisoUsersFromDb(): Promise<void> {
+    try {
+      const activeUsers = await this.dataSource.query(
+        `SELECT 
+          user_id as userId,
+          stake_amount as stakeAmount,
+          deriv_token as derivToken,
+          currency
+         FROM ai_user_config
+         WHERE is_active = TRUE
+           AND LOWER(mode) = 'preciso'`,
+      );
+
+      this.logger.log(`[SyncPreciso] Sincronizando ${activeUsers.length} usuários do banco`);
+
+      const activeIds = new Set(activeUsers.map((u: any) => u.userId));
+
+      // Remover usuários que não estão mais ativos
+      for (const existingId of this.precisoUsers.keys()) {
+        if (!activeIds.has(existingId)) {
+          this.precisoUsers.delete(existingId);
+          this.logger.log(`[SyncPreciso] Removido usuário ${existingId} (não mais ativo)`);
+        }
+      }
+
+      // Adicionar/atualizar usuários ativos
+      for (const user of activeUsers) {
+        this.logger.debug(
+          `[SyncPreciso] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount}`,
+        );
+
+        this.upsertPrecisoUserState({
+          userId: user.userId,
+          stakeAmount: parseFloat(user.stakeAmount),
+          derivToken: user.derivToken,
+          currency: user.currency,
+        });
+      }
+    } catch (error) {
+      this.logger.error('[SyncPreciso] Erro ao sincronizar usuários:', error);
+    }
+  }
+
+  /**
+   * Adiciona ou atualiza estado de usuário no modo preciso
+   */
+  private upsertPrecisoUserState(params: {
+    userId: string;
+    stakeAmount: number;
+    derivToken: string;
+    currency: string;
+  }): void {
+    this.logger.log(
+      `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency}`,
+    );
+
+    const existing = this.precisoUsers.get(params.userId);
+
+    if (existing) {
+      // Atualizar existente
+      this.logger.debug(
+        `[UpsertPrecisoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount}`,
+      );
+
+      existing.capital = params.stakeAmount;
+      existing.derivToken = params.derivToken;
+      existing.currency = params.currency;
+
+      // Resetar capital virtual se necessário
+      if (existing.virtualCapital <= 0) {
+        existing.virtualCapital = params.stakeAmount;
+      }
+    } else {
+      // Criar novo
+      this.logger.debug(`[UpsertPrecisoState] Criando novo usuário | capital=${params.stakeAmount}`);
+
+      this.precisoUsers.set(params.userId, {
+        userId: params.userId,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        capital: params.stakeAmount,
+        virtualCapital: params.stakeAmount,
+        lossVirtualActive: false,
+        lossVirtualCount: 0,
+        lossVirtualOperation: null,
+        isOperationActive: false,
+        martingaleStep: 0,
+        modoMartingale: 'conservador', // Padrão: conservador (recomendado)
+        perdaAcumulada: 0,
+        apostaInicial: 0,
+      });
+    }
+  }
+
+  /**
+   * Remove usuário do modo preciso
+   */
+  private removePrecisoUserState(userId: string): void {
+    if (this.precisoUsers.has(userId)) {
+      this.precisoUsers.delete(userId);
+      this.logger.log(`[Preciso] Estado removido para usuário ${userId}`);
     }
   }
 }
