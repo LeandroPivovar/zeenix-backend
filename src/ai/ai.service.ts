@@ -981,6 +981,8 @@ export class AiService {
 
   async getTradeHistory(userId: string, limit: number = 20) {
     // Buscar histórico de trades do usuário (últimas 20 por padrão)
+    this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}, limit=${limit}`);
+    
     const query = `
       SELECT 
         id,
@@ -1001,7 +1003,12 @@ export class AiService {
       LIMIT ?
     `;
 
+    this.logger.debug(`[GetTradeHistory] 📝 Query: ${query}`);
+    this.logger.debug(`[GetTradeHistory] 📝 Params: userId=${userId}, limit=${limit}`);
+
     const result = await this.dataSource.query(query, [userId, limit]);
+    
+    this.logger.log(`[GetTradeHistory] ✅ Query executada, ${result.length} registros encontrados`);
 
     return result.map((trade: any) => ({
       id: trade.id,

@@ -5,12 +5,15 @@ import {
   Body,
   Param,
   HttpException, 
-  HttpStatus 
+  HttpStatus,
+  Logger
 } from '@nestjs/common';
 import { AiService, DigitParity, Tick } from './ai.service';
 
 @Controller('ai')
 export class AiController {
+  private readonly logger = new Logger(AiController.name);
+  
   constructor(private readonly aiService: AiService) {}
 
   @Post('start')
@@ -205,12 +208,16 @@ export class AiController {
   @Get('trade-history/:userId')
   async getTradeHistory(@Param('userId') userId: string) {
     try {
+      this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
       const history = await this.aiService.getTradeHistory(userId);
+      this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
+      this.logger.debug(`[TradeHistory] Dados: ${JSON.stringify(history).substring(0, 200)}...`);
       return {
         success: true,
         data: history,
       };
     } catch (error) {
+      this.logger.error(`[TradeHistory] ❌ Erro ao buscar histórico: ${error.message}`);
       throw new HttpException(
         {
           success: false,
