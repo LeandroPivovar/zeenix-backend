@@ -1346,7 +1346,36 @@ export class AiService implements OnModuleInit {
     const totalVolume = parseFloat(stats.totalVolume) || 0;
     const winrate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
-    this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%`);
+    // Buscar saldo da sessão ativa
+    const sessionQuery = `
+      SELECT 
+        COALESCE(session_balance, 0) as sessionBalance,
+        created_at as sessionCreatedAt
+      FROM ai_user_config
+      WHERE user_id = ? AND is_active = TRUE
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
+    const sessionBalance = sessionResult.length > 0 ? parseFloat(sessionResult[0].sessionBalance) || 0 : 0;
+    const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
+
+    // Calcular lucro da sessão (trades desde o início da sessão)
+    let sessionProfitLoss = 0;
+    if (sessionCreatedAt) {
+      const sessionTradesQuery = `
+        SELECT SUM(COALESCE(profit_loss, 0)) as sessionProfitLoss
+        FROM ai_trades
+        WHERE user_id = ? 
+          AND created_at >= ?
+          AND status IN ('WON', 'LOST')
+      `;
+      const sessionTradesResult = await this.dataSource.query(sessionTradesQuery, [userId, sessionCreatedAt]);
+      sessionProfitLoss = parseFloat(sessionTradesResult[0]?.sessionProfitLoss) || 0;
+    }
+
+    this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%, sessionBalance=${sessionBalance}, sessionProfit=${sessionProfitLoss}`);
 
     return {
       totalTrades,
@@ -1355,6 +1384,8 @@ export class AiService implements OnModuleInit {
       profitLoss,
       totalVolume,
       winrate: parseFloat(winrate.toFixed(2)),
+      sessionBalance,
+      sessionProfitLoss,
     };
   }
 
@@ -1794,6 +1825,7 @@ export class AiService implements OnModuleInit {
         stake_amount as stakeAmount,
         currency,
         mode,
+        modo_martingale as modoMartingale,
         profit_target as profitTarget,
         loss_limit as lossLimit,
         last_trade_at as lastTradeAt,
@@ -1819,8 +1851,11 @@ export class AiService implements OnModuleInit {
         stakeAmount: 10,
         currency: 'USD',
         mode: 'veloz',
+        modoMartingale: 'conservador',
         profitTarget: null,
         lossLimit: null,
+        sessionBalance: 0,
+        sessionStatus: null,
         totalTrades: 0,
         totalWins: 0,
         totalLosses: 0,
