@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -172,7 +172,7 @@ function calcularProximaAposta(
 }
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
@@ -190,6 +190,16 @@ export class AiService {
     private readonly statsIAsService: StatsIAsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
+  }
+
+  async onModuleInit() {
+    this.logger.log('🚀 Inicializando AiService...');
+    try {
+      await this.initializeTables();
+      this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
+    } catch (error) {
+      this.logger.error('❌ Erro ao inicializar tabelas da IA:', error.message);
+    }
   }
 
   async initialize() {
