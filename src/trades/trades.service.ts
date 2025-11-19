@@ -133,12 +133,16 @@ export class TradesService {
     // Taxa de markup da plataforma (3%)
     const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835
     
-    let dateCondition = '';
-    const params: any[] = [];
+    let manualDateCondition = '';
+    let aiDateCondition = '';
+    const manualParams: any[] = [];
+    const aiParams: any[] = [];
     
     if (startDate && endDate) {
-      dateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
-      params.push(startDate, endDate);
+      manualDateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
+      aiDateCondition = 'AND DATE(at.created_at) BETWEEN ? AND ?';
+      manualParams.push(startDate, endDate);
+      aiParams.push(startDate, endDate);
     }
 
     // Buscar trades manuais vencedoras com lucro
@@ -147,15 +151,14 @@ export class TradesService {
         t.user_id,
         u.name,
         u.email,
-        u.whatsapp,
         COUNT(t.id) as transaction_count,
         SUM(t.profit) as total_profit_net
       FROM trades t
       INNER JOIN users u ON t.user_id = u.id
       WHERE t.status = 'won'
         AND t.profit > 0
-        ${dateCondition}
-      GROUP BY t.user_id, u.name, u.email, u.whatsapp
+        ${manualDateCondition}
+      GROUP BY t.user_id, u.name, u.email
     `;
 
     // Buscar AI trades vencedoras com lucro
@@ -164,20 +167,19 @@ export class TradesService {
         at.user_id,
         u.name,
         u.email,
-        u.whatsapp,
         COUNT(at.id) as transaction_count,
         SUM(at.profit_loss) as total_profit_net
       FROM ai_trades at
       INNER JOIN users u ON at.user_id = u.id
       WHERE at.status = 'WON'
         AND at.profit_loss > 0
-        ${dateCondition}
-      GROUP BY at.user_id, u.name, u.email, u.whatsapp
+        ${aiDateCondition}
+      GROUP BY at.user_id, u.name, u.email
     `;
 
     const [manualTrades, aiTrades] = await Promise.all([
-      this.dataSource.query(manualTradesQuery, params),
-      this.dataSource.query(aiTradesQuery, params),
+      this.dataSource.query(manualTradesQuery, manualParams),
+      this.dataSource.query(aiTradesQuery, aiParams),
     ]);
 
     // Combinar e agregar dados por usuário
@@ -191,7 +193,7 @@ export class TradesService {
           userId,
           name: trade.name,
           email: trade.email,
-          whatsapp: trade.whatsapp,
+          whatsapp: null, // TODO: adicionar campo whatsapp na tabela users
           country: 'Brasil', // TODO: adicionar país ao cadastro
           transactionCount: 0,
           totalProfitNet: 0,
@@ -211,7 +213,7 @@ export class TradesService {
           userId,
           name: trade.name,
           email: trade.email,
-          whatsapp: trade.whatsapp,
+          whatsapp: null, // TODO: adicionar campo whatsapp na tabela users
           country: 'Brasil', // TODO: adicionar país ao cadastro
           transactionCount: 0,
           totalProfitNet: 0,
@@ -228,7 +230,7 @@ export class TradesService {
       userId: user.userId,
       name: user.name,
       email: user.email,
-      whatsapp: user.whatsapp,
+      whatsapp: user.whatsapp || null,
       country: user.country,
       transactionCount: user.transactionCount,
       commission: parseFloat((user.totalProfitNet * MARKUP_RATE).toFixed(2)),
