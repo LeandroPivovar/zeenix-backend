@@ -732,6 +732,98 @@ export class AiService {
        WHERE user_id = ?`,
       [userId],
     );
+    
+    // ✅ Verificar limites de lucro/perda após atualizar stats
+    await this.checkAndEnforceLimits(userId);
+  }
+  
+  /**
+   * Verifica se os limites de lucro/perda diários foram atingidos e desativa a IA automaticamente
+   */
+  private async checkAndEnforceLimits(userId: string): Promise<void> {
+    try {
+      // Buscar configuração do usuário
+      const configResult = await this.dataSource.query(
+        `SELECT profit_target, loss_limit, is_active 
+         FROM ai_user_config 
+         WHERE user_id = ?`,
+        [userId],
+      );
+      
+      if (!configResult || configResult.length === 0) {
+        return;
+      }
+      
+      const config = configResult[0];
+      
+      // Se já está inativa, não precisa verificar
+      if (!config.is_active) {
+        return;
+      }
+      
+      const profitTarget = parseFloat(config.profit_target) || null;
+      const lossLimit = parseFloat(config.loss_limit) || null;
+      
+      // Se não há limites configurados, não fazer nada
+      if (!profitTarget && !lossLimit) {
+        return;
+      }
+      
+      // Buscar lucro/prejuízo total do dia
+      const statsResult = await this.dataSource.query(
+        `SELECT SUM(COALESCE(profit_loss, 0)) as totalProfitLoss
+         FROM ai_trades
+         WHERE user_id = ? 
+           AND DATE(created_at) = CURDATE()
+           AND status IN ('WON', 'LOST')`,
+        [userId],
+      );
+      
+      const totalProfitLoss = parseFloat(statsResult[0]?.totalProfitLoss) || 0;
+      
+      this.logger.debug(`[CheckLimits][${userId}] P&L: ${totalProfitLoss.toFixed(2)} | Alvo: ${profitTarget} | Limite: ${lossLimit}`);
+      
+      let shouldDeactivate = false;
+      let deactivationReason = '';
+      
+      // Verificar se atingiu meta de lucro
+      if (profitTarget && totalProfitLoss >= profitTarget) {
+        shouldDeactivate = true;
+        deactivationReason = `Meta de lucro diária atingida: $${totalProfitLoss.toFixed(2)} (Meta: $${profitTarget})`;
+        this.logger.log(`[CheckLimits][${userId}] 🎯 ${deactivationReason}`);
+      }
+      
+      // Verificar se atingiu limite de perda
+      if (lossLimit && totalProfitLoss <= -lossLimit) {
+        shouldDeactivate = true;
+        deactivationReason = `Limite de perda diária atingido: -$${Math.abs(totalProfitLoss).toFixed(2)} (Limite: $${lossLimit})`;
+        this.logger.warn(`[CheckLimits][${userId}] 🛑 ${deactivationReason}`);
+      }
+      
+      // Desativar IA se necessário
+      if (shouldDeactivate) {
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET is_active = FALSE, 
+               deactivation_reason = ?,
+               deactivated_at = NOW(),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = ?`,
+          [deactivationReason, userId],
+        );
+        
+        // Remover do mapa de usuários Veloz ativos
+        if (this.velozUsers.has(userId)) {
+          this.velozUsers.delete(userId);
+          this.logger.log(`[CheckLimits][${userId}] IA desativada automaticamente`);
+        }
+        
+        // Registrar log de desativação automática
+        this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason}`);
+      }
+    } catch (error) {
+      this.logger.error(`[CheckLimits][${userId}] Erro ao verificar limites:`, error);
+    }
   }
 
   private async syncVelozUsersFromDb(): Promise<void> {
@@ -1089,13 +1181,16 @@ export class AiService {
         
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deactivation_reason TEXT NULL COMMENT 'Motivo da desativação',
+        deactivated_at TIMESTAMP NULL COMMENT 'Data/hora da desativação',
         
-        UNIQUE KEY idx_user_id (user_id),
+        INDEX idx_user_id (user_id),
         INDEX idx_is_active (is_active),
         INDEX idx_next_trade_at (next_trade_at),
-        INDEX idx_mode (mode)
+        INDEX idx_mode (mode),
+        INDEX idx_user_active (user_id, is_active, created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      COMMENT='Configuração de IA de trading por usuário - permite execução em background'
+      COMMENT='Configuração de IA de trading por usuário - múltiplas sessões permitidas'
     `);
     
     // Verificar tipo da coluna user_id
@@ -1124,8 +1219,8 @@ export class AiService {
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
       `);
       
-      // Recriar índice
-      await this.dataSource.query(`ALTER TABLE ai_user_config ADD UNIQUE KEY idx_user_id (user_id)`);
+      // Recriar índice (não-unique para permitir múltiplas sessões)
+      await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
       
       this.logger.log('✅ Migração concluída: user_id agora é VARCHAR(36)');
     }
@@ -1157,6 +1252,62 @@ export class AiService {
         ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target
       `);
       this.logger.log('✅ Coluna loss_limit adicionada');
+    }
+    
+    // Adicionar deactivation_reason se não existir
+    if (!columnNames.includes('deactivation_reason')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN deactivation_reason TEXT NULL COMMENT 'Motivo da desativação' AFTER updated_at
+      `);
+      this.logger.log('✅ Coluna deactivation_reason adicionada');
+    }
+    
+    // Adicionar deactivated_at se não existir
+    if (!columnNames.includes('deactivated_at')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN deactivated_at TIMESTAMP NULL COMMENT 'Data/hora da desativação' AFTER deactivation_reason
+      `);
+      this.logger.log('✅ Coluna deactivated_at adicionada');
+    }
+    
+    // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
+    const indexesResult = await this.dataSource.query(`
+      SELECT INDEX_NAME, NON_UNIQUE
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ai_user_config'
+      AND INDEX_NAME = 'idx_user_id'
+    `);
+    
+    if (indexesResult.length > 0 && indexesResult[0].NON_UNIQUE === 0) {
+      this.logger.warn('🔄 Removendo constraint UNIQUE de idx_user_id para permitir múltiplas sessões...');
+      
+      // Remover índice UNIQUE
+      await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
+      
+      // Recriar como índice normal
+      await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
+      
+      this.logger.log('✅ Índice idx_user_id convertido de UNIQUE para normal');
+    }
+    
+    // Adicionar índice composto se não existir
+    const compositeIndexResult = await this.dataSource.query(`
+      SELECT INDEX_NAME
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ai_user_config'
+      AND INDEX_NAME = 'idx_user_active'
+    `);
+    
+    if (compositeIndexResult.length === 0) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD INDEX idx_user_active (user_id, is_active, created_at)
+      `);
+      this.logger.log('✅ Índice composto idx_user_active adicionado');
     }
     
     // Verificar e migrar tabela ai_trades também
@@ -1197,42 +1348,34 @@ export class AiService {
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode}`,
     );
 
-    // Verificar se já existe configuração
-    const existing = await this.dataSource.query(
-      'SELECT id FROM ai_user_config WHERE user_id = ?',
+    // 🔄 NOVA LÓGICA: Sempre criar nova sessão (INSERT)
+    // 1. Desativar todas as sessões anteriores deste usuário
+    await this.dataSource.query(
+      `UPDATE ai_user_config 
+       SET is_active = FALSE,
+           deactivation_reason = 'Nova sessão iniciada',
+           deactivated_at = NOW(),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND is_active = TRUE`,
       [userId],
+    );
+    
+    this.logger.log(
+      `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
 
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
 
-    if (existing.length > 0) {
-      // Atualizar configuração existente
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET is_active = TRUE, 
-             stake_amount = ?, 
-             deriv_token = ?, 
-             currency = ?,
-             mode = ?,
-             profit_target = ?,
-             loss_limit = ?,
-             next_trade_at = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
-        [stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt, userId],
-      );
-    } else {
-      // Criar nova configuração
-      await this.dataSource.query(
-        `INSERT INTO ai_user_config 
-         (user_id, is_active, stake_amount, deriv_token, currency, mode, profit_target, loss_limit, next_trade_at) 
-         VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt],
-      );
-    }
+    // 2. Criar nova sessão (sempre INSERT)
+    await this.dataSource.query(
+      `INSERT INTO ai_user_config 
+       (user_id, is_active, stake_amount, deriv_token, currency, mode, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+      [userId, stakeAmount, derivToken, currency, mode, profitTarget || null, lossLimit || null, nextTradeAt],
+    );
 
     this.logger.log(
-      `[ActivateAI] ✅ IA ativada | userId=${userId} | stake salvo=${stakeAmount} | currency=${currency}`,
+      `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${currency}`,
     );
 
     if ((mode || '').toLowerCase() === 'veloz') {
@@ -1251,13 +1394,19 @@ export class AiService {
   }
 
   /**
-   * Desativa a IA para um usuário
+   * Desativa a IA para um usuário (desativa apenas a sessão ativa)
    */
   async deactivateUserAI(userId: string): Promise<void> {
     this.logger.log(`Desativando IA para usuário ${userId}`);
 
+    // Desativar apenas a sessão ativa (is_active = TRUE)
     await this.dataSource.query(
-      'UPDATE ai_user_config SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+      `UPDATE ai_user_config 
+       SET is_active = FALSE, 
+           deactivation_reason = 'Desativação manual pelo usuário',
+           deactivated_at = NOW(),
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE user_id = ? AND is_active = TRUE`,
       [userId],
     );
 
@@ -1317,7 +1466,7 @@ export class AiService {
   }
 
   /**
-   * Busca configuração da IA de um usuário
+   * Busca configuração da IA de um usuário (apenas sessão ativa)
    */
   async getUserAIConfig(userId: string): Promise<any> {
     const result = await this.dataSource.query(
@@ -1335,10 +1484,14 @@ export class AiService {
         total_trades as totalTrades,
         total_wins as totalWins,
         total_losses as totalLosses,
+        deactivation_reason as deactivationReason,
+        deactivated_at as deactivatedAt,
         created_at as createdAt,
         updated_at as updatedAt
        FROM ai_user_config 
-       WHERE user_id = ?`,
+       WHERE user_id = ? AND is_active = TRUE
+       ORDER BY created_at DESC
+       LIMIT 1`,
       [userId],
     );
 
@@ -1354,6 +1507,8 @@ export class AiService {
         totalTrades: 0,
         totalWins: 0,
         totalLosses: 0,
+        deactivationReason: null,
+        deactivatedAt: null,
       };
     }
 
