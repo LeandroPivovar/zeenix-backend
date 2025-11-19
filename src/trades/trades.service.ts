@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource, Between } from 'typeorm';
 import { TradeEntity, TradeType, TradeStatus } from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserRepository } from '../domain/repositories/user.repository';
@@ -23,6 +23,7 @@ export class TradesService {
     private readonly tradeRepository: Repository<TradeEntity>,
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async createTrade(userId: string, dto: CreateTradeDto, ipAddress?: string, userAgent?: string) {
@@ -126,6 +127,124 @@ export class TradesService {
         result: trade.profit ? (trade.profit > 0 ? `+$${trade.profit.toFixed(2)}` : `$${trade.profit.toFixed(2)}`) : '-',
         profit: trade.profit,
       }));
+  }
+
+  async getMarkupData(startDate?: string, endDate?: string) {
+    // Taxa de markup da plataforma (3%)
+    const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835
+    
+    let dateCondition = '';
+    const params: any[] = [];
+    
+    if (startDate && endDate) {
+      dateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+
+    // Buscar trades manuais vencedoras com lucro
+    const manualTradesQuery = `
+      SELECT 
+        t.user_id,
+        u.name,
+        u.email,
+        u.whatsapp,
+        COUNT(t.id) as transaction_count,
+        SUM(t.profit) as total_profit_net
+      FROM trades t
+      INNER JOIN users u ON t.user_id = u.id
+      WHERE t.status = 'won'
+        AND t.profit > 0
+        ${dateCondition}
+      GROUP BY t.user_id, u.name, u.email, u.whatsapp
+    `;
+
+    // Buscar AI trades vencedoras com lucro
+    const aiTradesQuery = `
+      SELECT 
+        at.user_id,
+        u.name,
+        u.email,
+        u.whatsapp,
+        COUNT(at.id) as transaction_count,
+        SUM(at.profit_loss) as total_profit_net
+      FROM ai_trades at
+      INNER JOIN users u ON at.user_id = u.id
+      WHERE at.status = 'WON'
+        AND at.profit_loss > 0
+        ${dateCondition}
+      GROUP BY at.user_id, u.name, u.email, u.whatsapp
+    `;
+
+    const [manualTrades, aiTrades] = await Promise.all([
+      this.dataSource.query(manualTradesQuery, params),
+      this.dataSource.query(aiTradesQuery, params),
+    ]);
+
+    // Combinar e agregar dados por usuário
+    const usersMap = new Map<string, any>();
+
+    // Processar trades manuais
+    manualTrades.forEach((trade: any) => {
+      const userId = trade.user_id.toString();
+      if (!usersMap.has(userId)) {
+        usersMap.set(userId, {
+          userId,
+          name: trade.name,
+          email: trade.email,
+          whatsapp: trade.whatsapp,
+          country: 'Brasil', // TODO: adicionar país ao cadastro
+          transactionCount: 0,
+          totalProfitNet: 0,
+          commission: 0,
+        });
+      }
+      const userData = usersMap.get(userId);
+      userData.transactionCount += parseInt(trade.transaction_count);
+      userData.totalProfitNet += parseFloat(trade.total_profit_net);
+    });
+
+    // Processar AI trades
+    aiTrades.forEach((trade: any) => {
+      const userId = trade.user_id.toString();
+      if (!usersMap.has(userId)) {
+        usersMap.set(userId, {
+          userId,
+          name: trade.name,
+          email: trade.email,
+          whatsapp: trade.whatsapp,
+          country: 'Brasil', // TODO: adicionar país ao cadastro
+          transactionCount: 0,
+          totalProfitNet: 0,
+          commission: 0,
+        });
+      }
+      const userData = usersMap.get(userId);
+      userData.transactionCount += parseInt(trade.transaction_count);
+      userData.totalProfitNet += parseFloat(trade.total_profit_net);
+    });
+
+    // Calcular markup (engenharia reversa: lucro líquido * 0.030927835)
+    const results = Array.from(usersMap.values()).map(user => ({
+      userId: user.userId,
+      name: user.name,
+      email: user.email,
+      whatsapp: user.whatsapp,
+      country: user.country,
+      transactionCount: user.transactionCount,
+      commission: parseFloat((user.totalProfitNet * MARKUP_RATE).toFixed(2)),
+    }));
+
+    // Ordenar por comissão (maior para menor)
+    results.sort((a, b) => b.commission - a.commission);
+
+    return {
+      users: results,
+      summary: {
+        totalCommission: parseFloat(results.reduce((sum, user) => sum + user.commission, 0).toFixed(2)),
+        totalTransactions: results.reduce((sum, user) => sum + user.transactionCount, 0),
+        totalUsers: results.length,
+      },
+    };
   }
 }
 

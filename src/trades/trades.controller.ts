@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Query } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsEnum, IsNumber, Min, Max } from 'class-validator';
+import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
 import { TradesService, CreateTradeDto } from './trades.service';
 import { TradeType } from '../infrastructure/database/entities/trade.entity';
 
@@ -51,6 +51,14 @@ export class TradesController {
   async getRecentTrades(@Req() req: any) {
     const userId = req.user.userId;
     return await this.tradesService.getRecentTrades(userId);
+  }
+
+  @Get('markup')
+  async getMarkupData(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return await this.tradesService.getMarkupData(startDate, endDate);
   }
 }
 
