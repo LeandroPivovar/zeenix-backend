@@ -4,7 +4,7 @@
 -- Tabela de configuração de IA por usuário
 CREATE TABLE IF NOT EXISTS ai_user_config (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id INT UNSIGNED NOT NULL,
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário',
     is_active BOOLEAN NOT NULL DEFAULT FALSE,
     stake_amount DECIMAL(10, 2) NOT NULL DEFAULT 10.00,
     deriv_token TEXT NOT NULL,

@@ -247,7 +247,7 @@ export class AiController {
   @Post('activate')
   async activateAI(
     @Body() body: {
-      userId: number;
+      userId: string;
       stakeAmount: number;
       derivToken: string;
       currency: string;
@@ -283,7 +283,7 @@ export class AiController {
   }
 
   @Post('deactivate')
-  async deactivateAI(@Body() body: { userId: number }) {
+  async deactivateAI(@Body() body: { userId: string }) {
     try {
       await this.aiService.deactivateUserAI(body.userId);
       return {
@@ -305,7 +305,7 @@ export class AiController {
   @Get('config/:userId')
   async getAIConfig(@Param('userId') userId: string) {
     try {
-      const config = await this.aiService.getUserAIConfig(Number(userId));
+      const config = await this.aiService.getUserAIConfig(userId);
       return {
         success: true,
         data: config,
@@ -389,7 +389,7 @@ export class AiController {
   @Post('update-config')
   async updateAIConfig(
     @Body() body: {
-      userId: number;
+      userId: string;
       stakeAmount?: number;
     },
   ) {

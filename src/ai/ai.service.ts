@@ -15,7 +15,7 @@ export interface Tick {
 }
 
 interface VelozUserState {
-  userId: number;
+  userId: string;
   derivToken: string;
   currency: string;
   capital: number;
@@ -64,7 +64,7 @@ export class AiService {
   private symbol = 'R_10';
   private isConnected = false;
   private subscriptionId: string | null = null;
-  private velozUsers = new Map<number, VelozUserState>();
+  private velozUsers = new Map<string, VelozUserState>();
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -452,7 +452,7 @@ export class AiService {
   }
 
   private async createVelozTradeRecord(
-    userId: number,
+    userId: string,
     proposal: DigitParity,
     stakeAmount: number,
     fallbackEntryPrice: number,
@@ -716,7 +716,7 @@ export class AiService {
   }
 
   private async incrementVelozStats(
-    userId: number,
+    userId: string,
     won: boolean,
     profitLoss: number,
   ): Promise<void> {
@@ -764,7 +764,7 @@ export class AiService {
   }
 
   private upsertVelozUserState(params: {
-    userId: number;
+    userId: string;
     stakeAmount: number;
     derivToken: string;
     currency: string;
@@ -797,7 +797,7 @@ export class AiService {
     });
   }
 
-  private removeVelozUserState(userId: number) {
+  private removeVelozUserState(userId: string) {
     if (this.velozUsers.has(userId)) {
       this.velozUsers.delete(userId);
     }
@@ -914,7 +914,7 @@ export class AiService {
   }
 
   async triggerManualVelozOperation(
-    userId: number,
+    userId: string,
     proposal: DigitParity,
   ): Promise<number> {
     const state = this.velozUsers.get(userId);
@@ -932,7 +932,7 @@ export class AiService {
     return tradeId;
   }
 
-  async getSessionStats(userId: number) {
+  async getSessionStats(userId: string) {
     // Buscar todas as trades do usuário da sessão atual (hoje)
     const query = `
       SELECT 
@@ -957,7 +957,7 @@ export class AiService {
     };
   }
 
-  async getTradeHistory(userId: number, limit: number = 20) {
+  async getTradeHistory(userId: string, limit: number = 20) {
     // Buscar histórico de trades do usuário (últimas 20 por padrão)
     const query = `
       SELECT 
@@ -1027,7 +1027,7 @@ export class AiService {
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS ai_user_config (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        user_id INT UNSIGNED NOT NULL,
+        user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário',
         is_active BOOLEAN NOT NULL DEFAULT FALSE,
         stake_amount DECIMAL(10, 2) NOT NULL DEFAULT 10.00,
         deriv_token TEXT NOT NULL,
@@ -1053,6 +1053,38 @@ export class AiService {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       COMMENT='Configuração de IA de trading por usuário - permite execução em background'
     `);
+    
+    // Verificar tipo da coluna user_id
+    const userIdColumn = await this.dataSource.query(`
+      SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'ai_user_config'
+      AND COLUMN_NAME = 'user_id'
+    `);
+    
+    // Se user_id for INT, migrar para VARCHAR
+    if (userIdColumn.length > 0 && userIdColumn[0].DATA_TYPE !== 'varchar') {
+      this.logger.warn('🔄 Migrando user_id de INT para VARCHAR(36)...');
+      
+      try {
+        // Remover índice temporariamente
+        await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
+      } catch (error) {
+        // Índice pode não existir, continuar
+      }
+      
+      // Alterar tipo da coluna
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
+      `);
+      
+      // Recriar índice
+      await this.dataSource.query(`ALTER TABLE ai_user_config ADD UNIQUE KEY idx_user_id (user_id)`);
+      
+      this.logger.log('✅ Migração concluída: user_id agora é VARCHAR(36)');
+    }
     
     // Verificar se as colunas profit_target e loss_limit existem antes de adicionar
     // (Compatível com MySQL 5.7+)
@@ -1087,7 +1119,7 @@ export class AiService {
   }
 
   async activateUserAI(
-    userId: number,
+    userId: string,
     stakeAmount: number,
     derivToken: string,
     currency: string,
@@ -1148,7 +1180,7 @@ export class AiService {
   /**
    * Desativa a IA para um usuário
    */
-  async deactivateUserAI(userId: number): Promise<void> {
+  async deactivateUserAI(userId: string): Promise<void> {
     this.logger.log(`Desativando IA para usuário ${userId}`);
 
     await this.dataSource.query(
@@ -1164,7 +1196,7 @@ export class AiService {
    * Atualiza configuração da IA de um usuário
    */
   async updateUserAIConfig(
-    userId: number,
+    userId: string,
     stakeAmount?: number,
   ): Promise<void> {
     this.logger.log(`Atualizando configuração da IA para usuário ${userId}`);
@@ -1214,7 +1246,7 @@ export class AiService {
   /**
    * Busca configuração da IA de um usuário
    */
-  async getUserAIConfig(userId: number): Promise<any> {
+  async getUserAIConfig(userId: string): Promise<any> {
     const result = await this.dataSource.query(
       `SELECT 
         id,
@@ -1464,7 +1496,7 @@ private async processFastMode(user: any): Promise<void> {
     }
 }
 
-private async executeTrade(userId: number, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
+private async executeTrade(userId: string, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
     const tradeStartTime = Date.now();
     const tradeId = `trade_${userId}_${tradeStartTime}`;
     
