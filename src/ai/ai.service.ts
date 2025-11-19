@@ -469,24 +469,26 @@ export class AiService implements OnModuleInit {
       const configResult = await this.dataSource.query(
         `SELECT session_status, is_active 
          FROM ai_user_config 
-         WHERE user_id = ?`,
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [state.userId],
       );
       
-      if (configResult && configResult.length > 0) {
-        const config = configResult[0];
-        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
-          this.logger.warn(
-            `[Veloz][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-          );
-          return false;
-        }
-        if (!config.is_active) {
-          this.logger.warn(
-            `[Veloz][${state.userId}] IA inativa - não executando novos trades`,
-          );
-          return false;
-        }
+      if (!configResult || configResult.length === 0) {
+        // Não há sessão ativa
+        this.logger.warn(
+          `[Veloz][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
+        );
+        return false;
+      }
+      
+      const config = configResult[0];
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+        this.logger.warn(
+          `[Veloz][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+        );
+        return false;
       }
     } catch (error) {
       this.logger.error(`[Veloz][${state.userId}] Erro ao verificar status da sessão:`, error);
@@ -2973,24 +2975,26 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       const configResult = await this.dataSource.query(
         `SELECT session_status, is_active 
          FROM ai_user_config 
-         WHERE user_id = ?`,
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [state.userId],
       );
       
-      if (configResult && configResult.length > 0) {
-        const config = configResult[0];
-        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
-          this.logger.warn(
-            `[Moderado][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-          );
-          return false;
-        }
-        if (!config.is_active) {
-          this.logger.warn(
-            `[Moderado][${state.userId}] IA inativa - não executando novos trades`,
-          );
-          return false;
-        }
+      if (!configResult || configResult.length === 0) {
+        // Não há sessão ativa
+        this.logger.warn(
+          `[Moderado][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
+        );
+        return false;
+      }
+      
+      const config = configResult[0];
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+        this.logger.warn(
+          `[Moderado][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+        );
+        return false;
       }
     } catch (error) {
       this.logger.error(`[Moderado][${state.userId}] Erro ao verificar status da sessão:`, error);
@@ -3517,24 +3521,26 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       const configResult = await this.dataSource.query(
         `SELECT session_status, is_active 
          FROM ai_user_config 
-         WHERE user_id = ?`,
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [state.userId],
       );
       
-      if (configResult && configResult.length > 0) {
-        const config = configResult[0];
-        if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
-          this.logger.warn(
-            `[Preciso][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-          );
-          return false;
-        }
-        if (!config.is_active) {
-          this.logger.warn(
-            `[Preciso][${state.userId}] IA inativa - não executando novos trades`,
-          );
-          return false;
-        }
+      if (!configResult || configResult.length === 0) {
+        // Não há sessão ativa
+        this.logger.warn(
+          `[Preciso][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
+        );
+        return false;
+      }
+      
+      const config = configResult[0];
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+        this.logger.warn(
+          `[Preciso][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
+        );
+        return false;
       }
     } catch (error) {
       this.logger.error(`[Preciso][${state.userId}] Erro ao verificar status da sessão:`, error);
