@@ -119,7 +119,7 @@ export class AiController {
   }
 
   @Post('analyze')
-  async analyzeAndGetSignal(@Body() body: { userId: number }) {
+  async analyzeAndGetSignal(@Body() body: { userId: string }) {
     try {
       const diagnostics = await this.aiService.getVelozDiagnostics(body.userId);
       return {
@@ -141,7 +141,7 @@ export class AiController {
   @Post('execute-trade')
   async executeTrade(
     @Body() body: { 
-      userId: number; 
+      userId: string; 
       operation?: DigitParity | 'DIGITEVEN' | 'DIGITODD' | 'even' | 'odd';
       signal?: { signal?: string; operation?: string };
     }
@@ -185,7 +185,7 @@ export class AiController {
   @Get('session-stats/:userId')
   async getSessionStats(@Param('userId') userId: string) {
     try {
-      const stats = await this.aiService.getSessionStats(parseInt(userId));
+      const stats = await this.aiService.getSessionStats(userId);
       return {
         success: true,
         data: stats,
@@ -205,7 +205,7 @@ export class AiController {
   @Get('trade-history/:userId')
   async getTradeHistory(@Param('userId') userId: string) {
     try {
-      const history = await this.aiService.getTradeHistory(parseInt(userId));
+      const history = await this.aiService.getTradeHistory(userId);
       return {
         success: true,
         data: history,

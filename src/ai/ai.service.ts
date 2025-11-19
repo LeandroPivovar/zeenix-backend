@@ -744,7 +744,7 @@ export class AiService {
          AND LOWER(mode) = 'veloz'`,
     );
 
-    const activeIds = new Set<number>();
+    const activeIds = new Set<string>();
 
     for (const config of configs) {
       activeIds.add(config.userId);
@@ -880,7 +880,7 @@ export class AiService {
     }
   }
 
-  async getVelozDiagnostics(userId?: number) {
+  async getVelozDiagnostics(userId?: string) {
     await this.ensureTickStreamReady();
 
     const dvx = this.calculateDVX(this.ticks);
