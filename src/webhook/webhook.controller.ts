@@ -18,75 +18,131 @@ export class WebhookController {
   ) {}
 
   @Post()
-  async handleWebhook(@Body() payload: KiwifyWebhookDto) {
+  async handleWebhook(@Body() payload: any) {
+    this.logger.log('=== INÍCIO DO PROCESSAMENTO DO WEBHOOK ===');
+    this.logger.log(`Tipo do payload: ${typeof payload}`);
+    this.logger.log(`Payload é array: ${Array.isArray(payload)}`);
+    this.logger.log(`Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`);
+    
     const maskedPayload = this.maskSensitiveData(payload);
-    this.logger.log(`Webhook recebido: ${JSON.stringify(maskedPayload)}`);
-
-    // Verificar se é um webhook de pedido aprovado e pago
-    if (
-      payload.webhook_event_type === 'order_approved' &&
-      payload.order_status === 'paid' &&
-      payload.Customer?.email
-    ) {
-      await this.handleOrderApproved(payload);
+    this.logger.log(`Webhook recebido (mascarado): ${JSON.stringify(maskedPayload)}`);
+    
+    // Log dos campos importantes para debug
+    this.logger.log(`webhook_event_type: ${payload?.webhook_event_type || 'UNDEFINED'}`);
+    this.logger.log(`order_status: ${payload?.order_status || 'UNDEFINED'}`);
+    this.logger.log(`Customer existe: ${!!payload?.Customer}`);
+    this.logger.log(`Customer.email: ${payload?.Customer?.email || 'N/A'}`);
+    
+    // Verificar se o payload tem a estrutura esperada
+    if (!payload || typeof payload !== 'object') {
+      this.logger.error('❌ Payload inválido ou não é um objeto');
+      return { success: false, error: 'Invalid payload' };
     }
 
+    // Verificar se é um webhook de pedido aprovado e pago
+    const isOrderApproved = payload.webhook_event_type === 'order_approved';
+    const isPaid = payload.order_status === 'paid';
+    const hasCustomerEmail = !!payload.Customer?.email;
+
+    this.logger.log(`Verificações: isOrderApproved=${isOrderApproved}, isPaid=${isPaid}, hasCustomerEmail=${hasCustomerEmail}`);
+
+    if (isOrderApproved && isPaid && hasCustomerEmail) {
+      this.logger.log('✅ Condições atendidas! Processando pedido aprovado...');
+      await this.handleOrderApproved(payload as KiwifyWebhookDto);
+    } else {
+      this.logger.warn('⚠️ Condições não atendidas. Webhook não será processado para criação de usuário.');
+      if (!isOrderApproved) {
+        this.logger.warn(`  - webhook_event_type não é 'order_approved': ${payload.webhook_event_type}`);
+      }
+      if (!isPaid) {
+        this.logger.warn(`  - order_status não é 'paid': ${payload.order_status}`);
+      }
+      if (!hasCustomerEmail) {
+        this.logger.warn(`  - Customer.email não existe ou está vazio`);
+        if (payload.Customer) {
+          this.logger.warn(`  - Customer object: ${JSON.stringify(payload.Customer)}`);
+        }
+      }
+    }
+
+    this.logger.log('=== FIM DO PROCESSAMENTO DO WEBHOOK ===');
     return { success: true };
   }
 
   private async handleOrderApproved(payload: KiwifyWebhookDto) {
+    this.logger.log('--- Iniciando handleOrderApproved ---');
     const customer = payload.Customer;
     const email = customer.email;
     const name = customer.full_name || customer.first_name || 'Usuário';
 
+    this.logger.log(`Dados extraídos - Email: ${email}, Nome: ${name}`);
+
     try {
       // Verificar se o usuário já existe
+      this.logger.log(`Verificando se usuário com email ${email} já existe...`);
       const existingUser = await this.userRepository.findByEmail(email);
 
       if (existingUser) {
-        this.logger.log(`Usuário com email ${email} já existe, pulando criação`);
+        this.logger.warn(`⚠️ Usuário com email ${email} já existe (ID: ${existingUser.id}), pulando criação`);
         return;
       }
+      this.logger.log(`✅ Usuário não existe, prosseguindo com criação...`);
 
       // Gerar senha pré-configurada aleatória
+      this.logger.log('Gerando senha temporária...');
       const temporaryPassword = this.generateTemporaryPassword();
+      this.logger.log(`Senha temporária gerada (não logar em produção): ${temporaryPassword.substring(0, 3)}***`);
 
       // Hash da senha
+      this.logger.log('Fazendo hash da senha...');
       const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+      this.logger.log('Hash da senha concluído');
 
       // Criar usuário
+      this.logger.log('Criando objeto User...');
+      const userId = uuidv4();
+      this.logger.log(`ID do usuário gerado: ${userId}`);
       const user = User.create(
-        uuidv4(),
+        userId,
         name,
         email,
         hashedPassword,
       );
+      this.logger.log(`Objeto User criado: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`);
 
       // Salvar usuário no banco (com role 'user' por padrão)
+      this.logger.log('Salvando usuário no banco de dados...');
       const createdUser = await this.userRepository.create(user);
+      this.logger.log(`✅ Usuário salvo no banco com sucesso! ID: ${createdUser.id}`);
 
       // Obter URL da plataforma
       const platformUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+      this.logger.log(`URL da plataforma: ${platformUrl}`);
 
       // Enviar email de boas-vindas
+      this.logger.log(`Enviando email de boas-vindas para ${email}...`);
       await this.emailService.sendWelcomeEmail(
         email,
         name,
         temporaryPassword,
         platformUrl,
       );
+      this.logger.log(`✅ Email de boas-vindas enviado com sucesso para ${email}`);
 
-      this.logger.log(`Usuário criado com sucesso: ${createdUser.id} (${email})`);
+      this.logger.log(`🎉 Processo concluído com sucesso! Usuário criado: ${createdUser.id} (${email})`);
     } catch (error) {
-      this.logger.error(
-        `Erro ao processar webhook de pedido aprovado: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error('❌ ERRO ao processar webhook de pedido aprovado');
+      this.logger.error(`Mensagem de erro: ${error.message}`);
+      this.logger.error(`Stack trace: ${error.stack}`);
+      this.logger.error(`Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       // Não lançar erro para não quebrar o webhook
+    } finally {
+      this.logger.log('--- Fim do handleOrderApproved ---');
     }
   }
 
   private generateTemporaryPassword(): string {
+    this.logger.debug('Iniciando geração de senha temporária...');
     // Gera uma senha aleatória de 12 caracteres
     // Inclui letras maiúsculas, minúsculas e números
     const length = 12;
@@ -107,10 +163,13 @@ export class WebhookController {
     }
 
     // Embaralhar a senha
-    return password
+    const shuffledPassword = password
       .split('')
       .sort(() => Math.random() - 0.5)
       .join('');
+    
+    this.logger.debug(`Senha temporária gerada com ${shuffledPassword.length} caracteres`);
+    return shuffledPassword;
   }
 
   private maskSensitiveData(data: any): any {

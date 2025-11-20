@@ -220,8 +220,13 @@ export class EmailService {
   }
 
   async sendWelcomeEmail(email: string, name: string, password: string, platformUrl: string): Promise<void> {
+    this.logger.log(`[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`);
+    this.logger.log(`[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`);
+    
     const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+    
+    this.logger.log(`[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`);
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
@@ -328,10 +333,17 @@ export class EmailService {
     };
 
     try {
+      this.logger.log(`[sendWelcomeEmail] Preparando para enviar email via SMTP...`);
+      this.logger.log(`[sendWelcomeEmail] Destinatário: ${email}`);
+      this.logger.log(`[sendWelcomeEmail] Assunto: ${mailOptions.subject}`);
+      
       await this.transporter.sendMail(mailOptions);
-      this.logger.log(`Email de boas-vindas enviado para ${email}`);
+      this.logger.log(`✅ [sendWelcomeEmail] Email de boas-vindas enviado com sucesso para ${email}`);
     } catch (error) {
-      this.logger.error(`Erro ao enviar email de boas-vindas: ${error.message}`, error.stack);
+      this.logger.error(`❌ [sendWelcomeEmail] Erro ao enviar email de boas-vindas`);
+      this.logger.error(`[sendWelcomeEmail] Mensagem: ${error.message}`);
+      this.logger.error(`[sendWelcomeEmail] Stack: ${error.stack}`);
+      this.logger.error(`[sendWelcomeEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       throw new Error('Falha ao enviar email de boas-vindas');
     }
   }
