@@ -16,6 +16,7 @@ import { AiModule } from './ai/ai.module';
 import { ClientsModule } from './clients/clients.module';
 import { AdminModule } from './presentation/admin.module';
 import { ExpertsModule } from './experts/experts.module';
+import { WebhookModule } from './webhook/webhook.module';
 
 @Module({
   imports: [
@@ -33,7 +34,8 @@ import { ExpertsModule } from './experts/experts.module';
     AiModule,
     ClientsModule,
     AdminModule,
-    ExpertsModule
+    ExpertsModule,
+    WebhookModule
   ],
   controllers: [AppController],
   providers: [AppService],
