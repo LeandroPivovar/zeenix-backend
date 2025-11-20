@@ -1320,8 +1320,16 @@ export class AiService implements OnModuleInit {
   }
 
   async getSessionStats(userId: string) {
-    // Buscar todas as trades do usuário da sessão atual (hoje)
+    // Buscar todas as trades do usuário do dia atual (timezone America/Sao_Paulo)
     this.logger.log(`[GetSessionStats] 📊 Buscando estatísticas do dia para userId=${userId}`);
+    
+    // Pegar data atual no timezone do Brasil
+    const now = new Date();
+    const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const startOfDay = new Date(brazilTime.getFullYear(), brazilTime.getMonth(), brazilTime.getDate(), 0, 0, 0);
+    const endOfDay = new Date(brazilTime.getFullYear(), brazilTime.getMonth(), brazilTime.getDate(), 23, 59, 59);
+    
+    this.logger.log(`[GetSessionStats] 🕐 Filtrando trades do dia: ${startOfDay.toISOString()} até ${endOfDay.toISOString()}`);
     
     const query = `
       SELECT 
@@ -1332,11 +1340,12 @@ export class AiService implements OnModuleInit {
         SUM(COALESCE(stake_amount, 0)) as totalVolume
       FROM ai_trades
       WHERE user_id = ? 
-        AND DATE(created_at) = CURDATE()
+        AND created_at >= ?
+        AND created_at <= ?
         AND status IN ('WON', 'LOST')
     `;
 
-    const result = await this.dataSource.query(query, [userId]);
+    const result = await this.dataSource.query(query, [userId, startOfDay, endOfDay]);
     const stats = result[0];
 
     const totalTrades = parseInt(stats.totalTrades) || 0;
