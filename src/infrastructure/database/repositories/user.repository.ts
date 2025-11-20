@@ -107,6 +107,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.name = domain.name;
     entity.email = domain.email;
     entity.password = domain.password;
+    entity.role = 'user'; // Definir role como 'user' por padrão para novos usuários
     entity.createdAt = domain.createdAt;
     entity.updatedAt = domain.updatedAt;
     return entity;
