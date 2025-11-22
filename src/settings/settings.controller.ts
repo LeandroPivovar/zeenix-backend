@@ -1,4 +1,7 @@
-import { Controller, Get, Put, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Put, Body, UseGuards, Req, Post, UploadedFile, UseInterceptors, BadRequestException } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsOptional, IsBoolean, IsEmail, MinLength, IsEnum } from 'class-validator';
 import { SettingsService } from './settings.service';
@@ -123,6 +126,52 @@ export class SettingsController {
       this.getIpAddress(req),
       this.getUserAgent(req),
     );
+  }
+
+  @Post('upload-profile-picture')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads/profile-pictures',
+        filename: (req, file, callback) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname);
+          const filename = `profile-${uniqueSuffix}${ext}`;
+          callback(null, filename);
+        },
+      }),
+      fileFilter: (req, file, callback) => {
+        if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
+          return callback(new BadRequestException('Apenas imagens são permitidas!'), false);
+        }
+        callback(null, true);
+      },
+      limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB
+      },
+    }),
+  )
+  async uploadProfilePicture(@Req() req: any, @UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Nenhum arquivo foi enviado');
+    }
+
+    const userId = req.user.userId;
+    const fileUrl = `/uploads/profile-pictures/${file.filename}`;
+
+    // Atualizar a URL da foto no banco de dados
+    await this.settingsService.updateSettings(
+      userId,
+      { profilePictureUrl: fileUrl },
+      this.getIpAddress(req),
+      this.getUserAgent(req),
+    );
+
+    return {
+      success: true,
+      message: 'Foto de perfil atualizada com sucesso',
+      url: fileUrl,
+    };
   }
 
   @Put()
