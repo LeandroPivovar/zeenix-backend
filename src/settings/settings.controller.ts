@@ -157,7 +157,8 @@ export class SettingsController {
     }
 
     const userId = req.user.userId;
-    const fileUrl = `/uploads/profile-pictures/${file.filename}`;
+    // Usar /api/uploads para que o nginx sirva corretamente
+    const fileUrl = `/api/uploads/profile-pictures/${file.filename}`;
 
     // Atualizar a URL da foto no banco de dados
     await this.settingsService.updateSettings(
