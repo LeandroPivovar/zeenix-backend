@@ -1,7 +1,8 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, Get, Req, UseGuards } from '@nestjs/common';
 import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { SettingsService } from '../settings/settings.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 class LoginDto {
   @IsEmail()
@@ -81,6 +82,25 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() body: { token: string; password: string }) {
     return await this.authService.resetPassword(body.token, body.password);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getMe(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.sub || req.user?.id;
+    if (!userId) {
+      throw new Error('Usuário não autenticado');
+    }
+    const user = await this.authService.findUserById(userId);
+    if (!user) {
+      throw new Error('Usuário não encontrado');
+    }
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email
+    };
   }
 }
 

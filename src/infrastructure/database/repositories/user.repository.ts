@@ -13,8 +13,11 @@ export class TypeOrmUserRepository implements UserRepository {
   ) {}
 
   async create(user: User): Promise<User> {
+    console.log(`[TypeOrmUserRepository] Criando usuário: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`);
     const userEntity = this.toEntity(user);
+    console.log(`[TypeOrmUserRepository] Entity criada, role: ${(userEntity as any).role}`);
     const savedEntity = await this.userRepository.save(userEntity);
+    console.log(`[TypeOrmUserRepository] Usuário salvo no banco: ${JSON.stringify({ id: savedEntity.id, name: savedEntity.name, email: savedEntity.email, role: savedEntity.role })}`);
     return this.toDomain(savedEntity);
   }
 
@@ -24,7 +27,13 @@ export class TypeOrmUserRepository implements UserRepository {
   }
 
   async findByEmail(email: string): Promise<User | null> {
+    console.log(`[TypeOrmUserRepository] Buscando usuário por email: ${email}`);
     const userEntity = await this.userRepository.findOne({ where: { email } });
+    if (userEntity) {
+      console.log(`[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, email: userEntity.email })}`);
+    } else {
+      console.log(`[TypeOrmUserRepository] Usuário não encontrado para email: ${email}`);
+    }
     return userEntity ? this.toDomain(userEntity) : null;
   }
 
@@ -107,6 +116,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.name = domain.name;
     entity.email = domain.email;
     entity.password = domain.password;
+    entity.role = 'user'; // Definir role como 'user' por padrão para novos usuários
     entity.createdAt = domain.createdAt;
     entity.updatedAt = domain.updatedAt;
     return entity;

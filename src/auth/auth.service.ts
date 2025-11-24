@@ -30,7 +30,7 @@ export class AuthService {
     const hashed = await bcrypt.hash(payload.password, 10);
     const user = User.create(uuidv4(), payload.name, payload.email, hashed);
     await this.userRepository.create(user);
-    const token = await this.signToken(user.id, user.email);
+    const token = await this.signToken(user.id, user.email, user.name);
     return { token };
   }
 
@@ -44,12 +44,16 @@ export class AuthService {
     if (!valid) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
-    const token = await this.signToken(user.id, user.email);
+    const token = await this.signToken(user.id, user.email, user.name);
     return { token };
   }
 
   async findUserByEmail(email: string) {
     return await this.userRepository.findByEmail(email);
+  }
+
+  async findUserById(userId: string) {
+    return await this.userRepository.findById(userId);
   }
 
   async forgotPassword(email: string, frontendUrl: string): Promise<{ message: string }> {
@@ -124,8 +128,8 @@ export class AuthService {
     return { message: 'Senha redefinida com sucesso!' };
   }
 
-  private async signToken(sub: string, email: string): Promise<string> {
-    return await this.jwtService.signAsync({ sub, email });
+  private async signToken(sub: string, email: string, name: string): Promise<string> {
+    return await this.jwtService.signAsync({ sub, email, name });
   }
 }
 
