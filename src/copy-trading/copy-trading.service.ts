@@ -1,6 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 interface CopyTradingConfigData {
   traderId: string;
@@ -20,7 +23,11 @@ interface CopyTradingConfigData {
 export class CopyTradingService {
   private readonly logger = new Logger(CopyTradingService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(ExpertEntity)
+    private readonly expertRepository: Repository<ExpertEntity>,
+  ) {}
 
   async activateCopyTrading(
     userId: string,
@@ -252,6 +259,60 @@ export class CopyTradingService {
     } catch (error) {
       this.logger.error(
         `[ResumeCopyTrading] Erro ao retomar copy trading: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  async getAvailableTraders() {
+    try {
+      // Buscar experts que estão ativos e disponíveis para copy trading
+      const experts = await this.expertRepository.find({
+        where: {
+          isActive: true,
+        },
+        order: {
+          rating: 'DESC',
+          winRate: 'DESC',
+        },
+      });
+
+      // Formatar dados dos traders para o frontend
+      return experts.map((expert) => {
+        // Calcular ROI baseado no winRate (aproximação)
+        // ROI médio = winRate * multiplicador_lucro - (100 - winRate) * multiplicador_perda
+        // Assumindo lucro médio de 80% e perda média de 100% do stake
+        const winRate = expert.winRate ? parseFloat(expert.winRate.toString()) : 0;
+        const roi = winRate > 0 ? (winRate * 0.8) - ((100 - winRate) * 1.0) : 0;
+        
+        // Calcular drawdown aproximado baseado no winRate
+        // Drawdown menor quando winRate maior
+        const dd = winRate > 0 ? Math.max(0, (100 - winRate) * 0.12) : 10;
+        
+        // Converter followers para formato "k" (milhares)
+        const totalFollowers = expert.totalFollowers || 0;
+        const followersK = totalFollowers >= 1000 
+          ? (totalFollowers / 1000).toFixed(1) 
+          : totalFollowers.toString();
+
+        return {
+          id: expert.id,
+          name: expert.name,
+          roi: Math.max(0, roi).toFixed(0),
+          dd: dd.toFixed(1),
+          followers: followersK,
+          winRate: winRate.toFixed(1),
+          totalTrades: expert.totalSignals || 0,
+          rating: expert.rating ? parseFloat(expert.rating.toString()).toFixed(1) : '0.0',
+          specialty: expert.specialty || '',
+          isVerified: expert.isVerified || false,
+          connectionStatus: expert.connectionStatus || 'Desconectado',
+        };
+      });
+    } catch (error) {
+      this.logger.error(
+        `[GetAvailableTraders] Erro ao buscar traders: ${error.message}`,
         error.stack,
       );
       throw error;

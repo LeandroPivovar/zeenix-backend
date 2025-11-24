@@ -243,5 +243,29 @@ export class CopyTradingController {
       );
     }
   }
+
+  @Get('traders')
+  async getAvailableTraders() {
+    try {
+      const traders = await this.copyTradingService.getAvailableTraders();
+
+      return {
+        success: true,
+        data: traders,
+      };
+    } catch (error) {
+      this.logger.error(
+        `[GetAvailableTraders] Erro ao buscar traders: ${error.message}`,
+        error.stack,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Erro ao buscar traders disponíveis',
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 
