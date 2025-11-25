@@ -386,6 +386,18 @@ export class CoursesService {
     }
   }
 
+  async markLessonAsIncomplete(userId: string, lessonId: string): Promise<void> {
+    const existing = await this.progressRepository.findOne({
+      where: { userId, lessonId },
+    });
+
+    if (existing) {
+      existing.completed = false;
+      existing.completedAt = null;
+      await this.progressRepository.save(existing);
+    }
+  }
+
   async getProgressForCourse(userId: string, courseId: string): Promise<Record<string, boolean>> {
     // Buscar todas as aulas do curso
     const lessons = await this.lessonRepository.findByCourseId(courseId);
