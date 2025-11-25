@@ -18,7 +18,7 @@ SET @subtitle_exists := (
 
 SET @sql_add_subtitle := IF(
   @subtitle_exists = 0,
-  'ALTER TABLE `support_items` ADD COLUMN `subtitle` varchar(1000) DEFAULT NULL AFTER `title`;',
+  'ALTER TABLE `support_items` ADD COLUMN `subtitle` longtext DEFAULT NULL AFTER `title`;',
   'SELECT 1;'
 );
 PREPARE stmt_add_subtitle FROM @sql_add_subtitle;

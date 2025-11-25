@@ -8,7 +8,7 @@ export class SupportItemEntity {
   @Column({ type: 'varchar', length: 500 })
   title: string;
 
-  @Column({ type: 'varchar', length: 1000, nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   subtitle?: string | null;
 
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_path' })

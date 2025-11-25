@@ -10,7 +10,7 @@ USE `zeenix`;
 CREATE TABLE IF NOT EXISTS `support_items` (
   `id` char(36) NOT NULL,
   `title` varchar(500) NOT NULL,
-  `subtitle` varchar(1000) DEFAULT NULL,
+  `subtitle` longtext DEFAULT NULL,
   `image_path` varchar(500) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
