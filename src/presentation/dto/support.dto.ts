@@ -1,0 +1,60 @@
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateFaqDto {
+  @IsString()
+  @IsNotEmpty()
+  question: string;
+
+  @IsString()
+  @IsNotEmpty()
+  answer: string;
+
+  @IsString()
+  @IsOptional()
+  category?: string | null;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  orderIndex?: number;
+}
+
+export class UpdateFaqDto {
+  @IsString()
+  @IsOptional()
+  question?: string;
+
+  @IsString()
+  @IsOptional()
+  answer?: string;
+
+  @IsString()
+  @IsOptional()
+  category?: string | null;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  orderIndex?: number;
+}
+
+export class CreateSupportItemDto {
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+}
+
+export class UpdateSupportItemDto {
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @IsString()
+  @IsOptional()
+  content?: string;
+}
+
