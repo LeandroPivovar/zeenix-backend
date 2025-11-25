@@ -44,8 +44,12 @@ export class CreateSupportItemDto {
   title: string;
 
   @IsString()
-  @IsNotEmpty()
-  content: string;
+  @IsOptional()
+  subtitle?: string | null;
+
+  @IsString()
+  @IsOptional()
+  imagePath?: string | null;
 }
 
 export class UpdateSupportItemDto {
@@ -55,6 +59,10 @@ export class UpdateSupportItemDto {
 
   @IsString()
   @IsOptional()
-  content?: string;
+  subtitle?: string | null;
+
+  @IsString()
+  @IsOptional()
+  imagePath?: string | null;
 }
 

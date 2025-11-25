@@ -8,8 +8,11 @@ export class SupportItemEntity {
   @Column({ type: 'varchar', length: 500 })
   title: string;
 
-  @Column({ type: 'longtext' })
-  content: string;
+  @Column({ type: 'varchar', length: 1000, nullable: true })
+  subtitle?: string | null;
+
+  @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_path' })
+  imagePath?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -1,7 +1,7 @@
 -- ===================================================================
 -- SCRIPT PARA CRIAR TABELA DE ITENS DE SUPORTE
 -- ===================================================================
--- Descrição: Tabela para armazenar itens de suporte com título e conteúdo rico (HTML)
+-- Descrição: Tabela para armazenar itens de suporte com título, subtítulo e foto
 -- ===================================================================
 
 USE `zeenix`;
@@ -10,7 +10,8 @@ USE `zeenix`;
 CREATE TABLE IF NOT EXISTS `support_items` (
   `id` char(36) NOT NULL,
   `title` varchar(500) NOT NULL,
-  `content` longtext NOT NULL,
+  `subtitle` varchar(1000) DEFAULT NULL,
+  `image_path` varchar(500) DEFAULT NULL,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),

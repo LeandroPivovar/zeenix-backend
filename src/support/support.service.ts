@@ -120,7 +120,8 @@ export class SupportService {
     return items.map(item => ({
       id: item.id,
       title: item.title,
-      content: item.content,
+      subtitle: item.subtitle,
+      imagePath: item.imagePath,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     }));
@@ -134,7 +135,8 @@ export class SupportService {
     return {
       id: item.id,
       title: item.title,
-      content: item.content,
+      subtitle: item.subtitle,
+      imagePath: item.imagePath,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     };
@@ -146,7 +148,8 @@ export class SupportService {
     return {
       id: saved.id,
       title: saved.title,
-      content: saved.content,
+      subtitle: saved.subtitle,
+      imagePath: saved.imagePath,
       createdAt: saved.createdAt,
       updatedAt: saved.updatedAt,
     };
@@ -162,7 +165,8 @@ export class SupportService {
     return {
       id: saved.id,
       title: saved.title,
-      content: saved.content,
+      subtitle: saved.subtitle,
+      imagePath: saved.imagePath,
       createdAt: saved.createdAt,
       updatedAt: saved.updatedAt,
     };
