@@ -707,4 +707,25 @@ export class DerivController {
       appId: appIdToUse,
     };
   }
+
+  @Post('create-account')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async createAccount(@Body() body: any, @Req() req: any) {
+    try {
+      const userId = req.user.userId;
+      this.logger.log(`[CreateAccount] Criando conta Deriv para usuário ${userId}`);
+      
+      const result = await this.derivService.createDerivAccount(body, userId);
+      
+      return {
+        success: true,
+        message: 'Contas criadas com sucesso',
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`[CreateAccount] Erro: ${error.message}`, error.stack);
+      throw new BadRequestException(error.message || 'Erro ao criar conta na Deriv');
+    }
+  }
 }

@@ -483,4 +483,177 @@ export class DerivService {
   getSession(userId: string) {
     return this.sessionStore.get(userId);
   }
+
+  async createDerivAccount(formData: any, userId: string): Promise<any> {
+    const appId = Number(process.env.DERIV_APP_ID || 1089);
+    const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+    
+    // Parâmetros de afiliado extraídos do link
+    const AFFILIATE_TOKEN = 'XC3aAFsZH7wLEHc_lC6k5WNd7ZgqdRLk';
+    const UTM_CAMPAIGN = 'MyAffiliates';
+    const UTM_MEDIUM = 'affiliate';
+    const UTM_SOURCE = 'affiliate_169687';
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+      let demoAccountCreated = false;
+      let realAccountCreated = false;
+      const results: any = {};
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timeout ao criar contas'));
+      }, 30000);
+
+      ws.on('open', () => {
+        this.logger.log('[CreateAccount] WebSocket aberto, criando contas...');
+        
+        // Gerar senha e código de verificação
+        const password = this.generatePassword();
+        const verificationCode = this.generateVerificationCode();
+        
+        // Criar conta DEMO primeiro
+        const demoRequest = {
+          new_account_virtual: 1,
+          client_password: password,
+          verification_code: verificationCode,
+          type: 'dynamic',
+          residence: formData.pais || 'br',
+          date_first_contact: new Date().toISOString().split('T')[0],
+          signup_device: 'desktop',
+          email: formData.email,
+          affiliate_token: AFFILIATE_TOKEN,
+          utm_campaign: UTM_CAMPAIGN,
+          utm_medium: UTM_MEDIUM,
+          utm_source: UTM_SOURCE,
+        };
+        
+        this.logger.log('[CreateAccount] Enviando request para conta DEMO');
+        send(demoRequest);
+      });
+
+      ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const response = JSON.parse(data.toString());
+          
+          if (response.error) {
+            this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
+            clearTimeout(timeout);
+            ws.close();
+            reject(new Error(response.error.message || 'Erro ao criar conta'));
+            return;
+          }
+
+          // Resposta da conta DEMO
+          if (response.new_account_virtual && !demoAccountCreated) {
+            demoAccountCreated = true;
+            results.demoAccount = {
+              client_id: response.new_account_virtual.client_id,
+              email: response.new_account_virtual.email,
+              currency: response.new_account_virtual.currency,
+              oauth_token: response.new_account_virtual.oauth_token,
+            };
+            this.logger.log('[CreateAccount] Conta DEMO criada:', results.demoAccount.client_id);
+            
+            // Agora criar conta REAL
+            const realRequest = {
+              new_account_real: 1,
+              currency: 'USD',
+              email: formData.email,
+              first_name: formData.nome,
+              last_name: formData.sobrenome,
+              date_of_birth: formData.dataNascimento,
+              address_line_1: formData.endereco,
+              address_city: formData.cidade,
+              address_postcode: formData.cep.replace(/\D/g, ''),
+              address_state: formData.estado.toUpperCase(),
+              residence: formData.pais,
+              citizen: formData.pais,
+              phone: formData.telefone.replace(/\D/g, ''),
+              place_of_birth: formData.pais,
+              account_opening_reason: 'Speculative',
+              tax_residence: formData.pais,
+              employment_status: 'Employed',
+              tnc_acceptance: 1,
+              fatca_declaration: formData.naoFATCA ? 0 : 1,
+              non_pep_declaration: formData.naoPEP ? 1 : 0,
+              tin_skipped: 1,
+              affiliate_token: AFFILIATE_TOKEN,
+              utm_campaign: UTM_CAMPAIGN,
+              utm_medium: UTM_MEDIUM,
+              utm_source: UTM_SOURCE,
+            };
+            
+            this.logger.log('[CreateAccount] Enviando request para conta REAL');
+            send(realRequest);
+            return;
+          }
+
+          // Resposta da conta REAL
+          if (response.new_account_real && !realAccountCreated) {
+            realAccountCreated = true;
+            results.realAccount = {
+              client_id: response.new_account_real.client_id,
+              email: response.new_account_real.email,
+              currency: response.new_account_real.currency,
+              oauth_token: response.new_account_real.oauth_token,
+            };
+            this.logger.log('[CreateAccount] Conta REAL criada:', results.realAccount.client_id);
+            
+            clearTimeout(timeout);
+            ws.close();
+            resolve({
+              demoAccountId: results.demoAccount.client_id,
+              realAccountId: results.realAccount.client_id,
+              demoToken: results.demoAccount.oauth_token,
+              realToken: results.realAccount.oauth_token,
+              email: results.demoAccount.email || results.realAccount.email,
+            });
+          }
+        } catch (error) {
+          this.logger.error('[CreateAccount] Erro ao processar resposta:', error);
+          clearTimeout(timeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error('[CreateAccount] Erro no WebSocket:', error);
+        clearTimeout(timeout);
+        reject(new Error('Erro de conexão com a Deriv'));
+      });
+
+      ws.on('close', () => {
+        if (!demoAccountCreated || !realAccountCreated) {
+          clearTimeout(timeout);
+          if (!demoAccountCreated) {
+            reject(new Error('Não foi possível criar a conta DEMO'));
+          } else if (!realAccountCreated) {
+            reject(new Error('Não foi possível criar a conta REAL'));
+          }
+        }
+      });
+    });
+  }
+
+  private generatePassword(): string {
+    const length = 12;
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < length; i++) {
+      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return password;
+  }
+
+  private generateVerificationCode(): string {
+    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  }
 }
