@@ -560,15 +560,23 @@ export class DerivService {
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
     
     // Parâmetros de afiliado - valores padrão do link de afiliado
-    // Token extraído do link: https://deriv.com/?t=JbJSZZIT1CE3ZaCPBWmD0WNd7ZgqdRLk
-    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || 'JbJSZZIT1CE3ZaCPBWmD0WNd7ZgqdRLk';
+    // NOTA: O token do link (t=) não é o mesmo que affiliate_token da API
+    // O affiliate_token deve ser obtido do painel de afiliados da Deriv
+    // Por enquanto, vamos torná-lo opcional e usar apenas UTM para tracking
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || null; // Opcional - requer token válido do painel
     const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
     const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
     const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
 
-    this.logger.log(
-      `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
-    );
+    if (AFFILIATE_TOKEN) {
+      this.logger.log(
+        `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+      );
+    } else {
+      this.logger.warn(
+        '[CreateAccount] Token de afiliado não configurado. Criando conta sem tracking de afiliado.',
+      );
+    }
 
     // Validar se o código de verificação foi fornecido
     if (!verificationCode) {
@@ -649,7 +657,7 @@ export class DerivService {
       ws.on('open', () => {
         this.logger.log('[CreateAccount] WebSocket aberto, criando contas...');
         this.logger.debug(
-          `[CreateAccount] Configuração - AppID: ${appId}, AffiliateToken: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+          `[CreateAccount] Configuração - AppID: ${appId}, AffiliateToken: ${AFFILIATE_TOKEN ? AFFILIATE_TOKEN.substring(0, 10) + '...' : 'não configurado'}`,
         );
         
         // Iniciar timeout para conta DEMO
@@ -669,7 +677,7 @@ export class DerivService {
         const password = this.generatePassword();
         
         // Criar conta DEMO primeiro - seguindo documentação oficial da Deriv
-        const demoRequest = {
+        const demoRequest: any = {
           new_account_virtual: 1,
           client_password: password,
           verification_code: verificationCode, // Código recebido por email
@@ -678,11 +686,15 @@ export class DerivService {
           date_first_contact: new Date().toISOString().split('T')[0],
           signup_device: 'desktop',
           email: formData.email,
-          affiliate_token: AFFILIATE_TOKEN,
           utm_campaign: UTM_CAMPAIGN,
           utm_medium: UTM_MEDIUM,
           utm_source: UTM_SOURCE,
         };
+
+        // Adicionar affiliate_token apenas se estiver configurado (opcional)
+        if (AFFILIATE_TOKEN) {
+          demoRequest.affiliate_token = AFFILIATE_TOKEN;
+        }
         
         this.logger.log('[CreateAccount] Enviando request para conta DEMO');
         this.logger.debug(`[CreateAccount] Request DEMO: ${JSON.stringify({ ...demoRequest, client_password: '<hidden>', verification_code: '<hidden>' })}`);
@@ -704,13 +716,23 @@ export class DerivService {
             // Mensagens de erro mais específicas
             let errorMessage = response.error.message || 'Erro ao criar conta';
             if (response.error.code === 'InvalidToken') {
-              errorMessage = 
-                'Token de afiliado inválido ou expirado. ' +
-                'O token configurado no sistema não é válido ou expirou. ' +
-                'Entre em contato com o administrador do sistema para atualizar o token de afiliado.';
-              this.logger.error(
-                `[CreateAccount] Token de afiliado inválido. Token usado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
-              );
+              if (AFFILIATE_TOKEN) {
+                errorMessage = 
+                  'Token de afiliado inválido ou expirado. ' +
+                  'O token configurado no sistema não é válido ou expirou. ' +
+                  'Entre em contato com o administrador do sistema para atualizar o token de afiliado.';
+                this.logger.error(
+                  `[CreateAccount] Token de afiliado inválido. Token usado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+                );
+              } else {
+                errorMessage = 
+                  'Erro ao criar conta. ' +
+                  'Se você é um afiliado, configure um token de afiliado válido. ' +
+                  'Caso contrário, entre em contato com o suporte.';
+                this.logger.error(
+                  '[CreateAccount] Erro InvalidToken sem affiliate_token configurado.',
+                );
+              }
               this.logger.error(
                 '[CreateAccount] Verifique se o token de afiliado está correto e válido na Deriv.',
               );
@@ -741,7 +763,7 @@ export class DerivService {
             setRealTimeout();
             
             // Agora criar conta REAL
-            const realRequest = {
+            const realRequest: any = {
               new_account_real: 1,
               currency: 'USD',
               email: formData.email,
@@ -763,11 +785,15 @@ export class DerivService {
               fatca_declaration: formData.naoFATCA ? 0 : 1,
               non_pep_declaration: formData.naoPEP ? 1 : 0,
               tin_skipped: 1,
-              affiliate_token: AFFILIATE_TOKEN,
               utm_campaign: UTM_CAMPAIGN,
               utm_medium: UTM_MEDIUM,
               utm_source: UTM_SOURCE,
             };
+
+            // Adicionar affiliate_token apenas se estiver configurado (opcional)
+            if (AFFILIATE_TOKEN) {
+              realRequest.affiliate_token = AFFILIATE_TOKEN;
+            }
             
             this.logger.log('[CreateAccount] Enviando request para conta REAL');
             send(realRequest);
