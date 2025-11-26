@@ -601,34 +601,34 @@ export class DerivService {
       let realTimeout: NodeJS.Timeout | null = null;
       let globalTimeout: NodeJS.Timeout | null = null;
 
-      // Timeout global de 60 segundos (aumentado de 30)
+      // Timeout global de 90 segundos (aumentado para dar mais tempo)
       globalTimeout = setTimeout(() => {
-        this.logger.error('[CreateAccount] Timeout global atingido após 60 segundos');
+        this.logger.error('[CreateAccount] Timeout global atingido após 90 segundos');
         if (demoTimeout) clearTimeout(demoTimeout);
         if (realTimeout) clearTimeout(realTimeout);
         ws.close();
-        reject(new Error('Timeout ao criar contas - a operação demorou mais de 60 segundos'));
-      }, 60000);
+        reject(new Error('Timeout ao criar contas - a operação demorou mais de 90 segundos. Verifique sua conexão e tente novamente.'));
+      }, 90000);
 
-      // Timeout específico para conta DEMO (20 segundos)
+      // Timeout específico para conta DEMO (30 segundos - aumentado)
       const setDemoTimeout = () => {
         if (demoTimeout) clearTimeout(demoTimeout);
         demoTimeout = setTimeout(() => {
-          this.logger.error('[CreateAccount] Timeout ao criar conta DEMO após 20 segundos');
+          this.logger.error('[CreateAccount] Timeout ao criar conta DEMO após 30 segundos');
           if (!demoAccountCreated) {
             if (globalTimeout) clearTimeout(globalTimeout);
             if (realTimeout) clearTimeout(realTimeout);
             ws.close();
-            reject(new Error('Timeout ao criar conta DEMO - a operação demorou mais de 20 segundos'));
+            reject(new Error('Timeout ao criar conta DEMO - a operação demorou mais de 30 segundos. Verifique se o código de verificação está correto e se o email foi verificado.'));
           }
-        }, 20000);
+        }, 30000);
       };
 
-      // Timeout específico para conta REAL (40 segundos após DEMO)
+      // Timeout específico para conta REAL (50 segundos após DEMO - aumentado)
       const setRealTimeout = () => {
         if (realTimeout) clearTimeout(realTimeout);
         realTimeout = setTimeout(() => {
-          this.logger.error('[CreateAccount] Timeout ao criar conta REAL após 40 segundos');
+          this.logger.error('[CreateAccount] Timeout ao criar conta REAL após 50 segundos');
           if (!realAccountCreated) {
             this.logger.warn('[CreateAccount] Conta REAL não foi criada a tempo, mas DEMO foi criada com sucesso');
             // Se a DEMO foi criada, retornar apenas ela
@@ -651,7 +651,7 @@ export class DerivService {
               reject(new Error('Timeout ao criar conta REAL - nenhuma conta foi criada com sucesso'));
             }
           }
-        }, 40000);
+        }, 50000);
       };
 
       ws.on('open', () => {
@@ -697,14 +697,19 @@ export class DerivService {
         }
         
         this.logger.log('[CreateAccount] Enviando request para conta DEMO');
-        this.logger.debug(`[CreateAccount] Request DEMO: ${JSON.stringify({ ...demoRequest, client_password: '<hidden>', verification_code: '<hidden>' })}`);
+        this.logger.log(`[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({ 
+          ...demoRequest, 
+          client_password: '<hidden>', 
+          verification_code: '<hidden>' 
+        })}`);
+        this.logger.debug(`[CreateAccount] Código de verificação usado: ${verificationCode.substring(0, 3)}...`);
         send(demoRequest);
       });
 
       ws.on('message', (data: WebSocket.RawData) => {
         try {
           const response = JSON.parse(data.toString());
-          this.logger.debug('[CreateAccount] Resposta recebida:', JSON.stringify(response));
+          this.logger.log('[CreateAccount] Resposta recebida da Deriv:', JSON.stringify(response));
           
           if (response.error) {
             this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
