@@ -484,7 +484,78 @@ export class DerivService {
     return this.sessionStore.get(userId);
   }
 
-  async createDerivAccount(formData: any, userId: string): Promise<any> {
+  /**
+   * Verifica email e envia código de verificação
+   * Seguindo a documentação oficial da Deriv: https://deriv.com/
+   * Passo 1: Verificar email antes de criar conta
+   */
+  async verifyEmailForAccount(email: string): Promise<{ success: boolean; message: string }> {
+    const appId = Number(process.env.DERIV_APP_ID || 1089);
+    const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timeout ao verificar email'));
+      }, 30000);
+
+      ws.on('open', () => {
+        this.logger.log(`[VerifyEmail] Enviando verificação de email para: ${email}`);
+        send({
+          verify_email: email,
+          type: 'account_opening', // Tipo correto conforme documentação
+        });
+      });
+
+      ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const response = JSON.parse(data.toString());
+          
+          if (response.error) {
+            clearTimeout(timeout);
+            ws.close();
+            reject(new Error(response.error.message || 'Erro ao verificar email'));
+            return;
+          }
+
+          if (response.verify_email) {
+            clearTimeout(timeout);
+            ws.close();
+            this.logger.log('[VerifyEmail] Código de verificação enviado por email');
+            // A Deriv envia o código por email, não retorna na resposta
+            // Retornamos um indicador de sucesso
+            resolve({
+              success: true,
+              message: 'Código de verificação enviado por email. Verifique sua caixa de entrada.',
+            });
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(new Error('Erro de conexão ao verificar email'));
+      });
+    });
+  }
+
+  /**
+   * Cria contas DEMO e REAL na Deriv
+   * Seguindo a documentação oficial: https://deriv.com/
+   * Passo 2: Criar conta usando o código de verificação recebido por email
+   */
+  async createDerivAccount(formData: any, userId: string, verificationCode: string): Promise<any> {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
     
@@ -498,6 +569,14 @@ export class DerivService {
     this.logger.log(
       `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
     );
+
+    // Validar se o código de verificação foi fornecido
+    if (!verificationCode) {
+      throw new Error(
+        'Código de verificação é obrigatório. ' +
+        'Primeiro é necessário verificar o email usando o endpoint verify-email.',
+      );
+    }
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, {
@@ -586,15 +665,14 @@ export class DerivService {
           return;
         }
 
-        // Gerar senha e código de verificação
+        // Gerar senha (o código de verificação vem do email)
         const password = this.generatePassword();
-        const verificationCode = this.generateVerificationCode();
         
-        // Criar conta DEMO primeiro
+        // Criar conta DEMO primeiro - seguindo documentação oficial da Deriv
         const demoRequest = {
           new_account_virtual: 1,
           client_password: password,
-          verification_code: verificationCode,
+          verification_code: verificationCode, // Código recebido por email
           type: 'dynamic',
           residence: formData.pais || 'br',
           date_first_contact: new Date().toISOString().split('T')[0],
@@ -628,10 +706,13 @@ export class DerivService {
             if (response.error.code === 'InvalidToken') {
               errorMessage = 
                 'Token de afiliado inválido ou expirado. ' +
-                'Por favor, configure um token válido na variável de ambiente DERIV_AFFILIATE_TOKEN. ' +
-                'Entre em contato com o administrador do sistema.';
+                'O token configurado no sistema não é válido ou expirou. ' +
+                'Entre em contato com o administrador do sistema para atualizar o token de afiliado.';
               this.logger.error(
-                '[CreateAccount] Token de afiliado inválido. Verifique a configuração de DERIV_AFFILIATE_TOKEN',
+                `[CreateAccount] Token de afiliado inválido. Token usado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+              );
+              this.logger.error(
+                '[CreateAccount] Verifique se o token de afiliado está correto e válido na Deriv.',
               );
             } else if (response.error.code === 'InputValidationFailed') {
               errorMessage = `Dados inválidos: ${response.error.message}. Verifique os dados fornecidos.`;
