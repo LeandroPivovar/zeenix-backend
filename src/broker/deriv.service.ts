@@ -505,14 +505,68 @@ export class DerivService {
       let demoAccountCreated = false;
       let realAccountCreated = false;
       const results: any = {};
+      let demoTimeout: NodeJS.Timeout | null = null;
+      let realTimeout: NodeJS.Timeout | null = null;
+      let globalTimeout: NodeJS.Timeout | null = null;
 
-      const timeout = setTimeout(() => {
+      // Timeout global de 60 segundos (aumentado de 30)
+      globalTimeout = setTimeout(() => {
+        this.logger.error('[CreateAccount] Timeout global atingido após 60 segundos');
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
         ws.close();
-        reject(new Error('Timeout ao criar contas'));
-      }, 30000);
+        reject(new Error('Timeout ao criar contas - a operação demorou mais de 60 segundos'));
+      }, 60000);
+
+      // Timeout específico para conta DEMO (20 segundos)
+      const setDemoTimeout = () => {
+        if (demoTimeout) clearTimeout(demoTimeout);
+        demoTimeout = setTimeout(() => {
+          this.logger.error('[CreateAccount] Timeout ao criar conta DEMO após 20 segundos');
+          if (!demoAccountCreated) {
+            if (globalTimeout) clearTimeout(globalTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            ws.close();
+            reject(new Error('Timeout ao criar conta DEMO - a operação demorou mais de 20 segundos'));
+          }
+        }, 20000);
+      };
+
+      // Timeout específico para conta REAL (40 segundos após DEMO)
+      const setRealTimeout = () => {
+        if (realTimeout) clearTimeout(realTimeout);
+        realTimeout = setTimeout(() => {
+          this.logger.error('[CreateAccount] Timeout ao criar conta REAL após 40 segundos');
+          if (!realAccountCreated) {
+            this.logger.warn('[CreateAccount] Conta REAL não foi criada a tempo, mas DEMO foi criada com sucesso');
+            // Se a DEMO foi criada, retornar apenas ela
+            if (demoAccountCreated && results.demoAccount) {
+              if (globalTimeout) clearTimeout(globalTimeout);
+              if (demoTimeout) clearTimeout(demoTimeout);
+              ws.close();
+              resolve({
+                demoAccountId: results.demoAccount.client_id,
+                realAccountId: null,
+                demoToken: results.demoAccount.oauth_token,
+                realToken: null,
+                email: results.demoAccount.email,
+                warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+              });
+            } else {
+              if (globalTimeout) clearTimeout(globalTimeout);
+              if (demoTimeout) clearTimeout(demoTimeout);
+              ws.close();
+              reject(new Error('Timeout ao criar conta REAL - nenhuma conta foi criada com sucesso'));
+            }
+          }
+        }, 40000);
+      };
 
       ws.on('open', () => {
         this.logger.log('[CreateAccount] WebSocket aberto, criando contas...');
+        
+        // Iniciar timeout para conta DEMO
+        setDemoTimeout();
         
         // Gerar senha e código de verificação
         const password = this.generatePassword();
@@ -541,10 +595,13 @@ export class DerivService {
       ws.on('message', (data: WebSocket.RawData) => {
         try {
           const response = JSON.parse(data.toString());
+          this.logger.debug('[CreateAccount] Resposta recebida:', JSON.stringify(response));
           
           if (response.error) {
             this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
-            clearTimeout(timeout);
+            if (demoTimeout) clearTimeout(demoTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            if (globalTimeout) clearTimeout(globalTimeout);
             ws.close();
             reject(new Error(response.error.message || 'Erro ao criar conta'));
             return;
@@ -553,6 +610,8 @@ export class DerivService {
           // Resposta da conta DEMO
           if (response.new_account_virtual && !demoAccountCreated) {
             demoAccountCreated = true;
+            if (demoTimeout) clearTimeout(demoTimeout);
+            
             results.demoAccount = {
               client_id: response.new_account_virtual.client_id,
               email: response.new_account_virtual.email,
@@ -560,6 +619,9 @@ export class DerivService {
               oauth_token: response.new_account_virtual.oauth_token,
             };
             this.logger.log('[CreateAccount] Conta DEMO criada:', results.demoAccount.client_id);
+            
+            // Iniciar timeout para conta REAL
+            setRealTimeout();
             
             // Agora criar conta REAL
             const realRequest = {
@@ -598,6 +660,8 @@ export class DerivService {
           // Resposta da conta REAL
           if (response.new_account_real && !realAccountCreated) {
             realAccountCreated = true;
+            if (realTimeout) clearTimeout(realTimeout);
+            
             results.realAccount = {
               client_id: response.new_account_real.client_id,
               email: response.new_account_real.email,
@@ -606,7 +670,11 @@ export class DerivService {
             };
             this.logger.log('[CreateAccount] Conta REAL criada:', results.realAccount.client_id);
             
-            clearTimeout(timeout);
+            // Limpar todos os timeouts
+            if (demoTimeout) clearTimeout(demoTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            if (globalTimeout) clearTimeout(globalTimeout);
+            
             ws.close();
             resolve({
               demoAccountId: results.demoAccount.client_id,
@@ -618,7 +686,9 @@ export class DerivService {
           }
         } catch (error) {
           this.logger.error('[CreateAccount] Erro ao processar resposta:', error);
-          clearTimeout(timeout);
+          if (demoTimeout) clearTimeout(demoTimeout);
+          if (realTimeout) clearTimeout(realTimeout);
+          if (globalTimeout) clearTimeout(globalTimeout);
           ws.close();
           reject(error);
         }
@@ -626,19 +696,35 @@ export class DerivService {
 
       ws.on('error', (error) => {
         this.logger.error('[CreateAccount] Erro no WebSocket:', error);
-        clearTimeout(timeout);
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
+        if (globalTimeout) clearTimeout(globalTimeout);
         reject(new Error('Erro de conexão com a Deriv'));
       });
 
       ws.on('close', () => {
-        if (!demoAccountCreated || !realAccountCreated) {
-          clearTimeout(timeout);
-          if (!demoAccountCreated) {
-            reject(new Error('Não foi possível criar a conta DEMO'));
-          } else if (!realAccountCreated) {
-            reject(new Error('Não foi possível criar a conta REAL'));
-          }
+        // Limpar todos os timeouts ao fechar
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
+        if (globalTimeout) clearTimeout(globalTimeout);
+        
+        // Se a conexão foi fechada antes de completar, verificar o que foi criado
+        if (!demoAccountCreated && !realAccountCreated) {
+          this.logger.error('[CreateAccount] Conexão fechada sem criar nenhuma conta');
+          reject(new Error('Não foi possível criar as contas - conexão fechada prematuramente'));
+        } else if (demoAccountCreated && !realAccountCreated) {
+          this.logger.warn('[CreateAccount] Conexão fechada após criar apenas conta DEMO');
+          // Retornar apenas a conta DEMO se ela foi criada
+          resolve({
+            demoAccountId: results.demoAccount.client_id,
+            realAccountId: null,
+            demoToken: results.demoAccount.oauth_token,
+            realToken: null,
+            email: results.demoAccount.email,
+            warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+          });
         }
+        // Se ambas foram criadas, o resolve já foi chamado no handler de mensagem
       });
     });
   }

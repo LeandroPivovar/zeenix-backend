@@ -486,10 +486,27 @@ export class CopyTradingService {
       }
 
       // Verificar se está na tabela experts com trader_type
-      const expertResult = await this.dataSource.query(
+      // Primeiro tenta por user_id, depois por email (fallback)
+      let expertResult = await this.dataSource.query(
         `SELECT trader_type FROM experts WHERE user_id = ? AND is_active = 1 LIMIT 1`,
         [userId],
       );
+
+      // Se não encontrou por user_id, tenta por email
+      if (!expertResult || expertResult.length === 0) {
+        const userEmailResult = await this.dataSource.query(
+          `SELECT email FROM users WHERE id = ? LIMIT 1`,
+          [userId],
+        );
+        
+        if (userEmailResult && userEmailResult.length > 0) {
+          const userEmail = userEmailResult[0].email;
+          expertResult = await this.dataSource.query(
+            `SELECT trader_type FROM experts WHERE email = ? AND is_active = 1 LIMIT 1`,
+            [userEmail],
+          );
+        }
+      }
 
       if (expertResult && expertResult.length > 0) {
         const traderType = expertResult[0].trader_type?.toLowerCase() || '';

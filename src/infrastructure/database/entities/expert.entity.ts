@@ -62,6 +62,9 @@ export class ExpertEntity {
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'trader_type' })
   traderType?: string | null;
 
+  @Column({ type: 'char', length: 36, nullable: true, name: 'user_id' })
+  userId?: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
