@@ -488,11 +488,16 @@ export class DerivService {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
     
-    // Parâmetros de afiliado extraídos do link
-    const AFFILIATE_TOKEN = 'XC3aAFsZH7wLEHc_lC6k5WNd7ZgqdRLk';
-    const UTM_CAMPAIGN = 'MyAffiliates';
-    const UTM_MEDIUM = 'affiliate';
-    const UTM_SOURCE = 'affiliate_169687';
+    // Parâmetros de afiliado - valores padrão do link de afiliado
+    // Token extraído do link: https://deriv.com/?t=JbJSZZIT1CE3ZaCPBWmD0WNd7ZgqdRLk
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || 'JbJSZZIT1CE3ZaCPBWmD0WNd7ZgqdRLk';
+    const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
+    const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
+    const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
+
+    this.logger.log(
+      `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+    );
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, {
@@ -564,10 +569,23 @@ export class DerivService {
 
       ws.on('open', () => {
         this.logger.log('[CreateAccount] WebSocket aberto, criando contas...');
+        this.logger.debug(
+          `[CreateAccount] Configuração - AppID: ${appId}, AffiliateToken: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+        );
         
         // Iniciar timeout para conta DEMO
         setDemoTimeout();
         
+        // Validar dados obrigatórios
+        if (!formData.email) {
+          if (demoTimeout) clearTimeout(demoTimeout);
+          if (realTimeout) clearTimeout(realTimeout);
+          if (globalTimeout) clearTimeout(globalTimeout);
+          ws.close();
+          reject(new Error('Email é obrigatório para criar conta'));
+          return;
+        }
+
         // Gerar senha e código de verificação
         const password = this.generatePassword();
         const verificationCode = this.generateVerificationCode();
@@ -589,6 +607,7 @@ export class DerivService {
         };
         
         this.logger.log('[CreateAccount] Enviando request para conta DEMO');
+        this.logger.debug(`[CreateAccount] Request DEMO: ${JSON.stringify({ ...demoRequest, client_password: '<hidden>', verification_code: '<hidden>' })}`);
         send(demoRequest);
       });
 
@@ -603,7 +622,24 @@ export class DerivService {
             if (realTimeout) clearTimeout(realTimeout);
             if (globalTimeout) clearTimeout(globalTimeout);
             ws.close();
-            reject(new Error(response.error.message || 'Erro ao criar conta'));
+            
+            // Mensagens de erro mais específicas
+            let errorMessage = response.error.message || 'Erro ao criar conta';
+            if (response.error.code === 'InvalidToken') {
+              errorMessage = 
+                'Token de afiliado inválido ou expirado. ' +
+                'Por favor, configure um token válido na variável de ambiente DERIV_AFFILIATE_TOKEN. ' +
+                'Entre em contato com o administrador do sistema.';
+              this.logger.error(
+                '[CreateAccount] Token de afiliado inválido. Verifique a configuração de DERIV_AFFILIATE_TOKEN',
+              );
+            } else if (response.error.code === 'InputValidationFailed') {
+              errorMessage = `Dados inválidos: ${response.error.message}. Verifique os dados fornecidos.`;
+            } else if (response.error.code === 'RateLimit') {
+              errorMessage = 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.';
+            }
+            
+            reject(new Error(errorMessage));
             return;
           }
 
