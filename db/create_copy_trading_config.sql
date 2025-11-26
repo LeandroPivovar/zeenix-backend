@@ -54,3 +54,6 @@ COMMENT='Configuração de Copy Trading por usuário - permite execução em bac
 
 
 
+
+
+
