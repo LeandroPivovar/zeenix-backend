@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { SettingsService } from '../settings/settings.service';
+import { CopyTradingService } from '../copy-trading/copy-trading.service';
 
 export interface CreateTradeDto {
   contractType: string;
@@ -24,8 +25,8 @@ export class TradesService {
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => import('../copy-trading/copy-trading.service').then(m => m.CopyTradingService)))
-    private readonly copyTradingService?: any,
+    @Inject(forwardRef(() => CopyTradingService))
+    private readonly copyTradingService?: CopyTradingService,
   ) {}
 
   async createTrade(userId: string, dto: CreateTradeDto, ipAddress?: string, userAgent?: string) {
