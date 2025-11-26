@@ -267,5 +267,84 @@ export class CopyTradingController {
       );
     }
   }
+
+  @Get('session/active')
+  @UseGuards(AuthGuard('jwt'))
+  async getActiveSession(@Req() req: any) {
+    try {
+      const userId = req.user?.userId || req.user?.sub || req.user?.id;
+
+      if (!userId) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Usuário não identificado',
+          },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      const session = await this.copyTradingService.getActiveSession(userId);
+
+      return {
+        success: true,
+        data: session,
+      };
+    } catch (error) {
+      this.logger.error(
+        `[GetActiveSession] Erro ao buscar sessão ativa: ${error.message}`,
+        error.stack,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Erro ao buscar sessão ativa',
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('session/:sessionId/operations')
+  @UseGuards(AuthGuard('jwt'))
+  async getSessionOperations(
+    @Req() req: any,
+    @Param('sessionId') sessionId: string,
+  ) {
+    try {
+      const userId = req.user?.userId || req.user?.sub || req.user?.id;
+
+      if (!userId) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Usuário não identificado',
+          },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      const operations = await this.copyTradingService.getSessionOperations(
+        parseInt(sessionId, 10),
+      );
+
+      return {
+        success: true,
+        data: operations,
+      };
+    } catch (error) {
+      this.logger.error(
+        `[GetSessionOperations] Erro ao buscar operações: ${error.message}`,
+        error.stack,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Erro ao buscar operações da sessão',
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

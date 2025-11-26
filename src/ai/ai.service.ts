@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { StatsIAsService } from './stats-ias.service';
+import { CopyTradingService } from '../copy-trading/copy-trading.service';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
@@ -188,6 +189,8 @@ export class AiService implements OnModuleInit {
   constructor(
     @InjectDataSource() private dataSource: DataSource,
     private readonly statsIAsService: StatsIAsService,
+    @Inject(forwardRef(() => CopyTradingService))
+    private readonly copyTradingService?: CopyTradingService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -841,6 +844,32 @@ export class AiService implements OnModuleInit {
                WHERE id = ?`,
               [exitPrice, profit, status, tradeId],
             );
+
+            // Buscar dados da operação para replicação
+            const tradeData = await this.dataSource.query(
+              `SELECT user_id, contract_type, stake_amount, created_at 
+               FROM ai_trades WHERE id = ?`,
+              [tradeId],
+            );
+
+            // Replicar operação para copiadores (assíncrono, não bloqueia)
+            if (tradeData && tradeData.length > 0 && this.copyTradingService) {
+              const trade = tradeData[0];
+              this.copyTradingService.replicateTradeToFollowers(
+                trade.user_id,
+                {
+                  operationType: trade.contract_type,
+                  stakeAmount: parseFloat(trade.stake_amount) || 0,
+                  result: status === 'WON' ? 'win' : 'loss',
+                  profit: profit,
+                  executedAt: trade.created_at,
+                  closedAt: new Date(),
+                  traderOperationId: tradeId.toString(),
+                },
+              ).catch((error: any) => {
+                this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
+              });
+            }
 
             finalize(undefined, {
               profitLoss: profit,
@@ -2456,6 +2485,32 @@ private async monitorContract(contractId: string, tradeId: number, token: string
                              WHERE id = ?`,
                             [exitPrice, profit, status, tradeId],
                         );
+                        
+                        // Buscar dados da operação para replicação
+                        const tradeData = await this.dataSource.query(
+                            `SELECT user_id, contract_type, stake_amount, created_at 
+                             FROM ai_trades WHERE id = ?`,
+                            [tradeId],
+                        );
+
+                        // Replicar operação para copiadores (assíncrono, não bloqueia)
+                        if (tradeData && tradeData.length > 0 && this.copyTradingService) {
+                            const trade = tradeData[0];
+                            this.copyTradingService.replicateTradeToFollowers(
+                                trade.user_id,
+                                {
+                                    operationType: trade.contract_type,
+                                    stakeAmount: parseFloat(trade.stake_amount) || 0,
+                                    result: status === 'WON' ? 'win' : 'loss',
+                                    profit: profit,
+                                    executedAt: trade.created_at,
+                                    closedAt: new Date(),
+                                    traderOperationId: tradeId.toString(),
+                                },
+                            ).catch((error: any) => {
+                                this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
+                            });
+                        }
                         
                         // Unsubscribe
                         if (contractSubscriptionId) {
