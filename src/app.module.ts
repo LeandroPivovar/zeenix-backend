@@ -13,6 +13,7 @@ import { PlansModule } from './plans/plans.module';
 import { TradesModule } from './trades/trades.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { AiModule } from './ai/ai.module';
+import { CopyTradingModule } from './copy-trading/copy-trading.module';
 import { ClientsModule } from './clients/clients.module';
 import { AdminModule } from './presentation/admin.module';
 import { ExpertsModule } from './experts/experts.module';
@@ -32,6 +33,7 @@ import { WebhookModule } from './webhook/webhook.module';
     TradesModule, 
     GeminiModule, 
     AiModule,
+    CopyTradingModule,
     ClientsModule,
     AdminModule,
     ExpertsModule,

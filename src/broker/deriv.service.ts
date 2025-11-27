@@ -483,4 +483,411 @@ export class DerivService {
   getSession(userId: string) {
     return this.sessionStore.get(userId);
   }
+
+  /**
+   * Verifica email e envia código de verificação
+   * Seguindo a documentação oficial da Deriv: https://deriv.com/
+   * Passo 1: Verificar email antes de criar conta
+   */
+  async verifyEmailForAccount(email: string): Promise<{ success: boolean; message: string }> {
+    const appId = Number(process.env.DERIV_APP_ID || 1089);
+    const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timeout ao verificar email'));
+      }, 30000);
+
+      ws.on('open', () => {
+        this.logger.log(`[VerifyEmail] Enviando verificação de email para: ${email}`);
+        send({
+          verify_email: email,
+          type: 'account_opening', // Tipo correto conforme documentação
+        });
+      });
+
+      ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const response = JSON.parse(data.toString());
+          
+          if (response.error) {
+            clearTimeout(timeout);
+            ws.close();
+            reject(new Error(response.error.message || 'Erro ao verificar email'));
+            return;
+          }
+
+          if (response.verify_email) {
+            clearTimeout(timeout);
+            ws.close();
+            this.logger.log('[VerifyEmail] Código de verificação enviado por email');
+            // A Deriv envia o código por email, não retorna na resposta
+            // Retornamos um indicador de sucesso
+            resolve({
+              success: true,
+              message: 'Código de verificação enviado por email. Verifique sua caixa de entrada.',
+            });
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(new Error('Erro de conexão ao verificar email'));
+      });
+    });
+  }
+
+  /**
+   * Cria contas DEMO e REAL na Deriv
+   * Seguindo a documentação oficial: https://deriv.com/
+   * Passo 2: Criar conta usando o código de verificação recebido por email
+   */
+  async createDerivAccount(formData: any, userId: string, verificationCode: string): Promise<any> {
+    const appId = Number(process.env.DERIV_APP_ID || 1089);
+    const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+    
+    // Parâmetros de afiliado - valores padrão do link de afiliado
+    // NOTA: O token do link (t=) não é o mesmo que affiliate_token da API
+    // O affiliate_token deve ser obtido do painel de afiliados da Deriv
+    // Por enquanto, vamos torná-lo opcional e usar apenas UTM para tracking
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || null; // Opcional - requer token válido do painel
+    const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
+    const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
+    const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
+
+    if (AFFILIATE_TOKEN) {
+      this.logger.log(
+        `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+      );
+    } else {
+      this.logger.warn(
+        '[CreateAccount] Token de afiliado não configurado. Criando conta sem tracking de afiliado.',
+      );
+    }
+
+    // Validar se o código de verificação foi fornecido
+    if (!verificationCode) {
+      throw new Error(
+        'Código de verificação é obrigatório. ' +
+        'Primeiro é necessário verificar o email usando o endpoint verify-email.',
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      const send = (msg: unknown) => ws.send(JSON.stringify(msg));
+      let demoAccountCreated = false;
+      let realAccountCreated = false;
+      const results: any = {};
+      let demoTimeout: NodeJS.Timeout | null = null;
+      let realTimeout: NodeJS.Timeout | null = null;
+      let globalTimeout: NodeJS.Timeout | null = null;
+
+      // Timeout global de 90 segundos (aumentado para dar mais tempo)
+      globalTimeout = setTimeout(() => {
+        this.logger.error('[CreateAccount] Timeout global atingido após 90 segundos');
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
+        ws.close();
+        reject(new Error('Timeout ao criar contas - a operação demorou mais de 90 segundos. Verifique sua conexão e tente novamente.'));
+      }, 90000);
+
+      // Timeout específico para conta DEMO (30 segundos - aumentado)
+      const setDemoTimeout = () => {
+        if (demoTimeout) clearTimeout(demoTimeout);
+        demoTimeout = setTimeout(() => {
+          this.logger.error('[CreateAccount] Timeout ao criar conta DEMO após 30 segundos');
+          if (!demoAccountCreated) {
+            if (globalTimeout) clearTimeout(globalTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            ws.close();
+            reject(new Error('Timeout ao criar conta DEMO - a operação demorou mais de 30 segundos. Verifique se o código de verificação está correto e se o email foi verificado.'));
+          }
+        }, 30000);
+      };
+
+      // Timeout específico para conta REAL (50 segundos após DEMO - aumentado)
+      const setRealTimeout = () => {
+        if (realTimeout) clearTimeout(realTimeout);
+        realTimeout = setTimeout(() => {
+          this.logger.error('[CreateAccount] Timeout ao criar conta REAL após 50 segundos');
+          if (!realAccountCreated) {
+            this.logger.warn('[CreateAccount] Conta REAL não foi criada a tempo, mas DEMO foi criada com sucesso');
+            // Se a DEMO foi criada, retornar apenas ela
+            if (demoAccountCreated && results.demoAccount) {
+              if (globalTimeout) clearTimeout(globalTimeout);
+              if (demoTimeout) clearTimeout(demoTimeout);
+              ws.close();
+              resolve({
+                demoAccountId: results.demoAccount.client_id,
+                realAccountId: null,
+                demoToken: results.demoAccount.oauth_token,
+                realToken: null,
+                email: results.demoAccount.email,
+                warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+              });
+            } else {
+              if (globalTimeout) clearTimeout(globalTimeout);
+              if (demoTimeout) clearTimeout(demoTimeout);
+              ws.close();
+              reject(new Error('Timeout ao criar conta REAL - nenhuma conta foi criada com sucesso'));
+            }
+          }
+        }, 50000);
+      };
+
+      ws.on('open', () => {
+        this.logger.log('[CreateAccount] WebSocket aberto, criando contas...');
+        this.logger.debug(
+          `[CreateAccount] Configuração - AppID: ${appId}, AffiliateToken: ${AFFILIATE_TOKEN ? AFFILIATE_TOKEN.substring(0, 10) + '...' : 'não configurado'}`,
+        );
+        
+        // Iniciar timeout para conta DEMO
+        setDemoTimeout();
+        
+        // Validar dados obrigatórios
+        if (!formData.email) {
+          if (demoTimeout) clearTimeout(demoTimeout);
+          if (realTimeout) clearTimeout(realTimeout);
+          if (globalTimeout) clearTimeout(globalTimeout);
+          ws.close();
+          reject(new Error('Email é obrigatório para criar conta'));
+          return;
+        }
+
+        // Gerar senha (o código de verificação vem do email)
+        const password = this.generatePassword();
+        
+        // Criar conta DEMO primeiro - seguindo documentação oficial da Deriv
+        const demoRequest: any = {
+          new_account_virtual: 1,
+          client_password: password,
+          verification_code: verificationCode, // Código recebido por email
+          type: 'dynamic',
+          residence: formData.pais || 'br',
+          date_first_contact: new Date().toISOString().split('T')[0],
+          signup_device: 'desktop',
+          email: formData.email,
+          utm_campaign: UTM_CAMPAIGN,
+          utm_medium: UTM_MEDIUM,
+          utm_source: UTM_SOURCE,
+        };
+
+        // Adicionar affiliate_token apenas se estiver configurado (opcional)
+        if (AFFILIATE_TOKEN) {
+          demoRequest.affiliate_token = AFFILIATE_TOKEN;
+        }
+        
+        this.logger.log('[CreateAccount] Enviando request para conta DEMO');
+        this.logger.log(`[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({ 
+          ...demoRequest, 
+          client_password: '<hidden>', 
+          verification_code: '<hidden>' 
+        })}`);
+        this.logger.debug(`[CreateAccount] Código de verificação usado: ${verificationCode.substring(0, 3)}...`);
+        send(demoRequest);
+      });
+
+      ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const response = JSON.parse(data.toString());
+          this.logger.log('[CreateAccount] Resposta recebida da Deriv:', JSON.stringify(response));
+          
+          if (response.error) {
+            this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
+            if (demoTimeout) clearTimeout(demoTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            if (globalTimeout) clearTimeout(globalTimeout);
+            ws.close();
+            
+            // Mensagens de erro mais específicas
+            let errorMessage = response.error.message || 'Erro ao criar conta';
+            if (response.error.code === 'InvalidToken') {
+              if (AFFILIATE_TOKEN) {
+                errorMessage = 
+                  'Token de afiliado inválido ou expirado. ' +
+                  'O token configurado no sistema não é válido ou expirou. ' +
+                  'Entre em contato com o administrador do sistema para atualizar o token de afiliado.';
+                this.logger.error(
+                  `[CreateAccount] Token de afiliado inválido. Token usado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+                );
+              } else {
+                errorMessage = 
+                  'Erro ao criar conta. ' +
+                  'Se você é um afiliado, configure um token de afiliado válido. ' +
+                  'Caso contrário, entre em contato com o suporte.';
+                this.logger.error(
+                  '[CreateAccount] Erro InvalidToken sem affiliate_token configurado.',
+                );
+              }
+              this.logger.error(
+                '[CreateAccount] Verifique se o token de afiliado está correto e válido na Deriv.',
+              );
+            } else if (response.error.code === 'InputValidationFailed') {
+              errorMessage = `Dados inválidos: ${response.error.message}. Verifique os dados fornecidos.`;
+            } else if (response.error.code === 'RateLimit') {
+              errorMessage = 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.';
+            }
+            
+            reject(new Error(errorMessage));
+            return;
+          }
+
+          // Resposta da conta DEMO
+          if (response.new_account_virtual && !demoAccountCreated) {
+            demoAccountCreated = true;
+            if (demoTimeout) clearTimeout(demoTimeout);
+            
+            results.demoAccount = {
+              client_id: response.new_account_virtual.client_id,
+              email: response.new_account_virtual.email,
+              currency: response.new_account_virtual.currency,
+              oauth_token: response.new_account_virtual.oauth_token,
+            };
+            this.logger.log('[CreateAccount] Conta DEMO criada:', results.demoAccount.client_id);
+            
+            // Iniciar timeout para conta REAL
+            setRealTimeout();
+            
+            // Agora criar conta REAL
+            const realRequest: any = {
+              new_account_real: 1,
+              currency: 'USD',
+              email: formData.email,
+              first_name: formData.nome,
+              last_name: formData.sobrenome,
+              date_of_birth: formData.dataNascimento,
+              address_line_1: formData.endereco,
+              address_city: formData.cidade,
+              address_postcode: formData.cep.replace(/\D/g, ''),
+              address_state: formData.estado.toUpperCase(),
+              residence: formData.pais,
+              citizen: formData.pais,
+              phone: formData.telefone.replace(/\D/g, ''),
+              place_of_birth: formData.pais,
+              account_opening_reason: 'Speculative',
+              tax_residence: formData.pais,
+              employment_status: 'Employed',
+              tnc_acceptance: 1,
+              fatca_declaration: formData.naoFATCA ? 0 : 1,
+              non_pep_declaration: formData.naoPEP ? 1 : 0,
+              tin_skipped: 1,
+              utm_campaign: UTM_CAMPAIGN,
+              utm_medium: UTM_MEDIUM,
+              utm_source: UTM_SOURCE,
+            };
+
+            // Adicionar affiliate_token apenas se estiver configurado (opcional)
+            if (AFFILIATE_TOKEN) {
+              realRequest.affiliate_token = AFFILIATE_TOKEN;
+            }
+            
+            this.logger.log('[CreateAccount] Enviando request para conta REAL');
+            send(realRequest);
+            return;
+          }
+
+          // Resposta da conta REAL
+          if (response.new_account_real && !realAccountCreated) {
+            realAccountCreated = true;
+            if (realTimeout) clearTimeout(realTimeout);
+            
+            results.realAccount = {
+              client_id: response.new_account_real.client_id,
+              email: response.new_account_real.email,
+              currency: response.new_account_real.currency,
+              oauth_token: response.new_account_real.oauth_token,
+            };
+            this.logger.log('[CreateAccount] Conta REAL criada:', results.realAccount.client_id);
+            
+            // Limpar todos os timeouts
+            if (demoTimeout) clearTimeout(demoTimeout);
+            if (realTimeout) clearTimeout(realTimeout);
+            if (globalTimeout) clearTimeout(globalTimeout);
+            
+            ws.close();
+            resolve({
+              demoAccountId: results.demoAccount.client_id,
+              realAccountId: results.realAccount.client_id,
+              demoToken: results.demoAccount.oauth_token,
+              realToken: results.realAccount.oauth_token,
+              email: results.demoAccount.email || results.realAccount.email,
+            });
+          }
+        } catch (error) {
+          this.logger.error('[CreateAccount] Erro ao processar resposta:', error);
+          if (demoTimeout) clearTimeout(demoTimeout);
+          if (realTimeout) clearTimeout(realTimeout);
+          if (globalTimeout) clearTimeout(globalTimeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error('[CreateAccount] Erro no WebSocket:', error);
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
+        if (globalTimeout) clearTimeout(globalTimeout);
+        reject(new Error('Erro de conexão com a Deriv'));
+      });
+
+      ws.on('close', () => {
+        // Limpar todos os timeouts ao fechar
+        if (demoTimeout) clearTimeout(demoTimeout);
+        if (realTimeout) clearTimeout(realTimeout);
+        if (globalTimeout) clearTimeout(globalTimeout);
+        
+        // Se a conexão foi fechada antes de completar, verificar o que foi criado
+        if (!demoAccountCreated && !realAccountCreated) {
+          this.logger.error('[CreateAccount] Conexão fechada sem criar nenhuma conta');
+          reject(new Error('Não foi possível criar as contas - conexão fechada prematuramente'));
+        } else if (demoAccountCreated && !realAccountCreated) {
+          this.logger.warn('[CreateAccount] Conexão fechada após criar apenas conta DEMO');
+          // Retornar apenas a conta DEMO se ela foi criada
+          resolve({
+            demoAccountId: results.demoAccount.client_id,
+            realAccountId: null,
+            demoToken: results.demoAccount.oauth_token,
+            realToken: null,
+            email: results.demoAccount.email,
+            warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+          });
+        }
+        // Se ambas foram criadas, o resolve já foi chamado no handler de mensagem
+      });
+    });
+  }
+
+  private generatePassword(): string {
+    const length = 12;
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < length; i++) {
+      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return password;
+  }
+
+  private generateVerificationCode(): string {
+    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  }
 }

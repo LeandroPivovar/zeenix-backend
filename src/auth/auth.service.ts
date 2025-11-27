@@ -30,7 +30,7 @@ export class AuthService {
     const hashed = await bcrypt.hash(payload.password, 10);
     const user = User.create(uuidv4(), payload.name, payload.email, hashed);
     await this.userRepository.create(user);
-    const token = await this.signToken(user.id, user.email, user.name);
+    const token = await this.signToken(user.id, user.email, user.name, 'user');
     return { token };
   }
 
@@ -44,7 +44,13 @@ export class AuthService {
     if (!valid) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
-    const token = await this.signToken(user.id, user.email, user.name);
+    // Buscar role diretamente do banco
+    const userWithRole = await this.dataSource.query(
+      'SELECT role FROM users WHERE id = ?',
+      [user.id]
+    );
+    const userRole = userWithRole && userWithRole.length > 0 ? userWithRole[0].role : 'user';
+    const token = await this.signToken(user.id, user.email, user.name, userRole);
     return { token };
   }
 
@@ -128,8 +134,8 @@ export class AuthService {
     return { message: 'Senha redefinida com sucesso!' };
   }
 
-  private async signToken(sub: string, email: string, name: string): Promise<string> {
-    return await this.jwtService.signAsync({ sub, email, name });
+  private async signToken(sub: string, email: string, name: string, role: string = 'user'): Promise<string> {
+    return await this.jwtService.signAsync({ sub, email, name, role });
   }
 }
 

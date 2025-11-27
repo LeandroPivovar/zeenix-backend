@@ -1,21 +1,18 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
-@Entity('faqs')
-export class FaqEntity {
+@Entity('support_items')
+export class SupportItemEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ type: 'varchar', length: 500 })
-  question: string;
+  title: string;
 
-  @Column({ type: 'longtext' })
-  answer: string;
+  @Column({ type: 'longtext', nullable: true })
+  subtitle?: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  category?: string | null;
-
-  @Column({ type: 'int', default: 0, name: 'order_index' })
-  orderIndex: number;
+  @Column({ type: 'varchar', length: 500, nullable: true, name: 'image_path' })
+  imagePath?: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
@@ -23,7 +20,4 @@ export class FaqEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }
-
-
-
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, Between } from 'typeorm';
 import { TradeEntity, TradeType, TradeStatus } from '../infrastructure/database/entities/trade.entity';
@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { SettingsService } from '../settings/settings.service';
+import { CopyTradingService } from '../copy-trading/copy-trading.service';
 
 export interface CreateTradeDto {
   contractType: string;
@@ -24,6 +25,8 @@ export class TradesService {
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => CopyTradingService))
+    private readonly copyTradingService?: CopyTradingService,
   ) {}
 
   async createTrade(userId: string, dto: CreateTradeDto, ipAddress?: string, userAgent?: string) {
@@ -88,6 +91,26 @@ export class TradesService {
     trade.status = won ? TradeStatus.WON : TradeStatus.LOST;
     trade.profit = Number(profit.toFixed(2));
     await this.tradeRepository.save(trade);
+
+    // Replicar operação para copiadores (se for trader mestre)
+    if (this.copyTradingService) {
+      this.copyTradingService.replicateTradeToFollowers(
+        trade.userId,
+        {
+          operationType: trade.tradeType, // BUY ou SELL
+          stakeAmount: trade.entryValue,
+          result: won ? 'win' : 'loss',
+          profit: trade.profit,
+          executedAt: trade.createdAt,
+          closedAt: trade.updatedAt,
+          duration: parseInt(trade.duration) || undefined,
+          symbol: trade.contractType,
+          traderOperationId: trade.id,
+        },
+      ).catch((error: any) => {
+        console.error(`[TradesService] Erro ao replicar operação manual: ${error.message}`);
+      });
+    }
   }
 
   async getUserTrades(userId: string, limit: number = 50) {

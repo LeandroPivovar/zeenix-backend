@@ -16,6 +16,7 @@ import { UserSessionEntity } from './infrastructure/database/entities/user-sessi
 import { PlanEntity } from './infrastructure/database/entities/plan.entity';
 import { TradeEntity } from './infrastructure/database/entities/trade.entity';
 import { ExpertEntity } from './infrastructure/database/entities/expert.entity';
+import { SupportItemEntity } from './infrastructure/database/entities/support-item.entity';
 
 class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
   columnName(propertyName: string, customName: string, embeddedPrefixes: string[]): string {
@@ -47,7 +48,7 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity, ExpertEntity],
+        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity, ExpertEntity, SupportItemEntity],
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),

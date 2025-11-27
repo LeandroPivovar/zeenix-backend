@@ -147,5 +147,21 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- user_id (relaciona expert com usuário)
+SET @col_exists = (
+    SELECT COUNT(*) 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_SCHEMA = 'zeenix' 
+    AND TABLE_NAME = 'experts' 
+    AND COLUMN_NAME = 'user_id'
+);
+SET @sql = IF(@col_exists = 0, 
+    'ALTER TABLE `experts` ADD COLUMN `user_id` CHAR(36) NULL COMMENT \'ID do usuário relacionado (FK para users.id)\' AFTER `trader_type`, ADD INDEX `idx_user_id` (`user_id`), ADD CONSTRAINT `FK_experts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL',
+    'SELECT "Coluna user_id já existe" AS message'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 SELECT 'Migração concluída. A tabela experts foi criada/atualizada com sucesso.' AS message;
 

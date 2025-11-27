@@ -125,6 +125,17 @@ export class CoursesController {
     return { success: true, message: 'Aula marcada como concluída' };
   }
 
+  @Delete(':courseId/lessons/:lessonId/complete')
+  @UseGuards(AuthGuard('jwt'))
+  async markLessonAsIncomplete(
+    @Param('courseId') courseId: string,
+    @Param('lessonId') lessonId: string,
+    @Req() req: any,
+  ) {
+    await this.coursesService.markLessonAsIncomplete(req.user.userId, lessonId);
+    return { success: true, message: 'Conclusão da aula removida' };
+  }
+
   // Rota genérica de curso deve vir por último
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() req: any) {

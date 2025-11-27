@@ -707,4 +707,56 @@ export class DerivController {
       appId: appIdToUse,
     };
   }
+
+  @Post('verify-email')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Body() body: { email: string }, @Req() req: any) {
+    try {
+      const userId = req.user.userId;
+      this.logger.log(`[VerifyEmail] Verificando email para usuário ${userId}`);
+      
+      if (!body.email) {
+        throw new BadRequestException('Email é obrigatório');
+      }
+
+      const result = await this.derivService.verifyEmailForAccount(body.email);
+      
+      return {
+        success: true,
+        message: result.message,
+      };
+    } catch (error) {
+      this.logger.error(`[VerifyEmail] Erro: ${error.message}`, error.stack);
+      throw new BadRequestException(error.message || 'Erro ao verificar email');
+    }
+  }
+
+  @Post('create-account')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async createAccount(@Body() body: any, @Req() req: any) {
+    try {
+      const userId = req.user.userId;
+      this.logger.log(`[CreateAccount] Criando conta Deriv para usuário ${userId}`);
+      
+      if (!body.verificationCode) {
+        throw new BadRequestException(
+          'Código de verificação é obrigatório. ' +
+          'Primeiro verifique o email usando o endpoint /verify-email',
+        );
+      }
+      
+      const result = await this.derivService.createDerivAccount(body, userId, body.verificationCode);
+      
+      return {
+        success: true,
+        message: 'Contas criadas com sucesso',
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`[CreateAccount] Erro: ${error.message}`, error.stack);
+      throw new BadRequestException(error.message || 'Erro ao criar conta na Deriv');
+    }
+  }
 }

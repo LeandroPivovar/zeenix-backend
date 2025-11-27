@@ -117,11 +117,11 @@ export class ExpertsService {
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     const userId = uuidv4();
 
-    // Criar usuário na tabela users com role 'expert'
+    // Criar usuário na tabela users com role 'trader'
     // Usando snake_case que é o padrão do banco de dados
     await this.dataSource.query(
       `INSERT INTO users (id, name, email, password, role, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'expert', 1, NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, 'trader', 1, NOW(), NOW())`,
       [userId, name, email, hashedPassword]
     );
 
