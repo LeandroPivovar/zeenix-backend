@@ -66,7 +66,7 @@ export class AiController {
   }
 
   @Get('ticks')
-  getTicks(): {
+  getTicks(@Query('limit') limit?: string, @Query('count') count?: string): {
     success: boolean;
     data: {
       ticks: Tick[];
@@ -75,10 +75,21 @@ export class AiController {
       status: any;
     };
   } {
-    const ticks = this.aiService.getTicks();
+    let ticks = this.aiService.getTicks();
     const currentPrice = this.aiService.getCurrentPrice();
     const statistics = this.aiService.getStatistics();
     const status = this.aiService.getStatus();
+
+    // Priorizar 'count' se fornecido, senão usar 'limit' (compatibilidade)
+    const limitValue = count || limit;
+    
+    // Se um limite foi especificado, retornar apenas os últimos N ticks
+    if (limitValue) {
+      const limitNum = parseInt(limitValue, 10);
+      if (!isNaN(limitNum) && limitNum > 0) {
+        ticks = ticks.slice(-limitNum);
+      }
+    }
 
     return {
       success: true,

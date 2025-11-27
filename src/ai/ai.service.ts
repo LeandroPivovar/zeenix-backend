@@ -176,7 +176,7 @@ export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
-  private maxTicks = 100; // Armazena os últimos 100 preços
+  private maxTicks = 2000; // Armazena os últimos 2000 preços para gráficos maiores
   private appId: string;
   private symbol = 'R_10';
   private isConnected = false;
