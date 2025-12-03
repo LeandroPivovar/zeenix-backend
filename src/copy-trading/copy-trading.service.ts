@@ -281,17 +281,16 @@ export class CopyTradingService {
         [userId],
       );
 
-      // Encerrar sessão ativa
+      // Pausar sessão ativa (não encerrar)
       await this.dataSource.query(
         `UPDATE copy_trading_sessions 
-         SET status = 'ended', 
-             ended_at = NOW(),
+         SET status = 'paused', 
              paused_at = NOW()
          WHERE user_id = ? AND status = 'active'`,
         [userId],
       );
 
-      this.logger.log(`[PauseCopyTrading] Copy trading pausado e sessão encerrada para usuário ${userId}`);
+      this.logger.log(`[PauseCopyTrading] Copy trading pausado para usuário ${userId}`);
     } catch (error) {
       this.logger.error(
         `[PauseCopyTrading] Erro ao pausar copy trading: ${error.message}`,
@@ -305,6 +304,7 @@ export class CopyTradingService {
     this.logger.log(`[ResumeCopyTrading] Retomando copy trading para usuário ${userId}`);
 
     try {
+      // Atualizar configuração
       await this.dataSource.query(
         `UPDATE copy_trading_config 
          SET session_status = 'active',
@@ -312,6 +312,47 @@ export class CopyTradingService {
          WHERE user_id = ?`,
         [userId],
       );
+
+      // Verificar se existe uma sessão pausada
+      const pausedSession = await this.dataSource.query(
+        `SELECT * FROM copy_trading_sessions 
+         WHERE user_id = ? AND status = 'paused'
+         ORDER BY started_at DESC
+         LIMIT 1`,
+        [userId],
+      );
+
+      if (pausedSession && pausedSession.length > 0) {
+        // Reativar sessão pausada
+        await this.dataSource.query(
+          `UPDATE copy_trading_sessions 
+           SET status = 'active',
+               paused_at = NULL
+           WHERE id = ?`,
+          [pausedSession[0].id],
+        );
+        this.logger.log(`[ResumeCopyTrading] Sessão ${pausedSession[0].id} reativada para usuário ${userId}`);
+      } else {
+        // Criar nova sessão se não houver sessão pausada
+        const config = await this.getCopyTradingConfig(userId);
+        if (config) {
+          const initialBalance = 0.00;
+          await this.dataSource.query(
+            `INSERT INTO copy_trading_sessions 
+             (user_id, config_id, trader_id, trader_name, status, initial_balance, current_balance, started_at)
+             VALUES (?, ?, ?, ?, 'active', ?, ?, NOW())`,
+            [
+              userId,
+              config.id,
+              config.traderId,
+              config.traderName,
+              initialBalance,
+              initialBalance,
+            ],
+          );
+          this.logger.log(`[ResumeCopyTrading] Nova sessão criada para usuário ${userId}`);
+        }
+      }
 
       this.logger.log(`[ResumeCopyTrading] Copy trading retomado para usuário ${userId}`);
     } catch (error) {

@@ -40,3 +40,5 @@ CREATE TABLE IF NOT EXISTS copy_trading_operations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='Operações replicadas do Copy Trading';
 
+
+
