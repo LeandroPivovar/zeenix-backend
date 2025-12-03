@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS copy_trading_operations (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     session_id INT UNSIGNED NOT NULL COMMENT 'Referência à sessão de copy',
-    user_id INT UNSIGNED NOT NULL COMMENT 'Usuário que executou a operação',
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário que executou a operação',
     
     -- Informações da operação original do trader
     trader_operation_id VARCHAR(255) NULL COMMENT 'ID da operação do trader (se disponível)',

@@ -4,7 +4,7 @@
 
 CREATE TABLE IF NOT EXISTS copy_trading_sessions (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id INT UNSIGNED NOT NULL,
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário',
     config_id INT UNSIGNED NOT NULL COMMENT 'Referência à copy_trading_config',
     trader_id VARCHAR(100) NOT NULL COMMENT 'ID do trader copiado',
     trader_name VARCHAR(255) NOT NULL COMMENT 'Nome do trader',

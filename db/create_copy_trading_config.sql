@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS copy_trading_config (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id INT UNSIGNED NOT NULL,
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário',
     trader_id VARCHAR(100) NOT NULL COMMENT 'ID do trader selecionado',
     trader_name VARCHAR(255) NOT NULL COMMENT 'Nome do trader',
     
