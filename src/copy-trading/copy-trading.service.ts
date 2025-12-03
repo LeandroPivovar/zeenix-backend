@@ -35,6 +35,7 @@ export class CopyTradingService {
   ) {
     this.logger.log(`[ActivateCopyTrading] Ativando copy trading para usuário ${userId}`);
     this.logger.log(`[ActivateCopyTrading] Tipo de alocação: ${configData.allocationType}, Value: ${configData.allocationValue}, Percentage: ${configData.allocationPercentage}`);
+    this.logger.log(`[ActivateCopyTrading] Stop Loss: ${configData.stopLoss}, Take Profit: ${configData.takeProfit}, Blind Stop Loss: ${configData.blindStopLoss}`);
 
     try {
       // Verificar se já existe uma configuração para o usuário
