@@ -44,8 +44,8 @@ export class CopyTradingService {
       );
 
       // Determinar allocation_value baseado no tipo de alocação
-      let allocationValue = 0.00;
-      let allocationPercentage = null;
+      let allocationValue: number = 0.00;
+      let allocationPercentage: number | null = null;
 
       if (configData.allocationType === 'proportion') {
         // Se for proporção, usar o percentual e setar value como 0
