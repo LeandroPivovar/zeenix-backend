@@ -34,6 +34,7 @@ export class CopyTradingService {
     configData: CopyTradingConfigData,
   ) {
     this.logger.log(`[ActivateCopyTrading] Ativando copy trading para usuário ${userId}`);
+    this.logger.log(`[ActivateCopyTrading] Tipo de alocação: ${configData.allocationType}, Value: ${configData.allocationValue}, Percentage: ${configData.allocationPercentage}`);
 
     try {
       // Verificar se já existe uma configuração para o usuário
@@ -42,13 +43,27 @@ export class CopyTradingService {
         [userId],
       );
 
+      // Determinar allocation_value baseado no tipo de alocação
+      let allocationValue = 0.00;
+      let allocationPercentage = null;
+
+      if (configData.allocationType === 'proportion') {
+        // Se for proporção, usar o percentual e setar value como 0
+        allocationPercentage = configData.allocationPercentage || 100;
+        allocationValue = 0.00;
+      } else {
+        // Se for fixed, usar o valor fixo
+        allocationValue = configData.allocationValue || 0.00;
+        allocationPercentage = null;
+      }
+
       const config = {
         user_id: userId,
         trader_id: configData.traderId,
         trader_name: configData.traderName,
         allocation_type: configData.allocationType,
-        allocation_value: configData.allocationValue,
-        allocation_percentage: configData.allocationPercentage || null,
+        allocation_value: allocationValue,
+        allocation_percentage: allocationPercentage,
         leverage: configData.leverage,
         stop_loss: configData.stopLoss,
         take_profit: configData.takeProfit,
