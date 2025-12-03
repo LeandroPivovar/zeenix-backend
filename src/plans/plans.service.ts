@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
@@ -10,6 +10,8 @@ import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class PlansService {
+  private readonly logger = new Logger(PlansService.name);
+
   constructor(
     @InjectRepository(PlanEntity)
     private readonly planRepository: Repository<PlanEntity>,
@@ -20,10 +22,18 @@ export class PlansService {
   ) {}
 
   async getAllPlans() {
+    this.logger.log('[GetAllPlans] Buscando planos ativos...');
+    
     const plans = await this.planRepository.find({
-      where: { isActive: true },
+      where: { isActive: 1 as any },  // Banco usa 0 ou 1, não boolean
       order: { displayOrder: 'ASC' },
     });
+
+    this.logger.log(`[GetAllPlans] Encontrados ${plans.length} planos`);
+    
+    if (plans.length === 0) {
+      this.logger.warn('[GetAllPlans] Nenhum plano ativo encontrado! Verifique is_active no banco.');
+    }
 
     return plans.map(plan => ({
       id: plan.id,
@@ -35,6 +45,8 @@ export class PlansService {
       features: plan.features || {},
       isPopular: plan.isPopular,
       isRecommended: plan.isRecommended,
+      isActive: plan.isActive,
+      displayOrder: plan.displayOrder,
     }));
   }
 
@@ -83,7 +95,7 @@ export class PlansService {
   }
 
   async activatePlan(userId: string, planId: string, ipAddress?: string, userAgent?: string) {
-    const plan = await this.planRepository.findOne({ where: { id: planId, isActive: true } });
+    const plan = await this.planRepository.findOne({ where: { id: planId, isActive: 1 as any } });  // Banco usa 0 ou 1
     if (!plan) {
       throw new NotFoundException('Plano não encontrado ou inativo');
     }
