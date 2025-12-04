@@ -722,10 +722,15 @@ export class AiService implements OnModuleInit {
       return false;
     }
     
-    // Verificar se a sessão foi parada por stop loss/win
+    // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
     try {
       const configResult = await this.dataSource.query(
-        `SELECT session_status, is_active 
+        `SELECT 
+          session_status, 
+          is_active,
+          profit_target,
+          loss_limit,
+          COALESCE(session_balance, 0) as sessionBalance
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = TRUE
          ORDER BY created_at DESC
@@ -742,12 +747,40 @@ export class AiService implements OnModuleInit {
       }
       
       const config = configResult[0];
-      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+      
+      // Verificar se já foi parada
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
         this.logger.warn(
           `[Veloz][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
         );
         return false;
       }
+      
+      // ✅ VERIFICAR LIMITES ANTES DE OPERAR
+      const sessionBalance = parseFloat(config.sessionBalance) || 0;
+      const profitTarget = parseFloat(config.profit_target) || null;
+      const lossLimit = parseFloat(config.loss_limit) || null;
+      
+      // Se atingiu take profit (stop win)
+      if (profitTarget && sessionBalance >= profitTarget) {
+        this.logger.warn(
+          `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
+      // Se atingiu stop loss
+      if (lossLimit && sessionBalance <= -lossLimit) {
+        this.logger.warn(
+          `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
     } catch (error) {
       this.logger.error(`[Veloz][${state.userId}] Erro ao verificar status da sessão:`, error);
       return false;
@@ -915,7 +948,7 @@ export class AiService implements OnModuleInit {
       strategy: 'modo_veloz',
       dvx: this.calculateDVX(this.ticks),
       window: VELOZ_CONFIG.window,
-      ticks: this.ticks.slice(-this.maxTicks),
+      ticks: this.ticks.slice(-50), // Salvar apenas os últimos 50 ticks para reduzir log
     };
 
     const insertResult = await this.dataSource.query(
@@ -1195,11 +1228,64 @@ export class AiService implements OnModuleInit {
 
     // Verificar se pode continuar (respeitar o maxEntradas do modo)
     if (entry < config.maxEntradas) {
-      const proximaAposta = calcularProximaAposta(
+      let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
         state.apostaInicial,
         state.modoMartingale,
       );
+      
+      // ✅ STOP-LOSS NORMAL - ZENIX v2.0
+      // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
+      try {
+        const limitsResult = await this.dataSource.query(
+          `SELECT 
+            stake_amount as initialCapital,
+            COALESCE(session_balance, 0) as sessionBalance,
+            COALESCE(loss_limit, 0) as lossLimit
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = TRUE
+           LIMIT 1`,
+          [state.userId],
+        );
+        
+        if (limitsResult && limitsResult.length > 0) {
+          const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
+          const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
+          const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
+          
+          if (lossLimit > 0) {
+            // Capital disponível = capital inicial + saldo da sessão
+            const capitalDisponivel = initialCapital + sessionBalance;
+            
+            // Stop-loss disponível = quanto ainda pode perder
+            const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
+            
+            // Se próxima aposta + perda acumulada ultrapassar limite disponível
+            if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
+              this.logger.warn(
+                `[Veloz][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
+                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
+              );
+              
+              // Reduzir para valor inicial
+              proximaAposta = state.capital;
+              
+              // Resetar martingale (mas continuar operando)
+              state.isOperationActive = false;
+              state.martingaleStep = 0;
+              state.perdaAcumulada = 0;
+              state.apostaInicial = 0;
+              
+              this.logger.log(
+                `[Veloz][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
+              );
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(`[Veloz][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
+      }
       
       const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
       
@@ -2200,12 +2286,29 @@ export class AiService implements OnModuleInit {
 
   /**
    * Atualiza configuração da IA de um usuário
+   * ⚠️ ZENIX v2.0: BLOQUEIA mudanças durante sessão ativa!
    */
   async updateUserAIConfig(
     userId: string,
     stakeAmount?: number,
   ): Promise<void> {
     this.logger.log(`Atualizando configuração da IA para usuário ${userId}`);
+
+    // ✅ VERIFICAR SE HÁ SESSÃO ATIVA
+    const activeSession = await this.dataSource.query(
+      `SELECT is_active, session_status 
+       FROM ai_user_config 
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+
+    if (activeSession && activeSession.length > 0) {
+      throw new Error(
+        '❌ Não é possível alterar configurações durante uma sessão ativa! ' +
+        'Desative a IA primeiro para fazer mudanças.'
+      );
+    }
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -2227,7 +2330,7 @@ export class AiService implements OnModuleInit {
     await this.dataSource.query(
       `UPDATE ai_user_config 
        SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP 
-       WHERE user_id = ?`,
+       WHERE user_id = ? AND is_active = FALSE`,  // ✅ Só atualiza se NÃO ativa
       values,
     );
 
@@ -3431,6 +3534,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
   /**
    * Verifica se pode processar o estado do usuário no modo moderado
+   * ✅ ZENIX v2.0: Verifica limites ANTES de executar operação
    */
   private async canProcessModeradoState(state: ModeradoUserState): Promise<boolean> {
     if (state.isOperationActive) {
@@ -3452,10 +3556,15 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       return false;
     }
     
-    // Verificar se a sessão foi parada por stop loss/win
+    // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
     try {
       const configResult = await this.dataSource.query(
-        `SELECT session_status, is_active 
+        `SELECT 
+          session_status, 
+          is_active,
+          profit_target,
+          loss_limit,
+          COALESCE(session_balance, 0) as sessionBalance
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = TRUE
          ORDER BY created_at DESC
@@ -3472,12 +3581,40 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
       
       const config = configResult[0];
-      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+      
+      // Verificar se já foi parada
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
         this.logger.warn(
           `[Moderado][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
         );
         return false;
       }
+      
+      // ✅ VERIFICAR LIMITES ANTES DE OPERAR
+      const sessionBalance = parseFloat(config.sessionBalance) || 0;
+      const profitTarget = parseFloat(config.profit_target) || null;
+      const lossLimit = parseFloat(config.loss_limit) || null;
+      
+      // Se atingiu take profit (stop win)
+      if (profitTarget && sessionBalance >= profitTarget) {
+        this.logger.warn(
+          `[Moderado][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
+      // Se atingiu stop loss
+      if (lossLimit && sessionBalance <= -lossLimit) {
+        this.logger.warn(
+          `[Moderado][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
     } catch (error) {
       this.logger.error(`[Moderado][${state.userId}] Erro ao verificar status da sessão:`, error);
       return false;
@@ -3676,47 +3813,126 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     entry: number,
   ): Promise<void> {
     const won = result.status === 'WON';
-
-    this.logger.log(
-      `[Moderado][${state.userId}] ${won ? '✅ Vitória' : '❌ Loss'} | Lucro ${result.profitLoss} | entrada=${entry}`,
-    );
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
 
     await this.incrementModeradoStats(state.userId, won, result.profitLoss);
 
     if (won) {
+      // ✅ VITÓRIA
+      state.virtualCapital += result.profitLoss;
+      const lucroLiquido = result.profitLoss - state.perdaAcumulada;
+      
+      this.logger.log(
+        `[Moderado][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
+        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
+        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
+        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
+        `Capital: $${state.virtualCapital.toFixed(2)}`,
+      );
+      
+      // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
-      state.virtualCapital += result.profitLoss;
-      this.logger.log(
-        `[Moderado][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss} | capital virtual: ${state.virtualCapital}`,
-      );
-    } else {
-      state.virtualCapital += result.profitLoss;
-
-      if (entry < MODERADO_CONFIG.martingaleMax) {
-        const nextEntry = entry + 1;
-        this.logger.log(
-          `[Moderado][${state.userId}] Aplicando martingale ${nextEntry}/${MODERADO_CONFIG.martingaleMax}`,
-        );
-
-        setTimeout(() => {
-          this.executeModeradoOperation(state, proposal, nextEntry).catch(
-            (error) => {
-              this.logger.error(
-                `[Moderado] Erro no martingale ${nextEntry}:`,
-                error,
-              );
-            },
-          );
-        }, 4000);
-      } else {
-        state.isOperationActive = false;
-        state.martingaleStep = 0;
-        this.logger.warn(
-          `[Moderado][${state.userId}] Martingale esgotado após ${entry} tentativas | capital virtual: ${state.virtualCapital}`,
-        );
-      }
+      state.perdaAcumulada = 0;
+      state.apostaInicial = 0;
+      return;
     }
+
+    // ❌ PERDA
+    state.virtualCapital += result.profitLoss;
+    state.perdaAcumulada += stakeAmount;
+
+    this.logger.warn(
+      `[Moderado][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
+      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+    );
+
+    // Verificar se pode continuar (respeitar o maxEntradas do modo)
+    if (entry < config.maxEntradas) {
+      let proximaAposta = calcularProximaAposta(
+        state.perdaAcumulada,
+        state.apostaInicial,
+        state.modoMartingale,
+      );
+      
+      // ✅ STOP-LOSS NORMAL - ZENIX v2.0
+      // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
+      try {
+        const limitsResult = await this.dataSource.query(
+          `SELECT 
+            stake_amount as initialCapital,
+            COALESCE(session_balance, 0) as sessionBalance,
+            COALESCE(loss_limit, 0) as lossLimit
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = TRUE
+           LIMIT 1`,
+          [state.userId],
+        );
+        
+        if (limitsResult && limitsResult.length > 0) {
+          const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
+          const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
+          const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
+          
+          if (lossLimit > 0) {
+            // Capital disponível = capital inicial + saldo da sessão
+            const capitalDisponivel = initialCapital + sessionBalance;
+            
+            // Stop-loss disponível = quanto ainda pode perder
+            const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
+            
+            // Se próxima aposta + perda acumulada ultrapassar limite disponível
+            if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
+              this.logger.warn(
+                `[Moderado][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
+                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
+              );
+              
+              // Reduzir para valor inicial
+              proximaAposta = state.capital;
+              
+              // Resetar martingale (mas continuar operando)
+              state.isOperationActive = false;
+              state.martingaleStep = 0;
+              state.perdaAcumulada = 0;
+              state.apostaInicial = 0;
+              
+              this.logger.log(
+                `[Moderado][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
+              );
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(`[Moderado][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
+      }
+      
+      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      
+      this.logger.log(
+        `[Moderado][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
+        (lucroEsperado > 0
+          ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
+          : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
+      );
+      
+      // Executar próxima entrada
+      await this.executeModeradoOperation(state, proposal, entry + 1);
+      return;
+    }
+
+    // 🛑 STOP-LOSS DE MARTINGALE
+    this.logger.warn(
+      `[Moderado][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
+      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
+    );
+    
+    // Resetar martingale
+    state.isOperationActive = false;
+    state.martingaleStep = 0;
+    state.perdaAcumulada = 0;
+    state.apostaInicial = 0;
   }
 
   /**
@@ -3762,12 +3978,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }
 
   /**
-   * Calcula stake para o modo moderado (0.75% + martingale unificado)
+   * Calcula stake para o modo moderado (valor configurado + martingale unificado)
+   * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private calculateModeradoStake(state: ModeradoUserState): number {
-    const baseStake = state.capital * MODERADO_CONFIG.betPercent;
+    const baseStake = state.capital || MODERADO_CONFIG.minStake;
     
-    // Se é primeira entrada, usar a aposta base
+    // Se é primeira entrada, usar a aposta base (valor configurado pelo usuário)
     if (state.martingaleStep === 0) {
       return Math.max(MODERADO_CONFIG.minStake, baseStake);
     }
@@ -3963,6 +4180,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
   /**
    * Verifica se pode processar o estado do usuário no modo preciso
+   * ✅ ZENIX v2.0: Verifica limites ANTES de executar operação
    */
   private async canProcessPrecisoState(state: PrecisoUserState): Promise<boolean> {
     if (state.isOperationActive) {
@@ -3984,10 +4202,15 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       return false;
     }
     
-    // Verificar se a sessão foi parada por stop loss/win
+    // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
     try {
       const configResult = await this.dataSource.query(
-        `SELECT session_status, is_active 
+        `SELECT 
+          session_status, 
+          is_active,
+          profit_target,
+          loss_limit,
+          COALESCE(session_balance, 0) as sessionBalance
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = TRUE
          ORDER BY created_at DESC
@@ -4004,12 +4227,40 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
       
       const config = configResult[0];
-      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss') {
+      
+      // Verificar se já foi parada
+      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
         this.logger.warn(
           `[Preciso][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
         );
         return false;
       }
+      
+      // ✅ VERIFICAR LIMITES ANTES DE OPERAR
+      const sessionBalance = parseFloat(config.sessionBalance) || 0;
+      const profitTarget = parseFloat(config.profit_target) || null;
+      const lossLimit = parseFloat(config.loss_limit) || null;
+      
+      // Se atingiu take profit (stop win)
+      if (profitTarget && sessionBalance >= profitTarget) {
+        this.logger.warn(
+          `[Preciso][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
+      // Se atingiu stop loss
+      if (lossLimit && sessionBalance <= -lossLimit) {
+        this.logger.warn(
+          `[Preciso][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
+        );
+        // Desativar imediatamente
+        await this.checkAndEnforceLimits(state.userId);
+        return false;
+      }
+      
     } catch (error) {
       this.logger.error(`[Preciso][${state.userId}] Erro ao verificar status da sessão:`, error);
       return false;
@@ -4208,47 +4459,126 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     entry: number,
   ): Promise<void> {
     const won = result.status === 'WON';
-
-    this.logger.log(
-      `[Preciso][${state.userId}] ${won ? '✅ Vitória' : '❌ Loss'} | Lucro ${result.profitLoss} | entrada=${entry}`,
-    );
+    const config = CONFIGS_MARTINGALE[state.modoMartingale];
 
     await this.incrementPrecisoStats(state.userId, won, result.profitLoss);
 
     if (won) {
+      // ✅ VITÓRIA
+      state.virtualCapital += result.profitLoss;
+      const lucroLiquido = result.profitLoss - state.perdaAcumulada;
+      
+      this.logger.log(
+        `[Preciso][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
+        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
+        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
+        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
+        `Capital: $${state.virtualCapital.toFixed(2)}`,
+      );
+      
+      // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
-      state.virtualCapital += result.profitLoss;
-      this.logger.log(
-        `[Preciso][${state.userId}] ✅ Vitória | Lucro ${result.profitLoss} | capital virtual: ${state.virtualCapital}`,
-      );
-    } else {
-      state.virtualCapital += result.profitLoss;
-
-      if (entry < PRECISO_CONFIG.martingaleMax) {
-        const nextEntry = entry + 1;
-        this.logger.log(
-          `[Preciso][${state.userId}] Aplicando martingale ${nextEntry}/${PRECISO_CONFIG.martingaleMax}`,
-        );
-
-        setTimeout(() => {
-          this.executePrecisoOperation(state, proposal, nextEntry).catch(
-            (error) => {
-              this.logger.error(
-                `[Preciso] Erro no martingale ${nextEntry}:`,
-                error,
-              );
-            },
-          );
-        }, 4000);
-      } else {
-        state.isOperationActive = false;
-        state.martingaleStep = 0;
-        this.logger.warn(
-          `[Preciso][${state.userId}] Martingale esgotado após ${entry} tentativas | capital virtual: ${state.virtualCapital}`,
-        );
-      }
+      state.perdaAcumulada = 0;
+      state.apostaInicial = 0;
+      return;
     }
+
+    // ❌ PERDA
+    state.virtualCapital += result.profitLoss;
+    state.perdaAcumulada += stakeAmount;
+
+    this.logger.warn(
+      `[Preciso][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
+      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+    );
+
+    // Verificar se pode continuar (respeitar o maxEntradas do modo)
+    if (entry < config.maxEntradas) {
+      let proximaAposta = calcularProximaAposta(
+        state.perdaAcumulada,
+        state.apostaInicial,
+        state.modoMartingale,
+      );
+      
+      // ✅ STOP-LOSS NORMAL - ZENIX v2.0
+      // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
+      try {
+        const limitsResult = await this.dataSource.query(
+          `SELECT 
+            stake_amount as initialCapital,
+            COALESCE(session_balance, 0) as sessionBalance,
+            COALESCE(loss_limit, 0) as lossLimit
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = TRUE
+           LIMIT 1`,
+          [state.userId],
+        );
+        
+        if (limitsResult && limitsResult.length > 0) {
+          const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
+          const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
+          const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
+          
+          if (lossLimit > 0) {
+            // Capital disponível = capital inicial + saldo da sessão
+            const capitalDisponivel = initialCapital + sessionBalance;
+            
+            // Stop-loss disponível = quanto ainda pode perder
+            const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
+            
+            // Se próxima aposta + perda acumulada ultrapassar limite disponível
+            if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
+              this.logger.warn(
+                `[Preciso][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
+                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
+              );
+              
+              // Reduzir para valor inicial
+              proximaAposta = state.capital;
+              
+              // Resetar martingale (mas continuar operando)
+              state.isOperationActive = false;
+              state.martingaleStep = 0;
+              state.perdaAcumulada = 0;
+              state.apostaInicial = 0;
+              
+              this.logger.log(
+                `[Preciso][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
+              );
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(`[Preciso][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
+      }
+      
+      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      
+      this.logger.log(
+        `[Preciso][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
+        (lucroEsperado > 0
+          ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
+          : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
+      );
+      
+      // Executar próxima entrada
+      await this.executePrecisoOperation(state, proposal, entry + 1);
+      return;
+    }
+
+    // 🛑 STOP-LOSS DE MARTINGALE
+    this.logger.warn(
+      `[Preciso][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
+      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
+    );
+    
+    // Resetar martingale
+    state.isOperationActive = false;
+    state.martingaleStep = 0;
+    state.perdaAcumulada = 0;
+    state.apostaInicial = 0;
   }
 
   /**
@@ -4294,12 +4624,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }
 
   /**
-   * Calcula stake para o modo preciso (1.0% + martingale unificado)
+   * Calcula stake para o modo preciso (valor configurado + martingale unificado)
+   * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private calculatePrecisoStake(state: PrecisoUserState): number {
-    const baseStake = state.capital * PRECISO_CONFIG.betPercent;
+    const baseStake = state.capital || PRECISO_CONFIG.minStake;
     
-    // Se é primeira entrada, usar a aposta base
+    // Se é primeira entrada, usar a aposta base (valor configurado pelo usuário)
     if (state.martingaleStep === 0) {
       return Math.max(PRECISO_CONFIG.minStake, baseStake);
     }

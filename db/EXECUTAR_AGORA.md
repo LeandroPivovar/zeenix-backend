@@ -59,3 +59,4 @@ mysql -u root -p zeenix < db/create_copy_trading_operations.sql
 Depois execute novamente o passo 1.
 
 
+

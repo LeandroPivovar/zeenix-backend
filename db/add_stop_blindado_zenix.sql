@@ -6,10 +6,24 @@
 USE zeenix;
 
 -- Adicionar campo de percentual de proteção do stop blindado
-ALTER TABLE ai_user_config
-ADD COLUMN IF NOT EXISTS stop_blindado_percent DECIMAL(5,2) DEFAULT 50.00 
-COMMENT 'Percentual de proteção do stop blindado (%)' 
-AFTER profit_target;
+-- Verificar se coluna já existe antes de adicionar
+SET @column_exists = (
+    SELECT COUNT(*) 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_SCHEMA = 'zeenix' 
+    AND TABLE_NAME = 'ai_user_config' 
+    AND COLUMN_NAME = 'stop_blindado_percent'
+);
+
+-- Adicionar coluna somente se não existir
+SET @sql = IF(@column_exists = 0,
+    'ALTER TABLE ai_user_config ADD COLUMN stop_blindado_percent DECIMAL(5,2) DEFAULT 50.00 COMMENT ''Percentual de proteção do stop blindado (%)'' AFTER profit_target',
+    'SELECT ''Coluna stop_blindado_percent já existe'' as Aviso'
+);
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Atualizar enum de session_status para incluir 'stopped_blindado'
 ALTER TABLE ai_user_config

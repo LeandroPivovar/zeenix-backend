@@ -100,3 +100,4 @@ Após executar a migração com sucesso, o sistema de Copy Trading deve funciona
 3. Verificar se o campo realmente mudou para `varchar(36)`
 
 
+

@@ -91,3 +91,4 @@ mysqldump -u root -p zeenix copy_trading_config copy_trading_sessions copy_tradi
 Após seguir estes passos, o Copy Trading deve funcionar corretamente com suporte a UUID.
 
 
+

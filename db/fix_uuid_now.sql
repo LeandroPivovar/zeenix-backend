@@ -36,3 +36,4 @@ AND TABLE_NAME IN ('copy_trading_config', 'copy_trading_sessions', 'copy_trading
 AND COLUMN_NAME = 'user_id';
 
 
+
