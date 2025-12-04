@@ -670,7 +670,7 @@ export class AiService implements OnModuleInit {
         `  └─ ${sinal.motivo}`,
       );
       
-      // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE
+      // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
       await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
       
       // Formatar distribuição
@@ -682,20 +682,60 @@ export class AiService implements OnModuleInit {
         await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
       }
       
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 1: Desequilíbrio Base
       await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
-      await this.saveLog(userId, 'analise', `Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
+      await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
+      await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
       
-      if (sinal.detalhes?.bonusSequencias > 0) {
-        await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências (+${sinal.detalhes.bonusSequencias}%)`);
-      }
-      if (sinal.detalhes?.bonusMicro > 0) {
-        await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências (+${sinal.detalhes.bonusMicro}%)`);
-      }
-      if (sinal.detalhes?.bonusForca > 0) {
-        await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força (+${sinal.detalhes.bonusForca}%)`);
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 2: Sequências Repetidas
+      const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
+      const seqInfo = sinal.detalhes?.sequencias;
+      await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
+      if (seqInfo && seqInfo.tamanho >= 5) {
+        await this.saveLog(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 3: Micro-Tendências
+      const bonusMicro = sinal.detalhes?.bonusMicro || 0;
+      const microInfo = sinal.detalhes?.microTendencias;
+      await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
+      if (microInfo && microInfo.aceleracao > 0.10) {
+        await this.saveLog(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      const bonusForca = sinal.detalhes?.bonusForca || 0;
+      const forcaInfo = sinal.detalhes?.forca;
+      await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
+      if (forcaInfo && forcaInfo.velocidade > 0.05) {
+        await this.saveLog(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
+      
+      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
@@ -1381,11 +1421,27 @@ export class AiService implements OnModuleInit {
       return;
     }
 
-    // 🛑 STOP-LOSS DE MARTINGALE
+    // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
+    const prejuizoAceito = state.perdaAcumulada;
+    
     this.logger.warn(
-      `[Veloz][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
-      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
+      `[Veloz][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
+      `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
+      `Resetando para valor inicial`,
     );
+    
+    // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
+    if (state.modoMartingale === 'conservador') {
+      await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
+      await this.saveLog(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
+      await this.saveLog(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
+      await this.saveLog(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
+      await this.saveLog(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
+    } else {
+      // Outros modos (não deveria chegar aqui pois moderado/agressivo são infinitos)
+      await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
+      await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
+    }
     
     // Resetar martingale
     state.isOperationActive = false;
@@ -4094,11 +4150,27 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       return;
     }
 
-    // 🛑 STOP-LOSS DE MARTINGALE
+    // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
+    const prejuizoAceito = state.perdaAcumulada;
+    
     this.logger.warn(
-      `[Moderado][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
-      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
+      `[Moderado][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
+      `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
+      `Resetando para valor inicial`,
     );
+    
+    // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
+    if (state.modoMartingale === 'conservador') {
+      await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
+      await this.saveLog(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
+      await this.saveLog(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
+      await this.saveLog(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
+      await this.saveLog(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
+    } else {
+      // Outros modos (não deveria chegar aqui pois moderado/agressivo são infinitos)
+      await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
+      await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
+    }
     
     // Resetar martingale
     state.isOperationActive = false;
