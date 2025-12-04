@@ -325,6 +325,26 @@ export class AiController {
     }
   }
 
+  @Get('logs/:userId')
+  async getUserLogs(@Param('userId') userId: string) {
+    try {
+      const logs = await this.aiService.getUserLogs(userId, 100);
+      return {
+        success: true,
+        data: logs,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar logs',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('config/:userId')
   async getAIConfig(@Param('userId') userId: string) {
     try {

@@ -442,6 +442,7 @@ export class AiService implements OnModuleInit {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
+  private userSessionIds = new Map<string, string>(); // Mapeia userId para sessionId único
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -669,6 +670,27 @@ export class AiService implements OnModuleInit {
         `  └─ ${sinal.motivo}`,
       );
       
+      // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE
+      await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
+      await this.saveLog(userId, 'analise', `Distribuição: ${sinal.detalhes?.distribuicao || 'N/A'}`);
+      await this.saveLog(userId, 'analise', `Desequilíbrio: ${sinal.detalhes?.desequilibrio || 'N/A'}`);
+      await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
+      await this.saveLog(userId, 'analise', `Confiança base: ${sinal.detalhes?.confiancaBase || sinal.confianca.toFixed(1)}%`);
+      
+      if (sinal.detalhes?.bonusSequencias > 0) {
+        await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências (+${sinal.detalhes.bonusSequencias}%)`);
+      }
+      if (sinal.detalhes?.bonusMicro > 0) {
+        await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências (+${sinal.detalhes.bonusMicro}%)`);
+      }
+      if (sinal.detalhes?.bonusForca > 0) {
+        await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força (+${sinal.detalhes.bonusForca}%)`);
+      }
+      
+      await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      
       // Executar operação
       await this.executeVelozOperation(state, sinal.sinal, 1);
     }
@@ -895,6 +917,22 @@ export class AiService implements OnModuleInit {
         `Máx entradas: ${config.maxEntradas} | ` +
         `Multiplicador lucro: ${(config.multiplicadorLucro * 100).toFixed(0)}%`,
       );
+      
+      // 📋 LOG: Operação sendo executada
+      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
+      await this.saveLog(state.userId, 'operacao', `Ativo: R_10`);
+      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Payout: 0.95 (95%)`);
+      await this.saveLog(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+    } else {
+      // 📋 LOG: Operação martingale
+      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+      await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
     }
 
     const tradeId = await this.createVelozTradeRecord(
@@ -1209,6 +1247,23 @@ export class AiService implements OnModuleInit {
         `Capital: $${state.virtualCapital.toFixed(2)}`,
       );
       
+      // 📋 LOG: Resultado - VITÓRIA
+      await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
+      await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+      await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
+      await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
+      
+      if (entry > 1) {
+        await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
+        await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
+      }
+      
+      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.capital.toFixed(2)} (normal)`);
+      await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+      
       // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
@@ -1225,6 +1280,14 @@ export class AiService implements OnModuleInit {
       `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
     );
+    
+    // 📋 LOG: Resultado - DERROTA
+    await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
+    await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+    await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
+    await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+    await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
+    await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
     // Verificar se pode continuar (respeitar o maxEntradas do modo)
     if (entry < config.maxEntradas) {
@@ -1267,6 +1330,10 @@ export class AiService implements OnModuleInit {
                 `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
               );
               
+              // 📋 LOG: Stop-Loss Normal ativado
+              await this.saveLog(state.userId, 'alerta', `⚠️ STOP-LOSS NORMAL: Próxima aposta ultrapassaria limite`);
+              await this.saveLog(state.userId, 'alerta', `Reduzindo para $${state.capital.toFixed(2)} e resetando martingale`);
+              
               // Reduzir para valor inicial
               proximaAposta = state.capital;
               
@@ -1295,6 +1362,11 @@ export class AiService implements OnModuleInit {
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
       );
+      
+      // 📋 LOG: Martingale ativado
+      await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
+      await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
+      await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
       
       // Executar próxima entrada
       await this.executeVelozOperation(state, proposal, entry + 1);
@@ -1587,6 +1659,98 @@ export class AiService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error(`[StopBlindado][${userId}] Erro:`, error);
+    }
+  }
+
+  /**
+   * SISTEMA DE LOGS EM TEMPO REAL - ZENIX v2.0
+   * Salva logs detalhados no banco para exibição no frontend
+   */
+  private async saveLog(
+    userId: string,
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
+    message: string,
+    details?: any,
+  ): Promise<void> {
+    try {
+      const icons = {
+        info: 'ℹ️',
+        tick: '📥',
+        analise: '🔍',
+        sinal: '🎯',
+        operacao: '💰',
+        resultado: '✅',
+        alerta: '⚠️',
+        erro: '🚫',
+      };
+
+      const sessionId = this.userSessionIds.get(userId) || userId;
+
+      await this.dataSource.query(
+        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          type,
+          icons[type],
+          message,
+          details ? JSON.stringify(details) : null,
+          sessionId,
+        ],
+      );
+    } catch (error) {
+      // Não logar erro para evitar loop infinito
+      console.error(`[SaveLog][${userId}] Erro ao salvar log:`, error);
+    }
+  }
+
+  /**
+   * Busca logs recentes do usuário para exibição no frontend
+   */
+  async getUserLogs(userId: string, limit: number = 100): Promise<any[]> {
+    try {
+      const logs = await this.dataSource.query(
+        `SELECT 
+          DATE_FORMAT(timestamp, '%H:%i:%s') as timestamp,
+          type,
+          icon,
+          message,
+          details
+         FROM ai_logs
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [userId, limit],
+      );
+
+      // Inverter para ordem cronológica (mais antigo primeiro)
+      return logs.reverse();
+    } catch (error) {
+      this.logger.error(`[GetUserLogs][${userId}] Erro:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Limpa logs antigos do usuário (mantém apenas os últimos N)
+   */
+  async clearOldLogs(userId: string, keep: number = 1000): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `DELETE FROM ai_logs
+         WHERE user_id = ?
+         AND id NOT IN (
+           SELECT id FROM (
+             SELECT id FROM ai_logs
+             WHERE user_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?
+           ) AS keep_logs
+         )`,
+        [userId, userId, keep],
+      );
+    } catch (error) {
+      this.logger.error(`[ClearOldLogs][${userId}] Erro:`, error);
     }
   }
 
