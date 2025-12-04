@@ -37,3 +37,4 @@ FROM copy_trading_sessions
 ORDER BY id DESC 
 LIMIT 1\G
 
+

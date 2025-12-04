@@ -70,106 +70,363 @@ interface DigitTradeResult {
   contractId: string;
 }
 
-const VELOZ_CONFIG = {
-  window: 3,
-  dvxMax: 70,
-  lossVirtualTarget: 2,
-  betPercent: 0.005, // 0.5% do capital
-  martingaleMax: 2,
-  martingaleMultiplier: 2.5,
-};
+// ============================================
+// ESTRATÉGIA ZENIX v2.0 - CONFIGURAÇÕES
+// ============================================
 
-const FAST_MODE_CONFIG = {
-  window: 3, // Janela de análise de 3 ticks
-  dvxMax: 70, // DVX máximo permitido
-  lossVirtualTarget: 2, // Número de perdas virtuais necessárias
-  betPercent: 0.01, // 1% do capital por operação
-  martingaleMax: 2, // Máximo de martingales
-  martingaleMultiplier: 2.5, // Multiplicador do martingale
-  minTicks: 100, // Mínimo de ticks para análise
-  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
+const VELOZ_CONFIG = {
+  amostraInicial: 10, // 10 ticks (~10 segundos) - Início rápido
+  intervaloTicks: 3, // Gerar sinal a cada 3 ticks (~3 segundos)
+  desequilibrioMin: 0.50, // 50% mínimo para gerar sinal (relaxado)
+  confianciaMin: 0.50, // 50% confiança mínima (relaxado)
+  taxaAcertoEsperada: 0.67, // Taxa esperada: 65-70%
+  payout: 0.95, // Payout Deriv (95% com spread)
+  minStake: 0.35, // Valor mínimo permitido pela Deriv
+  betPercent: 0.005, // 0.5% do capital por operação
+  // Compatibilidade com código legado
+  window: 10,
+  dvxMax: 70,
+  lossVirtualTarget: 0,
+  martingaleMax: 5,
 };
 
 const MODERADO_CONFIG = {
-  window: 5, // Janela de análise de 5 ticks
-  dvxMax: 60, // DVX máximo permitido (mais restritivo)
-  lossVirtualTarget: 3, // 3 perdas virtuais necessárias
+  amostraInicial: 20, // 20 ticks (~20 segundos) - Equilíbrio
+  intervaloSegundos: 17, // Gerar sinal a cada 15-20 segundos
+  desequilibrioMin: 0.60, // 60% mínimo para gerar sinal (balanceado)
+  confianciaMin: 0.60, // 60% confiança mínima (balanceado)
+  taxaAcertoEsperada: 0.76, // Taxa esperada: 75-77%
+  payout: 0.95, // Payout Deriv (95% com spread)
+  minStake: 0.35, // Valor mínimo permitido pela Deriv
   betPercent: 0.0075, // 0.75% do capital por operação
-  martingaleMax: 3, // Máximo de 3 entradas (martingale)
-  martingaleMultiplier: 2.5, // Multiplicador do martingale
-  minTicks: 100, // Mínimo de ticks para análise
-  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
-  desequilibrioPercent: 0.80, // 80% para detectar desequilíbrio (4+ de 5)
-  trendWindow: 20, // Janela para análise de tendência
-  trendPercent: 0.60, // 60% para confirmar tendência (12+ de 20)
+  trendWindow: 20, // Janela para análise de micro-tendências
   anomalyWindow: 10, // Janela para detecção de anomalias
-  anomalyAlternationMin: 6, // Mínimo de alternâncias para detectar anomalia
-  anomalyRepetitionMin: 6, // Mínimo de repetições para detectar anomalia
-  anomalyHomogeneityMin: 8, // Mínimo de homogeneidade para detectar anomalia
+  // Compatibilidade com código legado
+  window: 20,
+  dvxMax: 60,
+  lossVirtualTarget: 0,
+  martingaleMax: 3,
+  desequilibrioPercent: 0.60,
+  trendPercent: 0.60,
+  anomalyAlternationMin: 6,
+  anomalyRepetitionMin: 6,
+  anomalyHomogeneityMin: 8,
+  minTicks: 20,
 };
 
 const PRECISO_CONFIG = {
-  window: 7, // Janela de análise de 7 ticks
-  dvxMax: 50, // DVX máximo permitido (MAIS rigoroso)
-  lossVirtualTarget: 4, // 4 perdas virtuais necessárias
+  amostraInicial: 50, // 50 ticks (~50 segundos) - Máxima precisão
+  intervaloSegundos: null, // Sem intervalo fixo (baseado em qualidade)
+  desequilibrioMin: 0.70, // 70% mínimo para gerar sinal (rigoroso)
+  confianciaMin: 0.70, // 70% confiança mínima (rigoroso)
+  taxaAcertoEsperada: 0.82, // Taxa esperada: 80-85%
+  payout: 0.95, // Payout Deriv (95% com spread)
+  minStake: 0.35, // Valor mínimo permitido pela Deriv
   betPercent: 0.01, // 1.0% do capital por operação
-  martingaleMax: 4, // Máximo de 4 entradas (martingale)
-  martingaleMultiplier: 2.5, // Multiplicador do martingale
-  minTicks: 100, // Mínimo de ticks para análise
-  minStake: 0.35, // Valor mínimo de stake permitido pela Deriv
-  desequilibrioPercent: 0.857, // 85%+ para detectar desequilíbrio (6+ de 7)
-  trendWindow: 20, // Janela para análise de tendência
-  trendPercent: 0.60, // 60% para confirmar tendência (12+ de 20)
+  trendWindow: 20, // Janela para análise de micro-tendências
   anomalyWindow: 10, // Janela para detecção de anomalias
-  anomalyAlternationMin: 6, // Mínimo de alternâncias para detectar anomalia
-  anomalyRepetitionMin: 6, // Mínimo de repetições para detectar anomalia
-  anomalyHomogeneityMin: 8, // Mínimo de homogeneidade para detectar anomalia
+  // Compatibilidade com código legado
+  window: 50,
+  dvxMax: 50,
+  lossVirtualTarget: 0,
+  martingaleMax: 4,
+  desequilibrioPercent: 0.70,
+  trendPercent: 0.60,
+  anomalyAlternationMin: 6,
+  anomalyRepetitionMin: 6,
+  anomalyHomogeneityMin: 8,
+  minTicks: 50,
 };
 
+// Compatibilidade com código legado (alias para VELOZ_CONFIG)
+const FAST_MODE_CONFIG = VELOZ_CONFIG;
+
 // ============================================
-// SISTEMA UNIFICADO DE MARTINGALE
+// SISTEMA UNIFICADO DE MARTINGALE - ZENIX v2.0
 // ============================================
 type ModoMartingale = 'conservador' | 'moderado' | 'agressivo';
 
 interface ConfigMartingale {
   maxEntradas: number;
-  multiplicadorLucro: number; // 0 = break-even, 0.5 = 50%, 1.0 = 100%
+  multiplicadorLucro: number; // 0 = break-even, 1.0 = 100% da última aposta
 }
 
 const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
   conservador: {
-    maxEntradas: 2,
-    multiplicadorLucro: 0, // Break-even (apenas recupera capital)
+    maxEntradas: 5, // ✅ ZENIX v2.0: Até 5ª entrada, depois reseta
+    multiplicadorLucro: 0, // ✅ Break-even (apenas recupera capital)
   },
   moderado: {
-    maxEntradas: 3,
-    multiplicadorLucro: 0.5, // 50% da aposta inicial
+    maxEntradas: Infinity, // ✅ ZENIX v2.0: Infinito até recuperar
+    multiplicadorLucro: 0, // ✅ Break-even puro (não 0.5)
   },
   agressivo: {
-    maxEntradas: 4,
-    multiplicadorLucro: 1.0, // 100% da aposta inicial
+    maxEntradas: Infinity, // ✅ ZENIX v2.0: Infinito até recuperar + lucro
+    multiplicadorLucro: 1.0, // ✅ 100% da ÚLTIMA aposta (não inicial)
   },
 };
 
-const PAYOUT_DERIV = 0.98; // Payout padrão da Deriv (98%)
+const PAYOUT_DERIV = 0.95; // ✅ ZENIX v2.0: Payout Deriv 95% (com spread)
 
 /**
- * Calcula a próxima aposta baseado no modo de martingale
+ * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * 
- * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.98
- * MODERADO: Próxima Aposta = (Perda Acumulada + 0.5 × Aposta Inicial) / 0.98
- * AGRESSIVO: Próxima Aposta = (Perda Acumulada + 1.0 × Aposta Inicial) / 0.98
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.95
+ * MODERADO: Próxima Aposta = Perda Acumulada / 0.95 (break-even puro)
+ * AGRESSIVO: Próxima Aposta = (Perda Acumulada + Última Aposta) / 0.95
+ * 
+ * @param perdaAcumulada - Total de perdas acumuladas no martingale
+ * @param ultimaAposta - Valor da última aposta (para modo agressivo)
+ * @param modo - Modo de martingale (conservador/moderado/agressivo)
+ * @returns Valor da próxima aposta calculada
  */
 function calcularProximaAposta(
   perdaAcumulada: number,
-  apostaInicial: number,
+  ultimaAposta: number,
   modo: ModoMartingale,
 ): number {
   const config = CONFIGS_MARTINGALE[modo];
-  const lucroDesejado = apostaInicial * config.multiplicadorLucro;
-  const aposta = (perdaAcumulada + lucroDesejado) / PAYOUT_DERIV;
+  let aposta = 0;
+  
+  switch (modo) {
+    case 'conservador':
+    case 'moderado':
+      // Break-even: Recupera apenas o capital perdido
+      aposta = perdaAcumulada / PAYOUT_DERIV;
+      break;
+    case 'agressivo':
+      // Recupera capital + gera lucro do tamanho da última aposta
+      aposta = (perdaAcumulada + ultimaAposta) / PAYOUT_DERIV;
+      break;
+  }
   
   return Math.round(aposta * 100) / 100; // 2 casas decimais
+}
+
+// ============================================
+// ANÁLISES COMPLEMENTARES - ZENIX v2.0
+// ============================================
+
+/**
+ * ANÁLISE 1: Desequilíbrio Estatístico (Base)
+ * Calcula % de PAR vs ÍMPAR na janela
+ * Identifica quando há desequilíbrio significativo para reversão à média
+ */
+function calcularDesequilibrio(ticks: Tick[], janela: number): {
+  percentualPar: number;
+  percentualImpar: number;
+  desequilibrio: number;
+  operacao: DigitParity | null;
+} {
+  const ultimos = ticks.slice(-janela);
+  const pares = ultimos.filter(t => t.digit % 2 === 0).length;
+  const impares = ultimos.filter(t => t.digit % 2 === 1).length;
+  
+  const percentualPar = pares / janela;
+  const percentualImpar = impares / janela;
+  
+  // Determinar operação (operar no OPOSTO do desequilíbrio)
+  let operacao: DigitParity | null = null;
+  if (percentualPar > percentualImpar) {
+    operacao = 'IMPAR'; // Desequilíbrio de PAR → operar ÍMPAR (reversão)
+  } else if (percentualImpar > percentualPar) {
+    operacao = 'PAR'; // Desequilíbrio de ÍMPAR → operar PAR (reversão)
+  }
+  
+  return {
+    percentualPar,
+    percentualImpar,
+    desequilibrio: Math.max(percentualPar, percentualImpar),
+    operacao,
+  };
+}
+
+/**
+ * ANÁLISE 2: Sequências Repetidas
+ * Detecta 5+ dígitos de mesma paridade consecutivos
+ * Aumenta probabilidade de reversão → Bônus +12%
+ */
+function analisarSequencias(ticks: Tick[]): {
+  tamanho: number;
+  paridade: DigitParity;
+  bonus: number;
+} {
+  if (ticks.length === 0) {
+    return { tamanho: 0, paridade: 'PAR', bonus: 0 };
+  }
+  
+  let sequenciaAtual = 1;
+  const ultimoTick = ticks[ticks.length - 1];
+  const paridadeAtual: DigitParity = ultimoTick.digit % 2 === 0 ? 'PAR' : 'IMPAR';
+  
+  // Contar quantos ticks consecutivos têm a mesma paridade
+  for (let i = ticks.length - 2; i >= 0; i--) {
+    const paridadeTick: DigitParity = ticks[i].digit % 2 === 0 ? 'PAR' : 'IMPAR';
+    if (paridadeTick === paridadeAtual) {
+      sequenciaAtual++;
+    } else {
+      break;
+    }
+  }
+  
+  return {
+    tamanho: sequenciaAtual,
+    paridade: paridadeAtual,
+    bonus: sequenciaAtual >= 5 ? 12 : 0, // Bônus +12% se sequência ≥ 5
+  };
+}
+
+/**
+ * ANÁLISE 3: Micro-Tendências
+ * Compara desequilíbrio dos últimos 10 vs últimos 20 ticks
+ * Detecta aceleração do desequilíbrio → Bônus +8% se aceleração > 10%
+ */
+function analisarMicroTendencias(ticks: Tick[]): {
+  aceleracao: number;
+  bonus: number;
+} {
+  if (ticks.length < 20) {
+    return { aceleracao: 0, bonus: 0 };
+  }
+  
+  const deseq10 = calcularDesequilibrio(ticks.slice(-10), 10).desequilibrio;
+  const deseq20 = calcularDesequilibrio(ticks.slice(-20), 20).desequilibrio;
+  
+  const aceleracao = Math.abs(deseq10 - deseq20);
+  
+  return {
+    aceleracao,
+    bonus: aceleracao > 0.10 ? 8 : 0, // Bônus +8% se aceleração > 10%
+  };
+}
+
+/**
+ * ANÁLISE 4: Força do Desequilíbrio
+ * Mede velocidade de crescimento do desequilíbrio
+ * Detecta desequilíbrio crescendo rapidamente → Bônus +10% se velocidade > 5%
+ */
+function analisarForcaDesequilibrio(ticks: Tick[], janela: number): {
+  velocidade: number;
+  bonus: number;
+} {
+  if (ticks.length < janela + 1) {
+    return { velocidade: 0, bonus: 0 };
+  }
+  
+  const deseqAtual = calcularDesequilibrio(ticks, janela).desequilibrio;
+  const deseqAnterior = calcularDesequilibrio(ticks.slice(0, -1), janela).desequilibrio;
+  
+  const velocidade = Math.abs(deseqAtual - deseqAnterior);
+  
+  return {
+    velocidade,
+    bonus: velocidade > 0.05 ? 10 : 0, // Bônus +10% se velocidade > 5%
+  };
+}
+
+/**
+ * SISTEMA DE CONFIANÇA INTEGRADO
+ * Combina confiança base + bônus das análises complementares
+ * Máximo: 95% (nunca 100% para evitar overconfidence)
+ */
+function calcularConfiancaFinal(
+  confiancaBase: number,
+  bonusSequencias: number,
+  bonusMicroTendencias: number,
+  bonusForca: number,
+): number {
+  const confiancaTotal = confiancaBase + bonusSequencias + bonusMicroTendencias + bonusForca;
+  return Math.min(95, confiancaTotal); // Máximo 95%
+}
+
+/**
+ * GERADOR DE SINAL ZENIX v2.0
+ * Integra todas as 4 análises complementares
+ * Retorna sinal somente se todas as condições forem satisfeitas
+ */
+function gerarSinalZenix(
+  ticks: Tick[],
+  config: typeof VELOZ_CONFIG | typeof MODERADO_CONFIG | typeof PRECISO_CONFIG,
+  modo: string,
+): {
+  sinal: DigitParity | null;
+  confianca: number;
+  motivo: string;
+  detalhes: any;
+} | null {
+  // 1. Verificar amostra mínima
+  if (ticks.length < config.amostraInicial) {
+    return null;
+  }
+  
+  // 2. ANÁLISE 1: Desequilíbrio Estatístico (Base)
+  const analiseDeseq = calcularDesequilibrio(ticks, config.amostraInicial);
+  
+  // Verificar se atingiu limiar mínimo
+  if (analiseDeseq.desequilibrio < config.desequilibrioMin) {
+    return null; // Desequilíbrio insuficiente
+  }
+  
+  // Se não há operação definida (50%/50%), não gerar sinal
+  if (!analiseDeseq.operacao) {
+    return null;
+  }
+  
+  // Confiança base = desequilíbrio em % (ex: 70% → 70)
+  const confiancaBase = analiseDeseq.desequilibrio * 100;
+  
+  // 3. ANÁLISE 2: Sequências Repetidas
+  const analiseSeq = analisarSequencias(ticks);
+  
+  // 4. ANÁLISE 3: Micro-Tendências
+  const analiseMicro = analisarMicroTendencias(ticks);
+  
+  // 5. ANÁLISE 4: Força do Desequilíbrio
+  const analiseForca = analisarForcaDesequilibrio(ticks, config.amostraInicial);
+  
+  // 6. Calcular confiança final
+  const confiancaFinal = calcularConfiancaFinal(
+    confiancaBase,
+    analiseSeq.bonus,
+    analiseMicro.bonus,
+    analiseForca.bonus,
+  );
+  
+  // 7. Verificar confiança mínima do modo
+  if (confiancaFinal < config.confianciaMin * 100) {
+    return null; // Confiança insuficiente
+  }
+  
+  // 8. Construir motivo detalhado
+  const motivoParts: string[] = [];
+  motivoParts.push(`Deseq: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% ${analiseDeseq.percentualPar > analiseDeseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
+  
+  if (analiseSeq.bonus > 0) {
+    motivoParts.push(`Seq: ${analiseSeq.tamanho} ${analiseSeq.paridade} (+${analiseSeq.bonus}%)`);
+  }
+  
+  if (analiseMicro.bonus > 0) {
+    motivoParts.push(`Micro: ${(analiseMicro.aceleracao * 100).toFixed(1)}% (+${analiseMicro.bonus}%)`);
+  }
+  
+  if (analiseForca.bonus > 0) {
+    motivoParts.push(`Força: ${(analiseForca.velocidade * 100).toFixed(1)}% (+${analiseForca.bonus}%)`);
+  }
+  
+  // 9. Retornar sinal completo
+  return {
+    sinal: analiseDeseq.operacao,
+    confianca: confiancaFinal,
+    motivo: motivoParts.join(' | '),
+    detalhes: {
+      desequilibrio: analiseDeseq,
+      sequencias: analiseSeq,
+      microTendencias: analiseMicro,
+      forca: analiseForca,
+      confiancaBase,
+      bonusTotal: analiseSeq.bonus + analiseMicro.bonus + analiseForca.bonus,
+    },
+  };
 }
 
 @Injectable()
@@ -366,56 +623,54 @@ export class AiService implements OnModuleInit {
     return digit % 2 === 0 ? 'PAR' : 'IMPAR';
   }
 
+  /**
+   * ZENIX v2.0: Processamento de estratégia Veloz
+   * - Amostra inicial: 10 ticks
+   * - Intervalo entre operações: 3 ticks
+   * - Desequilíbrio mínimo: 50%
+   * - Confiança mínima: 50%
+   */
   private async processVelozStrategies(latestTick: Tick) {
     if (this.velozUsers.size === 0) {
       return;
     }
 
-    const windowTicks = this.ticks.slice(-VELOZ_CONFIG.window);
-    if (windowTicks.length < VELOZ_CONFIG.window) {
+    // ✅ ZENIX v2.0: Verificar amostra mínima
+    if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
       this.logger.debug(
-        `[Veloz] Aguardando preencher janela (${windowTicks.length}/${VELOZ_CONFIG.window})`,
+        `[Veloz][ZENIX] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`,
       );
       return;
     }
 
-    const evenCount = windowTicks.filter((t) => t.parity === 'PAR').length;
-    const oddCount = VELOZ_CONFIG.window - evenCount;
+    // Processar cada usuário
+    for (const [userId, state] of this.velozUsers.entries()) {
+      // Pular se já tem operação ativa (martingale)
+      if (state.isOperationActive) {
+        continue;
+      }
 
-    let proposal: DigitParity | null = null;
-    if (evenCount === VELOZ_CONFIG.window) {
-      proposal = 'IMPAR';
-    } else if (oddCount === VELOZ_CONFIG.window) {
-      proposal = 'PAR';
-    } else {
-      this.logger.debug(
-        `[Veloz] Janela mista ${windowTicks
-          .map((t) => t.parity)
-          .join('-')} - aguardando desequilíbrio`,
-      );
-      return;
-    }
-
-    const dvx = this.calculateDVX(this.ticks);
-    this.logger.log(
-      `[Veloz] Janela ${windowTicks
-        .map((t) => t.parity)
-        .join('-')} | Proposta: ${proposal} | DVX: ${dvx}`,
-    );
-
-    if (dvx > VELOZ_CONFIG.dvxMax) {
-      this.logger.warn(
-        `[Veloz] DVX alto (${dvx}) > ${VELOZ_CONFIG.dvxMax} - bloqueando operação`,
-      );
-      return;
-    }
-
-    for (const state of this.velozUsers.values()) {
+      // Verificar se pode processar
       const canProcess = await this.canProcessVelozState(state);
       if (!canProcess) {
         continue;
       }
-      this.handleLossVirtualState(state, proposal, latestTick, dvx);
+
+      // ✅ ZENIX v2.0: Gerar sinal usando análise completa
+      const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
+      
+      if (!sinal || !sinal.sinal) {
+        continue; // Sem sinal válido
+      }
+      
+      this.logger.log(
+        `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
+        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
+        `  └─ ${sinal.motivo}`,
+      );
+      
+      // Executar operação
+      await this.executeVelozOperation(state, sinal.sinal, 1);
     }
   }
 
@@ -1007,6 +1262,9 @@ export class AiService implements OnModuleInit {
     
     // ✅ Verificar limites de lucro/perda após atualizar stats
     await this.checkAndEnforceLimits(userId);
+    
+    // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
+    await this.checkStopBlindado(userId);
   }
   
   /**
@@ -1118,6 +1376,131 @@ export class AiService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error(`[CheckLimits][${userId}] Erro ao verificar limites:`, error);
+    }
+  }
+
+  /**
+   * STOP-LOSS BLINDADO - ZENIX v2.0
+   * Protege lucros conquistados movendo o stop-loss gradativamente
+   * Quando o usuário está em lucro, protege 50% dele
+   * Se o capital cair abaixo do stop blindado → PARA o sistema
+   * 
+   * Exemplo:
+   * - Capital inicial: $1000
+   * - Lucro atual: +$100 (capital = $1100)
+   * - Stop blindado: $1000 + ($100 × 0.5) = $1050
+   * - Se capital cair para $1050 → PARA (protege $50 de lucro)
+   */
+  private async checkStopBlindado(userId: string): Promise<void> {
+    try {
+      const configResult = await this.dataSource.query(
+        `SELECT 
+          stake_amount as initialBalance,
+          COALESCE(session_balance, 0) as sessionBalance,
+          COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
+          is_active,
+          session_status
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE`,
+        [userId],
+      );
+      
+      if (!configResult || configResult.length === 0) {
+        return;
+      }
+      
+      const config = configResult[0];
+      
+      // Se já foi parada, não verificar
+      if (config.session_status && config.session_status !== 'active') {
+        return;
+      }
+      
+      const initialBalance = parseFloat(config.initialBalance) || 0;
+      const sessionBalance = parseFloat(config.sessionBalance) || 0;
+      const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+      
+      // Calcular lucro líquido (pode ser negativo)
+      const lucroLiquido = sessionBalance - initialBalance;
+      
+      // Stop Blindado só ativa se estiver em LUCRO
+      if (lucroLiquido <= 0) {
+        return; // Ainda não há lucro para proteger
+      }
+      
+      // Calcular stop blindado (protege X% do lucro)
+      const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+      const stopBlindado = initialBalance + (lucroLiquido * fatorProtecao);
+      
+      this.logger.debug(
+        `[StopBlindado][${userId}] Lucro: $${lucroLiquido.toFixed(2)} | ` +
+        `Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+        `Atual: $${sessionBalance.toFixed(2)}`,
+      );
+      
+      // Se capital atual caiu abaixo do stop blindado → PARAR
+      if (sessionBalance <= stopBlindado) {
+        const lucroProtegido = sessionBalance - initialBalance;
+        const percentualProtegido = (lucroProtegido / lucroLiquido) * 100;
+        
+        this.logger.warn(
+          `[StopBlindado][${userId}] 🛡️ ATIVADO! ` +
+          `Protegendo $${lucroProtegido.toFixed(2)} de lucro ` +
+          `(${percentualProtegido.toFixed(0)}% de $${lucroLiquido.toFixed(2)})`,
+        );
+        
+        const deactivationReason = 
+          `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+          `(${stopBlindadoPercent}% de $${lucroLiquido.toFixed(2)} conquistados)`;
+        
+        // Desativar IA
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET is_active = FALSE, 
+               session_status = 'stopped_blindado',
+               deactivation_reason = ?,
+               deactivated_at = NOW(),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = ?`,
+          [deactivationReason, userId],
+        );
+        
+        // Remover usuário dos mapas ativos (todos os modos)
+        if (this.velozUsers.has(userId)) {
+          const state = this.velozUsers.get(userId);
+          if (state) {
+            state.isOperationActive = false;
+          }
+          this.velozUsers.delete(userId);
+          this.logger.log(`[StopBlindado][${userId}] Removido do mapa Veloz`);
+        }
+        
+        if (this.moderadoUsers.has(userId)) {
+          const state = this.moderadoUsers.get(userId);
+          if (state) {
+            state.isOperationActive = false;
+          }
+          this.moderadoUsers.delete(userId);
+          this.logger.log(`[StopBlindado][${userId}] Removido do mapa Moderado`);
+        }
+        
+        if (this.precisoUsers.has(userId)) {
+          const state = this.precisoUsers.get(userId);
+          if (state) {
+            state.isOperationActive = false;
+          }
+          this.precisoUsers.delete(userId);
+          this.logger.log(`[StopBlindado][${userId}] Removido do mapa Preciso`);
+        }
+        
+        this.logger.log(
+          `[StopBlindado][${userId}] 🛡️ IA DESATIVADA | ` +
+          `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
+          `Saldo final: $${sessionBalance.toFixed(2)}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`[StopBlindado][${userId}] Erro:`, error);
     }
   }
 
@@ -2913,71 +3296,54 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   /**
    * Processa estratégias do modo MODERADO para todos os usuários ativos
    */
+  /**
+   * ZENIX v2.0: Processamento de estratégia Moderado
+   * - Amostra inicial: 20 ticks
+   * - Intervalo entre operações: 17 segundos
+   * - Desequilíbrio mínimo: 60%
+   * - Confiança mínima: 60%
+   */
   private async processModeradoStrategies(latestTick: Tick): Promise<void> {
-    if (this.ticks.length < MODERADO_CONFIG.minTicks) {
+    if (this.moderadoUsers.size === 0) {
       return;
     }
 
-    // Análise de desequilíbrio (janela de 5 ticks)
-    const windowTicks = this.ticks.slice(-MODERADO_CONFIG.window);
-    const parCount = windowTicks.filter(t => t.parity === 'PAR').length;
-    const imparCount = windowTicks.filter(t => t.parity === 'IMPAR').length;
-
-    const totalInWindow = windowTicks.length;
-    const parPercent = parCount / totalInWindow;
-    const imparPercent = imparCount / totalInWindow;
-
-    // Se não há desequilíbrio >= 80%, aguardar
-    if (parPercent < MODERADO_CONFIG.desequilibrioPercent && 
-        imparPercent < MODERADO_CONFIG.desequilibrioPercent) {
+    // ✅ ZENIX v2.0: Verificar amostra mínima
+    if (this.ticks.length < MODERADO_CONFIG.amostraInicial) {
       this.logger.debug(
-        `[Moderado] Sem desequilíbrio suficiente | PAR: ${(parPercent * 100).toFixed(0)}% | IMPAR: ${(imparPercent * 100).toFixed(0)}%`,
+        `[Moderado][ZENIX] Coletando amostra inicial (${this.ticks.length}/${MODERADO_CONFIG.amostraInicial})`,
       );
       return;
     }
 
-    // Determinar proposta baseada no desequilíbrio
-    let proposal: DigitParity;
-    if (parPercent >= MODERADO_CONFIG.desequilibrioPercent) {
-      proposal = 'IMPAR'; // Se 80%+ PAR, entrar em ÍMPAR
-    } else {
-      proposal = 'PAR'; // Se 80%+ ÍMPAR, entrar em PAR
-    }
+    // Processar cada usuário
+    for (const [userId, state] of this.moderadoUsers.entries()) {
+      // Pular se já tem operação ativa (martingale)
+      if (state.isOperationActive) {
+        continue;
+      }
 
-    // Validação DVX
-    const dvx = this.calculateDVX(this.ticks);
-    if (dvx > MODERADO_CONFIG.dvxMax) {
-      this.logger.warn(
-        `[Moderado] DVX alto (${dvx}) > ${MODERADO_CONFIG.dvxMax} - bloqueando operação`,
-      );
-      return;
-    }
-
-    // Detector de Anomalias (10 ticks)
-    const hasAnomaly = this.detectAnomalies(this.ticks.slice(-MODERADO_CONFIG.anomalyWindow));
-    if (hasAnomaly) {
-      this.logger.warn(`[Moderado] Anomalia detectada - bloqueando operação`);
-      return;
-    }
-
-    // Validação de Tendência Geral (20 ticks)
-    const trendValid = this.validateTrend(proposal, this.ticks.slice(-MODERADO_CONFIG.trendWindow));
-    if (!trendValid) {
-      this.logger.warn(`[Moderado] Tendência não confirma proposta ${proposal} - bloqueando`);
-      return;
-    }
-
-    this.logger.log(
-      `[Moderado] Condições OK | Proposta: ${proposal} | DVX: ${dvx} | Deseq: ${(Math.max(parPercent, imparPercent) * 100).toFixed(0)}%`,
-    );
-
-    // Processar loss virtual para cada usuário ativo no modo moderado
-    for (const state of this.moderadoUsers.values()) {
+      // Verificar se pode processar
       const canProcess = await this.canProcessModeradoState(state);
       if (!canProcess) {
         continue;
       }
-      await this.handleModeradoLossVirtual(state, proposal, latestTick, dvx);
+
+      // ✅ ZENIX v2.0: Gerar sinal usando análise completa
+      const sinal = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
+      
+      if (!sinal || !sinal.sinal) {
+        continue; // Sem sinal válido
+      }
+      
+      this.logger.log(
+        `[Moderado][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
+        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
+        `  └─ ${sinal.motivo}`,
+      );
+      
+      // Executar operação
+      await this.executeModeradoOperation(state, sinal.sinal, 1);
     }
   }
 
@@ -3390,6 +3756,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
+    
+    // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
+    await this.checkStopBlindado(userId);
   }
 
   /**
@@ -3541,71 +3910,54 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   /**
    * Processa estratégias do modo PRECISO para todos os usuários ativos
    */
+  /**
+   * ZENIX v2.0: Processamento de estratégia Preciso
+   * - Amostra inicial: 50 ticks
+   * - Intervalo entre operações: Baseado em qualidade (sem intervalo fixo)
+   * - Desequilíbrio mínimo: 70%
+   * - Confiança mínima: 70%
+   */
   private async processPrecisoStrategies(latestTick: Tick): Promise<void> {
-    if (this.ticks.length < PRECISO_CONFIG.minTicks) {
+    if (this.precisoUsers.size === 0) {
       return;
     }
 
-    // Análise de desequilíbrio (janela de 7 ticks)
-    const windowTicks = this.ticks.slice(-PRECISO_CONFIG.window);
-    const parCount = windowTicks.filter(t => t.parity === 'PAR').length;
-    const imparCount = windowTicks.filter(t => t.parity === 'IMPAR').length;
-
-    const totalInWindow = windowTicks.length;
-    const parPercent = parCount / totalInWindow;
-    const imparPercent = imparCount / totalInWindow;
-
-    // Se não há desequilíbrio >= 85%, aguardar
-    if (parPercent < PRECISO_CONFIG.desequilibrioPercent && 
-        imparPercent < PRECISO_CONFIG.desequilibrioPercent) {
+    // ✅ ZENIX v2.0: Verificar amostra mínima
+    if (this.ticks.length < PRECISO_CONFIG.amostraInicial) {
       this.logger.debug(
-        `[Preciso] Sem desequilíbrio suficiente | PAR: ${(parPercent * 100).toFixed(0)}% | IMPAR: ${(imparPercent * 100).toFixed(0)}%`,
+        `[Preciso][ZENIX] Coletando amostra inicial (${this.ticks.length}/${PRECISO_CONFIG.amostraInicial})`,
       );
       return;
     }
 
-    // Determinar proposta baseada no desequilíbrio
-    let proposal: DigitParity;
-    if (parPercent >= PRECISO_CONFIG.desequilibrioPercent) {
-      proposal = 'IMPAR'; // Se 85%+ PAR (6+ de 7), entrar em ÍMPAR
-    } else {
-      proposal = 'PAR'; // Se 85%+ ÍMPAR (6+ de 7), entrar em PAR
-    }
+    // Processar cada usuário
+    for (const [userId, state] of this.precisoUsers.entries()) {
+      // Pular se já tem operação ativa (martingale)
+      if (state.isOperationActive) {
+        continue;
+      }
 
-    // Validação DVX (mais rigoroso: máximo 50)
-    const dvx = this.calculateDVX(this.ticks);
-    if (dvx > PRECISO_CONFIG.dvxMax) {
-      this.logger.warn(
-        `[Preciso] DVX alto (${dvx}) > ${PRECISO_CONFIG.dvxMax} - bloqueando operação`,
-      );
-      return;
-    }
-
-    // Detector de Anomalias (10 ticks) - mesma lógica do moderado
-    const hasAnomaly = this.detectAnomalies(this.ticks.slice(-PRECISO_CONFIG.anomalyWindow));
-    if (hasAnomaly) {
-      this.logger.warn(`[Preciso] Anomalia detectada - bloqueando operação`);
-      return;
-    }
-
-    // Validação de Tendência Geral (20 ticks) - mesma lógica do moderado
-    const trendValid = this.validateTrend(proposal, this.ticks.slice(-PRECISO_CONFIG.trendWindow));
-    if (!trendValid) {
-      this.logger.warn(`[Preciso] Tendência não confirma proposta ${proposal} - bloqueando`);
-      return;
-    }
-
-    this.logger.log(
-      `[Preciso] Condições OK | Proposta: ${proposal} | DVX: ${dvx} | Deseq: ${(Math.max(parPercent, imparPercent) * 100).toFixed(0)}%`,
-    );
-
-    // Processar loss virtual para cada usuário ativo no modo preciso
-    for (const state of this.precisoUsers.values()) {
+      // Verificar se pode processar
       const canProcess = await this.canProcessPrecisoState(state);
       if (!canProcess) {
         continue;
       }
-      await this.handlePrecisoLossVirtual(state, proposal, latestTick, dvx);
+
+      // ✅ ZENIX v2.0: Gerar sinal usando análise completa
+      const sinal = gerarSinalZenix(this.ticks, PRECISO_CONFIG, 'PRECISO');
+      
+      if (!sinal || !sinal.sinal) {
+        continue; // Sem sinal válido
+      }
+      
+      this.logger.log(
+        `[Preciso][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
+        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
+        `  └─ ${sinal.motivo}`,
+      );
+      
+      // Executar operação
+      await this.executePrecisoOperation(state, sinal.sinal, 1);
     }
   }
 
@@ -3936,6 +4288,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
+    
+    // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
+    await this.checkStopBlindado(userId);
   }
 
   /**

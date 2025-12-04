@@ -40,3 +40,4 @@ WHERE TABLE_SCHEMA = 'zeenix'
 AND TABLE_NAME = 'plans'
 AND COLUMN_NAME = 'is_active';
 
+

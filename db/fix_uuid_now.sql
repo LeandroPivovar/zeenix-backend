@@ -35,3 +35,4 @@ WHERE TABLE_SCHEMA = 'zeenix'
 AND TABLE_NAME IN ('copy_trading_config', 'copy_trading_sessions', 'copy_trading_operations')
 AND COLUMN_NAME = 'user_id';
 
+

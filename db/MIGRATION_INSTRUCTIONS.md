@@ -99,3 +99,4 @@ Após executar a migração com sucesso, o sistema de Copy Trading deve funciona
 2. Verificar estrutura das tabelas: `DESCRIBE copy_trading_config;`
 3. Verificar se o campo realmente mudou para `varchar(36)`
 
+

@@ -25,3 +25,4 @@ FROM plans;
 
 SELECT '✅ Todos os planos foram ativados!' as Resultado;
 
+
