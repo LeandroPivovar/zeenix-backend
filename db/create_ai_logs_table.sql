@@ -21,21 +21,6 @@ CREATE TABLE IF NOT EXISTS `ai_logs` (
 -- Adicionar índice para busca rápida dos últimos logs
 ALTER TABLE `ai_logs` ADD INDEX `idx_user_created` (`user_id`, `created_at` DESC);
 
--- Limitar logs a 1000 por usuário (opcional - para não crescer indefinidamente)
-DELIMITER $$
-CREATE TRIGGER `ai_logs_limit` AFTER INSERT ON `ai_logs`
-FOR EACH ROW
-BEGIN
-  DELETE FROM `ai_logs`
-  WHERE `user_id` = NEW.`user_id`
-  AND `id` NOT IN (
-    SELECT `id` FROM (
-      SELECT `id` FROM `ai_logs`
-      WHERE `user_id` = NEW.`user_id`
-      ORDER BY `created_at` DESC
-      LIMIT 1000
-    ) AS keep_logs
-  );
-END$$
-DELIMITER ;
+-- NOTA: Trigger removido para evitar erro "Can't update table in trigger"
+-- Limpeza de logs antigos será feita por método separado (clearOldLogs)
 

@@ -672,10 +672,18 @@ export class AiService implements OnModuleInit {
       
       // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE
       await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
-      await this.saveLog(userId, 'analise', `Distribuição: ${sinal.detalhes?.distribuicao || 'N/A'}`);
-      await this.saveLog(userId, 'analise', `Desequilíbrio: ${sinal.detalhes?.desequilibrio || 'N/A'}`);
+      
+      // Formatar distribuição
+      const deseq = sinal.detalhes?.desequilibrio;
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        await this.saveLog(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
+      }
+      
       await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
-      await this.saveLog(userId, 'analise', `Confiança base: ${sinal.detalhes?.confiancaBase || sinal.confianca.toFixed(1)}%`);
+      await this.saveLog(userId, 'analise', `Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
       
       if (sinal.detalhes?.bonusSequencias > 0) {
         await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências (+${sinal.detalhes.bonusSequencias}%)`);
