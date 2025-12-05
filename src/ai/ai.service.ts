@@ -1790,12 +1790,15 @@ export class AiService implements OnModuleInit {
   /**
    * Busca logs recentes do usuário para exibição no frontend
    */
-  async getUserLogs(userId: string, limit: number = 100): Promise<any[]> {
+  async getUserLogs(userId: string, limit: number = 2000): Promise<any[]> {
     try {
       // 🕐 BUSCAR TIMESTAMPS E CONVERTER PARA HORÁRIO DE BRASÍLIA (UTC-3)
+      // ✅ INCLUIR created_at PARA COMPARAÇÃO CORRETA NO FRONTEND
       const logs = await this.dataSource.query(
         `SELECT 
+          id,
           timestamp,
+          created_at,
           type,
           icon,
           message,
@@ -1815,6 +1818,9 @@ export class AiService implements OnModuleInit {
           date = new Date(log.timestamp);
         } else if (log.timestamp instanceof Date) {
           date = log.timestamp;
+        } else if (log.created_at) {
+          // Usar created_at se timestamp não estiver disponível
+          date = new Date(log.created_at);
         } else {
           date = new Date();
         }
@@ -1831,14 +1837,33 @@ export class AiService implements OnModuleInit {
         return {
           ...log,
           timestamp: formattedTime,
+          // ✅ MANTER created_at ORIGINAL PARA COMPARAÇÃO
+          created_at: log.created_at,
         };
       });
 
-      // Inverter para ordem cronológica (mais antigo primeiro)
-      return logsWithBrazilTime.reverse();
+      // ✅ NÃO INVERTER - Backend retorna mais novos primeiro (DESC)
+      // Frontend espera mais novos primeiro
+      return logsWithBrazilTime;
     } catch (error) {
       this.logger.error(`[GetUserLogs][${userId}] Erro:`, error);
       return [];
+    }
+  }
+
+  /**
+   * Deleta TODOS os logs do usuário
+   */
+  async deleteUserLogs(userId: string): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `DELETE FROM ai_logs WHERE user_id = ?`,
+        [userId],
+      );
+      this.logger.log(`[DeleteUserLogs][${userId}] ✅ Todos os logs deletados`);
+    } catch (error) {
+      this.logger.error(`[DeleteUserLogs][${userId}] Erro:`, error);
+      throw error;
     }
   }
 

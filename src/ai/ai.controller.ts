@@ -2,6 +2,7 @@ import {
   Controller, 
   Get, 
   Post, 
+  Delete,
   Body,
   Param,
   Query,
@@ -328,7 +329,7 @@ export class AiController {
   @Get('logs/:userId')
   async getUserLogs(@Param('userId') userId: string) {
     try {
-      const logs = await this.aiService.getUserLogs(userId, 100);
+      const logs = await this.aiService.getUserLogs(userId, 2000);
       return {
         success: true,
         data: logs,
@@ -338,6 +339,26 @@ export class AiController {
         {
           success: false,
           message: 'Erro ao buscar logs',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Delete('logs/:userId')
+  async deleteUserLogs(@Param('userId') userId: string) {
+    try {
+      await this.aiService.deleteUserLogs(userId);
+      return {
+        success: true,
+        message: 'Logs deletados com sucesso',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao deletar logs',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
