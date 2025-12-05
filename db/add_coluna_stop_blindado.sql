@@ -17,3 +17,4 @@ SHOW COLUMNS FROM ai_user_config LIKE 'stop_blindado_percent';
 SELECT '✅ Coluna stop_blindado_percent adicionada!' as Resultado;
 
 
+

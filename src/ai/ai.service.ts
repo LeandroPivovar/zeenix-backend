@@ -29,6 +29,7 @@ interface VelozUserState {
   modoMartingale: ModoMartingale;
   perdaAcumulada: number;
   apostaInicial: number;
+  lastOperationTickIndex: number; // ✅ ZENIX v2.0: Controle de intervalo (3 ticks)
 }
 
 interface ModeradoUserState {
@@ -45,6 +46,7 @@ interface ModeradoUserState {
   modoMartingale: ModoMartingale;
   perdaAcumulada: number;
   apostaInicial: number;
+  lastOperationTimestamp: Date | null; // ✅ ZENIX v2.0: Controle de intervalo (15-20 segundos)
 }
 
 interface PrecisoUserState {
@@ -61,6 +63,7 @@ interface PrecisoUserState {
   modoMartingale: ModoMartingale;
   perdaAcumulada: number;
   apostaInicial: number;
+  // ✅ ZENIX v2.0: PRECISO não tem intervalo fixo (baseado em qualidade)
 }
 
 interface DigitTradeResult {
@@ -657,6 +660,17 @@ export class AiService implements OnModuleInit {
         continue;
       }
 
+      // ✅ ZENIX v2.0: Verificar intervalo entre operações (3 ticks)
+      if (state.lastOperationTickIndex !== undefined && state.lastOperationTickIndex >= 0) {
+        const ticksDesdeUltimaOp = this.ticks.length - 1 - state.lastOperationTickIndex;
+        if (ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
+          this.logger.debug(
+            `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
+          );
+          continue;
+        }
+      }
+
       // ✅ ZENIX v2.0: Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
       
@@ -1011,6 +1025,9 @@ export class AiService implements OnModuleInit {
         result,
         entry,
       );
+
+      // ✅ ZENIX v2.0: Atualizar índice do último tick após executar operação
+      state.lastOperationTickIndex = this.ticks.length - 1;
 
       return tradeId;
     } catch (error: any) {
@@ -1750,6 +1767,8 @@ export class AiService implements OnModuleInit {
 
       const sessionId = this.userSessionIds.get(userId) || userId;
 
+      // 🕐 TIMESTAMP NO HORÁRIO DE BRASÍLIA (UTC-3)
+      // Usar NOW() do MySQL (será convertido na query de SELECT)
       await this.dataSource.query(
         `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
@@ -1773,9 +1792,10 @@ export class AiService implements OnModuleInit {
    */
   async getUserLogs(userId: string, limit: number = 100): Promise<any[]> {
     try {
+      // 🕐 BUSCAR TIMESTAMPS E CONVERTER PARA HORÁRIO DE BRASÍLIA (UTC-3)
       const logs = await this.dataSource.query(
         `SELECT 
-          DATE_FORMAT(timestamp, '%H:%i:%s') as timestamp,
+          timestamp,
           type,
           icon,
           message,
@@ -1787,8 +1807,35 @@ export class AiService implements OnModuleInit {
         [userId, limit],
       );
 
+      // Converter timestamps para horário de Brasília e formatar
+      const logsWithBrazilTime = logs.map((log: any) => {
+        // Se timestamp é string, converter para Date
+        let date: Date;
+        if (typeof log.timestamp === 'string') {
+          date = new Date(log.timestamp);
+        } else if (log.timestamp instanceof Date) {
+          date = log.timestamp;
+        } else {
+          date = new Date();
+        }
+
+        // Converter para horário de Brasília (UTC-3) e formatar como HH:mm:ss
+        const formattedTime = date.toLocaleTimeString('pt-BR', { 
+          timeZone: 'America/Sao_Paulo',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        });
+
+        return {
+          ...log,
+          timestamp: formattedTime,
+        };
+      });
+
       // Inverter para ordem cronológica (mais antigo primeiro)
-      return logs.reverse();
+      return logsWithBrazilTime.reverse();
     } catch (error) {
       this.logger.error(`[GetUserLogs][${userId}] Erro:`, error);
       return [];
@@ -1907,6 +1954,7 @@ export class AiService implements OnModuleInit {
       modoMartingale: modoMartingale,
       perdaAcumulada: 0,
       apostaInicial: 0,
+      lastOperationTickIndex: -1, // ✅ ZENIX v2.0: Inicializar controle de intervalo
     });
   }
 
@@ -3660,6 +3708,17 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         continue;
       }
 
+      // ✅ ZENIX v2.0: Verificar intervalo entre operações (15-20 segundos)
+      if (state.lastOperationTimestamp) {
+        const segundosDesdeUltimaOp = (Date.now() - state.lastOperationTimestamp.getTime()) / 1000;
+        if (segundosDesdeUltimaOp < MODERADO_CONFIG.intervaloSegundos) {
+          this.logger.debug(
+            `[Moderado][${userId}] ⏱️ Aguardando intervalo: ${segundosDesdeUltimaOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos}s`,
+          );
+          continue;
+        }
+      }
+
       // ✅ ZENIX v2.0: Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
       
@@ -3966,6 +4025,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         result,
         entry,
       );
+
+      // ✅ ZENIX v2.0: Atualizar timestamp da última operação
+      state.lastOperationTimestamp = new Date();
 
       return tradeId;
     } catch (error: any) {
@@ -4352,6 +4414,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         modoMartingale: modoMartingale,
         perdaAcumulada: 0,
         apostaInicial: 0,
+        lastOperationTimestamp: null, // ✅ ZENIX v2.0: Inicializar controle de intervalo
       });
     }
   }
