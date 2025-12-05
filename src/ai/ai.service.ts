@@ -1754,6 +1754,12 @@ export class AiService implements OnModuleInit {
     details?: any,
   ): Promise<void> {
     try {
+      // ✅ Validar parâmetros
+      if (!userId || !type || !message) {
+        console.error(`[SaveLog] Parâmetros inválidos: userId=${userId}, type=${type}, message=${message?.substring(0, 50)}`);
+        return;
+      }
+
       const icons = {
         info: 'ℹ️',
         tick: '📥',
@@ -1766,6 +1772,7 @@ export class AiService implements OnModuleInit {
       };
 
       const sessionId = this.userSessionIds.get(userId) || userId;
+      const icon = icons[type] || 'ℹ️';
 
       // 🕐 TIMESTAMP NO HORÁRIO DE BRASÍLIA (UTC-3)
       // Usar NOW() do MySQL para garantir que timestamp seja preenchido
@@ -1775,18 +1782,26 @@ export class AiService implements OnModuleInit {
         [
           userId,
           type,
-          icons[type],
-          message,
-          details ? JSON.stringify(details) : null,
+          icon,
+          message.substring(0, 5000), // Limitar tamanho da mensagem
+          details ? JSON.stringify(details).substring(0, 10000) : null, // Limitar tamanho dos detalhes
           sessionId,
         ],
       );
       
-      // ✅ DEBUG: Confirmar que log foi salvo (apenas em desenvolvimento)
-      // this.logger.debug(`[SaveLog][${userId}] Log salvo: ${type} - ${message.substring(0, 50)}...`);
-    } catch (error) {
-      // Não logar erro para evitar loop infinito
-      console.error(`[SaveLog][${userId}] Erro ao salvar log:`, error);
+      // ✅ DEBUG: Logar apenas em caso de erro ou para rastreamento
+      if (!result || !result.insertId) {
+        console.error(`[SaveLog][${userId}] ⚠️ INSERT não retornou insertId:`, result);
+      }
+    } catch (error: any) {
+      // ✅ Logar erro mas não lançar para evitar quebrar o fluxo
+      console.error(`[SaveLog][${userId}] ❌ Erro ao salvar log (${type}):`, {
+        message: error.message,
+        code: error.code,
+        sqlState: error.sqlState,
+        sqlMessage: error.sqlMessage,
+      });
+      // Não lançar erro para não quebrar o fluxo da IA
     }
   }
 
@@ -3717,6 +3732,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (this.moderadoUsers.size === 0) {
       return;
     }
+    
+    // ✅ DEBUG: Logar quantos usuários estão sendo processados
+    this.logger.debug(`[Moderado] Processando ${this.moderadoUsers.size} usuário(s) ativo(s)`);
 
     // ✅ ZENIX v2.0: Verificar amostra mínima
     if (this.ticks.length < MODERADO_CONFIG.amostraInicial) {
@@ -3762,6 +3780,75 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
         `  └─ ${sinal.motivo}`,
       );
+      
+      // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
+      await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
+      
+      // Formatar distribuição
+      const deseq = sinal.detalhes?.desequilibrio;
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        await this.saveLog(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
+      await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
+      await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
+      
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 2: Sequências Repetidas
+      const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
+      const seqInfo = sinal.detalhes?.sequencias;
+      await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
+      if (seqInfo && seqInfo.tamanho >= 5) {
+        await this.saveLog(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 3: Micro-Tendências
+      const bonusMicro = sinal.detalhes?.bonusMicro || 0;
+      const microInfo = sinal.detalhes?.microTendencias;
+      await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
+      if (microInfo && microInfo.aceleracao > 0.10) {
+        await this.saveLog(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      const bonusForca = sinal.detalhes?.bonusForca || 0;
+      const forcaInfo = sinal.detalhes?.forca;
+      await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
+      if (forcaInfo && forcaInfo.velocidade > 0.05) {
+        await this.saveLog(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
+      } else {
+        await this.saveLog(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
+        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+      }
+      
+      await this.saveLog(userId, 'analise', '');
+      await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
+      
+      await this.saveLog(userId, 'analise', '');
+      await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
       // Executar operação
       await this.executeModeradoOperation(state, sinal.sinal, 1);
@@ -4028,6 +4115,24 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     const stakeAmount = this.calculateModeradoStake(state);
     const currentPrice = this.getCurrentPrice() || 0;
 
+    // 📋 LOG: Operação sendo executada
+    if (entry === 1) {
+      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
+      await this.saveLog(state.userId, 'operacao', `Ativo: R_10`);
+      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Payout: 0.95 (95%)`);
+      await this.saveLog(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+    } else {
+      // 📋 LOG: Operação martingale
+      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+      await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+    }
+
     const tradeId = await this.createModeradoTradeRecord(
       state.userId,
       proposal,
@@ -4151,6 +4256,23 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         `Capital: $${state.virtualCapital.toFixed(2)}`,
       );
       
+      // 📋 LOG: Resultado - VITÓRIA
+      await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
+      await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+      await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
+      await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
+      await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
+      
+      if (entry > 1) {
+        await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
+        await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
+      }
+      
+      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.capital.toFixed(2)} (normal)`);
+      await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+      
       // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
@@ -4167,6 +4289,14 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `[Moderado][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
     );
+    
+    // 📋 LOG: Resultado - DERROTA
+    await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
+    await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+    await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
+    await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+    await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
+    await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
     // Verificar se pode continuar (respeitar o maxEntradas do modo)
     if (entry < config.maxEntradas) {
@@ -4237,6 +4367,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
       );
+      
+      // 📋 LOG: Martingale ativado
+      await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
+      await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
+      await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
       
       // Executar próxima entrada
       await this.executeModeradoOperation(state, proposal, entry + 1);
