@@ -1768,10 +1768,10 @@ export class AiService implements OnModuleInit {
       const sessionId = this.userSessionIds.get(userId) || userId;
 
       // 🕐 TIMESTAMP NO HORÁRIO DE BRASÍLIA (UTC-3)
-      // Usar NOW() do MySQL (será convertido na query de SELECT)
-      await this.dataSource.query(
-        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+      // Usar NOW() do MySQL para garantir que timestamp seja preenchido
+      const result = await this.dataSource.query(
+        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(3))`,
         [
           userId,
           type,
@@ -1781,6 +1781,9 @@ export class AiService implements OnModuleInit {
           sessionId,
         ],
       );
+      
+      // ✅ DEBUG: Confirmar que log foi salvo (apenas em desenvolvimento)
+      // this.logger.debug(`[SaveLog][${userId}] Log salvo: ${type} - ${message.substring(0, 50)}...`);
     } catch (error) {
       // Não logar erro para evitar loop infinito
       console.error(`[SaveLog][${userId}] Erro ao salvar log:`, error);
@@ -1809,6 +1812,9 @@ export class AiService implements OnModuleInit {
          LIMIT ?`,
         [userId, limit],
       );
+
+      // ✅ DEBUG: Logar quantos logs foram encontrados
+      this.logger.debug(`[GetUserLogs][${userId}] Encontrados ${logs.length} logs no banco`);
 
       // Converter timestamps para horário de Brasília e formatar
       const logsWithBrazilTime = logs.map((log: any) => {
