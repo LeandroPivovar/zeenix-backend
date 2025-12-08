@@ -93,3 +93,4 @@ Após seguir estes passos, o Copy Trading deve funcionar corretamente com suport
 
 
 
+

@@ -235,6 +235,7 @@ function calcularDesequilibrio(ticks: Tick[], janela: number): {
   } else if (percentualImpar > percentualPar) {
     operacao = 'PAR'; // Desequilíbrio de ÍMPAR → operar PAR (reversão)
   }
+  // Se percentualPar === percentualImpar (50%/50%), operacao fica null
   
   return {
     percentualPar,
@@ -665,16 +666,33 @@ export class AiService implements OnModuleInit {
         const ticksDesdeUltimaOp = this.ticks.length - 1 - state.lastOperationTickIndex;
         if (ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
           this.logger.debug(
-            `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
+            `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks | ` +
+            `lastOpIndex=${state.lastOperationTickIndex} | currentTickIndex=${this.ticks.length - 1}`,
           );
           continue;
         }
+      } else {
+        // ✅ Se lastOperationTickIndex é -1 ou undefined, pode operar imediatamente
+        this.logger.debug(
+          `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | ` +
+          `lastOpIndex=${state.lastOperationTickIndex} | totalTicks=${this.ticks.length}`,
+        );
       }
 
       // ✅ ZENIX v2.0: Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
       
       if (!sinal || !sinal.sinal) {
+        // 🔍 DEBUG: Logar por que não gerou sinal
+        if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
+          const analiseDeseq = calcularDesequilibrio(this.ticks, VELOZ_CONFIG.amostraInicial);
+          this.logger.debug(
+            `[Veloz][${userId}] ❌ Sem sinal válido | ` +
+            `Desequilíbrio: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% (mín: ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(0)}%) | ` +
+            `Operação: ${analiseDeseq.operacao || 'NENHUMA'} | ` +
+            `Ticks: ${this.ticks.length}`,
+          );
+        }
         continue; // Sem sinal válido
       }
       
@@ -1064,8 +1082,9 @@ export class AiService implements OnModuleInit {
         entry_price,
         stake_amount,
         contract_type,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status,
+        symbol
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         JSON.stringify(analysisPayload),
@@ -1076,6 +1095,7 @@ export class AiService implements OnModuleInit {
         stakeAmount,
         proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
         'PENDING',
+        this.symbol,
       ],
     );
 
@@ -1979,6 +1999,10 @@ export class AiService implements OnModuleInit {
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = stakeAmount;
       }
+      // ✅ Resetar intervalo se não há operação ativa (permite nova operação imediatamente)
+      if (!existing.isOperationActive) {
+        existing.lastOperationTickIndex = -1;
+      }
       this.velozUsers.set(userId, existing);
       return;
     }
@@ -2251,6 +2275,7 @@ export class AiService implements OnModuleInit {
         gemini_duration as duration,
         gemini_reasoning as reasoning,
         status,
+        symbol,
         created_at as createdAt,
         closed_at as closedAt
       FROM ai_trades
@@ -2270,13 +2295,14 @@ export class AiService implements OnModuleInit {
       id: trade.id,
       signal: trade.signal,
       contractType: trade.contractType,
-      entryPrice: parseFloat(trade.entryPrice),
-      exitPrice: parseFloat(trade.exitPrice),
+      entryPrice: parseFloat(trade.entryPrice || 0),
+      exitPrice: parseFloat(trade.exitPrice || 0),
       stakeAmount: parseFloat(trade.stakeAmount),
-      profitLoss: parseFloat(trade.profitLoss),
+      profitLoss: parseFloat(trade.profitLoss || 0),
       duration: trade.duration,
       reasoning: trade.reasoning,
       status: trade.status,
+      symbol: trade.symbol || 'R_10',
       createdAt: trade.createdAt,
       closedAt: trade.closedAt,
     }));
@@ -2525,6 +2551,20 @@ export class AiService implements OnModuleInit {
     this.logger.log(
       `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
+    
+    // 🗑️ DELETAR TODOS OS LOGS DO USUÁRIO AO INICIAR NOVA SESSÃO
+    try {
+      await this.deleteUserLogs(userId);
+      this.logger.log(
+        `[ActivateAI] 🗑️ Logs anteriores deletados para userId=${userId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[ActivateAI] ⚠️ Erro ao deletar logs do usuário ${userId}:`,
+        error,
+      );
+      // Não bloquear a criação da sessão se houver erro ao deletar logs
+    }
     
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
     
@@ -3188,8 +3228,8 @@ private async recordTrade(trade: any): Promise<number | null> {
     const insertResult: any = await this.dataSource.query(
         `INSERT INTO ai_trades 
          (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, contract_type, contract_id, created_at, analysis_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
         [
             trade.userId,
             trade.contractType,
@@ -3205,7 +3245,8 @@ private async recordTrade(trade: any): Promise<number | null> {
                 dvx: this.calculateDVX(this.ticks),
                 duration_unit: trade.durationUnit || 't',
                 ...(trade.error && { error: trade.error })
-            })
+            }),
+            this.symbol,
         ]
     );
     
@@ -4209,8 +4250,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         entry_price,
         stake_amount,
         contract_type,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status,
+        symbol
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         JSON.stringify(analysisData),
@@ -4221,6 +4263,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         stakeAmount,
         proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
         'PENDING',
+        this.symbol,
       ],
     );
 
@@ -4902,8 +4945,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         entry_price,
         stake_amount,
         contract_type,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status,
+        symbol
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         JSON.stringify(analysisData),
@@ -4914,6 +4958,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         stakeAmount,
         proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
         'PENDING',
+        this.symbol,
       ],
     );
 
