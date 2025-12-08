@@ -2606,6 +2606,20 @@ export class AiService implements OnModuleInit {
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
     );
 
+    // 🗑️ PRIMEIRA AÇÃO: DELETAR TODOS OS LOGS DO USUÁRIO ANTES DE INICIAR NOVA SESSÃO
+    try {
+      await this.deleteUserLogs(userId);
+      this.logger.log(
+        `[ActivateAI] 🗑️ Logs anteriores deletados para userId=${userId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `[ActivateAI] ⚠️ Erro ao deletar logs do usuário ${userId}:`,
+        error,
+      );
+      // Não bloquear a criação da sessão se houver erro ao deletar logs
+    }
+
     // 🔄 NOVA LÓGICA: Sempre criar nova sessão (INSERT)
     // 1. Desativar todas as sessões anteriores deste usuário
     await this.dataSource.query(
@@ -2621,20 +2635,6 @@ export class AiService implements OnModuleInit {
     this.logger.log(
       `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
-    
-    // 🗑️ DELETAR TODOS OS LOGS DO USUÁRIO AO INICIAR NOVA SESSÃO
-    try {
-      await this.deleteUserLogs(userId);
-      this.logger.log(
-        `[ActivateAI] 🗑️ Logs anteriores deletados para userId=${userId}`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `[ActivateAI] ⚠️ Erro ao deletar logs do usuário ${userId}:`,
-        error,
-      );
-      // Não bloquear a criação da sessão se houver erro ao deletar logs
-    }
     
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
     
