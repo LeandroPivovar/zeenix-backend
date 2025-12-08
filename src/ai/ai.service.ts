@@ -1072,32 +1072,67 @@ export class AiService implements OnModuleInit {
       ticks: this.ticks.slice(-50), // Salvar apenas os últimos 50 ticks para reduzir log
     };
 
-    const insertResult = await this.dataSource.query(
-      `INSERT INTO ai_trades (
-        user_id,
-        analysis_data,
-        gemini_signal,
-        gemini_duration,
-        gemini_reasoning,
-        entry_price,
-        stake_amount,
-        contract_type,
-        status,
-        symbol
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        JSON.stringify(analysisPayload),
-        proposal,
-        1,
-        'Modo Veloz - desequilíbrio de paridade',
-        fallbackEntryPrice,
-        stakeAmount,
-        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-        'PENDING',
-        this.symbol,
-      ],
-    );
+    // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
+    let insertResult;
+    try {
+      insertResult = await this.dataSource.query(
+        `INSERT INTO ai_trades (
+          user_id,
+          analysis_data,
+          gemini_signal,
+          gemini_duration,
+          gemini_reasoning,
+          entry_price,
+          stake_amount,
+          contract_type,
+          status,
+          symbol
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          JSON.stringify(analysisPayload),
+          proposal,
+          1,
+          'Modo Veloz - desequilíbrio de paridade',
+          fallbackEntryPrice,
+          stakeAmount,
+          proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          'PENDING',
+          this.symbol,
+        ],
+      );
+    } catch (error: any) {
+      // Se o campo symbol não existir, inserir sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        this.logger.warn(`[CreateVelozTradeRecord] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
+        insertResult = await this.dataSource.query(
+          `INSERT INTO ai_trades (
+            user_id,
+            analysis_data,
+            gemini_signal,
+            gemini_duration,
+            gemini_reasoning,
+            entry_price,
+            stake_amount,
+            contract_type,
+            status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            JSON.stringify(analysisPayload),
+            proposal,
+            1,
+            'Modo Veloz - desequilíbrio de paridade',
+            fallbackEntryPrice,
+            stakeAmount,
+            proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+            'PENDING',
+          ],
+        );
+      } else {
+        throw error;
+      }
+    }
 
     return insertResult.insertId;
   }
@@ -1775,8 +1810,13 @@ export class AiService implements OnModuleInit {
   ): Promise<void> {
     try {
       // ✅ Validar parâmetros
-      if (!userId || !type || !message) {
-        console.error(`[SaveLog] Parâmetros inválidos: userId=${userId}, type=${type}, message=${message?.substring(0, 50)}`);
+      if (!userId || !type) {
+        console.error(`[SaveLog] Parâmetros inválidos: userId=${userId}, type=${type}`);
+        return;
+      }
+      
+      // ✅ Pular se mensagem estiver vazia (linhas em branco)
+      if (!message || message.trim() === '') {
         return;
       }
 
@@ -2263,7 +2303,8 @@ export class AiService implements OnModuleInit {
     // Buscar histórico de trades do usuário (últimas 20 por padrão)
     this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}, limit=${limit}`);
     
-    const query = `
+    // ✅ Tentar buscar com symbol, se falhar, buscar sem symbol (campo pode não existir ainda)
+    let query = `
       SELECT 
         id,
         gemini_signal as \`signal\`,
@@ -2283,11 +2324,40 @@ export class AiService implements OnModuleInit {
       ORDER BY COALESCE(closed_at, created_at) DESC
       LIMIT ?
     `;
-
-    this.logger.debug(`[GetTradeHistory] 📝 Query: ${query}`);
-    this.logger.debug(`[GetTradeHistory] 📝 Params: userId=${userId}, limit=${limit}`);
-
-    const result = await this.dataSource.query(query, [userId, limit]);
+    
+    let result;
+    try {
+      result = await this.dataSource.query(query, [userId, limit]);
+      this.logger.debug(`[GetTradeHistory] 📝 Query executada com symbol`);
+    } catch (error: any) {
+      // Se o campo symbol não existir, buscar sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        this.logger.warn(`[GetTradeHistory] Campo 'symbol' não existe, buscando sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
+        query = `
+          SELECT 
+            id,
+            gemini_signal as \`signal\`,
+            contract_type as contractType,
+            entry_price as entryPrice,
+            exit_price as exitPrice,
+            stake_amount as stakeAmount,
+            profit_loss as profitLoss,
+            gemini_duration as duration,
+            gemini_reasoning as reasoning,
+            status,
+            created_at as createdAt,
+            closed_at as closedAt
+          FROM ai_trades
+          WHERE user_id = ? 
+          ORDER BY COALESCE(closed_at, created_at) DESC
+          LIMIT ?
+        `;
+        result = await this.dataSource.query(query, [userId, limit]);
+        this.logger.debug(`[GetTradeHistory] 📝 Query executada sem symbol`);
+      } else {
+        throw error;
+      }
+    }
     
     this.logger.log(`[GetTradeHistory] ✅ Query executada, ${result.length} registros encontrados`);
 
@@ -2302,7 +2372,7 @@ export class AiService implements OnModuleInit {
       duration: trade.duration,
       reasoning: trade.reasoning,
       status: trade.status,
-      symbol: trade.symbol || 'R_10',
+      symbol: trade.symbol || 'R_10', // ✅ Usar 'R_10' como padrão se symbol não existir
       createdAt: trade.createdAt,
       closedAt: trade.closedAt,
     }));
@@ -3225,30 +3295,64 @@ private async executeTradeViaWebSocket(token: string, contractParams: any, trade
 }
 
 private async recordTrade(trade: any): Promise<number | null> {
-    const insertResult: any = await this.dataSource.query(
-        `INSERT INTO ai_trades 
-         (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [
-            trade.userId,
-            trade.contractType,
-            trade.entryPrice,
-            trade.amount,
-            trade.status,
-            trade.duration || 1,
-            trade.contractType,
-            trade.contractId || null,
-            JSON.stringify({ 
-                mode: 'fast',
-                timestamp: new Date().toISOString(),
-                dvx: this.calculateDVX(this.ticks),
-                duration_unit: trade.durationUnit || 't',
-                ...(trade.error && { error: trade.error })
-            }),
-            this.symbol,
-        ]
-    );
+    // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
+    let insertResult: any;
+    try {
+      insertResult = await this.dataSource.query(
+          `INSERT INTO ai_trades 
+           (user_id, gemini_signal, entry_price, stake_amount, status, 
+            gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+          [
+              trade.userId,
+              trade.contractType,
+              trade.entryPrice,
+              trade.amount,
+              trade.status,
+              trade.duration || 1,
+              trade.contractType,
+              trade.contractId || null,
+              JSON.stringify({ 
+                  mode: 'fast',
+                  timestamp: new Date().toISOString(),
+                  dvx: this.calculateDVX(this.ticks),
+                  duration_unit: trade.durationUnit || 't',
+                  ...(trade.error && { error: trade.error })
+              }),
+              this.symbol,
+          ]
+      );
+    } catch (error: any) {
+      // Se o campo symbol não existir, inserir sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        this.logger.warn(`[RecordTrade] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
+        insertResult = await this.dataSource.query(
+            `INSERT INTO ai_trades 
+             (user_id, gemini_signal, entry_price, stake_amount, status, 
+              gemini_duration, contract_type, contract_id, created_at, analysis_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+            [
+                trade.userId,
+                trade.contractType,
+                trade.entryPrice,
+                trade.amount,
+                trade.status,
+                trade.duration || 1,
+                trade.contractType,
+                trade.contractId || null,
+                JSON.stringify({ 
+                    mode: 'fast',
+                    timestamp: new Date().toISOString(),
+                    dvx: this.calculateDVX(this.ticks),
+                    duration_unit: trade.durationUnit || 't',
+                    ...(trade.error && { error: trade.error })
+                }),
+            ]
+        );
+      } else {
+        throw error;
+      }
+    }
     
     // TypeORM pode retornar array ou objeto direto
     const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
@@ -4240,32 +4344,67 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       })),
     };
 
-    const result = await this.dataSource.query(
-      `INSERT INTO ai_trades (
-        user_id,
-        analysis_data,
-        gemini_signal,
-        gemini_duration,
-        gemini_reasoning,
-        entry_price,
-        stake_amount,
-        contract_type,
-        status,
-        symbol
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        JSON.stringify(analysisData),
-        proposal,
-        1,
-        'Modo Moderado - desequilíbrio de paridade + validações',
-        entryPrice,
-        stakeAmount,
-        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-        'PENDING',
-        this.symbol,
-      ],
-    );
+    // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
+    let result;
+    try {
+      result = await this.dataSource.query(
+        `INSERT INTO ai_trades (
+          user_id,
+          analysis_data,
+          gemini_signal,
+          gemini_duration,
+          gemini_reasoning,
+          entry_price,
+          stake_amount,
+          contract_type,
+          status,
+          symbol
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          JSON.stringify(analysisData),
+          proposal,
+          1,
+          'Modo Moderado - desequilíbrio de paridade + validações',
+          entryPrice,
+          stakeAmount,
+          proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          'PENDING',
+          this.symbol,
+        ],
+      );
+    } catch (error: any) {
+      // Se o campo symbol não existir, inserir sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        this.logger.warn(`[CreateModeradoTradeRecord] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
+        result = await this.dataSource.query(
+          `INSERT INTO ai_trades (
+            user_id,
+            analysis_data,
+            gemini_signal,
+            gemini_duration,
+            gemini_reasoning,
+            entry_price,
+            stake_amount,
+            contract_type,
+            status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            JSON.stringify(analysisData),
+            proposal,
+            1,
+            'Modo Moderado - desequilíbrio de paridade + validações',
+            entryPrice,
+            stakeAmount,
+            proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+            'PENDING',
+          ],
+        );
+      } else {
+        throw error;
+      }
+    }
 
     return result.insertId;
   }
@@ -4935,32 +5074,67 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       })),
     };
 
-    const result = await this.dataSource.query(
-      `INSERT INTO ai_trades (
-        user_id,
-        analysis_data,
-        gemini_signal,
-        gemini_duration,
-        gemini_reasoning,
-        entry_price,
-        stake_amount,
-        contract_type,
-        status,
-        symbol
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        JSON.stringify(analysisData),
-        proposal,
-        1,
-        'Modo Preciso - desequilíbrio rigoroso + validações múltiplas',
-        entryPrice,
-        stakeAmount,
-        proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-        'PENDING',
-        this.symbol,
-      ],
-    );
+    // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
+    let result;
+    try {
+      result = await this.dataSource.query(
+        `INSERT INTO ai_trades (
+          user_id,
+          analysis_data,
+          gemini_signal,
+          gemini_duration,
+          gemini_reasoning,
+          entry_price,
+          stake_amount,
+          contract_type,
+          status,
+          symbol
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          JSON.stringify(analysisData),
+          proposal,
+          1,
+          'Modo Preciso - desequilíbrio rigoroso + validações múltiplas',
+          entryPrice,
+          stakeAmount,
+          proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          'PENDING',
+          this.symbol,
+        ],
+      );
+    } catch (error: any) {
+      // Se o campo symbol não existir, inserir sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        this.logger.warn(`[CreatePrecisoTradeRecord] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
+        result = await this.dataSource.query(
+          `INSERT INTO ai_trades (
+            user_id,
+            analysis_data,
+            gemini_signal,
+            gemini_duration,
+            gemini_reasoning,
+            entry_price,
+            stake_amount,
+            contract_type,
+            status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            JSON.stringify(analysisData),
+            proposal,
+            1,
+            'Modo Preciso - desequilíbrio rigoroso + validações múltiplas',
+            entryPrice,
+            stakeAmount,
+            proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+            'PENDING',
+          ],
+        );
+      } else {
+        throw error;
+      }
+    }
 
     return result.insertId;
   }
