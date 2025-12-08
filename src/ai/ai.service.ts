@@ -714,14 +714,12 @@ export class AiService implements OnModuleInit {
         await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 1: Desequilíbrio Base
       await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
       await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
       await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 2: Sequências Repetidas
       const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
@@ -735,7 +733,6 @@ export class AiService implements OnModuleInit {
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 3: Micro-Tendências
       const bonusMicro = sinal.detalhes?.bonusMicro || 0;
@@ -749,7 +746,6 @@ export class AiService implements OnModuleInit {
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 4: Força do Desequilíbrio
       const bonusForca = sinal.detalhes?.bonusForca || 0;
@@ -763,11 +759,9 @@ export class AiService implements OnModuleInit {
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
       await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
       
-      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
@@ -1254,12 +1248,18 @@ export class AiService implements OnModuleInit {
             const buyPrice = Number(buy.buy_price);
             const entrySpot = Number(buy.entry_spot || this.getCurrentPrice() || 0);
 
+            this.logger.log(
+              `[Veloz] Atualizando entry_price | tradeId=${tradeId} | entrySpot=${entrySpot} | buy.entry_spot=${buy.entry_spot}`,
+            );
+
             await this.dataSource.query(
               `UPDATE ai_trades 
                SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
                WHERE id = ?`,
               [contractId, entrySpot, tradeId],
             );
+            
+            this.logger.log(`[Veloz] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
             ws.send(
               JSON.stringify({
@@ -1283,6 +1283,10 @@ export class AiService implements OnModuleInit {
             const profit = Number(contract.profit || 0);
             const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
             const status = profit >= 0 ? 'WON' : 'LOST';
+
+            this.logger.log(
+              `[Veloz] Atualizando exit_price | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`,
+            );
 
             await this.dataSource.query(
               `UPDATE ai_trades
@@ -1851,7 +1855,9 @@ export class AiService implements OnModuleInit {
       
       // ✅ DEBUG: Logar apenas em caso de erro ou para rastreamento
       if (!result || !result.insertId) {
-        console.error(`[SaveLog][${userId}] ⚠️ INSERT não retornou insertId:`, result);
+        this.logger.error(`[SaveLog][${userId}] ⚠️ INSERT não retornou insertId:`, result);
+      } else {
+        this.logger.debug(`[SaveLog][${userId}] ✅ Log salvo | type=${type} | insertId=${result.insertId} | message=${message.substring(0, 50)}`);
       }
     } catch (error: any) {
       // ✅ Logar erro mas não lançar para evitar quebrar o fluxo
@@ -3425,11 +3431,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
                         const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
                         const status = profit >= 0 ? 'WON' : 'LOST';
                         
-                        this.logger.debug(`[Monitor] Contrato ${contractId} fechado`, {
-                            status,
-                            profit,
-                            exitPrice
-                        });
+                        this.logger.log(`[Monitor] Contrato ${contractId} fechado | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`);
                         
                         // Update database
                         await this.dataSource.query(
@@ -3438,6 +3440,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
                              WHERE id = ?`,
                             [exitPrice, profit, status, tradeId],
                         );
+                        
+                        this.logger.log(`[Monitor] ✅ exit_price atualizado no banco | tradeId=${tradeId} | exitPrice=${exitPrice}`);
                         
                         // Buscar dados da operação para replicação
                         const tradeData = await this.dataSource.query(
@@ -3938,14 +3942,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 1: Desequilíbrio Base
       await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
       await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
       await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 2: Sequências Repetidas
       const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
@@ -3959,7 +3961,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 3: Micro-Tendências
       const bonusMicro = sinal.detalhes?.bonusMicro || 0;
@@ -3973,7 +3974,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       
       // ANÁLISE 4: Força do Desequilíbrio
       const bonusForca = sinal.detalhes?.bonusForca || 0;
@@ -3987,11 +3987,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
       
-      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
       await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
       
-      await this.saveLog(userId, 'analise', '');
       await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
