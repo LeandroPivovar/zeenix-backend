@@ -2367,21 +2367,53 @@ export class AiService implements OnModuleInit {
     
     this.logger.log(`[GetTradeHistory] ✅ Query executada, ${result.length} registros encontrados`);
 
-    return result.map((trade: any) => ({
-      id: trade.id,
-      signal: trade.signal,
-      contractType: trade.contractType,
-      entryPrice: trade.entryPrice != null ? parseFloat(trade.entryPrice) : null,
-      exitPrice: trade.exitPrice != null ? parseFloat(trade.exitPrice) : null,
-      stakeAmount: parseFloat(trade.stakeAmount),
-      profitLoss: trade.profitLoss != null ? parseFloat(trade.profitLoss) : null,
-      duration: trade.duration,
-      reasoning: trade.reasoning,
-      status: trade.status,
-      symbol: trade.symbol || 'R_10', // ✅ Usar 'R_10' como padrão se symbol não existir
-      createdAt: trade.createdAt,
-      closedAt: trade.closedAt,
-    }));
+    const mapped = result.map((trade: any) => {
+      // ✅ Converter DECIMAL do MySQL corretamente (pode vir como string ou number)
+      let entryPrice: number | null = null;
+      if (trade.entryPrice != null && trade.entryPrice !== undefined) {
+        const entryValue = typeof trade.entryPrice === 'string' 
+          ? parseFloat(trade.entryPrice) 
+          : Number(trade.entryPrice);
+        entryPrice = !isNaN(entryValue) && entryValue > 0 ? entryValue : null;
+      }
+      
+      let exitPrice: number | null = null;
+      if (trade.exitPrice != null && trade.exitPrice !== undefined) {
+        const exitValue = typeof trade.exitPrice === 'string' 
+          ? parseFloat(trade.exitPrice) 
+          : Number(trade.exitPrice);
+        exitPrice = !isNaN(exitValue) && exitValue > 0 ? exitValue : null;
+      }
+      
+      // ✅ DEBUG: Logar valores para verificar (apenas primeiros 3)
+      const tradeIndex = result.indexOf(trade);
+      if (tradeIndex < 3) {
+        this.logger.debug(
+          `[GetTradeHistory] Trade ${tradeIndex + 1} (id=${trade.id}): ` +
+          `entryPrice=${entryPrice} (raw: ${trade.entryPrice}, type: ${typeof trade.entryPrice}), ` +
+          `exitPrice=${exitPrice} (raw: ${trade.exitPrice}, type: ${typeof trade.exitPrice}), ` +
+          `status=${trade.status}`
+        );
+      }
+      
+      return {
+        id: trade.id,
+        signal: trade.signal,
+        contractType: trade.contractType,
+        entryPrice: entryPrice,
+        exitPrice: exitPrice,
+        stakeAmount: parseFloat(trade.stakeAmount || 0),
+        profitLoss: trade.profitLoss != null ? parseFloat(trade.profitLoss) : null,
+        duration: trade.duration,
+        reasoning: trade.reasoning,
+        status: trade.status,
+        symbol: trade.symbol || 'R_10', // ✅ Usar 'R_10' como padrão se symbol não existir
+        createdAt: trade.createdAt,
+        closedAt: trade.closedAt,
+      };
+    });
+    
+    return mapped;
   }
 
   // ========== MÉTODOS PARA IA EM BACKGROUND ==========

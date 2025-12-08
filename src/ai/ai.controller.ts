@@ -224,7 +224,14 @@ export class AiController {
       this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
       const history = await this.aiService.getTradeHistory(userId);
       this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
-      this.logger.debug(`[TradeHistory] Dados: ${JSON.stringify(history).substring(0, 200)}...`);
+      
+      // ✅ DEBUG: Logar primeiros 3 trades com preços
+      if (history.length > 0) {
+        history.slice(0, 3).forEach((trade: any, index: number) => {
+          this.logger.debug(`[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`);
+        });
+      }
+      
       return {
         success: true,
         data: history,
