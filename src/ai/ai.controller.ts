@@ -6,10 +6,13 @@ import {
   Body,
   Param,
   Query,
+  Req,
+  UseGuards,
   HttpException, 
   HttpStatus,
   Logger
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { AiService, DigitParity, Tick } from './ai.service';
 
 @Controller('ai')
@@ -199,9 +202,12 @@ export class AiController {
   }
 
   @Get('session-stats/:userId')
-  async getSessionStats(@Param('userId') userId: string) {
+  @UseGuards(AuthGuard('jwt'))
+  async getSessionStats(@Param('userId') userId: string, @Req() req: any) {
     try {
-      const stats = await this.aiService.getSessionStats(userId);
+      // Se userId for "current", usar o userId do token JWT
+      const finalUserId = userId === 'current' ? req.user.userId : userId;
+      const stats = await this.aiService.getSessionStats(finalUserId);
       return {
         success: true,
         data: stats,
