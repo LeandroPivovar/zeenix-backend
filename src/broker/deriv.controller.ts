@@ -1424,7 +1424,7 @@ export class DerivController {
       }
       
       // Processar contratos para extrair tipos disponíveis
-      let availableContracts = [];
+      let availableContracts: any[] = [];
       if (contracts) {
         // A API Deriv retorna contracts_for como um objeto com arrays de contratos
         // Estrutura pode ser: { contracts_for: { [symbol]: [...] } } ou array direto
