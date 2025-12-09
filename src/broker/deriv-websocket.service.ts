@@ -182,10 +182,32 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     const startIdx = Math.max(0, prices.length - this.maxTicks);
 
     for (let i = startIdx; i < prices.length; i++) {
-      const value = Number(prices[i]);
-      const epoch = times[i] ? Math.floor(Number(times[i])) : Math.floor(Date.now() / 1000) - (prices.length - i);
+      // Validação rigorosa: verificar null, undefined, strings vazias
+      const rawPrice = prices[i];
+      if (rawPrice == null || rawPrice === '' || rawPrice === undefined) {
+        continue;
+      }
 
-      if (isFinite(value) && isFinite(epoch) && value > 0 && epoch > 0) {
+      const value = Number(rawPrice);
+      // Validação dupla: garantir que é um número válido e positivo
+      if (!isFinite(value) || value <= 0 || isNaN(value)) {
+        continue;
+      }
+
+      // Validação do epoch
+      const rawTime = times[i];
+      let epoch: number;
+      if (rawTime != null && rawTime !== '' && rawTime !== undefined) {
+        epoch = Math.floor(Number(rawTime));
+        if (!isFinite(epoch) || epoch <= 0 || isNaN(epoch)) {
+          epoch = Math.floor(Date.now() / 1000) - (prices.length - i);
+        }
+      } else {
+        epoch = Math.floor(Date.now() / 1000) - (prices.length - i);
+      }
+
+      // Validação final: ambos devem ser válidos
+      if (isFinite(value) && value > 0 && !isNaN(value) && isFinite(epoch) && epoch > 0 && !isNaN(epoch)) {
         newTicks.push({ value, epoch });
       }
     }
@@ -201,12 +223,35 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
   private processTick(msg: any): void {
     const tick = msg.tick;
-    if (!tick || tick.quote == null || tick.epoch == null) return;
+    if (!tick) return;
 
-    const value = Number(tick.quote);
-    const epoch = Number(tick.epoch);
+    // Validação rigorosa: verificar null, undefined, strings vazias
+    const rawQuote = tick.quote;
+    const rawEpoch = tick.epoch;
 
-    if (!isFinite(value) || !isFinite(epoch) || value <= 0 || epoch <= 0) return;
+    if (rawQuote == null || rawQuote === '' || rawQuote === undefined) {
+      this.logger.warn(`Tick ignorado: quote inválido (${rawQuote})`);
+      return;
+    }
+
+    if (rawEpoch == null || rawEpoch === '' || rawEpoch === undefined) {
+      this.logger.warn(`Tick ignorado: epoch inválido (${rawEpoch})`);
+      return;
+    }
+
+    const value = Number(rawQuote);
+    const epoch = Number(rawEpoch);
+
+    // Validação dupla: garantir que são números válidos e positivos
+    if (!isFinite(value) || value <= 0 || isNaN(value)) {
+      this.logger.warn(`Tick ignorado: value inválido (${value})`);
+      return;
+    }
+
+    if (!isFinite(epoch) || epoch <= 0 || isNaN(epoch)) {
+      this.logger.warn(`Tick ignorado: epoch inválido (${epoch})`);
+      return;
+    }
 
     if (tick.id && !this.tickSubscriptionId) {
       this.tickSubscriptionId = tick.id;

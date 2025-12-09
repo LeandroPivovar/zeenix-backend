@@ -885,11 +885,38 @@ export class DerivController {
     
     // Configurar listeners para eventos
     const onTick = (data: any) => {
-      res.write(`data: ${JSON.stringify({ type: 'tick', data })}\n\n`);
+      // Validar dados antes de enviar
+      if (data && typeof data.value === 'number' && isFinite(data.value) && data.value > 0 && 
+          typeof data.epoch === 'number' && isFinite(data.epoch) && data.epoch > 0) {
+        res.write(`data: ${JSON.stringify({ type: 'tick', data })}\n\n`);
+      } else {
+        this.logger.warn(`[Trading] Tick inválido ignorado: ${JSON.stringify(data)}`);
+      }
     };
     
     const onHistory = (data: any) => {
-      res.write(`data: ${JSON.stringify({ type: 'history', data })}\n\n`);
+      // Validar e filtrar ticks inválidos antes de enviar
+      if (data && data.ticks && Array.isArray(data.ticks)) {
+        const validTicks = data.ticks.filter((t: any) => 
+          t && 
+          typeof t.value === 'number' && 
+          isFinite(t.value) && 
+          t.value > 0 && 
+          !isNaN(t.value) &&
+          typeof t.epoch === 'number' && 
+          isFinite(t.epoch) && 
+          t.epoch > 0 &&
+          !isNaN(t.epoch)
+        );
+        
+        if (validTicks.length > 0) {
+          res.write(`data: ${JSON.stringify({ type: 'history', data: { ...data, ticks: validTicks } })}\n\n`);
+        } else {
+          this.logger.warn(`[Trading] History sem ticks válidos: ${data.ticks.length} ticks, 0 válidos`);
+        }
+      } else {
+        this.logger.warn(`[Trading] History inválido ignorado: ${JSON.stringify(data)}`);
+      }
     };
     
     const onProposal = (data: any) => {
@@ -947,7 +974,22 @@ export class DerivController {
     // Enviar dados iniciais se disponíveis
     const ticks = service.getTicks();
     if (ticks.length > 0) {
-      res.write(`data: ${JSON.stringify({ type: 'history', data: { ticks } })}\n\n`);
+      // Filtrar ticks inválidos antes de enviar
+      const validTicks = ticks.filter((t: any) => 
+        t && 
+        typeof t.value === 'number' && 
+        isFinite(t.value) && 
+        t.value > 0 && 
+        !isNaN(t.value) &&
+        typeof t.epoch === 'number' && 
+        isFinite(t.epoch) && 
+        t.epoch > 0 &&
+        !isNaN(t.epoch)
+      );
+      
+      if (validTicks.length > 0) {
+        res.write(`data: ${JSON.stringify({ type: 'history', data: { ticks: validTicks } })}\n\n`);
+      }
     }
   }
 
