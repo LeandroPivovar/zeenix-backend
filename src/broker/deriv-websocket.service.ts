@@ -1,0 +1,417 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import WebSocket from 'ws';
+import { EventEmitter } from 'events';
+
+interface TickData {
+  value: number;
+  epoch: number;
+}
+
+interface ProposalData {
+  id: string;
+  askPrice: number;
+  payout: number;
+  spot: number;
+  dateStart: number;
+}
+
+interface TradeData {
+  contractId: string;
+  buyPrice: number;
+  payout: number;
+  symbol: string;
+  contractType: string;
+  duration: number;
+  durationUnit: string;
+}
+
+@Injectable()
+export class DerivWebSocketService extends EventEmitter implements OnModuleDestroy {
+  private readonly logger = new Logger(DerivWebSocketService.name);
+  private ws: WebSocket | null = null;
+  private isAuthorized = false;
+  private currentLoginid: string | null = null;
+  private tickSubscriptionId: string | null = null;
+  private proposalSubscriptionId: string | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private isReconnecting = false;
+  private appId: number;
+  private token: string | null = null;
+  private symbol: string = 'R_100';
+  private ticks: TickData[] = [];
+  private readonly maxTicks = 300; // 5 minutos de ticks
+
+  constructor() {
+    super();
+    this.appId = Number(process.env.DERIV_APP_ID || 111346);
+  }
+
+  async connect(token: string, loginid?: string): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isAuthorized) {
+      this.logger.log('Conexão WebSocket já está ativa');
+      return;
+    }
+
+    this.token = token;
+    if (loginid) {
+      this.currentLoginid = loginid;
+    }
+
+    return this.establishConnection();
+  }
+
+  private establishConnection(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const url = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      this.logger.log(`Conectando ao Deriv WebSocket: ${url}`);
+
+      this.ws = new WebSocket(url, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      const timeout = setTimeout(() => {
+        if (!this.isAuthorized) {
+          this.ws?.close();
+          reject(new Error('Timeout ao conectar com Deriv'));
+        }
+      }, 10000);
+
+      this.ws.on('open', () => {
+        this.logger.log('WebSocket aberto, enviando autorização');
+        this.send({ authorize: this.token });
+      });
+
+      this.ws.on('message', (data: WebSocket.RawData) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          this.handleMessage(msg);
+          
+          if (msg.msg_type === 'authorize' && !msg.error) {
+            clearTimeout(timeout);
+            if (!this.isAuthorized) {
+              this.isAuthorized = true;
+              this.reconnectAttempts = 0;
+              this.emit('authorized', msg.authorize);
+              resolve();
+            }
+          }
+        } catch (error) {
+          this.logger.error('Erro ao processar mensagem:', error);
+        }
+      });
+
+      this.ws.on('error', (error) => {
+        clearTimeout(timeout);
+        this.logger.error('Erro no WebSocket:', error);
+        reject(error);
+      });
+
+      this.ws.on('close', () => {
+        this.logger.warn('WebSocket fechado');
+        this.isAuthorized = false;
+        this.attemptReconnect();
+      });
+    });
+  }
+
+  private handleMessage(msg: any): void {
+    if (msg.error) {
+      this.logger.error('Erro da API Deriv:', msg.error);
+      this.emit('error', msg.error);
+      return;
+    }
+
+    switch (msg.msg_type) {
+      case 'authorize':
+        if (!msg.error) {
+          this.currentLoginid = msg.authorize?.loginid || null;
+          this.emit('authorized', msg.authorize);
+        }
+        break;
+
+      case 'history':
+        this.processHistory(msg);
+        break;
+
+      case 'tick':
+        this.processTick(msg);
+        break;
+
+      case 'proposal':
+        this.processProposal(msg);
+        break;
+
+      case 'buy':
+        this.processBuy(msg);
+        break;
+
+      case 'contract':
+        this.processContract(msg);
+        break;
+    }
+  }
+
+  private processHistory(msg: any): void {
+    const history = msg.history;
+    if (!history || !history.prices) return;
+
+    const prices = history.prices || [];
+    const times = history.times || [];
+    const newTicks: TickData[] = [];
+
+    const startIdx = Math.max(0, prices.length - this.maxTicks);
+
+    for (let i = startIdx; i < prices.length; i++) {
+      const value = Number(prices[i]);
+      const epoch = times[i] ? Math.floor(Number(times[i])) : Math.floor(Date.now() / 1000) - (prices.length - i);
+
+      if (isFinite(value) && isFinite(epoch) && value > 0 && epoch > 0) {
+        newTicks.push({ value, epoch });
+      }
+    }
+
+    this.ticks = newTicks;
+
+    if (msg.subscription?.id) {
+      this.tickSubscriptionId = msg.subscription.id;
+    }
+
+    this.emit('history', { ticks: this.ticks, subscriptionId: this.tickSubscriptionId });
+  }
+
+  private processTick(msg: any): void {
+    const tick = msg.tick;
+    if (!tick || tick.quote == null || tick.epoch == null) return;
+
+    const value = Number(tick.quote);
+    const epoch = Number(tick.epoch);
+
+    if (!isFinite(value) || !isFinite(epoch) || value <= 0 || epoch <= 0) return;
+
+    if (tick.id && !this.tickSubscriptionId) {
+      this.tickSubscriptionId = tick.id;
+    }
+
+    this.ticks.push({ value, epoch });
+    if (this.ticks.length > this.maxTicks) {
+      this.ticks.shift();
+    }
+
+    this.emit('tick', { value, epoch });
+  }
+
+  private processProposal(msg: any): void {
+    const proposal = msg.proposal;
+    if (!proposal || !proposal.id) return;
+
+    const proposalData: ProposalData = {
+      id: proposal.id,
+      askPrice: Number(proposal.ask_price) || 0,
+      payout: Number(proposal.payout) || 0,
+      spot: Number(proposal.spot) || 0,
+      dateStart: Number(proposal.date_start) || 0,
+    };
+
+    if (msg.subscription?.id) {
+      this.proposalSubscriptionId = msg.subscription.id;
+    }
+
+    this.emit('proposal', proposalData);
+  }
+
+  private processBuy(msg: any): void {
+    const buy = msg.buy;
+    if (!buy || !buy.contract_id) return;
+
+    const tradeData: TradeData = {
+      contractId: buy.contract_id,
+      buyPrice: Number(buy.buy_price) || 0,
+      payout: Number(buy.payout) || 0,
+      symbol: buy.symbol || this.symbol,
+      contractType: buy.contract_type || 'CALL',
+      duration: Number(buy.duration) || 0,
+      durationUnit: buy.duration_unit || 'm',
+    };
+
+    this.emit('buy', tradeData);
+  }
+
+  private processContract(msg: any): void {
+    const contract = msg.contract;
+    if (!contract) return;
+
+    this.emit('contract_update', contract);
+  }
+
+  subscribeToSymbol(symbol: string): void {
+    this.symbol = symbol;
+    
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado. Aguardando...');
+      return;
+    }
+
+    this.logger.log(`Inscrevendo-se no símbolo: ${symbol}`);
+    
+    this.send({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 500,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    });
+  }
+
+  subscribeToProposal(config: {
+    symbol: string;
+    contractType: string;
+    duration: number;
+    durationUnit: string;
+    amount: number;
+  }): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.logger.log('Inscrevendo-se em proposta:', config);
+
+    this.send({
+      proposal: 1,
+      amount: config.amount,
+      basis: 'stake',
+      contract_type: config.contractType,
+      currency: 'USD',
+      duration: config.duration,
+      duration_unit: config.durationUnit,
+      symbol: config.symbol,
+      subscribe: 1,
+    });
+  }
+
+  buyContract(proposalId: string, price: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.logger.log(`Comprando contrato: ${proposalId} por ${price}`);
+
+    this.send({
+      buy: proposalId,
+      price: price,
+    });
+  }
+
+  getContractsFor(symbol: string, currency: string = 'USD'): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.send({
+      contracts_for: symbol,
+      currency: currency,
+      landing_company: 'svg',
+    });
+  }
+
+  getTradingDurations(landingCompany: string = 'svg'): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.send({
+      trading_durations: 1,
+      landing_company_short: landingCompany,
+    });
+  }
+
+  getActiveSymbols(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.send({
+      active_symbols: 'brief',
+    });
+  }
+
+  private send(payload: any): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.error('Tentativa de enviar mensagem com WebSocket fechado');
+      return;
+    }
+
+    try {
+      this.ws.send(JSON.stringify(payload));
+    } catch (error) {
+      this.logger.error('Erro ao enviar mensagem:', error);
+    }
+  }
+
+  private attemptReconnect(): void {
+    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
+      return;
+    }
+
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+    this.logger.log(`Tentando reconectar em ${delay}ms (tentativa ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    this.reconnectTimeout = setTimeout(() => {
+      if (this.token) {
+        this.establishConnection()
+          .then(() => {
+            this.isReconnecting = false;
+            this.emit('reconnected');
+          })
+          .catch((error) => {
+            this.logger.error('Erro ao reconectar:', error);
+            this.isReconnecting = false;
+            this.attemptReconnect();
+          });
+      } else {
+        this.isReconnecting = false;
+      }
+    }, delay);
+  }
+
+  getTicks(): TickData[] {
+    return [...this.ticks];
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    this.isAuthorized = false;
+    this.currentLoginid = null;
+    this.tickSubscriptionId = null;
+    this.proposalSubscriptionId = null;
+    this.ticks = [];
+    this.reconnectAttempts = 0;
+    this.isReconnecting = false;
+  }
+
+  onModuleDestroy() {
+    this.disconnect();
+  }
+}
+

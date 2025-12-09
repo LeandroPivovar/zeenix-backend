@@ -8,3 +8,5 @@ ADD COLUMN symbol VARCHAR(50) NOT NULL DEFAULT 'R_10' COMMENT 'Símbolo do merca
 -- Atualizar registros existentes com o valor padrão
 UPDATE ai_trades SET symbol = 'R_10' WHERE symbol IS NULL OR symbol = '';
 
+
+

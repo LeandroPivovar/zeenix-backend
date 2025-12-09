@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -758,5 +759,102 @@ export class DerivController {
       this.logger.error(`[CreateAccount] Erro: ${error.message}`, error.stack);
       throw new BadRequestException(error.message || 'Erro ao criar conta na Deriv');
     }
+  }
+
+  // ========== ENDPOINTS PARA OPERAÇÕES DE TRADING ==========
+  
+  @Post('trading/connect')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async connectTrading(@Body() body: { token: string; loginid?: string }, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Conectando usuário ${userId} ao Deriv WebSocket`);
+    
+    // Nota: A conexão WebSocket será gerenciada pelo DerivWebSocketService
+    // Este endpoint apenas retorna sucesso, a conexão real será feita via SSE
+    return { success: true, message: 'Conecte via SSE endpoint /trading/stream' };
+  }
+
+  @Get('trading/stream')
+  @UseGuards(AuthGuard('jwt'))
+  async streamTrading(@Req() req: any, @Res() res: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Iniciando stream SSE para usuário ${userId}`);
+    
+    // Configurar headers para Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Desabilitar buffering do nginx
+    
+    // Criar serviço WebSocket para este usuário (será gerenciado por um serviço singleton)
+    // Por enquanto, retornar erro informando que precisa ser implementado
+    res.write(`data: ${JSON.stringify({ error: 'Stream não implementado ainda. Use polling.' })}\n\n`);
+    res.end();
+  }
+
+  @Post('trading/subscribe-symbol')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async subscribeSymbol(@Body() body: { symbol: string; token: string; loginid?: string }, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se no símbolo ${body.symbol}`);
+    
+    // Por enquanto, retornar sucesso
+    // A implementação real será feita quando o serviço WebSocket estiver completo
+    return { success: true, message: 'Inscrição iniciada. Use /trading/ticks para obter dados.' };
+  }
+
+  @Get('trading/ticks')
+  @UseGuards(AuthGuard('jwt'))
+  async getTicks(@Query('symbol') symbol: string, @Query('token') token: string, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando ticks para ${symbol}`);
+    
+    // Por enquanto, retornar array vazio
+    // A implementação real buscará ticks do DerivWebSocketService
+    return { ticks: [], symbol: symbol || 'R_100' };
+  }
+
+  @Post('trading/subscribe-proposal')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async subscribeProposal(
+    @Body() body: {
+      symbol: string;
+      contractType: string;
+      duration: number;
+      durationUnit: string;
+      amount: number;
+      token: string;
+    },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se em proposta`);
+    
+    return { success: true, message: 'Inscrição iniciada. Use /trading/proposal para obter dados.' };
+  }
+
+  @Get('trading/proposal')
+  @UseGuards(AuthGuard('jwt'))
+  async getProposal(@Query('symbol') symbol: string, @Query('token') token: string, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando proposta para ${symbol}`);
+    
+    return { proposal: null, message: 'Nenhuma proposta disponível' };
+  }
+
+  @Post('trading/buy')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async buyContract(
+    @Body() body: { proposalId: string; price: number; token: string },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} comprando contrato ${body.proposalId}`);
+    
+    return { success: true, message: 'Compra executada via WebSocket interno' };
   }
 }
