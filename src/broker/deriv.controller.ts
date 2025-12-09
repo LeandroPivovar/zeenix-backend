@@ -82,6 +82,66 @@ class StatusDto {
   currency?: string;
 }
 
+class BuyContractDto {
+  @IsString()
+  @IsNotEmpty()
+  symbol: string;
+
+  @IsString()
+  @IsNotEmpty()
+  contractType: string; // 'CALL' ou 'PUT'
+
+  @IsInt()
+  duration: number;
+
+  @IsString()
+  @IsNotEmpty()
+  durationUnit: string; // 'm' ou 't'
+
+  @IsInt()
+  amount: number;
+
+  @IsOptional()
+  @IsString()
+  proposalId?: string;
+}
+
+class SellContractDto {
+  @IsString()
+  @IsNotEmpty()
+  contractId: string;
+}
+
+class ProposalDto {
+  @IsString()
+  @IsNotEmpty()
+  symbol: string;
+
+  @IsString()
+  @IsNotEmpty()
+  contractType: string;
+
+  @IsInt()
+  duration: number;
+
+  @IsString()
+  @IsNotEmpty()
+  durationUnit: string;
+
+  @IsInt()
+  amount: number;
+}
+
+class DefaultValuesDto {
+  @IsString()
+  @IsNotEmpty()
+  symbol: string;
+
+  @IsString()
+  @IsNotEmpty()
+  contractType: string;
+}
+
 @Controller('broker/deriv')
 export class DerivController {
   private readonly logger = new Logger(DerivController.name);
@@ -1089,31 +1149,86 @@ export class DerivController {
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async buyContract(
-    @Body() body: { proposalId: string; price: number },
+    @Body() body: BuyContractDto,
     @Req() req: any,
   ) {
     const userId = req.user.userId;
-    this.logger.log(`[Trading] Usuário ${userId} comprando contrato ${body.proposalId}`);
+    this.logger.log(`[Trading] Usuário ${userId} comprando contrato:`, body);
     
     try {
-      const service = this.wsManager.getService(userId);
-      if (!service) {
-        throw new BadRequestException('Serviço WebSocket não encontrado. Conecte-se primeiro.');
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
+        }
+        await service.connect(token);
       }
       
-      service.buyContract(body.proposalId, body.price);
-      return { success: true, message: 'Compra executada' };
+      // Se não tiver proposalId, buscar proposta primeiro
+      let proposalId = body.proposalId;
+      if (!proposalId) {
+        // Buscar proposta com os parâmetros fornecidos
+        const proposal = await this.getProposalInternal(service, {
+          symbol: body.symbol,
+          contractType: body.contractType,
+          duration: body.duration,
+          durationUnit: body.durationUnit,
+          amount: body.amount,
+        });
+        
+        if (!proposal || !proposal.id) {
+          throw new BadRequestException('Não foi possível obter proposta para compra.');
+        }
+        
+        proposalId = proposal.id;
+      }
+      
+      // Executar compra
+      service.buyContract(proposalId, body.amount);
+      
+      return { 
+        success: true, 
+        message: 'Compra executada',
+        proposalId,
+        amount: body.amount,
+      };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao comprar contrato: ${error.message}`);
       throw new BadRequestException(error.message || 'Erro ao comprar contrato');
     }
+  }
+  
+  private async getProposalInternal(service: any, config: ProposalDto): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout ao buscar proposta'));
+      }, 10000);
+      
+      const handler = (proposalData: any) => {
+        clearTimeout(timeout);
+        service.removeListener('proposal', handler);
+        resolve(proposalData);
+      };
+      
+      service.once('proposal', handler);
+      service.subscribeToProposal({
+        symbol: config.symbol,
+        contractType: config.contractType,
+        duration: config.duration,
+        durationUnit: config.durationUnit,
+        amount: config.amount,
+      });
+    });
   }
 
   @Post('trading/sell')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async sellContract(
-    @Body() body: { contractId: string; price: number },
+    @Body() body: SellContractDto,
     @Req() req: any,
   ) {
     const userId = req.user.userId;
@@ -1125,12 +1240,159 @@ export class DerivController {
         throw new BadRequestException('Serviço WebSocket não encontrado. Conecte-se primeiro.');
       }
       
-      service.sellContract(body.contractId, body.price);
-      return { success: true, message: 'Venda executada' };
+      // Buscar preço atual do contrato antes de vender
+      // O preço será determinado pela Deriv automaticamente
+      service.sellContract(body.contractId, 0); // 0 = vender ao preço atual
+      
+      return { 
+        success: true, 
+        message: 'Venda executada',
+        contractId: body.contractId,
+      };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao vender contrato: ${error.message}`);
       throw new BadRequestException(error.message || 'Erro ao vender contrato');
     }
+  }
+  
+  @Post('trading/proposal')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async getProposal(
+    @Body() body: ProposalDto,
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando proposta:`, body);
+    
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
+        }
+        await service.connect(token);
+      }
+      
+      const proposal = await this.getProposalInternal(service, body);
+      
+      return {
+        success: true,
+        proposal: {
+          id: proposal.id,
+          askPrice: proposal.askPrice,
+          payout: proposal.payout,
+          spot: proposal.spot,
+          dateStart: proposal.dateStart,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao buscar proposta: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao buscar proposta');
+    }
+  }
+  
+  @Post('trading/default-values')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async getDefaultValues(
+    @Body() body: DefaultValuesDto,
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando valores padrão:`, body);
+    
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
+        }
+        await service.connect(token);
+      }
+      
+      // Buscar contratos disponíveis para o símbolo
+      const contracts = await this.getContractsInternal(service, body.symbol, 'USD');
+      
+      // Buscar durações disponíveis
+      const durations = await this.getTradingDurationsInternal(service);
+      
+      // Determinar valores padrão baseado no símbolo e tipo de contrato
+      const defaultValues = {
+        amount: 10, // Valor padrão
+        duration: 1,
+        durationUnit: 'm' as 'm' | 't',
+        availableDurations: durations || [],
+        availableContracts: contracts || [],
+        minAmount: 0.35,
+        maxAmount: 10000,
+      };
+      
+      // Ajustar valores padrão baseado no tipo de contrato e símbolo
+      if (body.contractType === 'CALL' || body.contractType === 'PUT') {
+        // Para CALL/PUT, usar minutos por padrão
+        defaultValues.durationUnit = 'm';
+        defaultValues.duration = 1;
+      }
+      
+      return {
+        success: true,
+        defaultValues,
+      };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao buscar valores padrão: ${error.message}`);
+      // Retornar valores padrão mesmo em caso de erro
+      return {
+        success: true,
+        defaultValues: {
+          amount: 10,
+          duration: 1,
+          durationUnit: 'm',
+          minAmount: 0.35,
+          maxAmount: 10000,
+        },
+      };
+    }
+  }
+  
+  private async getContractsInternal(service: any, symbol: string, currency: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout ao buscar contratos'));
+      }, 10000);
+      
+      const handler = (contractsData: any) => {
+        clearTimeout(timeout);
+        service.removeListener('contracts_for', handler);
+        resolve(contractsData);
+      };
+      
+      service.once('contracts_for', handler);
+      service.getContractsFor(symbol, currency);
+    });
+  }
+  
+  private async getTradingDurationsInternal(service: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout ao buscar durações'));
+      }, 10000);
+      
+      const handler = (durationsData: any) => {
+        clearTimeout(timeout);
+        service.removeListener('trading_durations', handler);
+        resolve(durationsData);
+      };
+      
+      service.once('trading_durations', handler);
+      service.getTradingDurations('svg');
+    });
   }
   
   @Post('trading/get-contracts')
