@@ -104,6 +104,14 @@ class BuyContractDto {
   @IsOptional()
   @IsString()
   proposalId?: string;
+  
+  @IsOptional()
+  @IsInt()
+  barrier?: number; // Para contratos DIGIT* (dígito previsto 0-9)
+  
+  @IsOptional()
+  @IsInt()
+  multiplier?: number; // Para contratos MULTUP/MULTDOWN
 }
 
 class SellContractDto {
@@ -130,6 +138,14 @@ class ProposalDto {
 
   @IsInt()
   amount: number;
+  
+  @IsOptional()
+  @IsInt()
+  barrier?: number; // Para contratos DIGIT* (dígito previsto 0-9)
+  
+  @IsOptional()
+  @IsInt()
+  multiplier?: number; // Para contratos MULTUP/MULTDOWN
 }
 
 class DefaultValuesDto {
@@ -1111,6 +1127,8 @@ export class DerivController {
       duration: number;
       durationUnit: string;
       amount: number;
+      barrier?: number; // Para contratos DIGIT* (dígito previsto)
+      multiplier?: number; // Para contratos MULTUP/MULTDOWN
       token?: string;
     },
     @Req() req: any,
@@ -1118,8 +1136,16 @@ export class DerivController {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se em proposta`);
     
+    // Validar contractType
+    if (!body.contractType || body.contractType === 'undefined') {
+      throw new BadRequestException('contractType é obrigatório');
+    }
+    
     try {
       const service = this.wsManager.getOrCreateService(userId);
+      
+      // Remover listeners antigos de proposta para evitar vazamento de memória
+      service.removeAllListeners('proposal');
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
@@ -1130,13 +1156,37 @@ export class DerivController {
         await service.connect(token);
       }
       
-      service.subscribeToProposal({
+      // Preparar configuração da proposta
+      const proposalConfig: any = {
         symbol: body.symbol,
         contractType: body.contractType,
         duration: body.duration,
         durationUnit: body.durationUnit,
         amount: body.amount,
-      });
+      };
+      
+      // Adicionar barrier para contratos de dígitos
+      const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
+      if (digitContracts.includes(body.contractType)) {
+        if (body.barrier !== undefined && body.barrier !== null) {
+          proposalConfig.barrier = body.barrier;
+        } else {
+          // Por padrão, usar 5 se não especificado
+          proposalConfig.barrier = 5;
+        }
+      }
+      
+      // Adicionar multiplier para contratos MULTUP/MULTDOWN
+      if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
+        if (body.multiplier !== undefined && body.multiplier !== null) {
+          proposalConfig.multiplier = body.multiplier;
+        } else {
+          // Por padrão, usar 10 se não especificado
+          proposalConfig.multiplier = 10;
+        }
+      }
+      
+      service.subscribeToProposal(proposalConfig);
       
       return { success: true, message: 'Inscrição em proposta iniciada' };
     } catch (error) {
@@ -1171,13 +1221,26 @@ export class DerivController {
       let proposalId: string | undefined = body.proposalId;
       if (!proposalId) {
         // Buscar proposta com os parâmetros fornecidos
-        const proposal = await this.getProposalInternal(service, {
+        const proposalConfig: any = {
           symbol: body.symbol,
           contractType: body.contractType,
           duration: body.duration,
           durationUnit: body.durationUnit,
           amount: body.amount,
-        });
+        };
+        
+        // Adicionar barrier para contratos de dígitos
+        const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
+        if (digitContracts.includes(body.contractType)) {
+          proposalConfig.barrier = body.barrier !== undefined && body.barrier !== null ? body.barrier : 5;
+        }
+        
+        // Adicionar multiplier para contratos MULTUP/MULTDOWN
+        if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
+          proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
+        }
+        
+        const proposal = await this.getProposalInternal(service, proposalConfig);
         
         if (!proposal || !proposal.id) {
           throw new BadRequestException('Não foi possível obter proposta para compra.');
@@ -1218,14 +1281,42 @@ export class DerivController {
         resolve(proposalData);
       };
       
+      // Remover listeners antigos para evitar vazamento
+      service.removeAllListeners('proposal');
+      
       service.once('proposal', handler);
-      service.subscribeToProposal({
+      
+      // Preparar configuração da proposta
+      const proposalConfig: any = {
         symbol: config.symbol,
         contractType: config.contractType,
         duration: config.duration,
         durationUnit: config.durationUnit,
         amount: config.amount,
-      });
+      };
+      
+      // Adicionar barrier para contratos de dígitos
+      const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
+      if (digitContracts.includes(config.contractType)) {
+        if ((config as any).barrier !== undefined && (config as any).barrier !== null) {
+          proposalConfig.barrier = (config as any).barrier;
+        } else {
+          // Por padrão, usar 5 se não especificado
+          proposalConfig.barrier = 5;
+        }
+      }
+      
+      // Adicionar multiplier para contratos MULTUP/MULTDOWN
+      if (config.contractType === 'MULTUP' || config.contractType === 'MULTDOWN') {
+        if ((config as any).multiplier !== undefined && (config as any).multiplier !== null) {
+          proposalConfig.multiplier = (config as any).multiplier;
+        } else {
+          // Por padrão, usar 10 se não especificado
+          proposalConfig.multiplier = 10;
+        }
+      }
+      
+      service.subscribeToProposal(proposalConfig);
     });
   }
 
@@ -1323,7 +1414,71 @@ export class DerivController {
       }
       
       // Buscar contratos disponíveis para o símbolo
-      const contracts = await this.getContractsInternal(service, body.symbol, 'USD');
+      let contracts;
+      try {
+        contracts = await this.getContractsInternal(service, body.symbol, 'USD');
+        this.logger.log(`[Trading] Contratos recebidos para ${body.symbol}:`, JSON.stringify(contracts, null, 2));
+      } catch (error) {
+        this.logger.warn(`[Trading] Erro ao buscar contratos: ${error.message}`);
+        contracts = null;
+      }
+      
+      // Processar contratos para extrair tipos disponíveis
+      let availableContracts = [];
+      if (contracts) {
+        // A API Deriv retorna contracts_for como um objeto com arrays de contratos
+        // Estrutura pode ser: { contracts_for: { [symbol]: [...] } } ou array direto
+        if (Array.isArray(contracts)) {
+          availableContracts = contracts;
+        } else if (contracts.contracts_for && typeof contracts.contracts_for === 'object') {
+          // Se for um objeto, extrair os contratos do símbolo
+          const symbolContracts = contracts.contracts_for[body.symbol];
+          if (Array.isArray(symbolContracts)) {
+            availableContracts = symbolContracts;
+          } else if (symbolContracts && Array.isArray(symbolContracts.available)) {
+            availableContracts = symbolContracts.available;
+          } else if (symbolContracts && typeof symbolContracts === 'object') {
+            // Pode ser um objeto com propriedades de contratos
+            availableContracts = Object.values(symbolContracts).filter(Array.isArray).flat();
+          }
+        } else if (contracts[body.symbol]) {
+          // Se o símbolo for uma chave direta
+          availableContracts = Array.isArray(contracts[body.symbol]) ? contracts[body.symbol] : [];
+        } else if (typeof contracts === 'object') {
+          // Tentar extrair de qualquer estrutura de objeto
+          const allValues = Object.values(contracts);
+          for (const value of allValues) {
+            if (Array.isArray(value)) {
+              availableContracts = [...availableContracts, ...value];
+            } else if (value && typeof value === 'object' && value[body.symbol]) {
+              const symbolData = value[body.symbol];
+              if (Array.isArray(symbolData)) {
+                availableContracts = [...availableContracts, ...symbolData];
+              }
+            }
+          }
+        }
+        
+        // Normalizar estrutura dos contratos - garantir que tenham contract_type
+        availableContracts = availableContracts.map(contract => {
+          if (typeof contract === 'string') {
+            return { contract_type: contract };
+          }
+          if (contract && typeof contract === 'object') {
+            // Garantir que tenha contract_type
+            if (!contract.contract_type && contract.type) {
+              contract.contract_type = contract.type;
+            }
+            if (!contract.contract_type && contract.name) {
+              contract.contract_type = contract.name;
+            }
+            return contract;
+          }
+          return contract;
+        }).filter(c => c && c.contract_type);
+        
+        this.logger.log(`[Trading] Contratos processados (${availableContracts.length}):`, JSON.stringify(availableContracts, null, 2));
+      }
       
       // Buscar durações disponíveis
       const durations = await this.getTradingDurationsInternal(service);
@@ -1334,7 +1489,7 @@ export class DerivController {
         duration: 1,
         durationUnit: 'm' as 'm' | 't',
         availableDurations: durations || [],
-        availableContracts: contracts || [],
+        availableContracts: availableContracts,
         minAmount: 0.35,
         maxAmount: 10000,
       };

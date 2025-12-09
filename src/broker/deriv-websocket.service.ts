@@ -369,15 +369,23 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     duration: number;
     durationUnit: string;
     amount: number;
+    barrier?: number; // Para contratos DIGIT*
+    multiplier?: number; // Para contratos MULTUP/MULTDOWN
   }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
 
+    // Validar contractType
+    if (!config.contractType || config.contractType === 'undefined') {
+      this.logger.error('contractType é obrigatório');
+      return;
+    }
+
     this.logger.log('Inscrevendo-se em proposta:', config);
 
-    this.send({
+    const proposalRequest: any = {
       proposal: 1,
       amount: config.amount,
       basis: 'stake',
@@ -387,7 +395,19 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       duration_unit: config.durationUnit,
       symbol: config.symbol,
       subscribe: 1,
-    });
+    };
+    
+    // Adicionar barrier para contratos de dígitos
+    if (config.barrier !== undefined && config.barrier !== null) {
+      proposalRequest.barrier = String(config.barrier);
+    }
+    
+    // Adicionar multiplier para contratos MULTUP/MULTDOWN
+    if (config.multiplier !== undefined && config.multiplier !== null) {
+      proposalRequest.multiplier = config.multiplier;
+    }
+
+    this.send(proposalRequest);
   }
 
   buyContract(proposalId: string, price: number): void {

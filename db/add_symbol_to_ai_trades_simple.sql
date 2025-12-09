@@ -10,3 +10,4 @@ UPDATE ai_trades SET symbol = 'R_10' WHERE symbol IS NULL OR symbol = '';
 
 
 
+
