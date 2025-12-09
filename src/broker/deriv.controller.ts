@@ -1023,6 +1023,10 @@ export class DerivController {
       res.write(`data: ${JSON.stringify({ type: 'active_symbols', data })}\n\n`);
     };
     
+    const onContractUpdate = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'contract', data })}\n\n`);
+    };
+    
     service.on('tick', onTick);
     service.on('history', onHistory);
     service.on('proposal', onProposal);
@@ -1032,6 +1036,7 @@ export class DerivController {
     service.on('contracts_for', onContractsFor);
     service.on('trading_durations', onTradingDurations);
     service.on('active_symbols', onActiveSymbols);
+    service.on('contract_update', onContractUpdate);
     
     // Limpar listeners quando a conexão for fechada
     req.on('close', () => {
@@ -1045,6 +1050,7 @@ export class DerivController {
       service.removeAllListeners('contracts_for');
       service.removeAllListeners('trading_durations');
       service.removeAllListeners('active_symbols');
+      service.removeAllListeners('contract_update');
     });
     
     // Enviar dados iniciais se disponíveis
