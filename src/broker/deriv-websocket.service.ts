@@ -149,8 +149,24 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
         this.processBuy(msg);
         break;
 
+      case 'sell':
+        this.processSell(msg);
+        break;
+
       case 'contract':
         this.processContract(msg);
+        break;
+
+      case 'contracts_for':
+        this.processContractsFor(msg);
+        break;
+
+      case 'trading_durations':
+        this.processTradingDurations(msg);
+        break;
+
+      case 'active_symbols':
+        this.processActiveSymbols(msg);
         break;
     }
   }
@@ -240,11 +256,46 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.emit('buy', tradeData);
   }
 
+  private processSell(msg: any): void {
+    const sell = msg.sell;
+    if (!sell || !sell.contract_id) return;
+
+    const sellData = {
+      contractId: sell.contract_id,
+      sellPrice: Number(sell.sell_price) || 0,
+      profit: Number(sell.profit) || 0,
+      symbol: sell.symbol || this.symbol,
+    };
+
+    this.emit('sell', sellData);
+  }
+
   private processContract(msg: any): void {
     const contract = msg.contract;
     if (!contract) return;
 
     this.emit('contract_update', contract);
+  }
+
+  private processContractsFor(msg: any): void {
+    const contractsFor = msg.contracts_for;
+    if (!contractsFor) return;
+
+    this.emit('contracts_for', contractsFor);
+  }
+
+  private processTradingDurations(msg: any): void {
+    const durations = msg.trading_durations;
+    if (!durations) return;
+
+    this.emit('trading_durations', durations);
+  }
+
+  private processActiveSymbols(msg: any): void {
+    const symbols = msg.active_symbols;
+    if (!symbols) return;
+
+    this.emit('active_symbols', symbols);
   }
 
   subscribeToSymbol(symbol: string): void {
@@ -308,6 +359,20 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     });
   }
 
+  sellContract(contractId: string, price: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.logger.log(`Vendendo contrato: ${contractId} por ${price}`);
+
+    this.send({
+      sell: contractId,
+      price: price,
+    });
+  }
+
   getContractsFor(symbol: string, currency: string = 'USD'): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
@@ -342,6 +407,36 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.send({
       active_symbols: 'brief',
     });
+  }
+
+  cancelSubscription(subscriptionId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    this.logger.log(`Cancelando subscription: ${subscriptionId}`);
+    this.send({ forget: subscriptionId });
+
+    // Limpar IDs locais se corresponderem
+    if (this.tickSubscriptionId === subscriptionId) {
+      this.tickSubscriptionId = null;
+    }
+    if (this.proposalSubscriptionId === subscriptionId) {
+      this.proposalSubscriptionId = null;
+    }
+  }
+
+  cancelTickSubscription(): void {
+    if (this.tickSubscriptionId) {
+      this.cancelSubscription(this.tickSubscriptionId);
+    }
+  }
+
+  cancelProposalSubscription(): void {
+    if (this.proposalSubscriptionId) {
+      this.cancelSubscription(this.proposalSubscriptionId);
+    }
   }
 
   private send(payload: any): void {

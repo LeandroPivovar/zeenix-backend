@@ -29,6 +29,7 @@ import { Type } from 'class-transformer';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { DerivService } from './deriv.service';
+import { DerivWebSocketManagerService } from './deriv-websocket-manager.service';
 
 class ConnectDto {
   @IsString()
@@ -93,6 +94,7 @@ export class DerivController {
     private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
     private readonly configService: ConfigService,
+    private readonly wsManager: DerivWebSocketManagerService,
   ) {
     this.defaultAppId = Number(this.configService.get('DERIV_APP_ID') ?? 1089);
     this.oauthRedirectUrl = this.configService.get<string>('DERIV_OAUTH_REDIRECT_URL');
@@ -763,6 +765,49 @@ export class DerivController {
 
   // ========== ENDPOINTS PARA OPERAÇÕES DE TRADING ==========
   
+  // Cache de tokens temporários para SSE (expira em 5 minutos)
+  private sseTokens = new Map<string, { userId: string; expiresAt: number }>();
+  
+  @Post('trading/sse-token')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async generateSSEToken(@Req() req: any) {
+    const userId = req.user.userId;
+    
+    // Gerar token temporário (UUID simples)
+    const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutos
+    
+    this.sseTokens.set(token, { userId, expiresAt });
+    
+    // Limpar tokens expirados periodicamente
+    this.cleanExpiredSSETokens();
+    
+    this.logger.log(`[Trading] Token SSE gerado para usuário ${userId}`);
+    return { token, expiresIn: 300 }; // 5 minutos em segundos
+  }
+  
+  private cleanExpiredSSETokens() {
+    const now = Date.now();
+    for (const [token, data] of this.sseTokens.entries()) {
+      if (data.expiresAt < now) {
+        this.sseTokens.delete(token);
+      }
+    }
+  }
+  
+  private validateSSEToken(token: string): string | null {
+    const data = this.sseTokens.get(token);
+    if (!data) return null;
+    
+    if (data.expiresAt < Date.now()) {
+      this.sseTokens.delete(token);
+      return null;
+    }
+    
+    return data.userId;
+  }
+  
   @Post('trading/connect')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -770,50 +815,188 @@ export class DerivController {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Conectando usuário ${userId} ao Deriv WebSocket`);
     
-    // Nota: A conexão WebSocket será gerenciada pelo DerivWebSocketService
-    // Este endpoint apenas retorna sucesso, a conexão real será feita via SSE
-    return { success: true, message: 'Conecte via SSE endpoint /trading/stream' };
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      await service.connect(body.token, body.loginid);
+      return { success: true, message: 'Conectado com sucesso' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao conectar: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao conectar com Deriv');
+    }
   }
 
   @Get('trading/stream')
-  @UseGuards(AuthGuard('jwt'))
-  async streamTrading(@Req() req: any, @Res() res: any) {
-    const userId = req.user.userId;
+  async streamTrading(
+    @Query('token') sseToken: string,
+    @Query('derivToken') derivToken: string,
+    @Req() req: any,
+    @Res() res: any,
+  ) {
+    // Validar token SSE temporário
+    let userId: string | null = null;
+    
+    if (sseToken) {
+      userId = this.validateSSEToken(sseToken);
+      if (!userId) {
+        res.status(401).json({ error: 'Token SSE inválido ou expirado' });
+        return;
+      }
+    } else {
+      // Fallback: usar JWT se não tiver token SSE (menos seguro, mas funcional)
+      // Isso requer AuthGuard, mas EventSource não suporta headers
+      // Por isso, preferimos usar token temporário
+      res.status(400).json({ error: 'Token SSE necessário. Use /trading/sse-token para obter um token.' });
+      return;
+    }
     this.logger.log(`[Trading] Iniciando stream SSE para usuário ${userId}`);
     
     // Configurar headers para Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Desabilitar buffering do nginx
+    res.setHeader('X-Accel-Buffering', 'no');
     
-    // Criar serviço WebSocket para este usuário (será gerenciado por um serviço singleton)
-    // Por enquanto, retornar erro informando que precisa ser implementado
-    res.write(`data: ${JSON.stringify({ error: 'Stream não implementado ainda. Use polling.' })}\n\n`);
-    res.end();
+    const service = this.wsManager.getOrCreateService(userId);
+    
+    // Se não estiver conectado, conectar primeiro
+    if (!service['isAuthorized']) {
+      // Buscar token Deriv do banco de dados
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      const loginid = derivInfo?.loginId;
+      const finalDerivToken = derivInfo?.raw?.tokensByLoginId?.[loginid] || 
+                               derivToken || // Token passado via query
+                               null;
+      
+      if (!finalDerivToken) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Token Deriv não encontrado' })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      try {
+        await service.connect(finalDerivToken, loginid);
+      } catch (error) {
+        this.logger.error(`[Trading] Erro ao conectar serviço: ${error.message}`);
+        res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+        res.end();
+        return;
+      }
+    }
+    
+    // Configurar listeners para eventos
+    const onTick = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'tick', data })}\n\n`);
+    };
+    
+    const onHistory = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'history', data })}\n\n`);
+    };
+    
+    const onProposal = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'proposal', data })}\n\n`);
+    };
+    
+    const onBuy = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'buy', data })}\n\n`);
+    };
+    
+    const onSell = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'sell', data })}\n\n`);
+    };
+    
+    const onError = (error: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`);
+    };
+    
+    const onContractsFor = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'contracts_for', data })}\n\n`);
+    };
+    
+    const onTradingDurations = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'trading_durations', data })}\n\n`);
+    };
+    
+    const onActiveSymbols = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: 'active_symbols', data })}\n\n`);
+    };
+    
+    service.on('tick', onTick);
+    service.on('history', onHistory);
+    service.on('proposal', onProposal);
+    service.on('buy', onBuy);
+    service.on('sell', onSell);
+    service.on('error', onError);
+    service.on('contracts_for', onContractsFor);
+    service.on('trading_durations', onTradingDurations);
+    service.on('active_symbols', onActiveSymbols);
+    
+    // Limpar listeners quando a conexão for fechada
+    req.on('close', () => {
+      this.logger.log(`[Trading] Cliente desconectado do stream para usuário ${userId}`);
+      service.removeAllListeners('tick');
+      service.removeAllListeners('history');
+      service.removeAllListeners('proposal');
+      service.removeAllListeners('buy');
+      service.removeAllListeners('sell');
+      service.removeAllListeners('error');
+      service.removeAllListeners('contracts_for');
+      service.removeAllListeners('trading_durations');
+      service.removeAllListeners('active_symbols');
+    });
+    
+    // Enviar dados iniciais se disponíveis
+    const ticks = service.getTicks();
+    if (ticks.length > 0) {
+      res.write(`data: ${JSON.stringify({ type: 'history', data: { ticks } })}\n\n`);
+    }
   }
 
   @Post('trading/subscribe-symbol')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
-  async subscribeSymbol(@Body() body: { symbol: string; token: string; loginid?: string }, @Req() req: any) {
+  async subscribeSymbol(@Body() body: { symbol: string; token?: string; loginid?: string }, @Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se no símbolo ${body.symbol}`);
     
-    // Por enquanto, retornar sucesso
-    // A implementação real será feita quando o serviço WebSocket estiver completo
-    return { success: true, message: 'Inscrição iniciada. Use /trading/ticks para obter dados.' };
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = body.token || this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+        }
+        await service.connect(token, body.loginid);
+      }
+      
+      service.subscribeToSymbol(body.symbol);
+      return { success: true, message: 'Inscrição iniciada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao inscrever-se no símbolo: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao inscrever-se no símbolo');
+    }
   }
 
   @Get('trading/ticks')
   @UseGuards(AuthGuard('jwt'))
-  async getTicks(@Query('symbol') symbol: string, @Query('token') token: string, @Req() req: any) {
+  async getTicks(@Query('symbol') symbol: string, @Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando ticks para ${symbol}`);
     
-    // Por enquanto, retornar array vazio
-    // A implementação real buscará ticks do DerivWebSocketService
-    return { ticks: [], symbol: symbol || 'R_100' };
+    const service = this.wsManager.getService(userId);
+    if (!service) {
+      return { ticks: [], symbol: symbol || 'R_100' };
+    }
+    
+    const ticks = service.getTicks();
+    return { ticks, symbol: symbol || 'R_100', count: ticks.length };
+  }
+  
+  private getTokenFromStorage(userId: string): string | null {
+    // Buscar token do banco de dados
+    // Por enquanto retornar null, será implementado depois
+    return null;
   }
 
   @Post('trading/subscribe-proposal')
@@ -826,35 +1009,181 @@ export class DerivController {
       duration: number;
       durationUnit: string;
       amount: number;
-      token: string;
+      token?: string;
     },
     @Req() req: any,
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se em proposta`);
     
-    return { success: true, message: 'Inscrição iniciada. Use /trading/proposal para obter dados.' };
-  }
-
-  @Get('trading/proposal')
-  @UseGuards(AuthGuard('jwt'))
-  async getProposal(@Query('symbol') symbol: string, @Query('token') token: string, @Req() req: any) {
-    const userId = req.user.userId;
-    this.logger.log(`[Trading] Usuário ${userId} solicitando proposta para ${symbol}`);
-    
-    return { proposal: null, message: 'Nenhuma proposta disponível' };
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = body.token || this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+        }
+        await service.connect(token);
+      }
+      
+      service.subscribeToProposal({
+        symbol: body.symbol,
+        contractType: body.contractType,
+        duration: body.duration,
+        durationUnit: body.durationUnit,
+        amount: body.amount,
+      });
+      
+      return { success: true, message: 'Inscrição em proposta iniciada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao inscrever-se em proposta: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao inscrever-se em proposta');
+    }
   }
 
   @Post('trading/buy')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async buyContract(
-    @Body() body: { proposalId: string; price: number; token: string },
+    @Body() body: { proposalId: string; price: number },
     @Req() req: any,
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} comprando contrato ${body.proposalId}`);
     
-    return { success: true, message: 'Compra executada via WebSocket interno' };
+    try {
+      const service = this.wsManager.getService(userId);
+      if (!service) {
+        throw new BadRequestException('Serviço WebSocket não encontrado. Conecte-se primeiro.');
+      }
+      
+      service.buyContract(body.proposalId, body.price);
+      return { success: true, message: 'Compra executada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao comprar contrato: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao comprar contrato');
+    }
+  }
+
+  @Post('trading/sell')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async sellContract(
+    @Body() body: { contractId: string; price: number },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} vendendo contrato ${body.contractId}`);
+    
+    try {
+      const service = this.wsManager.getService(userId);
+      if (!service) {
+        throw new BadRequestException('Serviço WebSocket não encontrado. Conecte-se primeiro.');
+      }
+      
+      service.sellContract(body.contractId, body.price);
+      return { success: true, message: 'Venda executada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao vender contrato: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao vender contrato');
+    }
+  }
+  
+  @Post('trading/get-contracts')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async getContracts(
+    @Body() body: { symbol: string; currency?: string; token?: string },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando contratos para ${body.symbol}`);
+    
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+      
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = body.token || this.getTokenFromStorage(userId);
+        if (!token) {
+          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+        }
+        await service.connect(token);
+      }
+      
+      service.getContractsFor(body.symbol, body.currency || 'USD');
+      return { success: true, message: 'Solicitação de contratos enviada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao buscar contratos: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao buscar contratos');
+    }
+  }
+
+  @Post('trading/cancel-subscription')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async cancelSubscription(
+    @Body() body: { subscriptionId: string },
+    @Req() req: any,
+  ) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} cancelando subscription ${body.subscriptionId}`);
+    
+    try {
+      const service = this.wsManager.getService(userId);
+      if (!service) {
+        throw new BadRequestException('Serviço WebSocket não encontrado');
+      }
+      
+      service.cancelSubscription(body.subscriptionId);
+      return { success: true, message: 'Subscription cancelada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao cancelar subscription: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao cancelar subscription');
+    }
+  }
+
+  @Post('trading/cancel-tick-subscription')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async cancelTickSubscription(@Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} cancelando subscription de ticks`);
+    
+    try {
+      const service = this.wsManager.getService(userId);
+      if (!service) {
+        throw new BadRequestException('Serviço WebSocket não encontrado');
+      }
+      
+      service.cancelTickSubscription();
+      return { success: true, message: 'Subscription de ticks cancelada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao cancelar subscription de ticks: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao cancelar subscription de ticks');
+    }
+  }
+
+  @Post('trading/cancel-proposal-subscription')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async cancelProposalSubscription(@Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} cancelando subscription de proposta`);
+    
+    try {
+      const service = this.wsManager.getService(userId);
+      if (!service) {
+        throw new BadRequestException('Serviço WebSocket não encontrado');
+      }
+      
+      service.cancelProposalSubscription();
+      return { success: true, message: 'Subscription de proposta cancelada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao cancelar subscription de proposta: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao cancelar subscription de proposta');
+    }
   }
 }
