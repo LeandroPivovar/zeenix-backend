@@ -1168,7 +1168,7 @@ export class DerivController {
       }
       
       // Se não tiver proposalId, buscar proposta primeiro
-      let proposalId = body.proposalId;
+      let proposalId: string | undefined = body.proposalId;
       if (!proposalId) {
         // Buscar proposta com os parâmetros fornecidos
         const proposal = await this.getProposalInternal(service, {
@@ -1184,6 +1184,11 @@ export class DerivController {
         }
         
         proposalId = proposal.id;
+      }
+      
+      // Validar que proposalId é uma string válida
+      if (!proposalId || typeof proposalId !== 'string') {
+        throw new BadRequestException('Proposta inválida para compra.');
       }
       
       // Executar compra
