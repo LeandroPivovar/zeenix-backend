@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 
-interface TickData {
+export interface TickData {
   value: number;
   epoch: number;
 }

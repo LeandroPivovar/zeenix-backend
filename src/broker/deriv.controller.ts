@@ -863,7 +863,7 @@ export class DerivController {
       // Buscar token Deriv do banco de dados
       const derivInfo = await this.userRepository.getDerivInfo(userId);
       const loginid = derivInfo?.loginId;
-      const finalDerivToken = derivInfo?.raw?.tokensByLoginId?.[loginid] || 
+      const finalDerivToken = (loginid && derivInfo?.raw?.tokensByLoginId?.[loginid]) || 
                                derivToken || // Token passado via query
                                null;
       
@@ -874,7 +874,7 @@ export class DerivController {
       }
       
       try {
-        await service.connect(finalDerivToken, loginid);
+        await service.connect(finalDerivToken, loginid || undefined);
       } catch (error) {
         this.logger.error(`[Trading] Erro ao conectar serviço: ${error.message}`);
         res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
