@@ -1214,25 +1214,53 @@ export class DerivController {
     try {
       const service = this.wsManager.getOrCreateService(userId);
       
-      // Se não estiver conectado, conectar primeiro
-      if (!service['isAuthorized']) {
-        // Buscar informações da conta para determinar qual loginid usar
-        const derivInfo = await this.userRepository.getDerivInfo(userId);
-        const preferredCurrency = await this.getPreferredCurrency(userId, 'BUY');
+      // Buscar informações da conta para determinar qual loginid usar
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      const preferredCurrency = await this.getPreferredCurrency(userId, 'BUY');
+      
+      this.logger.log(`[Trading] PreferredCurrency: ${preferredCurrency}`);
+      this.logger.log(`[Trading] derivInfo.raw existe: ${!!derivInfo?.raw}`);
+      this.logger.log(`[Trading] accountsByCurrency existe: ${!!derivInfo?.raw?.accountsByCurrency}`);
+      this.logger.log(`[Trading] accountsByCurrency keys: ${derivInfo?.raw?.accountsByCurrency ? Object.keys(derivInfo?.raw?.accountsByCurrency).join(', ') : 'N/A'}`);
+      this.logger.log(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo?.raw?.tokensByLoginId).join(', ') : 'N/A'}`);
+      
+      // Determinar qual loginid usar baseado na moeda preferida
+      let targetLoginid: string | undefined = undefined;
+      if (preferredCurrency === 'DEMO') {
+        // Para DEMO, buscar conta demo (VRTC*)
+        // Tentar todas as moedas, priorizando USD
+        const allAccounts = Object.values(derivInfo?.raw?.accountsByCurrency || {}).flat();
+        const usdDemoAccounts = (derivInfo?.raw?.accountsByCurrency?.['USD'] || []).filter((acc: any) => acc.isDemo === true);
         
-        // Determinar qual loginid usar baseado na moeda preferida
-        let targetLoginid: string | undefined = undefined;
-        if (preferredCurrency === 'DEMO') {
-          // Para DEMO, buscar conta demo (VRTC*)
-          const demoAccounts = derivInfo?.raw?.accountsByCurrency?.['USD']?.filter((acc: any) => acc.isDemo === true) || [];
+        this.logger.log(`[Trading] Contas demo USD encontradas: ${usdDemoAccounts.length}`);
+        this.logger.log(`[Trading] Total de contas: ${allAccounts.length}`);
+        
+        if (usdDemoAccounts.length > 0) {
+          targetLoginid = usdDemoAccounts[0].loginid;
+          this.logger.log(`[Trading] ✅ Usando conta demo USD: ${targetLoginid}`);
+        } else {
+          // Buscar qualquer conta demo
+          const demoAccounts = allAccounts.filter((acc: any) => acc.isDemo === true);
           if (demoAccounts.length > 0) {
             targetLoginid = demoAccounts[0].loginid;
-            this.logger.log(`[Trading] Usando conta demo: ${targetLoginid}`);
+            this.logger.log(`[Trading] ✅ Usando conta demo (qualquer moeda): ${targetLoginid}`);
+          } else {
+            this.logger.warn(`[Trading] ⚠️ Nenhuma conta demo encontrada, usando loginId padrão`);
+            targetLoginid = derivInfo?.loginId || undefined;
           }
-        } else {
-          // Para moedas reais, usar o loginid da conta selecionada
-          targetLoginid = derivInfo?.loginId || undefined;
         }
+      } else {
+        // Para moedas reais, usar o loginid da conta selecionada
+        targetLoginid = derivInfo?.loginId || undefined;
+        this.logger.log(`[Trading] Usando conta real: ${targetLoginid}`);
+      }
+      
+      // Se não estiver conectado OU se estiver conectado com loginid diferente, reconectar
+      const currentLoginid = service['currentLoginid'];
+      const needsReconnect = !service['isAuthorized'] || (targetLoginid && currentLoginid !== targetLoginid);
+      
+      if (needsReconnect) {
+        this.logger.log(`[Trading] Reconectando: isAuthorized=${service['isAuthorized']}, currentLoginid=${currentLoginid}, targetLoginid=${targetLoginid}`);
         
         // Buscar token do loginid específico ou fallback
         const token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || 
@@ -1242,7 +1270,22 @@ export class DerivController {
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
         
+        this.logger.log(`[Trading] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'}`);
+        
+        // Se já estiver conectado, desconectar primeiro
+        if (service['isAuthorized']) {
+          this.logger.log(`[Trading] Desconectando serviço atual para reconectar com conta correta`);
+          try {
+            service.disconnect?.();
+          } catch (e) {
+            this.logger.warn(`[Trading] Erro ao desconectar: ${e.message}`);
+          }
+        }
+        
         await service.connect(token, targetLoginid);
+        this.logger.log(`[Trading] ✅ Conectado com loginid: ${targetLoginid}`);
+      } else {
+        this.logger.log(`[Trading] ✅ Já conectado com loginid correto: ${currentLoginid}`);
       }
       
       // Se não tiver proposalId, buscar proposta primeiro
