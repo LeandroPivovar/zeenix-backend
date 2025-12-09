@@ -1216,11 +1216,33 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = this.getTokenFromStorage(userId);
+        // Buscar informações da conta para determinar qual loginid usar
+        const derivInfo = await this.userRepository.getDerivInfo(userId);
+        const preferredCurrency = await this.getPreferredCurrency(userId, 'BUY');
+        
+        // Determinar qual loginid usar baseado na moeda preferida
+        let targetLoginid: string | undefined = undefined;
+        if (preferredCurrency === 'DEMO') {
+          // Para DEMO, buscar conta demo (VRTC*)
+          const demoAccounts = derivInfo?.raw?.accountsByCurrency?.['USD']?.filter((acc: any) => acc.isDemo === true) || [];
+          if (demoAccounts.length > 0) {
+            targetLoginid = demoAccounts[0].loginid;
+            this.logger.log(`[Trading] Usando conta demo: ${targetLoginid}`);
+          }
+        } else {
+          // Para moedas reais, usar o loginid da conta selecionada
+          targetLoginid = derivInfo?.loginId;
+        }
+        
+        // Buscar token do loginid específico ou fallback
+        const token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || 
+                      this.getTokenFromStorage(userId);
+        
         if (!token) {
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
-        await service.connect(token);
+        
+        await service.connect(token, targetLoginid);
       }
       
       // Se não tiver proposalId, buscar proposta primeiro
