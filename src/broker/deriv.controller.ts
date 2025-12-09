@@ -1231,7 +1231,7 @@ export class DerivController {
           }
         } else {
           // Para moedas reais, usar o loginid da conta selecionada
-          targetLoginid = derivInfo?.loginId;
+          targetLoginid = derivInfo?.loginId || undefined;
         }
         
         // Buscar token do loginid específico ou fallback
