@@ -1229,8 +1229,9 @@ export class DerivController {
       if (preferredCurrency === 'DEMO') {
         // Para DEMO, buscar conta demo (VRTC*)
         // Tentar todas as moedas, priorizando USD
-        const allAccounts = Object.values(derivInfo?.raw?.accountsByCurrency || {}).flat();
-        const usdDemoAccounts = (derivInfo?.raw?.accountsByCurrency?.['USD'] || []).filter((acc: any) => acc.isDemo === true);
+        type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
+        const allAccounts: AccountEntry[] = Object.values(derivInfo?.raw?.accountsByCurrency || {}).flat() as AccountEntry[];
+        const usdDemoAccounts: AccountEntry[] = ((derivInfo?.raw?.accountsByCurrency?.['USD'] || []) as AccountEntry[]).filter((acc) => acc.isDemo === true);
         
         this.logger.log(`[Trading] Contas demo USD encontradas: ${usdDemoAccounts.length}`);
         this.logger.log(`[Trading] Total de contas: ${allAccounts.length}`);
@@ -1240,7 +1241,7 @@ export class DerivController {
           this.logger.log(`[Trading] ✅ Usando conta demo USD: ${targetLoginid}`);
         } else {
           // Buscar qualquer conta demo
-          const demoAccounts = allAccounts.filter((acc: any) => acc.isDemo === true);
+          const demoAccounts: AccountEntry[] = allAccounts.filter((acc) => acc.isDemo === true);
           if (demoAccounts.length > 0) {
             targetLoginid = demoAccounts[0].loginid;
             this.logger.log(`[Trading] ✅ Usando conta demo (qualquer moeda): ${targetLoginid}`);
