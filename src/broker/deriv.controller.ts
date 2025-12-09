@@ -980,13 +980,13 @@ export class DerivController {
 
   @Get('trading/ticks')
   @UseGuards(AuthGuard('jwt'))
-  async getTicks(@Query('symbol') symbol: string, @Req() req: any) {
+  async getTicks(@Query('symbol') symbol: string, @Req() req: any): Promise<{ ticks: Array<{ value: number; epoch: number }>; symbol: string; count: number }> {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando ticks para ${symbol}`);
     
     const service = this.wsManager.getService(userId);
     if (!service) {
-      return { ticks: [], symbol: symbol || 'R_100' };
+      return { ticks: [], symbol: symbol || 'R_100', count: 0 };
     }
     
     const ticks = service.getTicks();
