@@ -23,6 +23,8 @@ interface TradeData {
   contractType: string;
   duration: number;
   durationUnit: string;
+  entrySpot?: number | null;
+  entryTime?: number | null;
 }
 
 @Injectable()
@@ -296,6 +298,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       contractType: buy.contract_type || 'CALL',
       duration: Number(buy.duration) || 0,
       durationUnit: buy.duration_unit || 'm',
+      entrySpot: Number(buy.entry_spot) || null,
+      entryTime: Number(buy.purchase_time) || null,
     };
 
     this.emit('buy', tradeData);
