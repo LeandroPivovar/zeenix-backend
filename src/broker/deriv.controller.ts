@@ -30,6 +30,10 @@ import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { DerivService } from './deriv.service';
 import { DerivWebSocketManagerService } from './deriv-websocket-manager.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not } from 'typeorm';
+import { TradeEntity } from '../infrastructure/database/entities/trade.entity';
+import { v4 as uuidv4 } from 'uuid';
 
 class ConnectDto {
   @IsString()
@@ -171,6 +175,8 @@ export class DerivController {
     private readonly settingsService: SettingsService,
     private readonly configService: ConfigService,
     private readonly wsManager: DerivWebSocketManagerService,
+    @InjectRepository(TradeEntity)
+    private readonly tradeRepository: Repository<TradeEntity>,
   ) {
     this.defaultAppId = Number(this.configService.get('DERIV_APP_ID') ?? 1089);
     this.oauthRedirectUrl = this.configService.get<string>('DERIV_OAUTH_REDIRECT_URL');
@@ -999,12 +1005,51 @@ export class DerivController {
       res.write(`data: ${JSON.stringify({ type: 'proposal', data })}\n\n`);
     };
     
-    const onBuy = (data: any) => {
+    const onBuy = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'buy', data })}\n\n`);
+      
+      // Salvar operação no banco
+      try {
+        const trade = this.tradeRepository.create({
+          id: uuidv4(),
+          userId,
+          contractType: data.contractType || 'CALL',
+          timeType: data.durationUnit === 't' ? 'tick' : 'time',
+          duration: String(data.duration || 1),
+          multiplier: 1.00,
+          entryValue: data.buyPrice || 0,
+          tradeType: 'BUY' as any,
+          status: 'pending' as any,
+          derivTransactionId: data.contractId || null,
+        });
+        await this.tradeRepository.save(trade);
+        this.logger.log(`[Trading] Operação de compra salva no banco: ${trade.id}`);
+      } catch (error) {
+        this.logger.error(`[Trading] Erro ao salvar operação de compra: ${error.message}`);
+      }
     };
     
-    const onSell = (data: any) => {
+    const onSell = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'sell', data })}\n\n`);
+      
+      // Atualizar operação no banco com o resultado
+      try {
+        const trade = await this.tradeRepository.findOne({
+          where: { derivTransactionId: data.contractId, userId },
+          order: { createdAt: 'DESC' },
+        });
+        
+        if (trade) {
+          trade.profit = data.profit || null;
+          trade.status = data.profit && data.profit > 0 ? 'won' : (data.profit !== null ? 'lost' : 'pending') as any;
+          await this.tradeRepository.save(trade);
+          this.logger.log(`[Trading] Operação de venda atualizada no banco: ${trade.id}`);
+        } else {
+          this.logger.warn(`[Trading] Operação não encontrada para contractId: ${data.contractId}`);
+        }
+      } catch (error) {
+        this.logger.error(`[Trading] Erro ao atualizar operação de venda: ${error.message}`);
+      }
     };
     
     const onError = (error: any) => {
