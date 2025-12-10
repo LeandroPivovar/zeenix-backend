@@ -1089,8 +1089,52 @@ export class DerivController {
             // Se o contrato foi vendido ou expirou, atualizar com os dados finais
             if (data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost') {
               // Atualizar preço de saída se disponível
-              if (data.exit_spot !== null && data.exit_spot !== undefined) {
-                trade.exitSpot = Number(data.exit_spot) || null;
+              let exitSpot = data.exit_spot !== null && data.exit_spot !== undefined ? Number(data.exit_spot) : null;
+              
+              // Se não encontrou exit_spot na resposta, tentar obter do último tick do serviço WebSocket
+              if (exitSpot === null || exitSpot === undefined) {
+                try {
+                  const service = this.wsManager.getService(userId);
+                  if (service) {
+                    const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
+                    if (ticks && ticks.length > 0) {
+                      const lastTick = ticks[ticks.length - 1];
+                      if (lastTick && lastTick.value) {
+                        exitSpot = Number(lastTick.value);
+                        this.logger.log(`[Trading] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`);
+                      }
+                    }
+                  }
+                } catch (error) {
+                  this.logger.warn(`[Trading] Erro ao obter último tick para exitSpot: ${error.message}`);
+                }
+              }
+              
+              // Garantir que exitSpot seja salvo se ainda não tiver
+              if (exitSpot !== null && exitSpot !== undefined) {
+                trade.exitSpot = exitSpot;
+              }
+              
+              // Garantir que entrySpot seja salvo se ainda não tiver
+              if ((trade.entrySpot === null || trade.entrySpot === undefined) && data.entry_spot !== null && data.entry_spot !== undefined) {
+                trade.entrySpot = Number(data.entry_spot);
+              } else if ((trade.entrySpot === null || trade.entrySpot === undefined)) {
+                // Tentar obter do último tick se ainda não tiver entrySpot
+                try {
+                  const service = this.wsManager.getService(userId);
+                  if (service) {
+                    const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
+                    if (ticks && ticks.length > 0) {
+                      const lastTick = ticks[ticks.length - 1];
+                      if (lastTick && lastTick.value) {
+                        trade.entrySpot = Number(lastTick.value);
+                        this.logger.log(`[Trading] EntrySpot não encontrado, usando último tick: ${trade.entrySpot}`);
+                      }
+                    }
+                  }
+                } catch (error) {
+                  this.logger.warn(`[Trading] Erro ao obter último tick para entrySpot: ${error.message}`);
+                }
               }
               
               // Atualizar valor de saída se disponível
