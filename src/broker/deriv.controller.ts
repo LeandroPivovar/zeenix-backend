@@ -1822,4 +1822,49 @@ export class DerivController {
       throw new BadRequestException(error.message || 'Erro ao cancelar subscription de proposta');
     }
   }
+
+  @Get('trading/last-orders')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async getLastOrders(
+    @Req() req: any,
+    @Query('limit') limit?: string,
+  ) {
+    const userId = req.user.userId;
+    const parsedLimit = parseInt(limit || '50', 10);
+    const limitValue = Math.min(parsedLimit, 50); // Máximo de 50 ordens
+    this.logger.log(`[Trading] Usuário ${userId} solicitando últimas ${limitValue} ordens Deriv`);
+
+    try {
+      const orders = await this.tradeRepository.find({
+        where: {
+          userId,
+          derivTransactionId: Not(null), // Only trades linked to Deriv
+        },
+        order: {
+          createdAt: 'DESC',
+        },
+        take: limitValue,
+      });
+
+      return orders.map(order => ({
+        id: order.id,
+        contractType: order.contractType,
+        timeType: order.timeType,
+        duration: order.duration,
+        multiplier: order.multiplier,
+        entryValue: order.entryValue,
+        exitValue: order.exitValue,
+        tradeType: order.tradeType,
+        status: order.status,
+        profit: order.profit,
+        derivTransactionId: order.derivTransactionId,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+      }));
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao buscar últimas ordens: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao buscar últimas ordens');
+    }
+  }
 }
