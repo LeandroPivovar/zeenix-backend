@@ -33,3 +33,4 @@ SELECT 'Migração concluída. A coluna user_id foi adicionada à tabela experts
 
 
 
+

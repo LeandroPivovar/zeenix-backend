@@ -1087,7 +1087,7 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || this.getTokenFromStorage(userId);
+        const token = body.token || await this.getTokenFromStorage(userId);
         if (!token) {
           throw new BadRequestException('Token não fornecido e não encontrado no storage');
         }
@@ -1117,10 +1117,43 @@ export class DerivController {
     return { ticks, symbol: symbol || 'R_100', count: ticks.length };
   }
   
-  private getTokenFromStorage(userId: string): string | null {
-    // Buscar token do banco de dados
-    // Por enquanto retornar null, será implementado depois
-    return null;
+  private async getTokenFromStorage(userId: string, targetLoginid?: string): Promise<string | null> {
+    try {
+      // Buscar informações da Deriv do banco de dados
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      
+      if (!derivInfo?.raw) {
+        this.logger.warn(`[getTokenFromStorage] derivInfo.raw não encontrado para userId: ${userId}`);
+        return null;
+      }
+      
+      // Se targetLoginid foi fornecido, buscar token específico desse loginid
+      if (targetLoginid && derivInfo.raw.tokensByLoginId?.[targetLoginid]) {
+        this.logger.log(`[getTokenFromStorage] Token encontrado para loginid ${targetLoginid}`);
+        return derivInfo.raw.tokensByLoginId[targetLoginid];
+      }
+      
+      // Se não tiver targetLoginid, tentar usar o loginid padrão
+      if (derivInfo.loginId && derivInfo.raw.tokensByLoginId?.[derivInfo.loginId]) {
+        this.logger.log(`[getTokenFromStorage] Token encontrado para loginid padrão: ${derivInfo.loginId}`);
+        return derivInfo.raw.tokensByLoginId[derivInfo.loginId];
+      }
+      
+      // Tentar qualquer token disponível
+      const tokensByLoginId = derivInfo.raw.tokensByLoginId || {};
+      const loginIds = Object.keys(tokensByLoginId);
+      if (loginIds.length > 0) {
+        const firstToken = tokensByLoginId[loginIds[0]];
+        this.logger.log(`[getTokenFromStorage] Usando primeiro token disponível do loginid: ${loginIds[0]}`);
+        return firstToken;
+      }
+      
+      this.logger.warn(`[getTokenFromStorage] Nenhum token encontrado para userId: ${userId}`);
+      return null;
+    } catch (error) {
+      this.logger.error(`[getTokenFromStorage] Erro ao buscar token: ${error.message}`);
+      return null;
+    }
   }
 
   @Post('trading/subscribe-proposal')
@@ -1155,7 +1188,7 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || this.getTokenFromStorage(userId);
+        const token = body.token || await this.getTokenFromStorage(userId);
         if (!token) {
           throw new BadRequestException('Token não fornecido e não encontrado no storage');
         }
@@ -1264,10 +1297,15 @@ export class DerivController {
         this.logger.log(`[Trading] Reconectando: isAuthorized=${service['isAuthorized']}, currentLoginid=${currentLoginid}, targetLoginid=${targetLoginid}`);
         
         // Buscar token do loginid específico ou fallback
-        const token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || 
-                      this.getTokenFromStorage(userId);
+        let token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || null;
         
         if (!token) {
+          token = await this.getTokenFromStorage(userId, targetLoginid);
+        }
+        
+        if (!token) {
+          this.logger.error(`[Trading] Token não encontrado. userId: ${userId}, targetLoginid: ${targetLoginid}`);
+          this.logger.error(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo.raw.tokensByLoginId).join(', ') : 'N/A'}`);
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
         
@@ -1438,7 +1476,7 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = this.getTokenFromStorage(userId);
+        const token = await this.getTokenFromStorage(userId);
         if (!token) {
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
@@ -1478,7 +1516,7 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = this.getTokenFromStorage(userId);
+        const token = await this.getTokenFromStorage(userId);
         if (!token) {
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
@@ -1642,7 +1680,7 @@ export class DerivController {
       
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || this.getTokenFromStorage(userId);
+        const token = body.token || await this.getTokenFromStorage(userId);
         if (!token) {
           throw new BadRequestException('Token não fornecido e não encontrado no storage');
         }
