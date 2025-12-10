@@ -1137,12 +1137,27 @@ export class DerivController {
         try {
           // Converter contract_id para string para garantir compatibilidade
           const contractId = String(data.contract_id);
-          this.logger.log(`[Trading] [ContractUpdate] Buscando trade com contract_id: ${contractId}`);
+          this.logger.log(`[Trading] [ContractUpdate] Buscando trade com contract_id: ${contractId}, userId: ${userId}`);
           
-          const trade = await this.tradeRepository.findOne({
+          // Buscar trade pelo contract_id
+          let trade = await this.tradeRepository.findOne({
             where: { derivTransactionId: contractId, userId },
             order: { createdAt: 'DESC' },
           });
+          
+          // Se não encontrou, tentar buscar apenas pelo contract_id (pode ser de outro usuário ou sem userId)
+          if (!trade) {
+            this.logger.warn(`[Trading] [ContractUpdate] Trade não encontrado com userId, tentando buscar apenas por contract_id: ${contractId}`);
+            trade = await this.tradeRepository.findOne({
+              where: { derivTransactionId: contractId },
+              order: { createdAt: 'DESC' },
+            });
+          }
+          
+          if (!trade) {
+            this.logger.error(`[Trading] [ContractUpdate] Trade não encontrado no banco para contract_id: ${contractId}, userId: ${userId}`);
+            return;
+          }
           
           if (trade) {
             this.logger.log(`[Trading] [ContractUpdate] Trade encontrado: ${trade.id}, status atual: ${trade.status}, symbol atual: ${trade.symbol}`);
@@ -1207,6 +1222,8 @@ export class DerivController {
               // Garantir que entrySpot seja salvo se ainda não tiver
               if ((trade.entrySpot === null || trade.entrySpot === undefined) && data.entry_spot !== null && data.entry_spot !== undefined) {
                 trade.entrySpot = Number(data.entry_spot);
+                shouldSave = true;
+                this.logger.log(`[Trading] EntrySpot atualizado do contrato: ${trade.entrySpot}`);
               } else if ((trade.entrySpot === null || trade.entrySpot === undefined)) {
                 // Tentar obter do último tick se ainda não tiver entrySpot
                 try {
@@ -1217,6 +1234,7 @@ export class DerivController {
                       const lastTick = ticks[ticks.length - 1];
                       if (lastTick && lastTick.value) {
                         trade.entrySpot = Number(lastTick.value);
+                        shouldSave = true;
                         this.logger.log(`[Trading] EntrySpot não encontrado, usando último tick: ${trade.entrySpot}`);
                       }
                     }
@@ -1226,14 +1244,28 @@ export class DerivController {
                 }
               }
               
-              // Atualizar valor de saída se disponível (sell_price ou bid_price)
+              // Atualizar valor de saída se disponível
+              // Prioridade: sell_price > payout > (entry_value + profit) > bid_price
               if (data.sell_price !== null && data.sell_price !== undefined) {
                 trade.exitValue = Number(data.sell_price) || null;
                 shouldSave = true;
+                this.logger.log(`[Trading] ExitValue atualizado de sell_price: ${trade.exitValue}`);
+              } else if (data.payout !== null && data.payout !== undefined && data.is_expired) {
+                // Se expirou e ganhou, usar payout como exit_value
+                trade.exitValue = Number(data.payout) || null;
+                shouldSave = true;
+                this.logger.log(`[Trading] ExitValue atualizado de payout: ${trade.exitValue}`);
+              } else if (data.is_expired && data.profit !== null && data.profit !== undefined && trade.entryValue !== null && trade.entryValue !== undefined) {
+                // Se expirou, calcular exit_value = entry_value + profit
+                const calculatedExitValue = Number(trade.entryValue) + Number(data.profit);
+                trade.exitValue = calculatedExitValue;
+                shouldSave = true;
+                this.logger.log(`[Trading] ExitValue calculado (expirou): entryValue=${trade.entryValue} + profit=${data.profit} = ${calculatedExitValue}`);
               } else if (data.bid_price !== null && data.bid_price !== undefined && data.is_expired) {
-                // Se expirou, usar bid_price como exit_value
+                // Fallback: usar bid_price se disponível
                 trade.exitValue = Number(data.bid_price) || null;
                 shouldSave = true;
+                this.logger.log(`[Trading] ExitValue atualizado de bid_price: ${trade.exitValue}`);
               }
               
               // Atualizar lucro/prejuízo
