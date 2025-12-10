@@ -32,7 +32,7 @@ import { DerivService } from './deriv.service';
 import { DerivWebSocketManagerService } from './deriv-websocket-manager.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull } from 'typeorm';
-import { TradeEntity } from '../infrastructure/database/entities/trade.entity';
+import { TradeEntity, TradeStatus } from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
 
 class ConnectDto {
@@ -1928,10 +1928,11 @@ export class DerivController {
 
       return orders.map(order => {
         // Mapear status: se expirou e não tem profit definido, considerar como closed
-        let displayStatus = order.status;
+        let displayStatus: TradeStatus = order.status;
         if (order.status === 'pending' && order.exitSpot !== null && order.exitSpot !== undefined) {
           // Se tem exitSpot mas ainda está pending, provavelmente expirou
-          displayStatus = order.profit !== null && order.profit > 0 ? 'won' : 'lost';
+          const profitValue = order.profit !== null && order.profit !== undefined ? Number(order.profit) : null;
+          displayStatus = profitValue !== null && profitValue > 0 ? TradeStatus.WON : TradeStatus.LOST;
         }
         
         return {
