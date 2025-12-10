@@ -30,6 +30,8 @@ interface VelozUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   lastOperationTickIndex: number; // ✅ ZENIX v2.0: Controle de intervalo (3 ticks)
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
 }
 
 interface ModeradoUserState {
@@ -47,6 +49,8 @@ interface ModeradoUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   lastOperationTimestamp: Date | null; // ✅ ZENIX v2.0: Controle de intervalo (15-20 segundos)
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
 }
 
 interface PrecisoUserState {
@@ -64,6 +68,8 @@ interface PrecisoUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   // ✅ ZENIX v2.0: PRECISO não tem intervalo fixo (baseado em qualidade)
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
 }
 
 interface DigitTradeResult {
@@ -170,6 +176,37 @@ const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
 };
 
 const PAYOUT_DERIV = 0.95; // ✅ ZENIX v2.0: Payout Deriv 95% (com spread)
+
+// ============================================
+// ESTRATÉGIA SOROS - ZENIX v2.0
+// ============================================
+const SOROS_MULTIPLICADOR = 1.5; // Multiplicador por vitória consecutiva (1.5x, 2.25x, 3.375x...)
+const SOROS_MAX_MULTIPLICADOR = 5.0; // Limite máximo de multiplicação (evita apostas excessivas)
+
+/**
+ * Calcula aposta com estratégia Soros aplicada
+ * Após cada vitória consecutiva, aumenta a aposta base
+ * 
+ * @param apostaBase - Valor base da aposta
+ * @param vitoriasConsecutivas - Número de vitórias consecutivas
+ * @returns Valor da aposta com Soros aplicado
+ */
+function calcularApostaComSoros(apostaBase: number, vitoriasConsecutivas: number): number {
+  if (vitoriasConsecutivas <= 0 || apostaBase <= 0) {
+    return apostaBase; // Sem vitórias consecutivas, usar aposta base
+  }
+  
+  // Calcular multiplicador: 1.5 ^ vitoriasConsecutivas
+  const multiplicador = Math.min(
+    Math.pow(SOROS_MULTIPLICADOR, vitoriasConsecutivas),
+    SOROS_MAX_MULTIPLICADOR
+  );
+  
+  const apostaComSoros = apostaBase * multiplicador;
+  
+  // Arredondar para 2 casas decimais
+  return Math.round(apostaComSoros * 100) / 100;
+}
 
 /**
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
@@ -433,8 +470,23 @@ function gerarSinalZenix(
   };
 }
 
+// ============================================
+// CACHE DE CONFIGURAÇÃO - OTIMIZAÇÃO PERFORMANCE
+// ============================================
+interface CachedUserConfig {
+  sessionBalance: number;
+  profitTarget: number | null;
+  lossLimit: number | null;
+  sessionStatus: string | null;
+  isActive: boolean;
+  lastUpdate: number;
+}
+
 @Injectable()
 export class AiService implements OnModuleInit {
+  // Cache de configuração de usuários (TTL: 1 segundo)
+  private userConfigCache = new Map<string, CachedUserConfig>();
+  private readonly CONFIG_CACHE_TTL = 1000; // 1 segundo
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
@@ -648,126 +700,134 @@ export class AiService implements OnModuleInit {
       return;
     }
 
-    // Processar cada usuário
-    for (const [userId, state] of this.velozUsers.entries()) {
-      // Pular se já tem operação ativa (martingale)
-      if (state.isOperationActive) {
-        continue;
-      }
-
-      // Verificar se pode processar
-      const canProcess = await this.canProcessVelozState(state);
-      if (!canProcess) {
-        continue;
-      }
-
-      // ✅ ZENIX v2.0: Verificar intervalo entre operações (3 ticks)
-      if (state.lastOperationTickIndex !== undefined && state.lastOperationTickIndex >= 0) {
-        const ticksDesdeUltimaOp = this.ticks.length - 1 - state.lastOperationTickIndex;
-        if (ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
-          this.logger.debug(
-            `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks | ` +
-            `lastOpIndex=${state.lastOperationTickIndex} | currentTickIndex=${this.ticks.length - 1}`,
-          );
-          continue;
+    // ✅ OTIMIZAÇÃO: Processar usuários em paralelo (não sequencial)
+    const userPromises = Array.from(this.velozUsers.entries()).map(async ([userId, state]) => {
+      try {
+        // Pular se já tem operação ativa (martingale)
+        if (state.isOperationActive) {
+          return;
         }
-      } else {
-        // ✅ Se lastOperationTickIndex é -1 ou undefined, pode operar imediatamente
-        this.logger.debug(
-          `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | ` +
-          `lastOpIndex=${state.lastOperationTickIndex} | totalTicks=${this.ticks.length}`,
+
+        // Verificar se pode processar
+        const canProcess = await this.canProcessVelozState(state);
+        if (!canProcess) {
+          return;
+        }
+
+        // ✅ ZENIX v2.0: Verificar intervalo entre operações (3 ticks)
+        if (state.lastOperationTickIndex !== undefined && state.lastOperationTickIndex >= 0) {
+          const ticksDesdeUltimaOp = this.ticks.length - 1 - state.lastOperationTickIndex;
+          if (ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
+            this.logger.debug(
+              `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks | ` +
+              `lastOpIndex=${state.lastOperationTickIndex} | currentTickIndex=${this.ticks.length - 1}`,
+            );
+            return;
+          }
+        } else {
+          // ✅ Se lastOperationTickIndex é -1 ou undefined, pode operar imediatamente
+          this.logger.debug(
+            `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | ` +
+            `lastOpIndex=${state.lastOperationTickIndex} | totalTicks=${this.ticks.length}`,
+          );
+        }
+
+        // ✅ ZENIX v2.0: Gerar sinal usando análise completa
+        const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
+        
+        if (!sinal || !sinal.sinal) {
+          // 🔍 DEBUG: Logar por que não gerou sinal
+          if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
+            const analiseDeseq = calcularDesequilibrio(this.ticks, VELOZ_CONFIG.amostraInicial);
+            this.logger.debug(
+              `[Veloz][${userId}] ❌ Sem sinal válido | ` +
+              `Desequilíbrio: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% (mín: ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(0)}%) | ` +
+              `Operação: ${analiseDeseq.operacao || 'NENHUMA'} | ` +
+              `Ticks: ${this.ticks.length}`,
+            );
+          }
+          return; // Sem sinal válido
+        }
+        
+        this.logger.log(
+          `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
+          `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
+          `  └─ ${sinal.motivo}`,
         );
-      }
-
-      // ✅ ZENIX v2.0: Gerar sinal usando análise completa
-      const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
-      
-      if (!sinal || !sinal.sinal) {
-        // 🔍 DEBUG: Logar por que não gerou sinal
-        if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
-          const analiseDeseq = calcularDesequilibrio(this.ticks, VELOZ_CONFIG.amostraInicial);
-          this.logger.debug(
-            `[Veloz][${userId}] ❌ Sem sinal válido | ` +
-            `Desequilíbrio: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% (mín: ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(0)}%) | ` +
-            `Operação: ${analiseDeseq.operacao || 'NENHUMA'} | ` +
-            `Ticks: ${this.ticks.length}`,
-          );
+        
+        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
+        // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
+        this.saveLogAsync(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
+        
+        // Formatar distribuição
+        const deseq = sinal.detalhes?.desequilibrio;
+        if (deseq) {
+          const percPar = (deseq.percentualPar * 100).toFixed(1);
+          const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+          this.saveLogAsync(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+          this.saveLogAsync(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
         }
-        continue; // Sem sinal válido
+        
+        
+        // ANÁLISE 1: Desequilíbrio Base
+        this.saveLogAsync(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
+        this.saveLogAsync(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
+        this.saveLogAsync(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
+        
+        
+        // ANÁLISE 2: Sequências Repetidas
+        const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
+        const seqInfo = sinal.detalhes?.sequencias;
+        this.saveLogAsync(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
+        if (seqInfo && seqInfo.tamanho >= 5) {
+          this.saveLogAsync(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
+        } else {
+          this.saveLogAsync(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
+        }
+        
+        
+        // ANÁLISE 3: Micro-Tendências
+        const bonusMicro = sinal.detalhes?.bonusMicro || 0;
+        const microInfo = sinal.detalhes?.microTendencias;
+        this.saveLogAsync(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
+        if (microInfo && microInfo.aceleracao > 0.10) {
+          this.saveLogAsync(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
+        } else {
+          this.saveLogAsync(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
+        }
+        
+        
+        // ANÁLISE 4: Força do Desequilíbrio
+        const bonusForca = sinal.detalhes?.bonusForca || 0;
+        const forcaInfo = sinal.detalhes?.forca;
+        this.saveLogAsync(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
+        if (forcaInfo && forcaInfo.velocidade > 0.05) {
+          this.saveLogAsync(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
+        } else {
+          this.saveLogAsync(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
+          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
+        }
+        
+        this.saveLogAsync(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+        this.saveLogAsync(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
+        
+        this.saveLogAsync(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+        this.saveLogAsync(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+        
+        // Executar operação (não bloqueia mais por logs)
+        await this.executeVelozOperation(state, sinal.sinal, 1);
+      } catch (error) {
+        this.logger.error(`[Veloz][${userId}] Erro ao processar usuário:`, error);
       }
-      
-      this.logger.log(
-        `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
-        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-        `  └─ ${sinal.motivo}`,
-      );
-      
-      // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
-      await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
-      
-      // Formatar distribuição
-      const deseq = sinal.detalhes?.desequilibrio;
-      if (deseq) {
-        const percPar = (deseq.percentualPar * 100).toFixed(1);
-        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        await this.saveLog(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
-      }
-      
-      
-      // ANÁLISE 1: Desequilíbrio Base
-      await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
-      await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
-      await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
-      
-      
-      // ANÁLISE 2: Sequências Repetidas
-      const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
-      const seqInfo = sinal.detalhes?.sequencias;
-      await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
-      if (seqInfo && seqInfo.tamanho >= 5) {
-        await this.saveLog(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
-      } else {
-        await this.saveLog(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
-      }
-      
-      
-      // ANÁLISE 3: Micro-Tendências
-      const bonusMicro = sinal.detalhes?.bonusMicro || 0;
-      const microInfo = sinal.detalhes?.microTendencias;
-      await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
-      if (microInfo && microInfo.aceleracao > 0.10) {
-        await this.saveLog(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
-      } else {
-        await this.saveLog(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
-      }
-      
-      
-      // ANÁLISE 4: Força do Desequilíbrio
-      const bonusForca = sinal.detalhes?.bonusForca || 0;
-      const forcaInfo = sinal.detalhes?.forca;
-      await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
-      if (forcaInfo && forcaInfo.velocidade > 0.05) {
-        await this.saveLog(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
-      } else {
-        await this.saveLog(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
-      }
-      
-      await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
-      await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
-      
-      await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
-      await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
-      
-      // Executar operação
-      await this.executeVelozOperation(state, sinal.sinal, 1);
-    }
+    });
+
+    // Aguardar todos os usuários processarem em paralelo
+    await Promise.all(userPromises);
   }
 
   private calculateDVX(ticks: Tick[]): number {
@@ -798,6 +858,63 @@ export class AiService implements OnModuleInit {
     return Math.round(dvx);
   }
 
+  /**
+   * Obtém configuração do usuário com cache (otimizado)
+   */
+  private async getCachedUserConfig(userId: string): Promise<CachedUserConfig | null> {
+    const cached = this.userConfigCache.get(userId);
+    const now = Date.now();
+
+    // Se cache é válido (menos de 1 segundo), retornar
+    if (cached && (now - cached.lastUpdate) < this.CONFIG_CACHE_TTL) {
+      return cached;
+    }
+
+    // Buscar do banco e atualizar cache
+    try {
+      const configResult = await this.dataSource.query(
+        `SELECT 
+          session_status, 
+          is_active,
+          profit_target,
+          loss_limit,
+          COALESCE(session_balance, 0) as sessionBalance
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [userId],
+      );
+
+      if (!configResult || configResult.length === 0) {
+        return null;
+      }
+
+      const config = configResult[0];
+      const cachedConfig: CachedUserConfig = {
+        sessionBalance: parseFloat(config.sessionBalance) || 0,
+        profitTarget: config.profit_target ? parseFloat(config.profit_target) : null,
+        lossLimit: config.loss_limit ? parseFloat(config.loss_limit) : null,
+        sessionStatus: config.session_status || null,
+        isActive: config.is_active === true || config.is_active === 1,
+        lastUpdate: now,
+      };
+
+      this.userConfigCache.set(userId, cachedConfig);
+      return cachedConfig;
+    } catch (error) {
+      this.logger.error(`[GetCachedUserConfig][${userId}] Erro:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Invalida cache de configuração do usuário (chamar quando config mudar)
+   */
+  private invalidateUserConfigCache(userId: string): void {
+    this.userConfigCache.delete(userId);
+  }
+
   private async canProcessVelozState(state: VelozUserState): Promise<boolean> {
     if (state.isOperationActive) {
       this.logger.debug(
@@ -818,67 +935,47 @@ export class AiService implements OnModuleInit {
       return false;
     }
     
-    // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
-    try {
-      const configResult = await this.dataSource.query(
-        `SELECT 
-          session_status, 
-          is_active,
-          profit_target,
-          loss_limit,
-          COALESCE(session_balance, 0) as sessionBalance
-         FROM ai_user_config 
-         WHERE user_id = ? AND is_active = TRUE
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [state.userId],
+    // ✅ OTIMIZAÇÃO: Usar cache em vez de consultar banco a cada tick
+    const config = await this.getCachedUserConfig(state.userId);
+    
+    if (!config) {
+      // Não há sessão ativa
+      this.logger.warn(
+        `[Veloz][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
       );
-      
-      if (!configResult || configResult.length === 0) {
-        // Não há sessão ativa
-        this.logger.warn(
-          `[Veloz][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
-        );
-        return false;
-      }
-      
-      const config = configResult[0];
-      
-      // Verificar se já foi parada
-      if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
-        this.logger.warn(
-          `[Veloz][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-        );
-        return false;
-      }
-      
-      // ✅ VERIFICAR LIMITES ANTES DE OPERAR
-      const sessionBalance = parseFloat(config.sessionBalance) || 0;
-      const profitTarget = parseFloat(config.profit_target) || null;
-      const lossLimit = parseFloat(config.loss_limit) || null;
-      
-      // Se atingiu take profit (stop win)
-      if (profitTarget && sessionBalance >= profitTarget) {
-        this.logger.warn(
-          `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
-        );
-        // Desativar imediatamente
-        await this.checkAndEnforceLimits(state.userId);
-        return false;
-      }
-      
-      // Se atingiu stop loss
-      if (lossLimit && sessionBalance <= -lossLimit) {
-        this.logger.warn(
-          `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
-        );
-        // Desativar imediatamente
-        await this.checkAndEnforceLimits(state.userId);
-        return false;
-      }
-      
-    } catch (error) {
-      this.logger.error(`[Veloz][${state.userId}] Erro ao verificar status da sessão:`, error);
+      return false;
+    }
+    
+    // Verificar se já foi parada
+    if (config.sessionStatus === 'stopped_profit' || config.sessionStatus === 'stopped_loss' || config.sessionStatus === 'stopped_blindado') {
+      this.logger.warn(
+        `[Veloz][${state.userId}] Sessão parada (${config.sessionStatus}) - não executando novos trades`,
+      );
+      return false;
+    }
+    
+    // ✅ VERIFICAR LIMITES ANTES DE OPERAR
+    // Se atingiu take profit (stop win)
+    if (config.profitTarget && config.sessionBalance >= config.profitTarget) {
+      this.logger.warn(
+        `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${config.sessionBalance.toFixed(2)} >= Meta: $${config.profitTarget} - PARANDO IMEDIATAMENTE`,
+      );
+      // Desativar imediatamente
+      await this.checkAndEnforceLimits(state.userId);
+      // Invalidar cache após mudança de configuração
+      this.invalidateUserConfigCache(state.userId);
+      return false;
+    }
+    
+    // Se atingiu stop loss
+    if (config.lossLimit && config.sessionBalance <= -config.lossLimit) {
+      this.logger.warn(
+        `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(config.sessionBalance).toFixed(2)} >= Limite: $${config.lossLimit} - PARANDO IMEDIATAMENTE`,
+      );
+      // Desativar imediatamente
+      await this.checkAndEnforceLimits(state.userId);
+      // Invalidar cache após mudança de configuração
+      this.invalidateUserConfigCache(state.userId);
       return false;
     }
     
@@ -937,14 +1034,19 @@ export class AiService implements OnModuleInit {
   }
 
   private calculateVelozStake(state: VelozUserState, entry: number): number {
-    const baseStake = state.capital || 0.35; // Valor mínimo da Deriv é 0.35
-    
-    // Se é primeira entrada, usar a aposta base
+    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
     if (entry <= 1) {
-      return baseStake;
+      // Garantir que apostaBase está inicializada
+      if (state.apostaBase <= 0) {
+        state.apostaBase = state.capital || 0.35;
+      }
+      
+      // Aplicar estratégia Soros se houver vitórias consecutivas
+      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
     }
 
-    // SISTEMA UNIFICADO DE MARTINGALE
+    // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
     const config = CONFIGS_MARTINGALE[state.modoMartingale];
     const proximaAposta = calcularProximaAposta(
       state.perdaAcumulada,
@@ -977,36 +1079,58 @@ export class AiService implements OnModuleInit {
     state.isOperationActive = true;
     state.martingaleStep = entry;
 
-    const stakeAmount = this.calculateVelozStake(state, entry);
+    // ✅ ZENIX v2.0: Calcular stake (já aplica Soros se for primeira entrada)
+    let stakeAmount = this.calculateVelozStake(state, entry);
     const currentPrice = this.getCurrentPrice() || 0;
 
-    // Se é primeira entrada, inicializar martingale
+    // Se é primeira entrada, inicializar martingale e Soros
     if (entry === 1) {
+      // ✅ CORREÇÃO: Manter apostaBase (não resetar para 0)
+      if (state.apostaBase <= 0) {
+        state.apostaBase = state.capital || 0.35; // Inicializar apenas se ainda não tiver valor
+      }
+      
+      // ✅ ZENIX v2.0: Aplicar estratégia Soros se houver vitórias consecutivas
+      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      if (apostaComSoros > stakeAmount) {
+        // Ajustar stakeAmount para usar valor com Soros
+        stakeAmount = apostaComSoros;
+        this.logger.log(
+          `[Veloz][Soros] 🚀 Aposta aumentada: $${state.apostaBase.toFixed(2)} → $${apostaComSoros.toFixed(2)} ` +
+          `(${state.vitoriasConsecutivas} vitórias consecutivas, ${(Math.pow(SOROS_MULTIPLICADOR, state.vitoriasConsecutivas) * 100).toFixed(0)}%)`,
+        );
+      }
+      
       state.apostaInicial = stakeAmount;
       state.perdaAcumulada = 0;
+      
       const config = CONFIGS_MARTINGALE[state.modoMartingale];
       this.logger.log(
         `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
         `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
+        `Aposta base: $${state.apostaBase.toFixed(2)} | ` +
+        `Vitórias consecutivas: ${state.vitoriasConsecutivas} | ` +
         `Máx entradas: ${config.maxEntradas} | ` +
         `Multiplicador lucro: ${(config.multiplicadorLucro * 100).toFixed(0)}%`,
       );
       
+      // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
       // 📋 LOG: Operação sendo executada
-      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
-      await this.saveLog(state.userId, 'operacao', `Ativo: R_10`);
-      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Payout: 0.95 (95%)`);
-      await this.saveLog(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+      this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
+      this.saveLogAsync(state.userId, 'operacao', `Ativo: R_10`);
+      this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+      this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `Payout: 0.95 (95%)`);
+      this.saveLogAsync(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
     } else {
+      // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
       // 📋 LOG: Operação martingale
-      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
-      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
-      await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+      this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+      this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+      this.saveLogAsync(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
     }
 
     const tradeId = await this.createVelozTradeRecord(
@@ -1363,12 +1487,44 @@ export class AiService implements OnModuleInit {
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
       
+      // ✅ VALIDAÇÃO: Verificar se recuperou toda a perda acumulada (se estava em martingale)
+      if (entry > 1 && state.perdaAcumulada > 0) {
+        const recuperacaoEsperada = state.perdaAcumulada;
+        const recuperacaoReal = result.profitLoss;
+        
+        if (recuperacaoReal < recuperacaoEsperada) {
+          this.logger.warn(
+            `[Veloz][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
+          );
+        } else {
+          this.logger.log(
+            `[Veloz][Martingale] ✅ Recuperação completa: $${recuperacaoEsperada.toFixed(2)} recuperado`,
+          );
+        }
+      }
+      
+      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Incrementar vitórias consecutivas
+      if (entry === 1) {
+        // Apenas incrementar se foi operação normal (não martingale)
+        state.vitoriasConsecutivas += 1;
+        this.logger.log(
+          `[Veloz][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
+          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
+          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
+        );
+      } else {
+        // Se estava em martingale, resetar contador (martingale não conta para Soros)
+        state.vitoriasConsecutivas = 0;
+        this.logger.log(`[Veloz][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
+      }
+      
       this.logger.log(
         `[Veloz][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
         `Ganho: $${result.profitLoss.toFixed(2)} | ` +
         `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
         `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)}`,
+        `Capital: $${state.virtualCapital.toFixed(2)} | ` +
+        `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
       );
       
       // 📋 LOG: Resultado - VITÓRIA
@@ -1385,14 +1541,18 @@ export class AiService implements OnModuleInit {
         await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
       
-      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.capital.toFixed(2)} (normal)`);
+      // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
+      // Calcular próxima aposta com Soros aplicado
+      const proximaApostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (${state.vitoriasConsecutivas > 0 ? `Soros ${state.vitoriasConsecutivas}x` : 'normal'})`);
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
       
-      // Resetar martingale
+      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas)
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
-      state.apostaInicial = 0;
+      // ✅ CORREÇÃO: Não resetar apostaInicial para 0, manter com valor atual
+      // state.apostaInicial mantém o valor da última aposta para referência
       return;
     }
 
@@ -1400,9 +1560,21 @@ export class AiService implements OnModuleInit {
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
 
+    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Resetar vitórias consecutivas após perda
+    if (entry === 1) {
+      // Apenas resetar se foi operação normal (não martingale)
+      if (state.vitoriasConsecutivas > 0) {
+        this.logger.log(
+          `[Veloz][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
+        );
+      }
+      state.vitoriasConsecutivas = 0;
+    }
+
     this.logger.warn(
       `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
     
     // 📋 LOG: Resultado - DERROTA
@@ -1413,8 +1585,9 @@ export class AiService implements OnModuleInit {
     await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
     await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
-    // Verificar se pode continuar (respeitar o maxEntradas do modo)
-    if (entry < config.maxEntradas) {
+    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
+    // Alterado de < para <= para permitir exatamente maxEntradas entradas
+    if (entry <= config.maxEntradas) {
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
         state.apostaInicial,
@@ -1560,6 +1733,8 @@ export class AiService implements OnModuleInit {
     
     // ✅ Verificar limites de lucro/perda após atualizar stats
     await this.checkAndEnforceLimits(userId);
+    // Invalidar cache após atualização de saldo
+    this.invalidateUserConfigCache(userId);
     
     // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
     await this.checkStopBlindado(userId);
@@ -1581,6 +1756,8 @@ export class AiService implements OnModuleInit {
       );
       
       if (!configResult || configResult.length === 0) {
+        // Invalidar cache se não há mais sessão ativa
+        this.invalidateUserConfigCache(userId);
         return;
       }
       
@@ -1637,6 +1814,9 @@ export class AiService implements OnModuleInit {
            WHERE user_id = ?`,
           [sessionStatus, deactivationReason, userId],
         );
+        
+        // ✅ OTIMIZAÇÃO: Invalidar cache após mudança de configuração
+        this.invalidateUserConfigCache(userId);
         
         // Parar imediatamente qualquer trade em andamento
         // Remover do mapa de usuários ativos para impedir novos trades
@@ -1763,6 +1943,9 @@ export class AiService implements OnModuleInit {
           [deactivationReason, userId],
         );
         
+        // ✅ OTIMIZAÇÃO: Invalidar cache após mudança de configuração
+        this.invalidateUserConfigCache(userId);
+        
         // Remover usuário dos mapas ativos (todos os modos)
         if (this.velozUsers.has(userId)) {
           const state = this.velozUsers.get(userId);
@@ -1805,6 +1988,145 @@ export class AiService implements OnModuleInit {
   /**
    * SISTEMA DE LOGS EM TEMPO REAL - ZENIX v2.0
    * Salva logs detalhados no banco para exibição no frontend
+   */
+  // ============================================
+  // SISTEMA DE LOGS OTIMIZADO - PERFORMANCE
+  // ============================================
+  
+  // Fila de logs para processamento assíncrono
+  private logQueue: Array<{
+    userId: string;
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+    message: string;
+    details?: any;
+  }> = [];
+  private logProcessing = false;
+
+  /**
+   * Salva log de forma assíncrona (não bloqueia execução)
+   */
+  private saveLogAsync(
+    userId: string,
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
+    message: string,
+    details?: any,
+  ): void {
+    // Validar parâmetros
+    if (!userId || !type || !message || message.trim() === '') {
+      return;
+    }
+
+    // Adicionar à fila
+    this.logQueue.push({ userId, type, message, details });
+
+    // Processar fila em background (não bloqueia)
+    this.processLogQueue().catch(error => {
+      this.logger.error(`[SaveLogAsync] Erro ao processar fila de logs:`, error);
+    });
+  }
+
+  /**
+   * Processa fila de logs em batch (otimizado)
+   */
+  private async processLogQueue(): Promise<void> {
+    if (this.logProcessing || this.logQueue.length === 0) {
+      return;
+    }
+
+    this.logProcessing = true;
+
+    try {
+      // Processar até 50 logs por vez
+      const batch = this.logQueue.splice(0, 50);
+      
+      if (batch.length === 0) {
+        this.logProcessing = false;
+        return;
+      }
+
+      // Agrupar por userId para otimizar
+      const logsByUser = new Map<string, typeof batch>();
+      for (const log of batch) {
+        if (!logsByUser.has(log.userId)) {
+          logsByUser.set(log.userId, []);
+        }
+        logsByUser.get(log.userId)!.push(log);
+      }
+
+      // Processar cada usuário em paralelo
+      await Promise.all(
+        Array.from(logsByUser.entries()).map(([userId, logs]) =>
+          this.saveLogsBatch(userId, logs)
+        )
+      );
+
+      // Se ainda há logs na fila, processar novamente
+      if (this.logQueue.length > 0) {
+        setImmediate(() => this.processLogQueue());
+      }
+    } catch (error) {
+      this.logger.error(`[ProcessLogQueue] Erro:`, error);
+    } finally {
+      this.logProcessing = false;
+    }
+  }
+
+  /**
+   * Salva múltiplos logs de um usuário em uma única query (otimizado)
+   */
+  private async saveLogsBatch(
+    userId: string,
+    logs: Array<{
+      type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+      message: string;
+      details?: any;
+    }>,
+  ): Promise<void> {
+    if (logs.length === 0) return;
+
+    try {
+      const icons = {
+        info: 'ℹ️',
+        tick: '📥',
+        analise: '🔍',
+        sinal: '🎯',
+        operacao: '💰',
+        resultado: '✅',
+        alerta: '⚠️',
+        erro: '🚫',
+      };
+
+      const sessionId = this.userSessionIds.get(userId) || userId;
+
+      // Preparar valores para INSERT em batch
+      const values = logs.map(log => {
+        const icon = icons[log.type] || 'ℹ️';
+        return [
+          userId,
+          log.type,
+          icon,
+          log.message.substring(0, 5000),
+          log.details ? JSON.stringify(log.details).substring(0, 10000) : null,
+          sessionId,
+        ];
+      });
+
+      // INSERT em batch (muito mais rápido)
+      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, NOW(3))').join(', ');
+      const flatValues = values.flat();
+
+      await this.dataSource.query(
+        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id, timestamp)
+         VALUES ${placeholders}`,
+        flatValues,
+      );
+    } catch (error) {
+      this.logger.error(`[SaveLogsBatch][${userId}] Erro ao salvar logs em batch:`, error);
+    }
+  }
+
+  /**
+   * Salva log de forma síncrona (mantido para compatibilidade)
    */
   private async saveLog(
     userId: string,
@@ -2045,6 +2367,10 @@ export class AiService implements OnModuleInit {
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = stakeAmount;
       }
+      // ✅ ZENIX v2.0: Atualizar apostaBase se necessário (mas manter vitoriasConsecutivas)
+      if (existing.apostaBase <= 0) {
+        existing.apostaBase = stakeAmount;
+      }
       // ✅ Resetar intervalo se não há operação ativa (permite nova operação imediatamente)
       if (!existing.isOperationActive) {
         existing.lastOperationTickIndex = -1;
@@ -2071,6 +2397,8 @@ export class AiService implements OnModuleInit {
       perdaAcumulada: 0,
       apostaInicial: 0,
       lastOperationTickIndex: -1, // ✅ ZENIX v2.0: Inicializar controle de intervalo
+      vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+      apostaBase: stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
     });
   }
 
@@ -4460,12 +4788,44 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
       
+      // ✅ VALIDAÇÃO: Verificar se recuperou toda a perda acumulada (se estava em martingale)
+      if (entry > 1 && state.perdaAcumulada > 0) {
+        const recuperacaoEsperada = state.perdaAcumulada;
+        const recuperacaoReal = result.profitLoss;
+        
+        if (recuperacaoReal < recuperacaoEsperada) {
+          this.logger.warn(
+            `[Moderado][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
+          );
+        } else {
+          this.logger.log(
+            `[Moderado][Martingale] ✅ Recuperação completa: $${recuperacaoEsperada.toFixed(2)} recuperado`,
+          );
+        }
+      }
+      
+      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Incrementar vitórias consecutivas
+      if (entry === 1) {
+        // Apenas incrementar se foi operação normal (não martingale)
+        state.vitoriasConsecutivas += 1;
+        this.logger.log(
+          `[Moderado][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
+          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
+          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
+        );
+      } else {
+        // Se estava em martingale, resetar contador (martingale não conta para Soros)
+        state.vitoriasConsecutivas = 0;
+        this.logger.log(`[Moderado][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
+      }
+      
       this.logger.log(
         `[Moderado][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
         `Ganho: $${result.profitLoss.toFixed(2)} | ` +
         `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
         `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)}`,
+        `Capital: $${state.virtualCapital.toFixed(2)} | ` +
+        `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
       );
       
       // 📋 LOG: Resultado - VITÓRIA
@@ -4482,14 +4842,17 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
       
-      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.capital.toFixed(2)} (normal)`);
+      // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
+      // Calcular próxima aposta com Soros aplicado
+      const proximaApostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (${state.vitoriasConsecutivas > 0 ? `Soros ${state.vitoriasConsecutivas}x` : 'normal'})`);
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
       
-      // Resetar martingale
+      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas)
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
-      state.apostaInicial = 0;
+      // ✅ CORREÇÃO: Não resetar apostaInicial para 0, manter com valor atual
       return;
     }
 
@@ -4497,9 +4860,21 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
 
+    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Resetar vitórias consecutivas após perda
+    if (entry === 1) {
+      // Apenas resetar se foi operação normal (não martingale)
+      if (state.vitoriasConsecutivas > 0) {
+        this.logger.log(
+          `[Moderado][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
+        );
+      }
+      state.vitoriasConsecutivas = 0;
+    }
+
     this.logger.warn(
       `[Moderado][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
     
     // 📋 LOG: Resultado - DERROTA
@@ -4510,8 +4885,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
     await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
-    // Verificar se pode continuar (respeitar o maxEntradas do modo)
-    if (entry < config.maxEntradas) {
+    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
+    // Alterado de < para <= para permitir exatamente maxEntradas entradas
+    if (entry <= config.maxEntradas) {
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
         state.apostaInicial,
@@ -4666,11 +5042,16 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private calculateModeradoStake(state: ModeradoUserState): number {
-    const baseStake = state.capital || MODERADO_CONFIG.minStake;
-    
-    // Se é primeira entrada, usar a aposta base (valor configurado pelo usuário)
-    if (state.martingaleStep === 0) {
-      return Math.max(MODERADO_CONFIG.minStake, baseStake);
+    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
+    if (state.martingaleStep === 0 || state.martingaleStep === 1) {
+      // Garantir que apostaBase está inicializada
+      if (state.apostaBase <= 0) {
+        state.apostaBase = state.capital || MODERADO_CONFIG.minStake;
+      }
+      
+      // Aplicar estratégia Soros se houver vitórias consecutivas
+      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
     }
 
     // SISTEMA UNIFICADO DE MARTINGALE
@@ -4793,6 +5174,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         perdaAcumulada: 0,
         apostaInicial: 0,
         lastOperationTimestamp: null, // ✅ ZENIX v2.0: Inicializar controle de intervalo
+        vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+        apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
       });
     }
   }
@@ -5215,8 +5598,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
     );
 
-    // Verificar se pode continuar (respeitar o maxEntradas do modo)
-    if (entry < config.maxEntradas) {
+    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
+    // Alterado de < para <= para permitir exatamente maxEntradas entradas
+    if (entry <= config.maxEntradas) {
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
         state.apostaInicial,
@@ -5350,11 +5734,16 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private calculatePrecisoStake(state: PrecisoUserState): number {
-    const baseStake = state.capital || PRECISO_CONFIG.minStake;
-    
-    // Se é primeira entrada, usar a aposta base (valor configurado pelo usuário)
-    if (state.martingaleStep === 0) {
-      return Math.max(PRECISO_CONFIG.minStake, baseStake);
+    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
+    if (state.martingaleStep === 0 || state.martingaleStep === 1) {
+      // Garantir que apostaBase está inicializada
+      if (state.apostaBase <= 0) {
+        state.apostaBase = state.capital || PRECISO_CONFIG.minStake;
+      }
+      
+      // Aplicar estratégia Soros se houver vitórias consecutivas
+      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
+      return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
     }
 
     // SISTEMA UNIFICADO DE MARTINGALE
@@ -5458,6 +5847,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = params.stakeAmount;
       }
+      
+      // ✅ ZENIX v2.0: Atualizar apostaBase se necessário (mas manter vitoriasConsecutivas)
+      if (existing.apostaBase <= 0) {
+        existing.apostaBase = params.stakeAmount;
+      }
     } else {
       // Criar novo
       this.logger.debug(`[UpsertPrecisoState] Criando novo usuário | capital=${params.stakeAmount} | martingale=${modoMartingale}`);
@@ -5476,6 +5870,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         modoMartingale: modoMartingale,
         perdaAcumulada: 0,
         apostaInicial: 0,
+        vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+        apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
       });
     }
   }
