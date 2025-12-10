@@ -1372,45 +1372,62 @@ export class DerivController {
         this.logger.log(`[Trading] ✅ Já conectado com loginid correto: ${currentLoginid}`);
       }
       
-      // Se não tiver proposalId, buscar proposta primeiro
-      let proposalId: string | undefined = body.proposalId;
-      if (!proposalId) {
-        // Buscar proposta com os parâmetros fornecidos
-        const proposalConfig: any = {
-          symbol: body.symbol,
-          contractType: body.contractType,
-          duration: body.duration,
-          durationUnit: body.durationUnit,
-          amount: body.amount,
-        };
-        
-        // Adicionar barrier para contratos de dígitos
-        const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
-        if (digitContracts.includes(body.contractType)) {
-          proposalConfig.barrier = body.barrier !== undefined && body.barrier !== null ? body.barrier : 5;
-        }
-        
-        // Adicionar multiplier para contratos MULTUP/MULTDOWN
-        if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
-          proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
-        }
-        
-        const proposal = await this.getProposalInternal(service, proposalConfig);
-        
-        if (!proposal || !proposal.id) {
-          throw new BadRequestException('Não foi possível obter proposta para compra.');
-        }
-        
-        proposalId = proposal.id;
+      // Validar contractType
+      if (!body.contractType) {
+        throw new BadRequestException('contractType é obrigatório');
       }
+      
+      this.logger.log(`[Trading] Compra solicitada com contractType: ${body.contractType}`);
+      
+      // IMPORTANTE: Na API Deriv, quando você compra usando um proposalId, o contract_type já está definido na proposta.
+      // Se o contractType enviado não corresponder ao da proposta, a compra será do tipo errado.
+      // Por segurança, SEMPRE buscar uma nova proposta com o contractType correto, mesmo se houver proposalId.
+      // Isso garante que o tipo correto seja sempre usado.
+      this.logger.log(`[Trading] Buscando proposta com contractType: ${body.contractType} (proposalId fornecido: ${body.proposalId || 'nenhum'})`);
+      
+      // Buscar proposta com os parâmetros fornecidos (sempre buscar nova para garantir tipo correto)
+      const proposalConfig: any = {
+        symbol: body.symbol,
+        contractType: body.contractType,
+        duration: body.duration,
+        durationUnit: body.durationUnit,
+        amount: body.amount,
+      };
+      
+      // Adicionar barrier para contratos de dígitos
+      const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
+      if (digitContracts.includes(body.contractType)) {
+        proposalConfig.barrier = body.barrier !== undefined && body.barrier !== null ? body.barrier : 5;
+      }
+      
+      // Adicionar multiplier para contratos MULTUP/MULTDOWN
+      if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
+        proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
+      }
+      
+      const proposal = await this.getProposalInternal(service, proposalConfig);
+      
+      if (!proposal || !proposal.id) {
+        throw new BadRequestException('Não foi possível obter proposta para compra.');
+      }
+      
+      const proposalId = proposal.id;
+      this.logger.log(`[Trading] ✅ Proposta obtida: ${proposalId} para contractType: ${body.contractType}`);
       
       // Validar que proposalId é uma string válida
       if (!proposalId || typeof proposalId !== 'string') {
         throw new BadRequestException('Proposta inválida para compra.');
       }
       
+      // IMPORTANTE: A Deriv usa o contract_type da proposta quando compra por proposalId
+      // Se o contractType enviado não corresponder ao da proposta, buscar nova proposta
+      // Por segurança, sempre buscar nova proposta se o contractType for diferente
+      // (Isso garante que o tipo correto seja usado)
+      this.logger.log(`[Trading] Usando proposalId: ${proposalId} com contractType: ${body.contractType}`);
+      
       // Executar compra, passando durationUnit e duration para preservar valores originais
-      service.buyContract(proposalId, body.amount, body.durationUnit, body.duration);
+      // Também passar contractType para validação no processamento
+      service.buyContract(proposalId, body.amount, body.durationUnit, body.duration, body.contractType);
       
       return { 
         success: true, 
