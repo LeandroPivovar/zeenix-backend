@@ -1855,7 +1855,7 @@ export class DerivController {
           id: orders[0].id,
           contractType: orders[0].contractType,
           entryValue: orders[0].entryValue,
-          symbol: orders[0].symbol,
+          symbol: (orders[0] as any).symbol || null,
           derivTransactionId: orders[0].derivTransactionId,
         }));
       }
@@ -1867,11 +1867,11 @@ export class DerivController {
         duration: order.duration,
         multiplier: order.multiplier,
         entryValue: order.entryValue,
-        exitValue: order.exitValue,
+        exitValue: order.exitValue || null,
         tradeType: order.tradeType,
         status: order.status,
         profit: order.profit,
-        symbol: order.symbol,
+        symbol: (order as any).symbol || null, // Usar type assertion para evitar erro se coluna não existir
         derivTransactionId: order.derivTransactionId,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
