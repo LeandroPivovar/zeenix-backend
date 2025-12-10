@@ -327,6 +327,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       contractId: sell.contract_id,
       sellPrice: Number(sell.sell_price) || 0,
       profit: Number(sell.profit) || 0,
+      exitSpot: Number(sell.exit_spot) || null,
       symbol: sell.symbol || this.symbol,
     };
 

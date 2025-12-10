@@ -53,6 +53,12 @@ export class TradeEntity {
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'exit_value' })
   exitValue?: number | null;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'entry_spot' })
+  entrySpot?: number | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'exit_spot' })
+  exitSpot?: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -1017,7 +1017,8 @@ export class DerivController {
           timeType: data.durationUnit === 't' ? 'tick' : 'time',
           duration: String(data.duration || 1),
           multiplier: 1.00,
-          entryValue: data.buyPrice || 0,
+          entryValue: data.buyPrice || 0, // Valor investido (stake)
+          entrySpot: data.entrySpot || data.entry_spot || null, // Preço de entrada (spot price)
           tradeType: 'BUY' as any,
           status: 'pending' as any,
           derivTransactionId: data.contractId || null,
@@ -1042,7 +1043,8 @@ export class DerivController {
         
         if (trade) {
           trade.profit = data.profit || null;
-          trade.exitValue = data.sellPrice || null;
+          trade.exitValue = data.sellPrice || null; // Valor recebido na venda
+          trade.exitSpot = data.exitSpot || data.exit_spot || null; // Preço de saída (spot price)
           trade.status = data.profit && data.profit > 0 ? 'won' : (data.profit !== null ? 'lost' : 'pending') as any;
           await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${trade.id}`);
@@ -1866,8 +1868,10 @@ export class DerivController {
         timeType: order.timeType,
         duration: order.duration,
         multiplier: order.multiplier,
-        entryValue: order.entryValue,
-        exitValue: order.exitValue || null,
+        entryValue: order.entryValue, // Valor investido (stake)
+        entrySpot: order.entrySpot || null, // Preço de entrada (spot)
+        exitValue: order.exitValue || null, // Valor recebido na venda
+        exitSpot: order.exitSpot || null, // Preço de saída (spot)
         tradeType: order.tradeType,
         status: order.status,
         profit: order.profit,
