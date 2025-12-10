@@ -2017,8 +2017,12 @@ export class DerivController {
           id: orders[0].id,
           contractType: orders[0].contractType,
           entryValue: orders[0].entryValue,
+          entrySpot: orders[0].entrySpot,
+          exitValue: orders[0].exitValue,
+          exitSpot: orders[0].exitSpot,
           symbol: orders[0].symbol || null,
           derivTransactionId: orders[0].derivTransactionId,
+          status: orders[0].status,
         }));
       }
 
