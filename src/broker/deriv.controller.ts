@@ -1010,7 +1010,33 @@ export class DerivController {
       
       // Salvar operação no banco
       try {
-        this.logger.log(`[Trading] Salvando compra - entrySpot: ${data.entrySpot}, entry_spot: ${data.entry_spot}, buyPrice: ${data.buyPrice}`);
+        // Garantir que entrySpot sempre tenha um valor
+        let entrySpot = data.entrySpot || data.entry_spot || null;
+        
+        // Se não encontrou entrySpot, tentar obter do último tick do serviço WebSocket
+        if (entrySpot === null || entrySpot === undefined) {
+          try {
+            const service = this.wsManager.getService(userId);
+            if (service) {
+              const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
+              if (ticks && ticks.length > 0) {
+                const lastTick = ticks[ticks.length - 1];
+                if (lastTick && lastTick.value) {
+                  entrySpot = Number(lastTick.value);
+                  this.logger.log(`[Trading] EntrySpot não encontrado na resposta, usando último tick: ${entrySpot}`);
+                }
+              }
+            }
+          } catch (error) {
+            this.logger.warn(`[Trading] Erro ao obter último tick para entrySpot: ${error.message}`);
+          }
+        }
+        
+        // Garantir que entrySpot seja um número válido
+        const finalEntrySpot = entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null;
+        
+        this.logger.log(`[Trading] Salvando compra - entrySpot: ${finalEntrySpot}, entry_spot: ${data.entry_spot}, buyPrice: ${data.buyPrice}`);
+        
         const trade = this.tradeRepository.create({
           id: uuidv4(),
           userId,
@@ -1019,14 +1045,14 @@ export class DerivController {
           duration: String(data.duration || 1),
           multiplier: 1.00,
           entryValue: data.buyPrice || 0, // Valor investido (stake)
-          entrySpot: data.entrySpot || data.entry_spot || null, // Preço de entrada (spot price)
+          entrySpot: finalEntrySpot, // Preço de entrada (spot price) - sempre salvar se disponível
           tradeType: 'BUY' as any,
           status: 'pending' as any,
           derivTransactionId: data.contractId || null,
           symbol: data.symbol || null,
         });
         const savedTrade = await this.tradeRepository.save(trade);
-        this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}, entrySpot: ${savedTrade.entrySpot}`);
+        this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}, entrySpot: ${savedTrade.entrySpot}, entryValue: ${savedTrade.entryValue}`);
       } catch (error) {
         this.logger.error(`[Trading] Erro ao salvar operação de compra: ${error.message}`);
       }
@@ -1037,7 +1063,33 @@ export class DerivController {
       
       // Atualizar operação no banco com o resultado
       try {
-        this.logger.log(`[Trading] Atualizando venda - exitSpot: ${data.exitSpot}, exit_spot: ${data.exit_spot}, sellPrice: ${data.sellPrice}, profit: ${data.profit}`);
+        // Garantir que exitSpot sempre tenha um valor
+        let exitSpot = data.exitSpot || data.exit_spot || null;
+        
+        // Se não encontrou exitSpot, tentar obter do último tick do serviço WebSocket
+        if (exitSpot === null || exitSpot === undefined) {
+          try {
+            const service = this.wsManager.getService(userId);
+            if (service) {
+              const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
+              if (ticks && ticks.length > 0) {
+                const lastTick = ticks[ticks.length - 1];
+                if (lastTick && lastTick.value) {
+                  exitSpot = Number(lastTick.value);
+                  this.logger.log(`[Trading] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`);
+                }
+              }
+            }
+          } catch (error) {
+            this.logger.warn(`[Trading] Erro ao obter último tick para exitSpot: ${error.message}`);
+          }
+        }
+        
+        // Garantir que exitSpot seja um número válido
+        const finalExitSpot = exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null;
+        
+        this.logger.log(`[Trading] Atualizando venda - exitSpot: ${finalExitSpot}, exit_spot: ${data.exit_spot}, sellPrice: ${data.sellPrice}, profit: ${data.profit}`);
+        
         const trade = await this.tradeRepository.findOne({
           where: { derivTransactionId: data.contractId, userId },
           order: { createdAt: 'DESC' },
@@ -1046,7 +1098,7 @@ export class DerivController {
         if (trade) {
           trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
           trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null; // Valor recebido na venda
-          trade.exitSpot = data.exitSpot || data.exit_spot || null; // Preço de saída (spot price)
+          trade.exitSpot = finalExitSpot; // Preço de saída (spot price) - sempre salvar se disponível
           trade.status = (trade.profit !== null && trade.profit > 0) ? 'won' : (trade.profit !== null ? 'lost' : 'pending') as any;
           const savedTrade = await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${savedTrade.id}, exitSpot: ${savedTrade.exitSpot}, exitValue: ${savedTrade.exitValue}, profit: ${savedTrade.profit}`);
