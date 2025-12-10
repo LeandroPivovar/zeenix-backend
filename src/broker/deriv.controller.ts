@@ -1010,6 +1010,7 @@ export class DerivController {
       
       // Salvar operação no banco
       try {
+        this.logger.log(`[Trading] Salvando compra - entrySpot: ${data.entrySpot}, entry_spot: ${data.entry_spot}, buyPrice: ${data.buyPrice}`);
         const trade = this.tradeRepository.create({
           id: uuidv4(),
           userId,
@@ -1024,8 +1025,8 @@ export class DerivController {
           derivTransactionId: data.contractId || null,
           symbol: data.symbol || null,
         });
-        await this.tradeRepository.save(trade);
-        this.logger.log(`[Trading] Operação de compra salva no banco: ${trade.id}`);
+        const savedTrade = await this.tradeRepository.save(trade);
+        this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}, entrySpot: ${savedTrade.entrySpot}`);
       } catch (error) {
         this.logger.error(`[Trading] Erro ao salvar operação de compra: ${error.message}`);
       }
@@ -1036,18 +1037,19 @@ export class DerivController {
       
       // Atualizar operação no banco com o resultado
       try {
+        this.logger.log(`[Trading] Atualizando venda - exitSpot: ${data.exitSpot}, exit_spot: ${data.exit_spot}, sellPrice: ${data.sellPrice}, profit: ${data.profit}`);
         const trade = await this.tradeRepository.findOne({
           where: { derivTransactionId: data.contractId, userId },
           order: { createdAt: 'DESC' },
         });
         
         if (trade) {
-          trade.profit = data.profit || null;
-          trade.exitValue = data.sellPrice || null; // Valor recebido na venda
+          trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
+          trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null; // Valor recebido na venda
           trade.exitSpot = data.exitSpot || data.exit_spot || null; // Preço de saída (spot price)
-          trade.status = data.profit && data.profit > 0 ? 'won' : (data.profit !== null ? 'lost' : 'pending') as any;
-          await this.tradeRepository.save(trade);
-          this.logger.log(`[Trading] Operação de venda atualizada no banco: ${trade.id}`);
+          trade.status = (trade.profit !== null && trade.profit > 0) ? 'won' : (trade.profit !== null ? 'lost' : 'pending') as any;
+          const savedTrade = await this.tradeRepository.save(trade);
+          this.logger.log(`[Trading] Operação de venda atualizada no banco: ${savedTrade.id}, exitSpot: ${savedTrade.exitSpot}, exitValue: ${savedTrade.exitValue}, profit: ${savedTrade.profit}`);
         } else {
           this.logger.warn(`[Trading] Operação não encontrada para contractId: ${data.contractId}`);
         }
@@ -1072,8 +1074,54 @@ export class DerivController {
       res.write(`data: ${JSON.stringify({ type: 'active_symbols', data })}\n\n`);
     };
     
-    const onContractUpdate = (data: any) => {
+    const onContractUpdate = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'contract', data })}\n\n`);
+      
+      // Atualizar operação no banco quando o contrato for finalizado (expirar ou ser vendido)
+      if (data && data.contract_id) {
+        try {
+          const trade = await this.tradeRepository.findOne({
+            where: { derivTransactionId: data.contract_id, userId },
+            order: { createdAt: 'DESC' },
+          });
+          
+          if (trade) {
+            // Se o contrato foi vendido ou expirou, atualizar com os dados finais
+            if (data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost') {
+              // Atualizar preço de saída se disponível
+              if (data.exit_spot !== null && data.exit_spot !== undefined) {
+                trade.exitSpot = Number(data.exit_spot) || null;
+              }
+              
+              // Atualizar valor de saída se disponível
+              if (data.sell_price !== null && data.sell_price !== undefined) {
+                trade.exitValue = Number(data.sell_price) || null;
+              }
+              
+              // Atualizar lucro/prejuízo
+              if (data.profit !== null && data.profit !== undefined) {
+                trade.profit = Number(data.profit) || null;
+              }
+              
+              // Atualizar status
+              if (data.status) {
+                if (data.status === 'won' || (data.profit !== null && data.profit > 0)) {
+                  trade.status = 'won' as any;
+                } else if (data.status === 'lost' || (data.profit !== null && data.profit <= 0)) {
+                  trade.status = 'lost' as any;
+                } else if (data.status === 'sold') {
+                  trade.status = 'won' as any; // Assumir que venda manual é lucro
+                }
+              }
+              
+              await this.tradeRepository.save(trade);
+              this.logger.log(`[Trading] Contrato atualizado no banco: ${trade.id}, exitSpot: ${trade.exitSpot}, profit: ${trade.profit}`);
+            }
+          }
+        } catch (error) {
+          this.logger.error(`[Trading] Erro ao atualizar contrato: ${error.message}`);
+        }
+      }
     };
     
     service.on('tick', onTick);
