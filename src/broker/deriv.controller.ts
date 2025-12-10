@@ -1838,16 +1838,27 @@ export class DerivController {
     this.logger.log(`[Trading] Usuário ${userId} solicitando últimas ${limitValue} ordens Deriv`);
 
     try {
+      // Buscar todas as ordens do usuário
       const orders = await this.tradeRepository.find({
         where: {
           userId,
-          derivTransactionId: Not(IsNull() as any), // Only trades linked to Deriv
         },
         order: {
           createdAt: 'DESC',
         },
         take: limitValue,
       });
+
+      this.logger.log(`[Trading] Encontradas ${orders.length} ordens para o usuário ${userId}`);
+      if (orders.length > 0) {
+        this.logger.log(`[Trading] Primeira ordem exemplo:`, JSON.stringify({
+          id: orders[0].id,
+          contractType: orders[0].contractType,
+          entryValue: orders[0].entryValue,
+          symbol: orders[0].symbol,
+          derivTransactionId: orders[0].derivTransactionId,
+        }));
+      }
 
       return orders.map(order => ({
         id: order.id,
