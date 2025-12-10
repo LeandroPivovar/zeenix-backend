@@ -301,8 +301,29 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.logger.log(`[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`);
     this.logger.log(`[Buy] API retornou contract_type: ${buy.contract_type}, usando: ${contractType}`);
     
+    // Log completo da resposta da API para debug
+    this.logger.log(`[Buy] Resposta completa da API: ${JSON.stringify(buy)}`);
+    
     // Limpar configuração pendente após usar
     this.pendingBuyConfig = null;
+
+    // Tentar capturar entry_spot de diferentes campos possíveis
+    let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || buy.start_spot || null;
+    
+    // Se não encontrou entry_spot na resposta, usar o último tick disponível
+    if (entrySpot === null || entrySpot === undefined) {
+      if (this.ticks && this.ticks.length > 0) {
+        const lastTick = this.ticks[this.ticks.length - 1];
+        entrySpot = lastTick.value;
+        this.logger.log(`[Buy] EntrySpot não encontrado na resposta, usando último tick: ${entrySpot}`);
+      } else {
+        this.logger.warn(`[Buy] EntrySpot não encontrado e nenhum tick disponível`);
+      }
+    }
+    
+    const entryTime = buy.purchase_time || buy.start_time || Date.now() / 1000;
+    
+    this.logger.log(`[Buy] EntrySpot final: ${entrySpot} (de entry_spot: ${buy.entry_spot}, spot: ${buy.spot}, current_spot: ${buy.current_spot}, start_spot: ${buy.start_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const tradeData: TradeData = {
       contractId: buy.contract_id,
@@ -312,8 +333,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       contractType: contractType, // Usar o tipo solicitado, não o retornado pela API
       duration: duration,
       durationUnit: durationUnit, // Preservar o valor original
-      entrySpot: Number(buy.entry_spot) || null,
-      entryTime: Number(buy.purchase_time) || null,
+      entrySpot: entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null,
+      entryTime: Number(entryTime) || null,
     };
 
     this.emit('buy', tradeData);
@@ -323,11 +344,30 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     const sell = msg.sell;
     if (!sell || !sell.contract_id) return;
 
+    // Log completo da resposta da API para debug
+    this.logger.log(`[Sell] Resposta completa da API: ${JSON.stringify(sell)}`);
+
+    // Tentar capturar exit_spot de diferentes campos possíveis
+    let exitSpot = sell.exit_spot || sell.spot || sell.current_spot || sell.exit_spot_price || null;
+    
+    // Se não encontrou exit_spot na resposta, usar o último tick disponível
+    if (exitSpot === null || exitSpot === undefined) {
+      if (this.ticks && this.ticks.length > 0) {
+        const lastTick = this.ticks[this.ticks.length - 1];
+        exitSpot = lastTick.value;
+        this.logger.log(`[Sell] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`);
+      } else {
+        this.logger.warn(`[Sell] ExitSpot não encontrado e nenhum tick disponível`);
+      }
+    }
+    
+    this.logger.log(`[Sell] ExitSpot final: ${exitSpot} (de exit_spot: ${sell.exit_spot}, spot: ${sell.spot}, current_spot: ${sell.current_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
+
     const sellData = {
       contractId: sell.contract_id,
       sellPrice: Number(sell.sell_price) || 0,
       profit: Number(sell.profit) || 0,
-      exitSpot: Number(sell.exit_spot) || null,
+      exitSpot: exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null,
       symbol: sell.symbol || this.symbol,
     };
 
