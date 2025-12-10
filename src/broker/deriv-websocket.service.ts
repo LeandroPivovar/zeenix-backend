@@ -419,6 +419,9 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       this.openContractSubscriptionId = msg.subscription.id;
     }
 
+    // Log detalhado para debug
+    this.logger.log(`[ContractUpdate] Recebido: contract_id=${contract.contract_id}, status=${contract.status}, is_expired=${contract.is_expired}, is_sold=${contract.is_sold}, exit_spot=${contract.exit_spot}, current_spot=${contract.current_spot}, profit=${contract.profit}`);
+
     // Emitir atualização de contrato que será processada pelo controller
     this.emit('contract_update', contract);
   }
