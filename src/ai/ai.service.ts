@@ -29,7 +29,8 @@ interface VelozUserState {
   modoMartingale: ModoMartingale;
   perdaAcumulada: number;
   apostaInicial: number;
-  lastOperationTickIndex: number; // ✅ ZENIX v2.0: Controle de intervalo (3 ticks)
+  lastOperationTickIndex: number; // ✅ ZENIX v2.0: Controle de intervalo (3 ticks) - DEPRECATED, usar ticksDesdeUltimaOp
+  ticksDesdeUltimaOp: number; // ✅ ZENIX v2.0: Contador de ticks desde última operação (mais confiável)
   vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
 }
@@ -700,6 +701,14 @@ export class AiService implements OnModuleInit {
       return;
     }
 
+    // ✅ ZENIX v2.0: Incrementar contador de ticks para TODOS os usuários (uma vez por tick)
+    // Isso garante que o intervalo seja contado corretamente
+    for (const [userId, state] of this.velozUsers.entries()) {
+      if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
+        state.ticksDesdeUltimaOp += 1;
+      }
+    }
+
     // ✅ OTIMIZAÇÃO: Processar usuários em paralelo (não sequencial)
     const userPromises = Array.from(this.velozUsers.entries()).map(async ([userId, state]) => {
       try {
@@ -715,20 +724,19 @@ export class AiService implements OnModuleInit {
         }
 
         // ✅ ZENIX v2.0: Verificar intervalo entre operações (3 ticks)
-        if (state.lastOperationTickIndex !== undefined && state.lastOperationTickIndex >= 0) {
-          const ticksDesdeUltimaOp = this.ticks.length - 1 - state.lastOperationTickIndex;
-          if (ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
+        // CORREÇÃO: Usar contador de ticks desde última operação (mais confiável que índice)
+        if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
+          if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
             this.logger.debug(
-              `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks | ` +
-              `lastOpIndex=${state.lastOperationTickIndex} | currentTickIndex=${this.ticks.length - 1}`,
+              `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
             );
             return;
           }
         } else {
-          // ✅ Se lastOperationTickIndex é -1 ou undefined, pode operar imediatamente
+          // ✅ Se ticksDesdeUltimaOp é undefined ou negativo, pode operar imediatamente
+          state.ticksDesdeUltimaOp = 0; // Inicializar contador
           this.logger.debug(
-            `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | ` +
-            `lastOpIndex=${state.lastOperationTickIndex} | totalTicks=${this.ticks.length}`,
+            `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | totalTicks=${this.ticks.length}`,
           );
         }
 
@@ -1079,6 +1087,10 @@ export class AiService implements OnModuleInit {
     state.isOperationActive = true;
     state.martingaleStep = entry;
 
+    // ✅ ZENIX v2.0: Resetar contador de ticks ANTES de executar operação
+    // Isso garante que o intervalo seja calculado corretamente
+    state.ticksDesdeUltimaOp = 0;
+
     // ✅ ZENIX v2.0: Calcular stake (já aplica Soros se for primeira entrada)
     let stakeAmount = this.calculateVelozStake(state, entry);
     const currentPrice = this.getCurrentPrice() || 0;
@@ -1162,8 +1174,8 @@ export class AiService implements OnModuleInit {
         entry,
       );
 
-      // ✅ ZENIX v2.0: Atualizar índice do último tick após executar operação
-      state.lastOperationTickIndex = this.ticks.length - 1;
+      // ✅ NOTA: lastOperationTickIndex já foi atualizado ANTES de executar a operação
+      // para garantir que o intervalo seja calculado corretamente
 
       return tradeId;
     } catch (error: any) {
@@ -2373,7 +2385,8 @@ export class AiService implements OnModuleInit {
       }
       // ✅ Resetar intervalo se não há operação ativa (permite nova operação imediatamente)
       if (!existing.isOperationActive) {
-        existing.lastOperationTickIndex = -1;
+        existing.lastOperationTickIndex = -1; // DEPRECATED
+        existing.ticksDesdeUltimaOp = -1; // Resetar contador
       }
       this.velozUsers.set(userId, existing);
       return;
@@ -2396,7 +2409,8 @@ export class AiService implements OnModuleInit {
       modoMartingale: modoMartingale,
       perdaAcumulada: 0,
       apostaInicial: 0,
-      lastOperationTickIndex: -1, // ✅ ZENIX v2.0: Inicializar controle de intervalo
+      lastOperationTickIndex: -1, // ✅ ZENIX v2.0: DEPRECATED - manter para compatibilidade
+      ticksDesdeUltimaOp: -1, // ✅ ZENIX v2.0: Inicializar contador de ticks (-1 = pode operar imediatamente)
       vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       apostaBase: stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
     });
