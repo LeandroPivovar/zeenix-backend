@@ -44,6 +44,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   private symbol: string = 'R_100';
   private ticks: TickData[] = [];
   private readonly maxTicks = 300; // 5 minutos de ticks
+  private pendingBuyConfig: { durationUnit?: string; duration?: number } | null = null; // Armazenar config da compra pendente
 
   constructor() {
     super();
@@ -290,14 +291,23 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     const buy = msg.buy;
     if (!buy || !buy.contract_id) return;
 
+    // Usar durationUnit da configuração pendente se disponível, senão usar da resposta da API
+    const durationUnit = this.pendingBuyConfig?.durationUnit || buy.duration_unit || 'm';
+    const duration = this.pendingBuyConfig?.duration || Number(buy.duration) || 0;
+    
+    this.logger.log(`[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`);
+    
+    // Limpar configuração pendente após usar
+    this.pendingBuyConfig = null;
+
     const tradeData: TradeData = {
       contractId: buy.contract_id,
       buyPrice: Number(buy.buy_price) || 0,
       payout: Number(buy.payout) || 0,
       symbol: buy.symbol || this.symbol,
       contractType: buy.contract_type || 'CALL',
-      duration: Number(buy.duration) || 0,
-      durationUnit: buy.duration_unit || 'm',
+      duration: duration,
+      durationUnit: durationUnit, // Preservar o valor original
       entrySpot: Number(buy.entry_spot) || null,
       entryTime: Number(buy.purchase_time) || null,
     };
@@ -414,10 +424,16 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.send(proposalRequest);
   }
 
-  buyContract(proposalId: string, price: number): void {
+  buyContract(proposalId: string, price: number, durationUnit?: string, duration?: number): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
+    }
+
+    // Armazenar configuração da compra para preservar durationUnit original
+    if (durationUnit !== undefined) {
+      this.pendingBuyConfig = { durationUnit, duration };
+      this.logger.log(`[Buy] Armazenando config: durationUnit=${durationUnit}, duration=${duration}`);
     }
 
     this.logger.log(`Comprando contrato: ${proposalId} por ${price}`);

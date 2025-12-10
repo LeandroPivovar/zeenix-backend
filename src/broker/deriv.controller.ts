@@ -1364,8 +1364,8 @@ export class DerivController {
         throw new BadRequestException('Proposta inválida para compra.');
       }
       
-      // Executar compra
-      service.buyContract(proposalId, body.amount);
+      // Executar compra, passando durationUnit e duration para preservar valores originais
+      service.buyContract(proposalId, body.amount, body.durationUnit, body.duration);
       
       return { 
         success: true, 
