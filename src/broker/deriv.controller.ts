@@ -31,7 +31,7 @@ import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { DerivService } from './deriv.service';
 import { DerivWebSocketManagerService } from './deriv-websocket-manager.service';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 import { TradeEntity } from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -1839,7 +1839,7 @@ export class DerivController {
       const orders = await this.tradeRepository.find({
         where: {
           userId,
-          derivTransactionId: Not(null), // Only trades linked to Deriv
+          derivTransactionId: Not(IsNull() as any), // Only trades linked to Deriv
         },
         order: {
           createdAt: 'DESC',
@@ -1854,7 +1854,6 @@ export class DerivController {
         duration: order.duration,
         multiplier: order.multiplier,
         entryValue: order.entryValue,
-        exitValue: order.exitValue,
         tradeType: order.tradeType,
         status: order.status,
         profit: order.profit,
