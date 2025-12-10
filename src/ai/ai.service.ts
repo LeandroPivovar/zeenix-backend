@@ -515,25 +515,34 @@ export class AiService implements OnModuleInit {
     try {
       await this.initializeTables();
       this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
+      
+      // Inicializar conexão WebSocket
+      this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
+      try {
+        await this.initialize();
+        this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
+      } catch (error) {
+        this.logger.error('❌ Erro ao inicializar WebSocket:', error.message);
+      }
     } catch (error) {
       this.logger.error('❌ Erro ao inicializar tabelas da IA:', error.message);
     }
   }
 
   async initialize() {
-    if (this.isConnected) {
-      this.logger.log('Já está conectado ao Deriv API');
+    if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.logger.log('✅ Já está conectado ao Deriv API');
       return;
     }
 
     return new Promise<void>((resolve, reject) => {
-      this.logger.log('Inicializando conexão com Deriv API...');
+      this.logger.log(`🔌 Inicializando conexão com Deriv API (app_id: ${this.appId})...`);
 
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       this.ws = new WebSocket.WebSocket(endpoint);
 
       this.ws.on('open', () => {
-        this.logger.log('✅ Conexão WebSocket estabelecida');
+        this.logger.log('✅ Conexão WebSocket aberta com sucesso');
         this.isConnected = true;
         this.subscribeToTicks();
         resolve();
@@ -569,7 +578,7 @@ export class AiService implements OnModuleInit {
   }
 
   private subscribeToTicks() {
-    this.logger.log(`Inscrevendo-se nos ticks de ${this.symbol}...`);
+    this.logger.log(`📡 Inscrevendo-se nos ticks de ${this.symbol}...`);
     this.send({
       ticks_history: this.symbol,
       adjust_start_time: 1,
@@ -578,6 +587,7 @@ export class AiService implements OnModuleInit {
       subscribe: 1,
       style: 'ticks',
     });
+    this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
   }
 
   private handleMessage(msg: any) {
@@ -599,14 +609,16 @@ export class AiService implements OnModuleInit {
 
   private processHistory(history: any, subscriptionId?: string) {
     if (!history || !history.prices) {
+      this.logger.warn('⚠️ Histórico recebido sem dados de preços');
       return;
     }
 
     if (subscriptionId) {
       this.subscriptionId = subscriptionId;
+      this.logger.log(`📋 Subscription ID recebido: ${subscriptionId}`);
     }
 
-    this.logger.log('Histórico recebido');
+    this.logger.log(`📊 Processando histórico: ${history.prices?.length || 0} preços recebidos`);
 
     this.ticks = history.prices.map((price: string, index: number) => {
       const value = parseFloat(price);
@@ -624,11 +636,12 @@ export class AiService implements OnModuleInit {
       };
     });
 
-    this.logger.log(`${this.ticks.length} ticks carregados`);
+    this.logger.log(`✅ ${this.ticks.length} ticks carregados no histórico`);
   }
 
   private processTick(tick: any) {
     if (!tick || !tick.quote) {
+      this.logger.debug('⚠️ Tick recebido sem quote');
       return;
     }
 
@@ -648,14 +661,17 @@ export class AiService implements OnModuleInit {
 
     this.ticks.push(newTick);
 
-    // Manter apenas os últimos 20 ticks
+    // Manter apenas os últimos maxTicks
     if (this.ticks.length > this.maxTicks) {
       this.ticks.shift();
     }
 
-    this.logger.debug(
-      `[Tick] valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
-    );
+    // Log a cada 10 ticks para não poluir muito
+    if (this.ticks.length % 10 === 0) {
+      this.logger.debug(
+        `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+      );
+    }
 
     // Processar estratégias de todos os modos ativos
     this.processVelozStrategies(newTick).catch((error) => {
@@ -2482,21 +2498,30 @@ export class AiService implements OnModuleInit {
   private async ensureTickStreamReady(
     minTicks: number = VELOZ_CONFIG.window,
   ): Promise<void> {
+    this.logger.debug(`[ensureTickStreamReady] Verificando conexão WebSocket...`);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.debug(`[ensureTickStreamReady] WebSocket não conectado, inicializando...`);
       await this.initialize();
     }
 
+    this.logger.debug(`[ensureTickStreamReady] Aguardando ${minTicks} ticks (atual: ${this.ticks.length})...`);
     let attempts = 0;
     while (this.ticks.length < minTicks && attempts < 60) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       attempts++;
+      if (attempts % 10 === 0) {
+        this.logger.debug(`[ensureTickStreamReady] Tentativa ${attempts}/60 - Ticks: ${this.ticks.length}/${minTicks}`);
+      }
     }
 
     if (this.ticks.length < minTicks) {
+      this.logger.error(`[ensureTickStreamReady] ❌ Timeout: Não foi possível obter ${minTicks} ticks (obtidos: ${this.ticks.length})`);
       throw new Error(
         `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
       );
     }
+    
+    this.logger.debug(`[ensureTickStreamReady] ✅ Ticks suficientes: ${this.ticks.length}/${minTicks}`);
   }
 
   async getVelozDiagnostics(userId?: string) {
@@ -3235,6 +3260,7 @@ export class AiService implements OnModuleInit {
    */
   async processFastModeUsers(): Promise<void> {
     try {
+        this.logger.debug('🔍 [Fast Mode] Buscando usuários ativos...');
         const fastModeUsers = await this.dataSource.query(
             `SELECT 
                 user_id as userId,
@@ -3247,9 +3273,12 @@ export class AiService implements OnModuleInit {
              AND LOWER(mode) = 'fast'`
         );
 
+        this.logger.debug(`[Fast Mode] Encontrados ${fastModeUsers.length} usuários ativos`);
+
         if (fastModeUsers.length > 0) {
             for (const user of fastModeUsers) {
                 try {
+                    this.logger.debug(`[Fast Mode] Processando usuário ${user.userId}...`);
                     await this.processFastMode(user);
                 } catch (error) {
                     this.logger.error(
@@ -3258,6 +3287,8 @@ export class AiService implements OnModuleInit {
                     );
                 }
             }
+        } else {
+            this.logger.debug('[Fast Mode] Nenhum usuário ativo encontrado');
         }
     } catch (error) {
         this.logger.error('[Fast Mode] Erro no processamento:', error);
@@ -3345,15 +3376,20 @@ private async processFastMode(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency } = user;
     
     try {
+        this.logger.debug(`[Fast][${userId}] Iniciando processamento...`);
+        this.logger.debug(`[Fast][${userId}] WebSocket conectado: ${this.isConnected}, Ticks disponíveis: ${this.ticks.length}`);
+        
         // Garantir que temos dados suficientes
         await this.ensureTickStreamReady(FAST_MODE_CONFIG.window);
+        
+        this.logger.debug(`[Fast][${userId}] Ticks após ensureTickStreamReady: ${this.ticks.length}`);
         
         // Obter os últimos ticks
         const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
         
         // Verificar se temos ticks suficientes
         if (windowTicks.length < FAST_MODE_CONFIG.window) {
-            this.logger.warn(`[Fast] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
+            this.logger.warn(`[Fast][${userId}] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
             return;
         }
         

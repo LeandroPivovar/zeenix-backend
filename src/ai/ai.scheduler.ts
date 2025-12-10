@@ -33,10 +33,11 @@ export class AiScheduler {
     name: 'process-fast-mode-ais',
   })
   async handleFastModeAIs() {
+    this.logger.debug('🔄 [Scheduler] Executando processamento de modo fast');
     try {
       await this.aiService.processFastModeUsers();
     } catch (error) {
-      this.logger.error('Erro ao processar modo fast:', error);
+      this.logger.error('❌ [Scheduler] Erro ao processar modo fast:', error);
     }
   }
 }
