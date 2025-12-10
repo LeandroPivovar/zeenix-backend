@@ -35,6 +35,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   private currentLoginid: string | null = null;
   private tickSubscriptionId: string | null = null;
   private proposalSubscriptionId: string | null = null;
+  private openContractSubscriptionId: string | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectTimeout: NodeJS.Timeout | null = null;
@@ -170,6 +171,10 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
       case 'active_symbols':
         this.processActiveSymbols(msg);
+        break;
+
+      case 'proposal_open_contract':
+        this.processProposalOpenContract(msg);
         break;
     }
   }
@@ -337,6 +342,9 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       entryTime: Number(entryTime) || null,
     };
 
+    // Automaticamente se inscrever em proposal_open_contract para monitorar o contrato
+    this.subscribeToOpenContract(buy.contract_id);
+
     this.emit('buy', tradeData);
   }
 
@@ -402,6 +410,19 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.emit('active_symbols', symbols);
   }
 
+  private processProposalOpenContract(msg: any): void {
+    const contract = msg.proposal_open_contract;
+    if (!contract) return;
+
+    // Capturar subscription ID se disponível
+    if (msg.subscription?.id) {
+      this.openContractSubscriptionId = msg.subscription.id;
+    }
+
+    // Emitir atualização de contrato que será processada pelo controller
+    this.emit('contract_update', contract);
+  }
+
   subscribeToSymbol(symbol: string): void {
     this.symbol = symbol;
     
@@ -440,6 +461,13 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     if (!config.contractType || config.contractType === 'undefined') {
       this.logger.error('contractType é obrigatório');
       return;
+    }
+
+    // Cancelar subscription anterior se existir para evitar erro "AlreadySubscribed"
+    if (this.proposalSubscriptionId) {
+      this.logger.log(`Cancelando subscription anterior de proposta: ${this.proposalSubscriptionId}`);
+      this.cancelSubscription(this.proposalSubscriptionId);
+      this.proposalSubscriptionId = null;
     }
 
     this.logger.log('Inscrevendo-se em proposta:', config);
@@ -559,6 +587,9 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     if (this.proposalSubscriptionId === subscriptionId) {
       this.proposalSubscriptionId = null;
     }
+    if (this.openContractSubscriptionId === subscriptionId) {
+      this.openContractSubscriptionId = null;
+    }
   }
 
   cancelTickSubscription(): void {
@@ -570,6 +601,35 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   cancelProposalSubscription(): void {
     if (this.proposalSubscriptionId) {
       this.cancelSubscription(this.proposalSubscriptionId);
+      this.proposalSubscriptionId = null;
+    }
+  }
+
+  subscribeToOpenContract(contractId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado');
+      return;
+    }
+
+    // Cancelar subscription anterior se existir
+    if (this.openContractSubscriptionId) {
+      this.cancelSubscription(this.openContractSubscriptionId);
+      this.openContractSubscriptionId = null;
+    }
+
+    this.logger.log(`Inscrevendo-se em contrato aberto: ${contractId}`);
+
+    this.send({
+      proposal_open_contract: 1,
+      contract_id: contractId,
+      subscribe: 1,
+    });
+  }
+
+  cancelOpenContractSubscription(): void {
+    if (this.openContractSubscriptionId) {
+      this.cancelSubscription(this.openContractSubscriptionId);
+      this.openContractSubscriptionId = null;
     }
   }
 
@@ -634,6 +694,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.currentLoginid = null;
     this.tickSubscriptionId = null;
     this.proposalSubscriptionId = null;
+    this.openContractSubscriptionId = null;
     this.ticks = [];
     this.reconnectAttempts = 0;
     this.isReconnecting = false;

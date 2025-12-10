@@ -1047,7 +1047,7 @@ export class DerivController {
           entryValue: data.buyPrice || 0, // Valor investido (stake)
           entrySpot: finalEntrySpot, // Preço de entrada (spot price) - sempre salvar se disponível
           tradeType: 'BUY' as any,
-          status: 'pending' as any,
+          status: TradeStatus.PENDING,
           derivTransactionId: data.contractId || null,
           symbol: data.symbol || null,
         });
@@ -1099,7 +1099,7 @@ export class DerivController {
           trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
           trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null; // Valor recebido na venda
           trade.exitSpot = finalExitSpot; // Preço de saída (spot price) - sempre salvar se disponível
-          trade.status = (trade.profit !== null && trade.profit > 0) ? 'won' : (trade.profit !== null ? 'lost' : 'pending') as any;
+          trade.status = (trade.profit !== null && trade.profit > 0) ? TradeStatus.WON : (trade.profit !== null ? TradeStatus.LOST : TradeStatus.PENDING);
           const savedTrade = await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${savedTrade.id}, exitSpot: ${savedTrade.exitSpot}, exitValue: ${savedTrade.exitValue}, profit: ${savedTrade.profit}`);
         } else {
@@ -1129,7 +1129,7 @@ export class DerivController {
     const onContractUpdate = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'contract', data })}\n\n`);
       
-      // Atualizar operação no banco quando o contrato for finalizado (expirar ou ser vendido)
+      // Atualizar operação no banco sempre que houver atualização do contrato
       if (data && data.contract_id) {
         try {
           const trade = await this.tradeRepository.findOne({
@@ -1138,6 +1138,15 @@ export class DerivController {
           });
           
           if (trade) {
+            let shouldSave = false;
+            
+            // Atualizar entry_spot se disponível e ainda não tiver sido salvo
+            if ((trade.entrySpot === null || trade.entrySpot === undefined) && data.entry_spot !== null && data.entry_spot !== undefined) {
+              trade.entrySpot = Number(data.entry_spot);
+              shouldSave = true;
+              this.logger.log(`[Trading] EntrySpot atualizado do contrato: ${trade.entrySpot}`);
+            }
+            
             // Se o contrato foi vendido ou expirou, atualizar com os dados finais
             if (data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost') {
               // Atualizar preço de saída se disponível
@@ -1202,32 +1211,37 @@ export class DerivController {
               // Atualizar status
               if (data.status) {
                 if (data.status === 'won' || (data.profit !== null && data.profit > 0)) {
-                  trade.status = 'won' as any;
+                  trade.status = TradeStatus.WON;
                 } else if (data.status === 'lost' || (data.profit !== null && data.profit <= 0)) {
-                  trade.status = 'lost' as any;
+                  trade.status = TradeStatus.LOST;
                 } else if (data.status === 'sold') {
-                  trade.status = 'won' as any; // Assumir que venda manual é lucro
+                  trade.status = TradeStatus.WON; // Assumir que venda manual é lucro
                 } else if (data.status === 'expired' || data.is_expired) {
                   // Quando expira, determinar se ganhou ou perdeu baseado no profit
                   if (data.profit !== null && data.profit > 0) {
-                    trade.status = 'won' as any;
+                    trade.status = TradeStatus.WON;
                   } else if (data.profit !== null && data.profit <= 0) {
-                    trade.status = 'lost' as any;
+                    trade.status = TradeStatus.LOST;
                   } else {
-                    trade.status = 'lost' as any; // Por padrão, assumir perda se expirou sem profit definido
+                    trade.status = TradeStatus.LOST; // Por padrão, assumir perda se expirou sem profit definido
                   }
                 }
               } else if (data.is_expired) {
                 // Se is_expired mas sem status, determinar baseado no profit
                 if (data.profit !== null && data.profit > 0) {
-                  trade.status = 'won' as any;
+                  trade.status = TradeStatus.WON;
                 } else {
-                  trade.status = 'lost' as any;
+                  trade.status = TradeStatus.LOST;
                 }
               }
               
+              shouldSave = true;
+            }
+            
+            // Salvar apenas se houver mudanças
+            if (shouldSave) {
               await this.tradeRepository.save(trade);
-              this.logger.log(`[Trading] Contrato atualizado no banco: ${trade.id}, exitSpot: ${trade.exitSpot}, profit: ${trade.profit}`);
+              this.logger.log(`[Trading] Contrato atualizado no banco: ${trade.id}, status: ${trade.status}, entrySpot: ${trade.entrySpot}, exitSpot: ${trade.exitSpot}, profit: ${trade.profit}`);
             }
           }
         } catch (error) {
