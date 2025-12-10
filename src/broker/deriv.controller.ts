@@ -1111,6 +1111,22 @@ export class DerivController {
                   trade.status = 'lost' as any;
                 } else if (data.status === 'sold') {
                   trade.status = 'won' as any; // Assumir que venda manual é lucro
+                } else if (data.status === 'expired' || data.is_expired) {
+                  // Quando expira, determinar se ganhou ou perdeu baseado no profit
+                  if (data.profit !== null && data.profit > 0) {
+                    trade.status = 'won' as any;
+                  } else if (data.profit !== null && data.profit <= 0) {
+                    trade.status = 'lost' as any;
+                  } else {
+                    trade.status = 'lost' as any; // Por padrão, assumir perda se expirou sem profit definido
+                  }
+                }
+              } else if (data.is_expired) {
+                // Se is_expired mas sem status, determinar baseado no profit
+                if (data.profit !== null && data.profit > 0) {
+                  trade.status = 'won' as any;
+                } else {
+                  trade.status = 'lost' as any;
                 }
               }
               
@@ -1910,24 +1926,33 @@ export class DerivController {
         }));
       }
 
-      return orders.map(order => ({
-        id: order.id,
-        contractType: order.contractType,
-        timeType: order.timeType,
-        duration: order.duration,
-        multiplier: order.multiplier,
-        entryValue: order.entryValue, // Valor investido (stake)
-        entrySpot: order.entrySpot || null, // Preço de entrada (spot)
-        exitValue: order.exitValue || null, // Valor recebido na venda
-        exitSpot: order.exitSpot || null, // Preço de saída (spot)
-        tradeType: order.tradeType,
-        status: order.status,
-        profit: order.profit,
-        symbol: order.symbol || null,
-        derivTransactionId: order.derivTransactionId,
-        createdAt: order.createdAt,
-        updatedAt: order.updatedAt,
-      }));
+      return orders.map(order => {
+        // Mapear status: se expirou e não tem profit definido, considerar como closed
+        let displayStatus = order.status;
+        if (order.status === 'pending' && order.exitSpot !== null && order.exitSpot !== undefined) {
+          // Se tem exitSpot mas ainda está pending, provavelmente expirou
+          displayStatus = order.profit !== null && order.profit > 0 ? 'won' : 'lost';
+        }
+        
+        return {
+          id: order.id,
+          contractType: order.contractType,
+          timeType: order.timeType,
+          duration: order.duration,
+          multiplier: order.multiplier,
+          entryValue: order.entryValue, // Valor investido (stake)
+          entrySpot: order.entrySpot !== null && order.entrySpot !== undefined ? Number(order.entrySpot) : null, // Preço de entrada (spot)
+          exitValue: order.exitValue !== null && order.exitValue !== undefined ? Number(order.exitValue) : null, // Valor recebido na venda
+          exitSpot: order.exitSpot !== null && order.exitSpot !== undefined ? Number(order.exitSpot) : null, // Preço de saída (spot)
+          tradeType: order.tradeType,
+          status: displayStatus,
+          profit: order.profit !== null && order.profit !== undefined ? Number(order.profit) : null,
+          symbol: order.symbol || null,
+          derivTransactionId: order.derivTransactionId,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+        };
+      });
     } catch (error) {
       this.logger.error(`[Trading] Erro ao buscar últimas ordens: ${error.message}`);
       throw new BadRequestException(error.message || 'Erro ao buscar últimas ordens');
