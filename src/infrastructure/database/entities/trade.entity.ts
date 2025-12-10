@@ -47,6 +47,12 @@ export class TradeEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'deriv_transaction_id' })
   derivTransactionId?: string | null;
 
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  symbol?: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'exit_value' })
+  exitValue?: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -1021,6 +1021,7 @@ export class DerivController {
           tradeType: 'BUY' as any,
           status: 'pending' as any,
           derivTransactionId: data.contractId || null,
+          symbol: data.symbol || null,
         });
         await this.tradeRepository.save(trade);
         this.logger.log(`[Trading] Operação de compra salva no banco: ${trade.id}`);
@@ -1041,6 +1042,7 @@ export class DerivController {
         
         if (trade) {
           trade.profit = data.profit || null;
+          trade.exitValue = data.sellPrice || null;
           trade.status = data.profit && data.profit > 0 ? 'won' : (data.profit !== null ? 'lost' : 'pending') as any;
           await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${trade.id}`);
@@ -1854,9 +1856,11 @@ export class DerivController {
         duration: order.duration,
         multiplier: order.multiplier,
         entryValue: order.entryValue,
+        exitValue: order.exitValue,
         tradeType: order.tradeType,
         status: order.status,
         profit: order.profit,
+        symbol: order.symbol,
         derivTransactionId: order.derivTransactionId,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
