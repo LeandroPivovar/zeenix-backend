@@ -5111,18 +5111,43 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         }
       }
       
-      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Incrementar vitórias consecutivas
-      if (entry === 1) {
-        // Apenas incrementar se foi operação normal (não martingale)
-        state.vitoriasConsecutivas += 1;
-        this.logger.log(
-          `[Moderado][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
-          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
-          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
-        );
+      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
+      // Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
+      // Entrada 1: vitoriasConsecutivas = 0 → após vitória, vira 1
+      // Entrada 2: vitoriasConsecutivas = 1 (Soros nível 1) → após vitória, vira 2
+      // Entrada 3: vitoriasConsecutivas = 2 (Soros nível 2) → após vitória, reinicia tudo
+      
+      if (entry <= 3 && state.perdaAcumulada === 0) {
+        // Está no Soros (entradas 1, 2 ou 3 sem perda acumulada)
+        if (entry === 1) {
+          // Vitória na entrada 1: ativar Soros nível 1
+          state.vitoriasConsecutivas = 1;
+          state.ultimoLucro = result.profitLoss;
+          this.logger.log(
+            `[Moderado][Soros] ✅ Entrada 1 vitoriosa | Ativando Soros Nível 1 | ` +
+            `Próxima: $${stakeAmount.toFixed(2)} + $${result.profitLoss.toFixed(2)} = $${(stakeAmount + result.profitLoss).toFixed(2)}`,
+          );
+        } else if (entry === 2 && state.vitoriasConsecutivas === 1) {
+          // Vitória no Soros nível 1: ativar Soros nível 2
+          state.vitoriasConsecutivas = 2;
+          state.ultimoLucro = result.profitLoss;
+          this.logger.log(
+            `[Moderado][Soros] ✅ Soros Nível 1 vitorioso | Ativando Soros Nível 2 | ` +
+            `Próxima: $${stakeAmount.toFixed(2)} + $${result.profitLoss.toFixed(2)} = $${(stakeAmount + result.profitLoss).toFixed(2)}`,
+          );
+        } else if (entry === 3 && state.vitoriasConsecutivas === 2) {
+          // Vitória no Soros nível 2: ciclo perfeito, reiniciar tudo
+          this.logger.log(
+            `[Moderado][Soros] 🎉 CICLO PERFEITO! Soros Nível 2 completo | Reiniciando tudo`,
+          );
+          state.vitoriasConsecutivas = 0;
+          state.ultimoLucro = 0;
+          // Reiniciar para valor inicial
+        }
       } else {
-        // Se estava em martingale, resetar contador (martingale não conta para Soros)
+        // Vitória em martingale: resetar Soros
         state.vitoriasConsecutivas = 0;
+        state.ultimoLucro = 0;
         this.logger.log(`[Moderado][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
       }
       
@@ -5150,12 +5175,37 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
       
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
-      // Calcular próxima aposta com Soros aplicado
-      const proximaApostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (${state.vitoriasConsecutivas > 0 ? `Soros ${state.vitoriasConsecutivas}x` : 'normal'})`);
+      // Se completou Soros nível 2, reiniciar tudo
+      if (entry === 3 && state.vitoriasConsecutivas === 2) {
+        await this.saveLog(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
+        state.isOperationActive = false;
+        state.martingaleStep = 0;
+        state.perdaAcumulada = 0;
+        state.vitoriasConsecutivas = 0;
+        state.ultimoLucro = 0;
+        // Próxima entrada será o valor inicial
+        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+        return;
+      }
+      
+      // Se ainda está no Soros, calcular próxima aposta
+      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+        const proximaApostaComSoros = calcularApostaComSoros(
+          stakeAmount,
+          result.profitLoss,
+          state.vitoriasConsecutivas,
+        );
+        if (proximaApostaComSoros !== null) {
+          await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
+        }
+      } else {
+        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+      }
+      
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
       
-      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas)
+      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
@@ -5167,15 +5217,26 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
 
-    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Resetar vitórias consecutivas após perda
-    if (entry === 1) {
-      // Apenas resetar se foi operação normal (não martingale)
+    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
+    // Se perder em qualquer entrada do Soros (1, 2 ou 3), entrar em recuperação
+    if (entry <= 3 && state.perdaAcumulada === stakeAmount) {
+      // Perdeu no Soros: resetar Soros e entrar em recuperação
       if (state.vitoriasConsecutivas > 0) {
         this.logger.log(
-          `[Moderado][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
+          `[Moderado][Soros] ❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação`,
+        );
+      } else {
+        this.logger.log(
+          `[Moderado][Soros] ❌ Entrada 1 falhou! Entrando em recuperação`,
         );
       }
       state.vitoriasConsecutivas = 0;
+      state.ultimoLucro = 0;
+      // perdaAcumulada já foi incrementada acima, então entrará em martingale
+    } else if (entry === 1) {
+      // Perda na primeira entrada (não estava no Soros)
+      state.vitoriasConsecutivas = 0;
+      state.ultimoLucro = 0;
     }
 
     this.logger.warn(
