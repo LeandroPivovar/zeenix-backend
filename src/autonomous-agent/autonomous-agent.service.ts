@@ -2379,9 +2379,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
   async getLogs(userId: string, limit: number = 2000): Promise<any[]> {
     try {
-      // Buscar logs com created_at para comparação no frontend
+      // Buscar logs (a tabela não tem created_at, apenas timestamp)
       const logs = await this.dataSource.query(
-        `SELECT id, timestamp, created_at, log_level, module, message, metadata
+        `SELECT id, timestamp, log_level, module, message, metadata
          FROM autonomous_agent_logs
          WHERE user_id = ?
          ORDER BY timestamp DESC
@@ -2435,8 +2435,6 @@ export class AutonomousAgentService implements OnModuleInit {
           date = new Date(log.timestamp);
         } else if (log.timestamp instanceof Date) {
           date = log.timestamp;
-        } else if (log.created_at) {
-          date = new Date(log.created_at);
         } else {
           date = new Date();
         }
@@ -2452,7 +2450,7 @@ export class AutonomousAgentService implements OnModuleInit {
         return {
           id: log.id,
           timestamp: formattedTime,
-          created_at: log.created_at || log.timestamp,
+          created_at: log.timestamp, // Usar timestamp como created_at (a tabela não tem created_at)
           type,
           icon,
           message: log.message,
