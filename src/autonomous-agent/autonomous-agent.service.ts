@@ -106,6 +106,8 @@ export class AutonomousAgentService implements OnModuleInit {
           deriv_token,
           currency,
           symbol,
+          strategy,
+          risk_level,
           martingale_level,
           last_loss_amount,
           operations_since_pause,
@@ -204,6 +206,9 @@ export class AutonomousAgentService implements OnModuleInit {
       dailyLossLimit: number;
       derivToken: string;
       currency?: string;
+      symbol?: string;
+      strategy?: string;
+      riskLevel?: string;
     },
   ): Promise<void> {
     try {
@@ -216,6 +221,10 @@ export class AutonomousAgentService implements OnModuleInit {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      const symbol = config.symbol || SENTINEL_CONFIG.symbol;
+      const strategy = config.strategy || 'arion';
+      const riskLevel = config.riskLevel || 'balanced';
+
       if (existing && existing.length > 0) {
         // Atualizar existente
         await this.dataSource.query(
@@ -226,6 +235,9 @@ export class AutonomousAgentService implements OnModuleInit {
             daily_loss_limit = ?,
             deriv_token = ?,
             currency = ?,
+            symbol = ?,
+            strategy = ?,
+            risk_level = ?,
             session_date = ?,
             daily_profit = 0,
             daily_loss = 0,
@@ -240,6 +252,9 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
+            symbol,
+            strategy,
+            riskLevel,
             today,
             this.getRandomInterval(),
             userId,
@@ -250,9 +265,9 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config (
             user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            deriv_token, currency, symbol, session_date, session_status,
+            deriv_token, currency, symbol, strategy, risk_level, session_date, session_status,
             next_trade_at, created_at, updated_at
-          ) VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, 'active', DATE_ADD(NOW(), INTERVAL ? SECOND), NOW(), NOW())`,
+          ) VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', DATE_ADD(NOW(), INTERVAL ? SECOND), NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -260,7 +275,9 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            SENTINEL_CONFIG.symbol,
+            symbol,
+            strategy,
+            riskLevel,
             today,
             this.getRandomInterval(),
           ],
@@ -284,6 +301,9 @@ export class AutonomousAgentService implements OnModuleInit {
           dailyProfitTarget: config.dailyProfitTarget,
           dailyLossLimit: config.dailyLossLimit,
           currency: config.currency || 'USD',
+          symbol,
+          strategy,
+          riskLevel,
         },
       );
 
@@ -347,6 +367,24 @@ export class AutonomousAgentService implements OnModuleInit {
         // Verificar intervalo
         if (state.nextTradeAt && state.nextTradeAt > now) {
           continue;
+        }
+
+        // Verificar se está saindo de uma pausa aleatória
+        const config = await this.dataSource.query(
+          `SELECT last_pause_at, next_trade_at, operations_since_pause
+           FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE`,
+          [userId],
+        );
+        
+        if (config && config.length > 0 && config[0].last_pause_at && state.nextTradeAt && state.nextTradeAt <= now) {
+          // Pausa acabou, logar retomada
+          await this.saveLog(
+            userId,
+            'INFO',
+            'HUMANIZER',
+            'Random pause finished. Resuming trades.',
+            { pauseEndedAt: now.toISOString() },
+          );
         }
 
         // Verificar pausa aleatória
@@ -440,7 +478,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // Verificar confirmação estatística (dígitos)
-      if (!this.validateStatisticalConfirmation(prices, analysis.direction)) {
+      if (!(await this.validateStatisticalConfirmation(prices, analysis.direction, state.userId))) {
         await this.saveLog(
           state.userId,
           'DEBUG',
@@ -620,7 +658,7 @@ export class AutonomousAgentService implements OnModuleInit {
     return Math.min(100, Math.max(0, score));
   }
 
-  private validateStatisticalConfirmation(prices: PriceTick[], direction: ContractType | null): boolean {
+  private async validateStatisticalConfirmation(prices: PriceTick[], direction: ContractType | null, userId: string): Promise<boolean> {
     if (!direction) {
       return false;
     }
@@ -632,11 +670,24 @@ export class AutonomousAgentService implements OnModuleInit {
       return parseInt(str.charAt(str.length - 1), 10);
     });
 
+    let imbalance = '';
+    let sequenceOk = false;
+
     // Para RISE: verificar se >60% dos dígitos são altos (5-9)
     if (direction === 'RISE') {
       const highDigits = digits.filter(d => d >= 5).length;
       const highPercent = highDigits / 20;
+      imbalance = `${(highPercent * 100).toFixed(0)}%_UP`;
+      
       if (highPercent <= 0.6) {
+        // Log de análise estatística (falhou)
+        await this.saveLog(
+          userId,
+          'DEBUG',
+          'ANALYZER',
+          `Statistical analysis complete. imbalance=${imbalance}, sequence_ok=false`,
+          { imbalance: highPercent, direction: 'RISE', highDigits, totalDigits: 20 },
+        ).catch(() => {});
         return false;
       }
 
@@ -649,7 +700,17 @@ export class AutonomousAgentService implements OnModuleInit {
           break;
         }
       }
+      sequenceOk = consecutiveLow < 4;
+      
       if (consecutiveLow >= 4) {
+        // Log de análise estatística (falhou por sequência)
+        await this.saveLog(
+          userId,
+          'DEBUG',
+          'ANALYZER',
+          `Statistical analysis complete. imbalance=${imbalance}, sequence_ok=false`,
+          { imbalance: highPercent, direction: 'RISE', consecutiveLow, sequenceOk: false },
+        ).catch(() => {});
         return false;
       }
     }
@@ -657,7 +718,17 @@ export class AutonomousAgentService implements OnModuleInit {
     else if (direction === 'FALL') {
       const lowDigits = digits.filter(d => d < 5).length;
       const lowPercent = lowDigits / 20;
+      imbalance = `${(lowPercent * 100).toFixed(0)}%_DOWN`;
+      
       if (lowPercent <= 0.6) {
+        // Log de análise estatística (falhou)
+        await this.saveLog(
+          userId,
+          'DEBUG',
+          'ANALYZER',
+          `Statistical analysis complete. imbalance=${imbalance}, sequence_ok=false`,
+          { imbalance: lowPercent, direction: 'FALL', lowDigits, totalDigits: 20 },
+        ).catch(() => {});
         return false;
       }
 
@@ -670,10 +741,29 @@ export class AutonomousAgentService implements OnModuleInit {
           break;
         }
       }
+      sequenceOk = consecutiveHigh < 4;
+      
       if (consecutiveHigh >= 4) {
+        // Log de análise estatística (falhou por sequência)
+        await this.saveLog(
+          userId,
+          'DEBUG',
+          'ANALYZER',
+          `Statistical analysis complete. imbalance=${imbalance}, sequence_ok=false`,
+          { imbalance: lowPercent, direction: 'FALL', consecutiveHigh, sequenceOk: false },
+        ).catch(() => {});
         return false;
       }
     }
+
+    // Log de análise estatística (sucesso)
+    await this.saveLog(
+      userId,
+      'DEBUG',
+      'ANALYZER',
+      `Statistical analysis complete. imbalance=${imbalance}, sequence_ok=${sequenceOk}`,
+      { imbalance, direction, sequenceOk },
+    ).catch(() => {});
 
     return true;
   }
@@ -1476,6 +1566,11 @@ export class AutonomousAgentService implements OnModuleInit {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // Buscar agentes ativos antes do reset para obter saldo inicial
+      const activeAgentsBefore = await this.dataSource.query(
+        `SELECT user_id, daily_profit, daily_loss FROM autonomous_agent_config WHERE is_active = TRUE`,
+      );
+
       // Resetar todas as sessões ativas
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
@@ -1491,25 +1586,25 @@ export class AutonomousAgentService implements OnModuleInit {
         [today, this.getRandomInterval()],
       );
 
-      // Log de reset
-      this.logger.log('[ResetDailySessions] ✅ Sessões diárias resetadas');
-
       // Re-sincronizar estados em memória
       await this.syncActiveAgentsFromDb();
 
-      // Log para cada agente ativo
-      const activeAgents = await this.dataSource.query(
-        `SELECT user_id FROM autonomous_agent_config WHERE is_active = TRUE`,
-      );
-
-      for (const agent of activeAgents) {
+      // Log de reset diário para cada agente (conforme documentação)
+      for (const agent of activeAgentsBefore) {
+        const balanceStartDay = (parseFloat(agent.daily_profit) || 0) - (parseFloat(agent.daily_loss) || 0);
         await this.saveLog(
           agent.user_id.toString(),
           'INFO',
           'CORE',
-          'Daily session reset. daily_profit=0, daily_loss=0, session_status=active',
+          `Daily reset executed. balance_start_day=${balanceStartDay.toFixed(2)}, date=${today.toISOString().split('T')[0]}`,
+          {
+            balanceStartDay,
+            date: today.toISOString().split('T')[0],
+          },
         );
       }
+
+      this.logger.log('[ResetDailySessions] ✅ Sessões diárias resetadas');
     } catch (error) {
       this.logger.error('[ResetDailySessions] ❌ Erro:', error);
       throw error;
@@ -1528,6 +1623,8 @@ export class AutonomousAgentService implements OnModuleInit {
         daily_profit_target,
         daily_loss_limit,
         symbol,
+        strategy,
+        risk_level,
         total_trades,
         total_wins,
         total_losses,
@@ -1552,6 +1649,8 @@ export class AutonomousAgentService implements OnModuleInit {
       dailyProfitTarget: parseFloat(cfg.daily_profit_target),
       dailyLossLimit: parseFloat(cfg.daily_loss_limit),
       symbol: cfg.symbol,
+      strategy: cfg.strategy || 'arion',
+      riskLevel: cfg.risk_level || 'balanced',
       totalTrades: cfg.total_trades,
       totalWins: cfg.total_wins,
       totalLosses: cfg.total_losses,

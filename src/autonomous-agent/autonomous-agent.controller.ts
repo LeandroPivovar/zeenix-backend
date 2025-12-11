@@ -43,6 +43,9 @@ export class AutonomousAgentController {
         dailyLossLimit: parseFloat(body.dailyLossLimit),
         derivToken: body.derivToken,
         currency: body.currency || 'USD',
+        symbol: body.symbol,
+        strategy: body.strategy,
+        riskLevel: body.riskLevel,
       });
 
       return {
