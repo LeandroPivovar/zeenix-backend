@@ -6,19 +6,25 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
   HttpException,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Response } from 'express';
 import { AutonomousAgentService } from './autonomous-agent.service';
+import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream.service';
 
 @Controller('autonomous-agent')
 export class AutonomousAgentController {
   private readonly logger = new Logger(AutonomousAgentController.name);
 
-  constructor(private readonly agentService: AutonomousAgentService) {}
+  constructor(
+    private readonly agentService: AutonomousAgentService,
+    private readonly logsStreamService: AutonomousAgentLogsStreamService,
+  ) {}
 
   @Post('activate')
   @UseGuards(AuthGuard('jwt'))
@@ -216,6 +222,97 @@ export class AutonomousAgentController {
         {
           success: false,
           message: 'Erro ao buscar logs',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('logs-stream/:userId')
+  async streamLogs(
+    @Param('userId') userId: string,
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    // Verificar token manualmente (já que EventSource não suporta headers)
+    if (!token) {
+      res.status(HttpStatus.UNAUTHORIZED).json({
+        success: false,
+        message: 'Token não fornecido',
+      });
+      return;
+    }
+
+    // TODO: Validar token JWT aqui se necessário
+    try {
+      // Configurar headers para SSE
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // Desabilitar buffering do nginx
+
+      // Enviar logs históricos primeiro
+      const historicalLogs = this.logsStreamService.getLogs(userId, 500);
+      for (const log of historicalLogs) {
+        res.write(`data: ${JSON.stringify(log)}\n\n`);
+      }
+
+      // Configurar callback para novos logs
+      const unsubscribe = this.logsStreamService.subscribe(userId, (log) => {
+        try {
+          res.write(`data: ${JSON.stringify(log)}\n\n`);
+        } catch (error) {
+          this.logger.warn(`[StreamLogs] Erro ao enviar log:`, error);
+        }
+      });
+
+      // Manter conexão aberta
+      res.on('close', () => {
+        unsubscribe();
+        res.end();
+      });
+
+      // Enviar heartbeat a cada 30 segundos
+      const heartbeatInterval = setInterval(() => {
+        try {
+          res.write(`: heartbeat\n\n`);
+        } catch (error) {
+          clearInterval(heartbeatInterval);
+          unsubscribe();
+        }
+      }, 30000);
+
+      res.on('close', () => {
+        clearInterval(heartbeatInterval);
+      });
+    } catch (error) {
+      this.logger.error(`[StreamLogs] Erro:`, error);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        message: 'Erro ao iniciar stream de logs',
+        error: error.message,
+      });
+    }
+  }
+
+  @Get('console-logs/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getConsoleLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
+    try {
+      const limitNum = limit ? parseInt(limit, 10) : 500;
+      const logs = this.logsStreamService.getLogs(userId, limitNum);
+
+      return {
+        success: true,
+        data: logs,
+      };
+    } catch (error) {
+      this.logger.error(`[GetConsoleLogs] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar logs do console',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,

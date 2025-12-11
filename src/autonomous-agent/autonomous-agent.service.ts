@@ -110,7 +110,10 @@ export class AutonomousAgentService implements OnModuleInit {
   private wsConnections = new Map<string, WebSocket>();
   private readonly appId = process.env.DERIV_APP_ID || '1089';
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly logsStreamService?: AutonomousAgentLogsStreamService,
+  ) {}
 
   async onModuleInit() {
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
@@ -670,6 +673,9 @@ export class AutonomousAgentService implements OnModuleInit {
       );
 
       this.logger.log(`[ProcessAgent][${state.userId}] ✅ Sinal válido encontrado! Executando trade...`);
+      if (this.logsStreamService) {
+        this.logsStreamService.addLogForUser(state.userId, 'log', 'AutonomousAgentService', `[ProcessAgent] ✅ Sinal válido encontrado! Executando trade...`);
+      }
 
       // Executar operação
       await this.executeTrade(state, analysis);
