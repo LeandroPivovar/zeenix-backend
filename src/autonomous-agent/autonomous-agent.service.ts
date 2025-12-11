@@ -2205,6 +2205,31 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     const cfg = config[0];
+    
+    // Garantir que session_date seja retornado como string ISO se existir
+    let sessionDate: string | null = null;
+    if (cfg.session_date) {
+      if (cfg.session_date instanceof Date) {
+        sessionDate = cfg.session_date.toISOString();
+      } else if (typeof cfg.session_date === 'string') {
+        // Se já for string, garantir formato ISO
+        sessionDate = new Date(cfg.session_date).toISOString();
+      } else {
+        sessionDate = String(cfg.session_date);
+      }
+    }
+    
+    let createdAt: string | null = null;
+    if (cfg.created_at) {
+      if (cfg.created_at instanceof Date) {
+        createdAt = cfg.created_at.toISOString();
+      } else if (typeof cfg.created_at === 'string') {
+        createdAt = new Date(cfg.created_at).toISOString();
+      } else {
+        createdAt = String(cfg.created_at);
+      }
+    }
+    
     return {
       isActive: cfg.is_active === 1 || cfg.is_active === true,
       initialStake: parseFloat(cfg.initial_stake),
@@ -2219,10 +2244,10 @@ export class AutonomousAgentService implements OnModuleInit {
       dailyProfit: parseFloat(cfg.daily_profit) || 0,
       dailyLoss: parseFloat(cfg.daily_loss) || 0,
       sessionStatus: cfg.session_status,
-      sessionDate: cfg.session_date,
-      createdAt: cfg.created_at,
-      lastTradeAt: cfg.last_trade_at,
-      nextTradeAt: cfg.next_trade_at,
+      sessionDate: sessionDate, // Retornar como ISO string
+      createdAt: createdAt, // Retornar como ISO string
+      lastTradeAt: cfg.last_trade_at ? (cfg.last_trade_at instanceof Date ? cfg.last_trade_at.toISOString() : cfg.last_trade_at) : null,
+      nextTradeAt: cfg.next_trade_at ? (cfg.next_trade_at instanceof Date ? cfg.next_trade_at.toISOString() : cfg.next_trade_at) : null,
     };
   }
 
