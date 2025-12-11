@@ -712,21 +712,21 @@ export class AutonomousAgentService implements OnModuleInit {
     let confidenceScore = 0;
     let reasoning = '';
 
-    // Alinhamento de EMAs para RISE
-    if (ema10 > ema25 && ema25 > ema50) {
-      if (rsi < 70 && momentum > 0) {
-        direction = 'RISE';
-        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'RISE');
-        reasoning = `EMAs alinhadas para alta (EMA10: ${ema10.toFixed(4)} > EMA25: ${ema25.toFixed(4)} > EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
-      }
-    }
-    // Alinhamento de EMAs para FALL
-    else if (ema10 < ema25 && ema25 < ema50) {
-      if (rsi > 30 && momentum < 0) {
-        direction = 'FALL';
-        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'FALL');
-        reasoning = `EMAs alinhadas para baixa (EMA10: ${ema10.toFixed(4)} < EMA25: ${ema25.toFixed(4)} < EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
-      }
+    // Calcular pontuação para cada direção (mesmo sem alinhamento perfeito)
+    const riseScore = this.calculateDirectionScore(ema10, ema25, ema50, rsi, momentum, 'RISE');
+    const fallScore = this.calculateDirectionScore(ema10, ema25, ema50, rsi, momentum, 'FALL');
+
+    // Definir direção baseado na maior pontuação (se atender mínimo)
+    const minScoreForDirection = 30; // Mínimo de 30% para considerar uma direção
+
+    if (riseScore >= minScoreForDirection && riseScore > fallScore) {
+      direction = 'RISE';
+      confidenceScore = riseScore;
+      reasoning = `Tendência de alta detectada (EMA10: ${ema10.toFixed(4)}, EMA25: ${ema25.toFixed(4)}, EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
+    } else if (fallScore >= minScoreForDirection && fallScore > riseScore) {
+      direction = 'FALL';
+      confidenceScore = fallScore;
+      reasoning = `Tendência de baixa detectada (EMA10: ${ema10.toFixed(4)}, EMA25: ${ema25.toFixed(4)}, EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
     }
 
     // Log de análise técnica (formato da documentação) - mostrar todas as EMAs
@@ -744,19 +744,26 @@ export class AutonomousAgentService implements OnModuleInit {
         userId,
         'DEBUG',
         'ANALYZER',
-        `Nenhuma direção definida. Verificações: RISE(ema10>ema25>ema50=${ema10 > ema25 && ema25 > ema50}, rsi<70=${rsi < 70}, momentum>0=${momentum > 0}), FALL(ema10<ema25<ema50=${ema10 < ema25 && ema25 < ema50}, rsi>30=${rsi > 30}, momentum<0=${momentum < 0})`,
+        `Nenhuma direção definida. Pontuações: RISE=${riseScore.toFixed(1)}%, FALL=${fallScore.toFixed(1)}% (mínimo=${minScoreForDirection}%)`,
         { 
           ema10, ema25, ema50, rsi, momentum,
-          riseConditions: {
-            emaAligned: ema10 > ema25 && ema25 > ema50,
-            rsiOk: rsi < 70,
-            momentumOk: momentum > 0
-          },
-          fallConditions: {
-            emaAligned: ema10 < ema25 && ema25 < ema50,
-            rsiOk: rsi > 30,
-            momentumOk: momentum < 0
-          }
+          riseScore,
+          fallScore,
+          minScoreForDirection,
+        },
+      ).catch(() => {});
+    } else {
+      // Log quando direção é definida
+      this.saveLog(
+        userId,
+        'DEBUG',
+        'ANALYZER',
+        `Direção ${direction} definida com confiança ${confidenceScore.toFixed(1)}%. Pontuações: RISE=${riseScore.toFixed(1)}%, FALL=${fallScore.toFixed(1)}%`,
+        {
+          direction,
+          confidenceScore,
+          riseScore,
+          fallScore,
         },
       ).catch(() => {});
     }
@@ -822,6 +829,97 @@ export class AutonomousAgentService implements OnModuleInit {
     return current - past;
   }
 
+  // Método novo: calcula pontuação para uma direção sem exigir condições perfeitas
+  private calculateDirectionScore(
+    ema10: number,
+    ema25: number,
+    ema50: number,
+    rsi: number,
+    momentum: number,
+    direction: ContractType,
+  ): number {
+    let score = 0;
+
+    // 1. Pontuação das EMAs (40% do total)
+    let emaScore = 0;
+    if (direction === 'RISE') {
+      // Para RISE: ema10 > ema25 > ema50 é ideal
+      // Mas damos pontuação parcial mesmo se não estiver perfeito
+      const ema10vs25 = ema10 > ema25 ? Math.min(20, ((ema10 - ema25) / ema25) * 1000) : 0;
+      const ema25vs50 = ema25 > ema50 ? Math.min(20, ((ema25 - ema50) / ema50) * 1000) : 0;
+      // Se ema10 > ema25, já temos tendência de alta (mesmo que ema25 = ema50)
+      if (ema10 > ema25) {
+        emaScore = ema10vs25 + (ema25vs50 > 0 ? ema25vs50 : ema10vs25 * 0.5); // Bônus se ema25 > ema50
+      } else if (ema10 > ema50) {
+        // ema10 está acima de ema50 mas não de ema25 - tendência fraca
+        emaScore = Math.min(15, ((ema10 - ema50) / ema50) * 500);
+      }
+    } else {
+      // Para FALL: ema10 < ema25 < ema50 é ideal
+      const ema25vs10 = ema25 > ema10 ? Math.min(20, ((ema25 - ema10) / ema10) * 1000) : 0;
+      const ema50vs25 = ema50 > ema25 ? Math.min(20, ((ema50 - ema25) / ema25) * 1000) : 0;
+      // Se ema10 < ema25, já temos tendência de baixa
+      if (ema10 < ema25) {
+        emaScore = ema25vs10 + (ema50vs25 > 0 ? ema50vs25 : ema25vs10 * 0.5);
+      } else if (ema10 < ema50) {
+        // ema10 está abaixo de ema50 mas não de ema25 - tendência fraca
+        emaScore = Math.min(15, ((ema50 - ema10) / ema10) * 500);
+      }
+    }
+    score += Math.min(40, Math.max(0, emaScore));
+
+    // 2. Pontuação do RSI (30% do total)
+    let rsiScore = 0;
+    if (direction === 'RISE') {
+      // Para RISE: RSI < 70 é bom, ideal entre 30-50
+      if (rsi < 30) {
+        rsiScore = 0; // RSI muito baixo pode indicar sobrevenda extrema
+      } else if (rsi <= 50) {
+        rsiScore = 30; // Ideal para alta
+      } else if (rsi < 70) {
+        rsiScore = 30 * (1 - (rsi - 50) / 20); // Decai de 30 para 0 conforme RSI sobe
+      } else {
+        rsiScore = 0; // RSI >= 70 não é favorável para alta
+      }
+    } else {
+      // Para FALL: RSI > 30 é bom, ideal entre 50-70
+      if (rsi > 70) {
+        rsiScore = 0; // RSI muito alto pode indicar sobrecompra extrema
+      } else if (rsi >= 50) {
+        rsiScore = 30; // Ideal para baixa
+      } else if (rsi > 30) {
+        rsiScore = 30 * ((rsi - 30) / 20); // Cresce de 0 para 30 conforme RSI sobe
+      } else {
+        rsiScore = 0; // RSI <= 30 não é favorável para baixa
+      }
+    }
+    score += Math.min(30, Math.max(0, rsiScore));
+
+    // 3. Pontuação do Momentum (30% do total)
+    let momentumScore = 0;
+    if (direction === 'RISE') {
+      // Para RISE: momentum positivo é bom
+      if (momentum > 0) {
+        momentumScore = Math.min(30, momentum * 2); // Cada unidade de momentum = 2% de score
+      } else {
+        // Momentum negativo reduz a pontuação, mas não zera completamente
+        momentumScore = Math.max(0, 30 + momentum * 1); // Penalidade menor
+      }
+    } else {
+      // Para FALL: momentum negativo é bom
+      if (momentum < 0) {
+        momentumScore = Math.min(30, Math.abs(momentum) * 2);
+      } else {
+        // Momentum positivo reduz a pontuação
+        momentumScore = Math.max(0, 30 - momentum * 1);
+      }
+    }
+    score += Math.min(30, Math.max(0, momentumScore));
+
+    return Math.min(100, Math.max(0, score));
+  }
+
+  // Método original mantido para compatibilidade (usado quando já temos direção confirmada)
   private calculateConfidenceScore(
     ema10: number,
     ema25: number,
