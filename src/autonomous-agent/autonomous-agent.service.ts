@@ -10,7 +10,7 @@ import WebSocket from 'ws';
 export type ContractType = 'RISE' | 'FALL' | 'HIGHER' | 'LOWER';
 export type MartingaleLevel = 'M0' | 'M1';
 
-interface PriceTick {
+export interface PriceTick {
   value: number;
   epoch: number;
   timestamp: string;
@@ -552,7 +552,7 @@ export class AutonomousAgentService implements OnModuleInit {
       return 50; // Neutro
     }
 
-    const changes = [];
+    const changes: number[] = [];
     for (let i = 1; i < values.length; i++) {
       changes.push(values[i] - values[i - 1]);
     }
