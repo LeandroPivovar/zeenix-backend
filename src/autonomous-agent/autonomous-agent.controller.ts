@@ -46,6 +46,9 @@ export class AutonomousAgentController {
         symbol: body.symbol,
         strategy: body.strategy,
         riskLevel: body.riskLevel,
+        tradingMode: body.tradingMode || 'normal',
+        stopLossType: body.stopLossType || 'normal',
+        initialBalance: parseFloat(body.initialBalance) || 0,
       });
 
       return {
@@ -200,7 +203,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
     try {
-      const limitNum = limit ? parseInt(limit, 10) : 100;
+      const limitNum = limit ? parseInt(limit, 10) : 2000;
       const logs = await this.agentService.getLogs(userId, limitNum);
 
       return {
