@@ -23,8 +23,7 @@ export class AutonomousAgentScheduler {
   async handleResetDailySessions() {
     try {
       this.logger.log('[Scheduler] Resetando sessões diárias');
-      // TODO: Implementar reset de sessões diárias
-      // Resetar daily_profit, daily_loss, session_status para 'active'
+      await this.agentService.resetDailySessions();
     } catch (error) {
       this.logger.error('[Scheduler] Erro ao resetar sessões:', error);
     }

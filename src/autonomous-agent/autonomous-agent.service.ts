@@ -121,23 +121,26 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log(`[SyncAgents] Sincronizando ${activeAgents.length} agentes ativos`);
 
       for (const agent of activeAgents) {
-        this.upsertAgentState({
-          userId: agent.user_id.toString(),
-          initialStake: parseFloat(agent.initial_stake),
-          dailyProfitTarget: parseFloat(agent.daily_profit_target),
-          dailyLossLimit: parseFloat(agent.daily_loss_limit),
-          derivToken: agent.deriv_token,
-          currency: agent.currency,
-          symbol: agent.symbol || SENTINEL_CONFIG.symbol,
-          martingaleLevel: agent.martingale_level || 'M0',
-          lastLossAmount: parseFloat(agent.last_loss_amount) || 0,
-          operationsSincePause: agent.operations_since_pause || 0,
-          lastTradeAt: agent.last_trade_at ? new Date(agent.last_trade_at) : null,
-          nextTradeAt: agent.next_trade_at ? new Date(agent.next_trade_at) : null,
-          dailyProfit: parseFloat(agent.daily_profit) || 0,
-          dailyLoss: parseFloat(agent.daily_loss) || 0,
-          sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
-        });
+      this.upsertAgentState({
+        userId: agent.user_id.toString(),
+        initialStake: parseFloat(agent.initial_stake),
+        dailyProfitTarget: parseFloat(agent.daily_profit_target),
+        dailyLossLimit: parseFloat(agent.daily_loss_limit),
+        derivToken: agent.deriv_token,
+        currency: agent.currency,
+        symbol: agent.symbol || SENTINEL_CONFIG.symbol,
+        martingaleLevel: agent.martingale_level || 'M0',
+        lastLossAmount: parseFloat(agent.last_loss_amount) || 0,
+        operationsSincePause: agent.operations_since_pause || 0,
+        lastTradeAt: agent.last_trade_at ? new Date(agent.last_trade_at) : null,
+        nextTradeAt: agent.next_trade_at ? new Date(agent.next_trade_at) : null,
+        dailyProfit: parseFloat(agent.daily_profit) || 0,
+        dailyLoss: parseFloat(agent.daily_loss) || 0,
+        sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
+      });
+
+      // Estabelecer conexão WebSocket para agentes ativos
+      await this.ensureWebSocketConnection(agent.user_id.toString());
       }
     } catch (error) {
       this.logger.error('[SyncAgents] Erro ao sincronizar agentes:', error);
@@ -266,6 +269,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Sincronizar estado em memória
       await this.syncActiveAgentsFromDb();
+
+      // Estabelecer conexão WebSocket para receber ticks
+      await this.ensureWebSocketConnection(userId);
 
       // Log detalhado
       await this.saveLog(
@@ -1253,11 +1259,13 @@ export class AutonomousAgentService implements OnModuleInit {
       );
 
       if (recentTrades && recentTrades.length > 0) {
-        const prices: PriceTick[] = recentTrades.map((trade: any) => ({
-          value: parseFloat(trade.entry_price),
-          epoch: Math.floor(new Date(trade.created_at).getTime() / 1000),
-          timestamp: trade.created_at,
-        }));
+        const prices: PriceTick[] = recentTrades
+          .reverse()
+          .map((trade: any) => ({
+            value: parseFloat(trade.entry_price),
+            epoch: Math.floor(new Date(trade.created_at).getTime() / 1000),
+            timestamp: new Date(trade.created_at).toISOString(),
+          }));
 
         // Armazenar em cache
         this.priceHistory.set(userId, prices);
@@ -1271,8 +1279,8 @@ export class AutonomousAgentService implements OnModuleInit {
     return [];
   }
 
-  // Método para atualizar histórico de preços via WebSocket (chamado externamente)
-  async updatePriceHistory(userId: string, tick: PriceTick): Promise<void> {
+  // Método para atualizar histórico de preços via WebSocket (chamado internamente)
+  private async updatePriceHistory(userId: string, tick: PriceTick): Promise<void> {
     const cached = this.priceHistory.get(userId) || [];
     cached.push(tick);
 
@@ -1282,6 +1290,210 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     this.priceHistory.set(userId, cached);
+  }
+
+  // ============================================
+  // CONEXÃO WEBSOCKET PERSISTENTE PARA TICKS
+  // ============================================
+
+  private async ensureWebSocketConnection(userId: string): Promise<void> {
+    const state = this.agentStates.get(userId);
+    if (!state) {
+      return;
+    }
+
+    // Verificar se já existe conexão ativa
+    const existingWs = this.wsConnections.get(userId);
+    if (existingWs && existingWs.readyState === WebSocket.OPEN) {
+      this.logger.debug(`[EnsureWebSocket][${userId}] Conexão WebSocket já está ativa`);
+      return;
+    }
+
+    // Fechar conexão anterior se existir
+    if (existingWs) {
+      try {
+        existingWs.close();
+      } catch (error) {
+        this.logger.warn(`[EnsureWebSocket][${userId}] Erro ao fechar conexão anterior:`, error);
+      }
+    }
+
+    // Estabelecer nova conexão
+    await this.establishWebSocketConnection(userId);
+  }
+
+  private async establishWebSocketConnection(userId: string): Promise<void> {
+    const state = this.agentStates.get(userId);
+    if (!state) {
+      return;
+    }
+
+    try {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+
+      let isAuthorized = false;
+      let subscriptionId: string | null = null;
+
+      ws.on('open', () => {
+        this.logger.log(`[WebSocket][${userId}] ✅ Conexão estabelecida`);
+        this.saveLog(userId, 'INFO', 'API', 'WebSocket connection opened.').catch(() => {});
+        
+        // Autorizar
+        ws.send(JSON.stringify({ authorize: state.derivToken }));
+      });
+
+      ws.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.error) {
+            this.logger.error(`[WebSocket][${userId}] ❌ Erro:`, msg.error);
+            this.saveLog(userId, 'ERROR', 'API', `WebSocket error. error=${msg.error.message || 'Unknown error'}`).catch(() => {});
+            
+            // Tentar reconectar após delay
+            setTimeout(() => {
+              this.establishWebSocketConnection(userId);
+            }, 5000);
+            return;
+          }
+
+          if (msg.msg_type === 'authorize') {
+            isAuthorized = true;
+            this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
+            this.saveLog(userId, 'INFO', 'API', `Authorization successful. account=${msg.authorize?.loginid || 'N/A'}`).catch(() => {});
+            
+            // Subscribir aos ticks
+            ws.send(JSON.stringify({
+              ticks_history: state.symbol,
+              adjust_start_time: 1,
+              count: 50,
+              end: 'latest',
+              subscribe: 1,
+              style: 'ticks',
+            }));
+            return;
+          }
+
+          if (msg.msg_type === 'history') {
+            const history = msg.history;
+            if (history && history.prices) {
+              subscriptionId = history.id || null;
+              
+              // Processar histórico inicial
+              const ticks: PriceTick[] = history.prices.map((price: number, index: number) => ({
+                value: parseFloat(price.toString()),
+                epoch: history.times ? history.times[index] : Math.floor(Date.now() / 1000),
+                timestamp: history.times 
+                  ? new Date(history.times[index] * 1000).toISOString()
+                  : new Date().toISOString(),
+              }));
+
+              this.priceHistory.set(userId, ticks);
+              this.logger.log(`[WebSocket][${userId}] 📊 Histórico inicial recebido: ${ticks.length} ticks`);
+              this.saveLog(userId, 'INFO', 'API', `Initial price history received. ticks=${ticks.length}`).catch(() => {});
+            }
+            return;
+          }
+
+          if (msg.msg_type === 'tick') {
+            const tick = msg.tick;
+            if (tick && tick.quote !== undefined) {
+              const priceTick: PriceTick = {
+                value: parseFloat(tick.quote),
+                epoch: tick.epoch || Math.floor(Date.now() / 1000),
+                timestamp: tick.epoch 
+                  ? new Date(tick.epoch * 1000).toISOString()
+                  : new Date().toISOString(),
+              };
+
+              await this.updatePriceHistory(userId, priceTick);
+            }
+            return;
+          }
+        } catch (error) {
+          this.logger.error(`[WebSocket][${userId}] Erro ao processar mensagem:`, error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error(`[WebSocket][${userId}] ❌ Erro no WebSocket:`, error);
+        this.saveLog(userId, 'ERROR', 'API', `WebSocket error. error=${error.message || 'Unknown error'}`).catch(() => {});
+      });
+
+      ws.on('close', () => {
+        this.logger.warn(`[WebSocket][${userId}] 🔌 Conexão WebSocket fechada`);
+        this.wsConnections.delete(userId);
+        this.saveLog(userId, 'WARN', 'API', 'WebSocket connection closed.').catch(() => {});
+
+        // Tentar reconectar se o agente ainda estiver ativo
+        const currentState = this.agentStates.get(userId);
+        if (currentState) {
+          setTimeout(() => {
+            this.ensureWebSocketConnection(userId);
+          }, 5000);
+        }
+      });
+
+      this.wsConnections.set(userId, ws);
+    } catch (error) {
+      this.logger.error(`[EstablishWebSocket][${userId}] ❌ Erro ao estabelecer conexão:`, error);
+      this.saveLog(userId, 'ERROR', 'API', `Failed to establish WebSocket. error=${error.message}`).catch(() => {});
+      
+      // Tentar reconectar após delay
+      setTimeout(() => {
+        this.establishWebSocketConnection(userId);
+      }, 10000);
+    }
+  }
+
+  // ============================================
+  // RESET DE SESSÕES DIÁRIAS
+  // ============================================
+
+  async resetDailySessions(): Promise<void> {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Resetar todas as sessões ativas
+      await this.dataSource.query(
+        `UPDATE autonomous_agent_config 
+         SET 
+           daily_profit = 0,
+           daily_loss = 0,
+           operations_since_pause = 0,
+           session_date = ?,
+           session_status = 'active',
+           next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
+           updated_at = NOW()
+         WHERE is_active = TRUE`,
+        [today, this.getRandomInterval()],
+      );
+
+      // Log de reset
+      this.logger.log('[ResetDailySessions] ✅ Sessões diárias resetadas');
+
+      // Re-sincronizar estados em memória
+      await this.syncActiveAgentsFromDb();
+
+      // Log para cada agente ativo
+      const activeAgents = await this.dataSource.query(
+        `SELECT user_id FROM autonomous_agent_config WHERE is_active = TRUE`,
+      );
+
+      for (const agent of activeAgents) {
+        await this.saveLog(
+          agent.user_id.toString(),
+          'INFO',
+          'CORE',
+          'Daily session reset. daily_profit=0, daily_loss=0, session_status=active',
+        );
+      }
+    } catch (error) {
+      this.logger.error('[ResetDailySessions] ❌ Erro:', error);
+      throw error;
+    }
   }
 
   // ============================================
@@ -1420,7 +1632,8 @@ export class AutonomousAgentService implements OnModuleInit {
         return [];
       }
 
-      const prices = this.priceHistory.get(state.symbol) || [];
+      // Buscar histórico por userId (não por symbol)
+      const prices = this.priceHistory.get(userId) || [];
       return prices.slice(-limit);
     } catch (error) {
       this.logger.error(`[GetPriceHistoryForUser][${userId}] Erro:`, error);

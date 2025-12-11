@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS autonomous_agent_config (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id INT UNSIGNED NOT NULL,
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário (char(36) da tabela users)',
     is_active BOOLEAN NOT NULL DEFAULT FALSE,
     
     -- Configurações do usuário

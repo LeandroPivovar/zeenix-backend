@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS autonomous_agent_trades (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id INT UNSIGNED NOT NULL,
+    user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário (char(36) da tabela users)',
     
     -- Dados da análise técnica
     analysis_data JSON NOT NULL COMMENT 'Dados da análise: EMAs, RSI, Momentum, etc',
@@ -37,8 +37,7 @@ CREATE TABLE IF NOT EXISTS autonomous_agent_trades (
     
     INDEX idx_autonomous_agent_trades_user_id (user_id),
     INDEX idx_autonomous_agent_trades_status (status),
-    INDEX idx_autonomous_agent_trades_created_at (created_at),
-    INDEX idx_autonomous_agent_trades_session_date (DATE(created_at))
+    INDEX idx_autonomous_agent_trades_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='Armazena operações realizadas pelo Agente Autônomo IA SENTINEL';
 
