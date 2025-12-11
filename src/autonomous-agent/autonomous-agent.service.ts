@@ -449,12 +449,27 @@ export class AutonomousAgentService implements OnModuleInit {
       const prices = await this.getPriceHistory(state.userId, state.symbol);
       
       if (prices.length < 50) {
-        this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/50)`);
+        this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/50). Aguardando mais ticks...`);
+        await this.saveLog(
+          state.userId,
+          'DEBUG',
+          'ANALYZER',
+          `Insufficient price history. current=${prices.length}, required=50`,
+          { currentTicks: prices.length, requiredTicks: 50 },
+        );
+        // Atualizar próximo trade com intervalo menor para verificar novamente
+        const interval = Math.min(30, this.getRandomInterval());
+        await this.updateNextTradeAt(state.userId, interval);
         return;
       }
 
       // Realizar análise técnica
       const analysis = this.performTechnicalAnalysis(prices, state.userId);
+
+      // Log detalhado da análise
+      this.logger.debug(
+        `[ProcessAgent][${state.userId}] Análise: direction=${analysis.direction}, confidence=${analysis.confidenceScore.toFixed(1)}%, ema10=${analysis.ema10.toFixed(2)}, rsi=${analysis.rsi.toFixed(1)}`,
+      );
 
       // Verificar score de confiança
       if (analysis.confidenceScore < SENTINEL_CONFIG.minConfidenceScore) {
@@ -477,7 +492,7 @@ export class AutonomousAgentService implements OnModuleInit {
         return;
       }
 
-      // Verificar confirmação estatística (dígitos)
+      // Verificar confirmação estatística (dígitos) - mais flexível
       if (!(await this.validateStatisticalConfirmation(prices, analysis.direction, state.userId))) {
         await this.saveLog(
           state.userId,
@@ -513,10 +528,19 @@ export class AutonomousAgentService implements OnModuleInit {
         },
       );
 
+      this.logger.log(`[ProcessAgent][${state.userId}] ✅ Sinal válido encontrado! Executando trade...`);
+
       // Executar operação
       await this.executeTrade(state, analysis);
     } catch (error) {
       this.logger.error(`[ProcessAgent][${state.userId}] Erro:`, error);
+      await this.saveLog(
+        state.userId,
+        'ERROR',
+        'CORE',
+        `Error processing agent. error=${error.message}`,
+        { error: error.message, stack: error.stack },
+      );
     }
   }
 
@@ -1335,6 +1359,7 @@ export class AutonomousAgentService implements OnModuleInit {
     // Retornar histórico em memória se existir
     const cached = this.priceHistory.get(userId);
     if (cached && cached.length >= 50) {
+      this.logger.debug(`[GetPriceHistory][${userId}] Usando cache: ${cached.length} ticks`);
       return cached;
     }
 
@@ -1361,13 +1386,21 @@ export class AutonomousAgentService implements OnModuleInit {
 
         // Armazenar em cache
         this.priceHistory.set(userId, prices);
+        this.logger.debug(`[GetPriceHistory][${userId}] Histórico do banco: ${prices.length} ticks`);
         return prices;
       }
     } catch (error) {
       this.logger.error(`[GetPriceHistory] Erro ao buscar histórico:`, error);
     }
 
+    // Retornar histórico em memória mesmo que seja menor que 50
+    if (cached && cached.length > 0) {
+      this.logger.debug(`[GetPriceHistory][${userId}] Cache parcial: ${cached.length} ticks (aguardando mais ticks via WebSocket)`);
+      return cached;
+    }
+
     // Retornar array vazio se não houver dados
+    this.logger.warn(`[GetPriceHistory][${userId}] ⚠️ Nenhum histórico disponível. Aguardando ticks via WebSocket...`);
     return [];
   }
 
