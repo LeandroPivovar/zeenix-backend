@@ -707,7 +707,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Alinhamento de EMAs para RISE
     if (ema10 > ema25 && ema25 > ema50) {
-      if (rsi < 70 && momentum > 0) {
+      // Condições mais flexíveis: RSI não sobrecomprado E momentum positivo ou neutro
+      if (rsi < 75 && momentum >= -5) {
         direction = 'RISE';
         confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'RISE');
         reasoning = `EMAs alinhadas para alta (EMA10: ${ema10.toFixed(4)} > EMA25: ${ema25.toFixed(4)} > EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
@@ -715,10 +716,27 @@ export class AutonomousAgentService implements OnModuleInit {
     }
     // Alinhamento de EMAs para FALL
     else if (ema10 < ema25 && ema25 < ema50) {
-      if (rsi > 30 && momentum < 0) {
+      // Condições mais flexíveis: RSI não sobrevendido E momentum negativo ou neutro
+      if (rsi > 25 && momentum <= 5) {
         direction = 'FALL';
         confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'FALL');
         reasoning = `EMAs alinhadas para baixa (EMA10: ${ema10.toFixed(4)} < EMA25: ${ema25.toFixed(4)} < EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
+      }
+    }
+    
+    // Se não encontrou sinal com alinhamento completo, tentar sinais mais fracos
+    if (!direction) {
+      // Sinal fraco para RISE: EMA10 acima de EMA25 (sem necessidade de EMA50)
+      if (ema10 > ema25 && rsi < 70 && momentum > -10) {
+        direction = 'RISE';
+        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'RISE') * 0.7; // Reduzir confiança
+        reasoning = `Sinal fraco para alta (EMA10: ${ema10.toFixed(4)} > EMA25: ${ema25.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
+      }
+      // Sinal fraco para FALL: EMA10 abaixo de EMA25 (sem necessidade de EMA50)
+      else if (ema10 < ema25 && rsi > 30 && momentum < 10) {
+        direction = 'FALL';
+        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'FALL') * 0.7; // Reduzir confiança
+        reasoning = `Sinal fraco para baixa (EMA10: ${ema10.toFixed(4)} < EMA25: ${ema25.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
       }
     }
 
@@ -727,9 +745,20 @@ export class AutonomousAgentService implements OnModuleInit {
       userId,
       'DEBUG',
       'ANALYZER',
-      `EMA(10)=${ema10.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
+      `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
     ).catch(() => {}); // Não bloquear se houver erro
+    
+    // Log detalhado se não encontrou sinal
+    if (!direction) {
+      this.saveLog(
+        userId,
+        'DEBUG',
+        'ANALYZER',
+        `Nenhum sinal encontrado. EMA10=${ema10.toFixed(4)}, EMA25=${ema25.toFixed(4)}, EMA50=${ema50.toFixed(4)}, RSI=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}. Condições: ema10>ema25=${ema10 > ema25}, ema25>ema50=${ema25 > ema50}, ema10<ema25=${ema10 < ema25}, ema25<ema50=${ema25 < ema50}, rsi<75=${rsi < 75}, rsi>25=${rsi > 25}, momentum>=-5=${momentum >= -5}, momentum<=5=${momentum <= 5}`,
+        { ema10, ema25, ema50, rsi, momentum, direction, confidenceScore },
+      ).catch(() => {});
+    }
 
     return {
       ema10,
