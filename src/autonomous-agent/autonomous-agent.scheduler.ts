@@ -8,8 +8,10 @@ export class AutonomousAgentScheduler {
 
   constructor(private readonly agentService: AutonomousAgentService) {}
 
-  // Executar a cada 30 segundos para processar agentes ativos
-  @Cron('*/30 * * * * *')
+  // Executar a cada 1 minuto para processar agentes ativos (24hrs contínuo, como a IA)
+  @Cron(CronExpression.EVERY_MINUTE, {
+    name: 'process-autonomous-agents',
+  })
   async handleProcessAgents() {
     try {
       this.logger.debug('[AutonomousAgentScheduler] Executando processamento de agentes autônomos');
