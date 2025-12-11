@@ -1309,10 +1309,12 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    // Fechar conexão anterior se existir
+    // Fechar conexão anterior se existir e estiver aberta
     if (existingWs) {
       try {
-        existingWs.close();
+        if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
+          existingWs.close();
+        }
       } catch (error) {
         this.logger.warn(`[EnsureWebSocket][${userId}] Erro ao fechar conexão anterior:`, error);
       }
@@ -1653,8 +1655,9 @@ export class AutonomousAgentService implements OnModuleInit {
     metadata?: any,
   ): Promise<void> {
     try {
-      const timestamp = new Date().toISOString();
-      const logMessage = `[${timestamp}] [${level}] [${module}] - ${message}`;
+      const now = new Date();
+      const timestampISO = now.toISOString();
+      const logMessage = `[${timestampISO}] [${level}] [${module}] - ${message}`;
       
       // Log no console também
       switch (level) {
@@ -1671,11 +1674,18 @@ export class AutonomousAgentService implements OnModuleInit {
           this.logger.log(logMessage);
       }
 
+      // Converter para formato MySQL: YYYY-MM-DD HH:MM:SS.mmm
+      const timestampMySQL = now
+        .toISOString()
+        .replace('T', ' ')
+        .replace('Z', '')
+        .slice(0, 23); // YYYY-MM-DD HH:MM:SS.mmm (23 caracteres)
+
       // Salvar no banco de dados
       await this.dataSource.query(
         `INSERT INTO autonomous_agent_logs (user_id, timestamp, log_level, module, message, metadata)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [userId, timestamp, level, module, message, metadata ? JSON.stringify(metadata) : null],
+        [userId, timestampMySQL, level, module, message, metadata ? JSON.stringify(metadata) : null],
       );
     } catch (error) {
       // Não falhar se houver erro ao salvar log
