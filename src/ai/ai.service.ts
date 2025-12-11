@@ -539,6 +539,9 @@ export class AiService implements OnModuleInit {
         try {
           const msg = JSON.parse(data.toString());
           this.handleMessage(msg);
+        } catch (error) {
+          // Erro ao processar mensagem (log removido - mantendo apenas logs salvos no banco)
+        }
       });
 
       this.ws.on('error', (error) => {
@@ -642,8 +645,6 @@ export class AiService implements OnModuleInit {
 
     // Log a cada 10 ticks para não poluir muito
     if (this.ticks.length % 10 === 0) {
-        `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
-      );
     }
 
     // Processar estratégias de todos os modos ativos
@@ -681,8 +682,6 @@ export class AiService implements OnModuleInit {
 
     // ✅ ZENIX v2.0: Verificar amostra mínima
     if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
-        `[Veloz][ZENIX] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`,
-      );
       return;
     }
 
@@ -712,15 +711,11 @@ export class AiService implements OnModuleInit {
         // CORREÇÃO: Usar contador de ticks desde última operação (mais confiável que índice)
         if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
           if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
-              `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
-            );
             return;
           }
         } else {
           // ✅ Se ticksDesdeUltimaOp é undefined ou negativo, pode operar imediatamente
           state.ticksDesdeUltimaOp = 0; // Inicializar contador
-            `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | totalTicks=${this.ticks.length}`,
-          );
         }
 
         // ✅ ZENIX v2.0: Gerar sinal usando análise completa
@@ -730,19 +725,10 @@ export class AiService implements OnModuleInit {
           // 🔍 DEBUG: Logar por que não gerou sinal
           if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
             const analiseDeseq = calcularDesequilibrio(this.ticks, VELOZ_CONFIG.amostraInicial);
-              `[Veloz][${userId}] ❌ Sem sinal válido | ` +
-              `Desequilíbrio: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% (mín: ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(0)}%) | ` +
-              `Operação: ${analiseDeseq.operacao || 'NENHUMA'} | ` +
-              `Ticks: ${this.ticks.length}`,
-            );
           }
           return; // Sem sinal válido
         }
         
-          `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
-          `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-          `  └─ ${sinal.motivo}`,
-        );
         
         // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
         // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
@@ -902,18 +888,12 @@ export class AiService implements OnModuleInit {
 
   private async canProcessVelozState(state: VelozUserState): Promise<boolean> {
     if (state.isOperationActive) {
-        `[Veloz][${state.userId}] Operação em andamento - aguardando finalização`,
-      );
       return false;
     }
     if (!state.derivToken) {
-        `[Veloz][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
-      );
       return false;
     }
     if ((state.virtualCapital || state.capital) <= 0) {
-        `[Veloz][${state.userId}] Usuário sem capital configurado - ignorando`,
-      );
       return false;
     }
     
@@ -922,23 +902,17 @@ export class AiService implements OnModuleInit {
     
     if (!config) {
       // Não há sessão ativa
-        `[Veloz][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
-      );
       return false;
     }
     
     // Verificar se já foi parada
     if (config.sessionStatus === 'stopped_profit' || config.sessionStatus === 'stopped_loss' || config.sessionStatus === 'stopped_blindado') {
-        `[Veloz][${state.userId}] Sessão parada (${config.sessionStatus}) - não executando novos trades`,
-      );
       return false;
     }
     
     // ✅ VERIFICAR LIMITES ANTES DE OPERAR
     // Se atingiu take profit (stop win)
     if (config.profitTarget && config.sessionBalance >= config.profitTarget) {
-        `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${config.sessionBalance.toFixed(2)} >= Meta: $${config.profitTarget} - PARANDO IMEDIATAMENTE`,
-      );
       // Desativar imediatamente
       await this.checkAndEnforceLimits(state.userId);
       // Invalidar cache após mudança de configuração
@@ -948,8 +922,6 @@ export class AiService implements OnModuleInit {
     
     // Se atingiu stop loss
     if (config.lossLimit && config.sessionBalance <= -config.lossLimit) {
-        `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(config.sessionBalance).toFixed(2)} >= Limite: $${config.lossLimit} - PARANDO IMEDIATAMENTE`,
-      );
       // Desativar imediatamente
       await this.checkAndEnforceLimits(state.userId);
       // Invalidar cache após mudança de configuração
@@ -970,24 +942,16 @@ export class AiService implements OnModuleInit {
       state.lossVirtualActive = true;
       state.lossVirtualOperation = proposal;
       state.lossVirtualCount = 0;
-        `[Veloz][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
-      );
     }
 
     const simulatedWin = tick.parity === proposal;
 
     if (simulatedWin) {
-      if (state.lossVirtualCount > 0) {
-          `[Veloz][${state.userId}] Simulação venceria | Resetando contador`,
-        );
-      }
       state.lossVirtualCount = 0;
       return;
     }
 
     state.lossVirtualCount += 1;
-      `[Veloz][${state.userId}] Loss virtual ${state.lossVirtualCount}/${VELOZ_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tick.parity}) | proposta=${proposal} | DVX=${dvx}`,
-    );
 
     if (state.lossVirtualCount < VELOZ_CONFIG.lossVirtualTarget) {
       return;
@@ -996,13 +960,8 @@ export class AiService implements OnModuleInit {
     state.lossVirtualActive = false;
     state.lossVirtualCount = 0;
 
-      `[Veloz][${state.userId}] ✅ Loss virtual completo -> executando operação ${proposal}`,
-    );
-
     this.executeVelozOperation(state, proposal).catch((error) => {
-        `[Veloz] Erro ao executar operação para usuário ${state.userId}:`,
-        error,
-      );
+      // Erro ao executar operação (log removido - mantendo apenas logs salvos no banco)
     });
   }
 
@@ -1029,11 +988,6 @@ export class AiService implements OnModuleInit {
 
     const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
     
-      `[Veloz][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
-      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
-    );
 
     return Math.max(0.35, proximaAposta); // Mínimo da Deriv: 0.35
   }
@@ -1070,22 +1024,12 @@ export class AiService implements OnModuleInit {
       if (apostaComSoros > stakeAmount) {
         // Ajustar stakeAmount para usar valor com Soros
         stakeAmount = apostaComSoros;
-          `[Veloz][Soros] 🚀 Aposta aumentada: $${state.apostaBase.toFixed(2)} → $${apostaComSoros.toFixed(2)} ` +
-          `(${state.vitoriasConsecutivas} vitórias consecutivas, ${(Math.pow(SOROS_MULTIPLICADOR, state.vitoriasConsecutivas) * 100).toFixed(0)}%)`,
-        );
       }
       
       state.apostaInicial = stakeAmount;
       state.perdaAcumulada = 0;
       
       const config = CONFIGS_MARTINGALE[state.modoMartingale];
-        `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
-        `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
-        `Aposta base: $${state.apostaBase.toFixed(2)} | ` +
-        `Vitórias consecutivas: ${state.vitoriasConsecutivas} | ` +
-        `Máx entradas: ${config.maxEntradas} | ` +
-        `Multiplicador lucro: ${(config.multiplicadorLucro * 100).toFixed(0)}%`,
-      );
       
       // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
       // 📋 LOG: Operação sendo executada
@@ -1113,8 +1057,6 @@ export class AiService implements OnModuleInit {
       currentPrice,
     );
 
-      `[Veloz][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
-    );
 
     try {
       const result = await this.executeDigitTradeOnDeriv({
@@ -1268,8 +1210,6 @@ export class AiService implements OnModuleInit {
       };
 
       ws.on('open', () => {
-          `[Veloz] WS conectado para trade ${tradeId} | contrato=${contractType}`,
-        );
         ws.send(JSON.stringify({ authorize: derivToken }));
       });
 
@@ -1338,8 +1278,6 @@ export class AiService implements OnModuleInit {
             const buyPrice = Number(buy.buy_price);
             const entrySpot = Number(buy.entry_spot || this.getCurrentPrice() || 0);
 
-              `[Veloz] Atualizando entry_price | tradeId=${tradeId} | entrySpot=${entrySpot} | buy.entry_spot=${buy.entry_spot}`,
-            );
 
             await this.dataSource.query(
               `UPDATE ai_trades 
@@ -1356,8 +1294,6 @@ export class AiService implements OnModuleInit {
                 subscribe: 1,
               }),
             );
-              `[Veloz] Compra confirmada | trade=${tradeId} | contrato=${contractId} | preço=${buyPrice}`,
-            );
             return;
           }
 
@@ -1371,8 +1307,6 @@ export class AiService implements OnModuleInit {
             const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
             const status = profit >= 0 ? 'WON' : 'LOST';
 
-              `[Veloz] Atualizando exit_price | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`,
-            );
 
             await this.dataSource.query(
               `UPDATE ai_trades
@@ -1454,11 +1388,7 @@ export class AiService implements OnModuleInit {
         const recuperacaoReal = result.profitLoss;
         
         if (recuperacaoReal < recuperacaoEsperada) {
-            `[Veloz][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
-          );
         } else {
-            `[Veloz][Martingale] ✅ Recuperação completa: $${recuperacaoEsperada.toFixed(2)} recuperado`,
-          );
         }
       }
       
@@ -1466,22 +1396,11 @@ export class AiService implements OnModuleInit {
       if (entry === 1) {
         // Apenas incrementar se foi operação normal (não martingale)
         state.vitoriasConsecutivas += 1;
-          `[Veloz][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
-          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
-          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
-        );
       } else {
         // Se estava em martingale, resetar contador (martingale não conta para Soros)
         state.vitoriasConsecutivas = 0;
       }
       
-        `[Veloz][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
-        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
-        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
-        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)} | ` +
-        `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
-      );
       
       // 📋 LOG: Resultado - VITÓRIA
       await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
@@ -1520,16 +1439,10 @@ export class AiService implements OnModuleInit {
     if (entry === 1) {
       // Apenas resetar se foi operação normal (não martingale)
       if (state.vitoriasConsecutivas > 0) {
-          `[Veloz][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
-        );
       }
       state.vitoriasConsecutivas = 0;
     }
 
-      `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
-    );
     
     // 📋 LOG: Resultado - DERROTA
     await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
@@ -1576,9 +1489,6 @@ export class AiService implements OnModuleInit {
             
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
-                `[Veloz][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
-                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
-              );
               
               // 📋 LOG: Stop-Loss Normal ativado
               await this.saveLog(state.userId, 'alerta', `⚠️ STOP-LOSS NORMAL: Próxima aposta ultrapassaria limite`);
@@ -1593,8 +1503,6 @@ export class AiService implements OnModuleInit {
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               
-                `[Veloz][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
-              );
               return;
             }
           }
@@ -1602,11 +1510,9 @@ export class AiService implements OnModuleInit {
       
       const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
       
-        `[Veloz][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
-      );
       
       // 📋 LOG: Martingale ativado
       await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
@@ -1621,10 +1527,6 @@ export class AiService implements OnModuleInit {
     // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
     const prejuizoAceito = state.perdaAcumulada;
     
-      `[Veloz][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
-      `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
-      `Resetando para valor inicial`,
-    );
     
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
@@ -1846,24 +1748,14 @@ export class AiService implements OnModuleInit {
       const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
       const stopBlindado = initialBalance + (lucroLiquido * fatorProtecao);
       
-        `[StopBlindado][${userId}] Lucro: $${lucroLiquido.toFixed(2)} | ` +
-        `Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-        `Atual: $${sessionBalance.toFixed(2)}`,
-      );
       
       // Se capital atual caiu abaixo do stop blindado → PARAR
       if (sessionBalance <= stopBlindado) {
         const lucroProtegido = sessionBalance - initialBalance;
         const percentualProtegido = (lucroProtegido / lucroLiquido) * 100;
         
-          `[StopBlindado][${userId}] 🛡️ ATIVADO! ` +
-          `Protegendo $${lucroProtegido.toFixed(2)} de lucro ` +
-          `(${percentualProtegido.toFixed(0)}% de $${lucroLiquido.toFixed(2)})`,
-        );
         
         const deactivationReason = 
-          `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-          `(${stopBlindadoPercent}% de $${lucroLiquido.toFixed(2)} conquistados)`;
         
         // Desativar IA
         await this.dataSource.query(
@@ -1905,10 +1797,6 @@ export class AiService implements OnModuleInit {
           this.precisoUsers.delete(userId);
         }
         
-          `[StopBlindado][${userId}] 🛡️ IA DESATIVADA | ` +
-          `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-          `Saldo final: $${sessionBalance.toFixed(2)}`,
-        );
       }
   }
 
@@ -2184,7 +2072,6 @@ export class AiService implements OnModuleInit {
   async deleteUserLogs(userId: string): Promise<void> {
     try {
       await this.dataSource.query(
-        `DELETE FROM ai_logs WHERE user_id = ?`,
         [userId],
       );
     } catch (error) {
@@ -2223,19 +2110,14 @@ export class AiService implements OnModuleInit {
        FROM ai_user_config
        WHERE is_active = TRUE
          AND LOWER(mode) = 'veloz'`,
-    );
 
     if (configs.length > 0) {
-        `[SyncVeloz] Sincronizando ${configs.length} usuários do banco`,
-      );
     }
 
     const activeIds = new Set<string>();
 
     for (const config of configs) {
       activeIds.add(config.userId);
-        `[SyncVeloz] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | martingale=${config.modoMartingale}`,
-      );
       this.upsertVelozUserState({
         userId: config.userId,
         stakeAmount: Number(config.stakeAmount) || 0,
@@ -2261,14 +2143,10 @@ export class AiService implements OnModuleInit {
   }) {
     const { userId, stakeAmount, derivToken, currency, modoMartingale = 'conservador' } = params;
     
-      `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | martingale=${modoMartingale}`,
-    );
     
     const existing = this.velozUsers.get(userId);
 
     if (existing) {
-        `[UpsertVelozState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${stakeAmount} | martingale=${modoMartingale}`,
-      );
       existing.capital = stakeAmount;
       existing.derivToken = derivToken;
       existing.currency = currency;
@@ -2289,8 +2167,6 @@ export class AiService implements OnModuleInit {
       return;
     }
 
-      `[UpsertVelozState] Criando novo usuário | capital=${stakeAmount} | martingale=${modoMartingale}`,
-    );
     this.velozUsers.set(userId, {
       userId,
       derivToken,
@@ -2389,8 +2265,6 @@ export class AiService implements OnModuleInit {
 
     if (this.ticks.length < minTicks) {
       throw new Error(
-        `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
-      );
     }
     
   }
@@ -2469,7 +2343,6 @@ export class AiService implements OnModuleInit {
         AND created_at >= ?
         AND created_at <= ?
         AND status IN ('WON', 'LOST')
-    `;
 
     const result = await this.dataSource.query(query, [userId, startOfDay, endOfDay]);
     const stats = result[0];
@@ -2490,7 +2363,6 @@ export class AiService implements OnModuleInit {
       WHERE user_id = ? AND is_active = TRUE
       ORDER BY created_at DESC
       LIMIT 1
-    `;
 
     const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
     const sessionBalance = sessionResult.length > 0 ? parseFloat(sessionResult[0].sessionBalance) || 0 : 0;
@@ -2514,7 +2386,6 @@ export class AiService implements OnModuleInit {
         WHERE user_id = ? 
           AND created_at >= ?
           AND status IN ('WON', 'LOST')
-      `;
       const sessionTradesResult = await this.dataSource.query(sessionTradesQuery, [userId, sessionCreatedAt]);
       sessionTrades = parseInt(sessionTradesResult[0]?.sessionTrades) || 0;
       sessionWins = parseInt(sessionTradesResult[0]?.sessionWins) || 0;
@@ -2563,7 +2434,6 @@ export class AiService implements OnModuleInit {
       WHERE user_id = ? 
       ORDER BY COALESCE(closed_at, created_at) DESC
       LIMIT ?
-    `;
     
     let result;
     try {
@@ -2589,7 +2459,6 @@ export class AiService implements OnModuleInit {
           WHERE user_id = ? 
           ORDER BY COALESCE(closed_at, created_at) DESC
           LIMIT ?
-        `;
         result = await this.dataSource.query(query, [userId, limit]);
       } else {
         throw error;
@@ -2618,11 +2487,6 @@ export class AiService implements OnModuleInit {
       // ✅ DEBUG: Logar valores para verificar (apenas primeiros 3)
       const tradeIndex = result.indexOf(trade);
       if (tradeIndex < 3) {
-          `[GetTradeHistory] Trade ${tradeIndex + 1} (id=${trade.id}): ` +
-          `entryPrice=${entryPrice} (raw: ${trade.entryPrice}, type: ${typeof trade.entryPrice}), ` +
-          `exitPrice=${exitPrice} (raw: ${trade.exitPrice}, type: ${typeof trade.exitPrice}), ` +
-          `status=${trade.status}`
-        );
       }
       
       return {
@@ -2703,7 +2567,6 @@ export class AiService implements OnModuleInit {
         INDEX idx_user_active (user_id, is_active, created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       COMMENT='Configuração de IA de trading por usuário - múltiplas sessões permitidas'
-    `);
     
     // Verificar tipo da coluna user_id
     const userIdColumn = await this.dataSource.query(`
@@ -2712,7 +2575,6 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_user_config'
       AND COLUMN_NAME = 'user_id'
-    `);
     
     // Se user_id for INT, migrar para VARCHAR
     if (userIdColumn.length > 0 && userIdColumn[0].DATA_TYPE !== 'varchar') {
@@ -2728,7 +2590,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
-      `);
       
       // Recriar índice (não-unique para permitir múltiplas sessões)
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
@@ -2742,7 +2603,6 @@ export class AiService implements OnModuleInit {
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_user_config'
-    `);
     
     const columnNames = columns.map((col: any) => col.COLUMN_NAME);
     
@@ -2751,7 +2611,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN profit_target DECIMAL(10, 2) NULL COMMENT 'Meta de lucro diária' AFTER mode
-      `);
     }
     
     // Adicionar loss_limit se não existir
@@ -2759,7 +2618,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target
-      `);
     }
     
     // Adicionar deactivation_reason se não existir
@@ -2767,7 +2625,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivation_reason TEXT NULL COMMENT 'Motivo da desativação' AFTER updated_at
-      `);
     }
     
     // Adicionar deactivated_at se não existir
@@ -2775,7 +2632,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivated_at TIMESTAMP NULL COMMENT 'Data/hora da desativação' AFTER deactivation_reason
-      `);
     }
     
     // Adicionar modo_martingale se não existir
@@ -2785,7 +2641,6 @@ export class AiService implements OnModuleInit {
         ADD COLUMN modo_martingale VARCHAR(20) NOT NULL DEFAULT 'conservador' 
         COMMENT 'Modo de martingale: conservador, moderado, agressivo' 
         AFTER mode
-      `);
     }
     
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
@@ -2795,7 +2650,6 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_id'
-    `);
     
     if (indexesResult.length > 0 && indexesResult[0].NON_UNIQUE === 0) {
       
@@ -2814,13 +2668,11 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_active'
-    `);
     
     if (compositeIndexResult.length === 0) {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD INDEX idx_user_active (user_id, is_active, created_at)
-      `);
     }
     
     // Verificar e migrar tabela ai_trades também
@@ -2830,7 +2682,6 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_trades'
       AND COLUMN_NAME = 'user_id'
-    `);
     
     // Se user_id em ai_trades for INT, migrar para VARCHAR
     if (aiTradesUserIdColumn.length > 0 && aiTradesUserIdColumn[0].DATA_TYPE !== 'varchar') {
@@ -2839,7 +2690,6 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_trades 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
-      `);
       
     }
     
@@ -2855,18 +2705,13 @@ export class AiService implements OnModuleInit {
     lossLimit?: number,
     modoMartingale: ModoMartingale = 'conservador',
   ): Promise<void> {
-      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
-    );
 
     // 🗑️ PRIMEIRA AÇÃO: DELETAR TODOS OS LOGS DO USUÁRIO ANTES DE INICIAR NOVA SESSÃO
     try {
       await this.deleteUserLogs(userId);
-        `[ActivateAI] 🗑️ Logs anteriores deletados para userId=${userId}`,
-      );
     } catch (error) {
-        `[ActivateAI] ⚠️ Erro ao deletar logs do usuário ${userId}:`,
-        error,
-      );
+      // Erro ao processar (log removido - mantendo apenas logs salvos no banco)
+    }
       // Não bloquear a criação da sessão se houver erro ao deletar logs
     }
 
@@ -2882,8 +2727,6 @@ export class AiService implements OnModuleInit {
       [userId],
     );
     
-      `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
-    );
     
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
     
@@ -2895,12 +2738,8 @@ export class AiService implements OnModuleInit {
       [userId, stakeAmount, derivToken, currency, mode, modoMartingale, profitTarget || null, lossLimit || null, nextTradeAt],
     );
 
-      `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${currency}`,
-    );
 
     if ((mode || '').toLowerCase() === 'veloz') {
-        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount}`,
-      );
       this.upsertVelozUserState({
         userId,
         stakeAmount,
@@ -2910,8 +2749,6 @@ export class AiService implements OnModuleInit {
       this.removeModeradoUserState(userId);
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'moderado') {
-        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount}`,
-      );
       this.upsertModeradoUserState({
         userId,
         stakeAmount,
@@ -2921,8 +2758,6 @@ export class AiService implements OnModuleInit {
       this.removeVelozUserState(userId);
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'preciso') {
-        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount}`,
-      );
       this.upsertPrecisoUserState({
         userId,
         stakeAmount,
@@ -3017,8 +2852,6 @@ export class AiService implements OnModuleInit {
         if (state.virtualCapital <= 0) {
           state.virtualCapital = stakeAmount;
         }
-          `Estado em memória atualizado para usuário ${userId}: capital=${stakeAmount}`,
-        );
       }
     }
 
@@ -3105,7 +2938,6 @@ export class AiService implements OnModuleInit {
              FROM ai_user_config 
              WHERE is_active = TRUE 
              AND LOWER(mode) = 'fast'`
-        );
 
 
         if (fastModeUsers.length > 0) {
@@ -3113,9 +2945,8 @@ export class AiService implements OnModuleInit {
                 try {
                     await this.processFastMode(user);
                 } catch (error) {
-                        `[Fast Mode] Erro ao processar usuário ${user.userId}:`,
-                        error,
-                    );
+                    // Erro ao processar (log removido - mantendo apenas logs salvos no banco)
+                }
                 }
             }
         } else {
@@ -3147,19 +2978,15 @@ export class AiService implements OnModuleInit {
              AND LOWER(mode) != 'fast'
              AND (next_trade_at IS NULL OR next_trade_at <= NOW())
              LIMIT 10`
-        );
 
         if (usersToProcess.length > 0) {
-                `[Background AI] Processando ${usersToProcess.length} usuários agendados`
-            );
 
             for (const user of usersToProcess) {
                 try {
                     await this.processUserAI(user);
                 } catch (error) {
-                        `[Background AI] Erro ao processar usuário ${user.userId}:`,
-                        error,
-                    );
+                    // Erro ao processar (log removido - mantendo apenas logs salvos no banco)
+                }
                 }
             }
         }
@@ -3171,8 +2998,6 @@ export class AiService implements OnModuleInit {
     const { userId, stakeAmount, derivToken, currency, mode } = user;
     const normalizedMode = (mode || 'moderate').toLowerCase();
     
-        `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
-    );
 
     if (normalizedMode === 'veloz') {
         await this.prepareVelozUser(user);
@@ -3184,8 +3009,6 @@ export class AiService implements OnModuleInit {
         return;
     }
 
-        `[Background AI] Modo ${normalizedMode} não suportado`,
-    );
 
     await this.dataSource.query(
         'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
@@ -3717,8 +3540,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     try {
       await this.ensureTickStreamReady(this.maxTicks);
     } catch (error) {
-        `[Veloz] Não foi possível garantir histórico completo para usuário ${userId}: ${error.message}`,
-      );
+      // Erro ignorado (log removido - mantendo apenas logs salvos no banco)
     }
 
     this.upsertVelozUserState({
@@ -3737,8 +3559,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       [nextTradeAt, userId],
     );
 
-      `[Veloz] Usuário ${userId} sincronizado | capital=${stakeAmount} | acompanhados=${this.velozUsers.size}`,
-    );
   }
 
   /**
@@ -4034,8 +3854,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         betPercent = Math.max(0.003, VELOZ_CONFIG.betPercent * 0.7);
       }
 
-        `Parâmetros ajustados baseados em win rate ${stats.winRate}%: DVX=${dvxMax}, Bet=${betPercent}`,
-      );
 
       return {
         dvxMax,
@@ -4072,8 +3890,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // ✅ ZENIX v2.0: Verificar amostra mínima
     if (this.ticks.length < MODERADO_CONFIG.amostraInicial) {
-        `[Moderado][ZENIX] Coletando amostra inicial (${this.ticks.length}/${MODERADO_CONFIG.amostraInicial})`,
-      );
       return;
     }
 
@@ -4094,8 +3910,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       if (state.lastOperationTimestamp) {
         const segundosDesdeUltimaOp = (Date.now() - state.lastOperationTimestamp.getTime()) / 1000;
         if (segundosDesdeUltimaOp < MODERADO_CONFIG.intervaloSegundos) {
-            `[Moderado][${userId}] ⏱️ Aguardando intervalo: ${segundosDesdeUltimaOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos}s`,
-          );
           continue;
         }
       }
@@ -4107,10 +3921,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         continue; // Sem sinal válido
       }
       
-        `[Moderado][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
-        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-        `  └─ ${sinal.motivo}`,
-      );
       
       // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
       await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
@@ -4261,18 +4071,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    */
   private async canProcessModeradoState(state: ModeradoUserState): Promise<boolean> {
     if (state.isOperationActive) {
-        `[Moderado][${state.userId}] Operação em andamento - aguardando finalização`,
-      );
       return false;
     }
     if (!state.derivToken) {
-        `[Moderado][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
-      );
       return false;
     }
     if ((state.virtualCapital || state.capital) <= 0) {
-        `[Moderado][${state.userId}] Usuário sem capital configurado - ignorando`,
-      );
       return false;
     }
     
@@ -4294,8 +4098,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       if (!configResult || configResult.length === 0) {
         // Não há sessão ativa
-          `[Moderado][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
-        );
         return false;
       }
       
@@ -4303,8 +4105,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Verificar se já foi parada
       if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
-          `[Moderado][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-        );
         return false;
       }
       
@@ -4315,8 +4115,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Se atingiu take profit (stop win)
       if (profitTarget && sessionBalance >= profitTarget) {
-          `[Moderado][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
-        );
         // Desativar imediatamente
         await this.checkAndEnforceLimits(state.userId);
         return false;
@@ -4324,8 +4122,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Se atingiu stop loss
       if (lossLimit && sessionBalance <= -lossLimit) {
-          `[Moderado][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
-        );
         // Desativar imediatamente
         await this.checkAndEnforceLimits(state.userId);
         return false;
@@ -4352,16 +4148,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.lossVirtualActive = true;
       state.lossVirtualCount = 0;
       state.lossVirtualOperation = proposal;
-        `[Moderado][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
-      );
     }
 
     // Se mudou a proposta, resetar
     if (state.lossVirtualOperation !== proposal) {
       state.lossVirtualCount = 0;
       state.lossVirtualOperation = proposal;
-        `[Moderado][${state.userId}] Proposta mudou, resetando loss virtual`,
-      );
     }
 
     // Verificar resultado do tick atual contra a proposta
@@ -4370,21 +4162,15 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     if (wouldWin) {
       // Se venceria, resetar contador
-        `[Moderado][${state.userId}] Vitória virtual | tick=${tick.value} (${tickResult}) | proposta=${proposal} | resetando contador`,
-      );
       state.lossVirtualCount = 0;
       return;
     }
 
     // Perdeu virtualmente, incrementar contador
     state.lossVirtualCount++;
-      `[Moderado][${state.userId}] Loss virtual ${state.lossVirtualCount}/${MODERADO_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tickResult}) | proposta=${proposal} | DVX: ${dvx}`,
-    );
 
     // Se atingiu 3 perdas virtuais, executar operação real
     if (state.lossVirtualCount >= MODERADO_CONFIG.lossVirtualTarget) {
-        `[Moderado][${state.userId}] ✅ Loss virtual completo -> executando operação ${proposal}`,
-      );
 
       // Resetar contadores antes de executar
       state.lossVirtualCount = 0;
@@ -4393,7 +4179,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // Executar operação real (async)
       this.executeModeradoOperation(state, proposal).catch((error) => {
-          `[Moderado] Erro ao executar operação para usuário ${state.userId}:`,
           error,
         );
       });
@@ -4443,8 +4228,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       currentPrice,
     );
 
-      `[Moderado][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
-    );
 
     try {
       const result = await this.executeDigitTradeOnDeriv({
@@ -4592,11 +4375,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         const recuperacaoReal = result.profitLoss;
         
         if (recuperacaoReal < recuperacaoEsperada) {
-            `[Moderado][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
-          );
         } else {
-            `[Moderado][Martingale] ✅ Recuperação completa: $${recuperacaoEsperada.toFixed(2)} recuperado`,
-          );
         }
       }
       
@@ -4604,22 +4383,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       if (entry === 1) {
         // Apenas incrementar se foi operação normal (não martingale)
         state.vitoriasConsecutivas += 1;
-          `[Moderado][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
-          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
-          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
-        );
       } else {
         // Se estava em martingale, resetar contador (martingale não conta para Soros)
         state.vitoriasConsecutivas = 0;
       }
       
-        `[Moderado][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
-        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
-        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
-        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)} | ` +
-        `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
-      );
       
       // 📋 LOG: Resultado - VITÓRIA
       await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
@@ -4657,16 +4425,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (entry === 1) {
       // Apenas resetar se foi operação normal (não martingale)
       if (state.vitoriasConsecutivas > 0) {
-          `[Moderado][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
-        );
       }
       state.vitoriasConsecutivas = 0;
     }
 
-      `[Moderado][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
-    );
     
     // 📋 LOG: Resultado - DERROTA
     await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
@@ -4713,9 +4475,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
             
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
-                `[Moderado][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
-                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
-              );
               
               // Reduzir para valor inicial
               proximaAposta = state.capital;
@@ -4726,8 +4485,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               
-                `[Moderado][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
-              );
               return;
             }
           }
@@ -4735,11 +4492,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
       
-        `[Moderado][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
-      );
       
       // 📋 LOG: Martingale ativado
       await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
@@ -4754,10 +4509,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
     const prejuizoAceito = state.perdaAcumulada;
     
-      `[Moderado][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
-      `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
-      `Resetando para valor inicial`,
-    );
     
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
@@ -4847,11 +4598,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
     
-      `[Moderado][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
-      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
-    );
 
     return Math.max(MODERADO_CONFIG.minStake, proximaAposta);
   }
@@ -4871,7 +4617,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
          FROM ai_user_config
          WHERE is_active = TRUE
            AND LOWER(mode) = 'moderado'`,
-      );
 
 
       const activeIds = new Set(activeUsers.map((u: any) => u.userId));
@@ -4885,8 +4630,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // Adicionar/atualizar usuários ativos
       for (const user of activeUsers) {
-          `[SyncModerado] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
-        );
 
         this.upsertModeradoUserState({
           userId: user.userId,
@@ -4910,15 +4653,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
     
-      `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
-    );
 
     const existing = this.moderadoUsers.get(params.userId);
 
     if (existing) {
       // Atualizar existente
-        `[UpsertModeradoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount} | martingale=${modoMartingale}`,
-      );
 
       existing.capital = params.stakeAmount;
       existing.derivToken = params.derivToken;
@@ -4981,8 +4720,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // ✅ ZENIX v2.0: Verificar amostra mínima
     if (this.ticks.length < PRECISO_CONFIG.amostraInicial) {
-        `[Preciso][ZENIX] Coletando amostra inicial (${this.ticks.length}/${PRECISO_CONFIG.amostraInicial})`,
-      );
       return;
     }
 
@@ -5006,10 +4743,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         continue; // Sem sinal válido
       }
       
-        `[Preciso][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
-        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-        `  └─ ${sinal.motivo}`,
-      );
       
       // Executar operação
       await this.executePrecisoOperation(state, sinal.sinal, 1);
@@ -5022,18 +4755,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    */
   private async canProcessPrecisoState(state: PrecisoUserState): Promise<boolean> {
     if (state.isOperationActive) {
-        `[Preciso][${state.userId}] Operação em andamento - aguardando finalização`,
-      );
       return false;
     }
     if (!state.derivToken) {
-        `[Preciso][${state.userId}] Usuário sem token Deriv configurado - ignorando`,
-      );
       return false;
     }
     if ((state.virtualCapital || state.capital) <= 0) {
-        `[Preciso][${state.userId}] Usuário sem capital configurado - ignorando`,
-      );
       return false;
     }
     
@@ -5055,8 +4782,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       if (!configResult || configResult.length === 0) {
         // Não há sessão ativa
-          `[Preciso][${state.userId}] Nenhuma sessão ativa encontrada - não executando novos trades`,
-        );
         return false;
       }
       
@@ -5064,8 +4789,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Verificar se já foi parada
       if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
-          `[Preciso][${state.userId}] Sessão parada (${config.session_status}) - não executando novos trades`,
-        );
         return false;
       }
       
@@ -5076,8 +4799,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Se atingiu take profit (stop win)
       if (profitTarget && sessionBalance >= profitTarget) {
-          `[Preciso][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${sessionBalance.toFixed(2)} >= Meta: $${profitTarget} - PARANDO IMEDIATAMENTE`,
-        );
         // Desativar imediatamente
         await this.checkAndEnforceLimits(state.userId);
         return false;
@@ -5085,8 +4806,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       // Se atingiu stop loss
       if (lossLimit && sessionBalance <= -lossLimit) {
-          `[Preciso][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit} - PARANDO IMEDIATAMENTE`,
-        );
         // Desativar imediatamente
         await this.checkAndEnforceLimits(state.userId);
         return false;
@@ -5113,16 +4832,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.lossVirtualActive = true;
       state.lossVirtualCount = 0;
       state.lossVirtualOperation = proposal;
-        `[Preciso][${state.userId}] Iniciando ciclo de loss virtual para ${proposal}`,
-      );
     }
 
     // Se mudou a proposta, resetar
     if (state.lossVirtualOperation !== proposal) {
       state.lossVirtualCount = 0;
       state.lossVirtualOperation = proposal;
-        `[Preciso][${state.userId}] Proposta mudou, resetando loss virtual`,
-      );
     }
 
     // Verificar resultado do tick atual contra a proposta
@@ -5131,21 +4846,15 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     if (wouldWin) {
       // Se venceria, resetar contador
-        `[Preciso][${state.userId}] Vitória virtual | tick=${tick.value} (${tickResult}) | proposta=${proposal} | resetando contador`,
-      );
       state.lossVirtualCount = 0;
       return;
     }
 
     // Perdeu virtualmente, incrementar contador
     state.lossVirtualCount++;
-      `[Preciso][${state.userId}] Loss virtual ${state.lossVirtualCount}/${PRECISO_CONFIG.lossVirtualTarget} | tick=${tick.value} (${tickResult}) | proposta=${proposal} | DVX: ${dvx}`,
-    );
 
     // Se atingiu 4 perdas virtuais, executar operação real
     if (state.lossVirtualCount >= PRECISO_CONFIG.lossVirtualTarget) {
-        `[Preciso][${state.userId}] ✅ Loss virtual completo (4/4) -> executando operação ${proposal}`,
-      );
 
       // Resetar contadores antes de executar
       state.lossVirtualCount = 0;
@@ -5154,7 +4863,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // Executar operação real (async)
       this.executePrecisoOperation(state, proposal).catch((error) => {
-          `[Preciso] Erro ao executar operação para usuário ${state.userId}:`,
           error,
         );
       });
@@ -5186,8 +4894,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       currentPrice,
     );
 
-      `[Preciso][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
-    );
 
     try {
       const result = await this.executeDigitTradeOnDeriv({
@@ -5326,12 +5032,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
       
-        `[Preciso][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
-        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
-        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
-        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)}`,
-      );
       
       // Resetar martingale
       state.isOperationActive = false;
@@ -5345,9 +5045,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
 
-      `[Preciso][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-    );
 
     // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
     // Alterado de < para <= para permitir exatamente maxEntradas entradas
@@ -5386,9 +5083,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
             
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
-                `[Preciso][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
-                `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
-              );
               
               // Reduzir para valor inicial
               proximaAposta = state.capital;
@@ -5399,8 +5093,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               
-                `[Preciso][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
-              );
               return;
             }
           }
@@ -5408,11 +5100,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
       
-        `[Preciso][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
-      );
       
       // Executar próxima entrada
       await this.executePrecisoOperation(state, proposal, entry + 1);
@@ -5420,9 +5110,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     }
 
     // 🛑 STOP-LOSS DE MARTINGALE
-      `[Preciso][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
-      `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
-    );
     
     // Resetar martingale
     state.isOperationActive = false;
@@ -5499,11 +5186,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
     
-      `[Preciso][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
-      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
-    );
 
     return Math.max(PRECISO_CONFIG.minStake, proximaAposta);
   }
@@ -5523,7 +5205,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
          FROM ai_user_config
          WHERE is_active = TRUE
            AND LOWER(mode) = 'preciso'`,
-      );
 
 
       const activeIds = new Set(activeUsers.map((u: any) => u.userId));
@@ -5537,8 +5218,6 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // Adicionar/atualizar usuários ativos
       for (const user of activeUsers) {
-          `[SyncPreciso] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
-        );
 
         this.upsertPrecisoUserState({
           userId: user.userId,
@@ -5562,15 +5241,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
     
-      `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
-    );
 
     const existing = this.precisoUsers.get(params.userId);
 
     if (existing) {
       // Atualizar existente
-        `[UpsertPrecisoState] Atualizando usuário existente | capital antigo=${existing.capital} | capital novo=${params.stakeAmount} | martingale=${modoMartingale}`,
-      );
 
       existing.capital = params.stakeAmount;
       existing.derivToken = params.derivToken;
