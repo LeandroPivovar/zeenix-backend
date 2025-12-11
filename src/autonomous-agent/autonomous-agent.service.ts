@@ -1722,14 +1722,32 @@ export class AutonomousAgentService implements OnModuleInit {
         [userId, limit],
       );
 
-      return logs.map(log => ({
-        id: log.id,
-        timestamp: log.timestamp,
-        level: log.log_level,
-        module: log.module,
-        message: log.message,
-        metadata: log.metadata ? JSON.parse(log.metadata) : null,
-      }));
+      return logs.map(log => {
+        let metadata = null;
+        if (log.metadata) {
+          try {
+            // Se já for um objeto, usar diretamente; senão, fazer parse
+            if (typeof log.metadata === 'string') {
+              metadata = JSON.parse(log.metadata);
+            } else {
+              metadata = log.metadata;
+            }
+          } catch (error) {
+            // Se falhar o parse, usar null
+            this.logger.warn(`[GetLogs] Erro ao parsear metadata do log ${log.id}:`, error);
+            metadata = null;
+          }
+        }
+        
+        return {
+          id: log.id,
+          timestamp: log.timestamp,
+          level: log.log_level,
+          module: log.module,
+          message: log.message,
+          metadata,
+        };
+      });
     } catch (error) {
       this.logger.error(`[GetLogs][${userId}] Erro:`, error);
       return [];
