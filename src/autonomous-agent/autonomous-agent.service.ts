@@ -1631,8 +1631,10 @@ export class AutonomousAgentService implements OnModuleInit {
         daily_profit,
         daily_loss,
         session_status,
+        session_date,
         last_trade_at,
-        next_trade_at
+        next_trade_at,
+        created_at
        FROM autonomous_agent_config
        WHERE user_id = ?`,
       [userId],
@@ -1651,12 +1653,14 @@ export class AutonomousAgentService implements OnModuleInit {
       symbol: cfg.symbol,
       strategy: cfg.strategy || 'arion',
       riskLevel: cfg.risk_level || 'balanced',
-      totalTrades: cfg.total_trades,
-      totalWins: cfg.total_wins,
-      totalLosses: cfg.total_losses,
+      totalTrades: cfg.total_trades || 0,
+      totalWins: cfg.total_wins || 0,
+      totalLosses: cfg.total_losses || 0,
       dailyProfit: parseFloat(cfg.daily_profit) || 0,
       dailyLoss: parseFloat(cfg.daily_loss) || 0,
       sessionStatus: cfg.session_status,
+      sessionDate: cfg.session_date,
+      createdAt: cfg.created_at,
       lastTradeAt: cfg.last_trade_at,
       nextTradeAt: cfg.next_trade_at,
     };
