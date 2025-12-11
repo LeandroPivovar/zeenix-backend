@@ -31,8 +31,9 @@ interface VelozUserState {
   apostaInicial: number;
   lastOperationTickIndex: number; // ✅ ZENIX v2.0: Controle de intervalo (3 ticks) - DEPRECATED, usar ticksDesdeUltimaOp
   ticksDesdeUltimaOp: number; // ✅ ZENIX v2.0: Contador de ticks desde última operação (mais confiável)
-  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
+  ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
 }
 
 interface ModeradoUserState {
@@ -50,8 +51,9 @@ interface ModeradoUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   lastOperationTimestamp: Date | null; // ✅ ZENIX v2.0: Controle de intervalo (15-20 segundos)
-  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
+  ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
 }
 
 interface PrecisoUserState {
@@ -69,8 +71,9 @@ interface PrecisoUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   // ✅ ZENIX v2.0: PRECISO não tem intervalo fixo (baseado em qualidade)
-  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas
+  vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
+  ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
 }
 
 interface DigitTradeResult {
@@ -175,31 +178,34 @@ const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
 const MARKUP_ZENIX = 3; // Markup fixo em pontos percentuais
 
 // ============================================
-// ESTRATÉGIA SOROS - ZENIX v2.0
+// ESTRATÉGIA SOROS - ZENIX v2.0 CORRIGIDO
 // ============================================
-const SOROS_MULTIPLICADOR = 1.5; // Multiplicador por vitória consecutiva (1.5x, 2.25x, 3.375x...)
-const SOROS_MAX_MULTIPLICADOR = 5.0; // Limite máximo de multiplicação (evita apostas excessivas)
+const SOROS_MAX_NIVEL = 2; // Soros tem apenas 2 níveis (entrada 1, 2, 3)
 
 /**
  * Calcula aposta com estratégia Soros aplicada
- * Após cada vitória consecutiva, aumenta a aposta base
+ * Soros funciona apenas até o nível 2 (3 entradas):
+ * - Entrada 1: valor inicial
+ * - Entrada 2 (Soros Nível 1): entrada anterior + lucro da entrada anterior
+ * - Entrada 3 (Soros Nível 2): entrada anterior + lucro da entrada anterior
  * 
- * @param apostaBase - Valor base da aposta
- * @param vitoriasConsecutivas - Número de vitórias consecutivas
- * @returns Valor da aposta com Soros aplicado
+ * @param entradaAnterior - Valor da entrada anterior
+ * @param lucroAnterior - Lucro obtido na entrada anterior
+ * @param vitoriasConsecutivas - Número de vitórias consecutivas (0, 1, ou 2)
+ * @returns Valor da aposta com Soros aplicado, ou null se Soros não deve ser aplicado
  */
-function calcularApostaComSoros(apostaBase: number, vitoriasConsecutivas: number): number {
-  if (vitoriasConsecutivas <= 0 || apostaBase <= 0) {
-    return apostaBase; // Sem vitórias consecutivas, usar aposta base
+function calcularApostaComSoros(
+  entradaAnterior: number,
+  lucroAnterior: number,
+  vitoriasConsecutivas: number,
+): number | null {
+  // Soros só funciona até o nível 2 (vitoriasConsecutivas = 0, 1, ou 2)
+  if (vitoriasConsecutivas <= 0 || vitoriasConsecutivas > SOROS_MAX_NIVEL) {
+    return null; // Não está no Soros ou já passou do limite
   }
   
-  // Calcular multiplicador: 1.5 ^ vitoriasConsecutivas
-  const multiplicador = Math.min(
-    Math.pow(SOROS_MULTIPLICADOR, vitoriasConsecutivas),
-    SOROS_MAX_MULTIPLICADOR
-  );
-  
-  const apostaComSoros = apostaBase * multiplicador;
+  // Soros: entrada anterior + lucro anterior
+  const apostaComSoros = entradaAnterior + lucroAnterior;
   
   // Arredondar para 2 casas decimais
   return Math.round(apostaComSoros * 100) / 100;
@@ -1172,19 +1178,53 @@ export class AiService implements OnModuleInit {
   }
 
   private async calculateVelozStake(state: VelozUserState, entry: number, proposal?: DigitParity): Promise<number> {
-    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
-    if (entry <= 1) {
-      // Garantir que apostaBase está inicializada
+    // ✅ ZENIX v2.0: Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
+    // Entrada 1: valor inicial
+    // Entrada 2: Soros Nível 1 (entrada 1 + lucro entrada 1)
+    // Entrada 3: Soros Nível 2 (entrada 2 + lucro entrada 2)
+    // Entrada 4+: Martingale (recuperação)
+    
+    if (entry === 1) {
+      // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
         state.apostaBase = state.capital || 0.35;
       }
-      
-      // Aplicar estratégia Soros se houver vitórias consecutivas
-      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
+      return Math.max(0.35, state.apostaBase); // Mínimo da Deriv: 0.35
+    }
+    
+    if (entry === 2) {
+      // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          1, // Soros nível 1
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
+        }
+      }
+      // Se não está no Soros, entrar em martingale
+    }
+    
+    if (entry === 3) {
+      // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          2, // Soros nível 2
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
+        }
+      }
+      // Se não está no Soros, entrar em martingale
     }
 
-    // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
+    // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 3 ou se Soros falhou)
     // Consultar payout via API antes de calcular
     const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
@@ -1246,14 +1286,21 @@ export class AiService implements OnModuleInit {
       }
       
       // ✅ ZENIX v2.0: Aplicar estratégia Soros se houver vitórias consecutivas
-      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      if (apostaComSoros > stakeAmount) {
-        // Ajustar stakeAmount para usar valor com Soros
-        stakeAmount = apostaComSoros;
-        this.logger.log(
-          `[Veloz][Soros] 🚀 Aposta aumentada: $${state.apostaBase.toFixed(2)} → $${apostaComSoros.toFixed(2)} ` +
-          `(${state.vitoriasConsecutivas} vitórias consecutivas, ${(Math.pow(SOROS_MULTIPLICADOR, state.vitoriasConsecutivas) * 100).toFixed(0)}%)`,
+      // Entrada 2 = Soros nível 1, Entrada 3 = Soros nível 2
+      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.ultimoLucro > 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          state.vitoriasConsecutivas,
         );
+        if (apostaComSoros !== null && apostaComSoros > stakeAmount) {
+          // Ajustar stakeAmount para usar valor com Soros
+          stakeAmount = apostaComSoros;
+          this.logger.log(
+            `[Veloz][Soros] 🚀 Soros Nível ${state.vitoriasConsecutivas} | ` +
+            `Aposta: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + Lucro: $${state.ultimoLucro.toFixed(2)} = $${apostaComSoros.toFixed(2)}`,
+          );
+        }
       }
       
       state.apostaInicial = stakeAmount;
@@ -1660,18 +1707,43 @@ export class AiService implements OnModuleInit {
         }
       }
       
-      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Incrementar vitórias consecutivas
-      if (entry === 1) {
-        // Apenas incrementar se foi operação normal (não martingale)
-        state.vitoriasConsecutivas += 1;
-        this.logger.log(
-          `[Veloz][Soros] 🚀 Vitória consecutiva #${state.vitoriasConsecutivas} | ` +
-          `Próxima aposta base será: $${state.apostaBase.toFixed(2)} × ${SOROS_MULTIPLICADOR}^${state.vitoriasConsecutivas} = ` +
-          `$${calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas).toFixed(2)}`,
-        );
+      // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
+      // Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
+      // Entrada 1: vitoriasConsecutivas = 0 → após vitória, vira 1
+      // Entrada 2: vitoriasConsecutivas = 1 (Soros nível 1) → após vitória, vira 2
+      // Entrada 3: vitoriasConsecutivas = 2 (Soros nível 2) → após vitória, reinicia tudo
+      
+      if (entry <= 3 && state.perdaAcumulada === 0) {
+        // Está no Soros (entradas 1, 2 ou 3 sem perda acumulada)
+        if (entry === 1) {
+          // Vitória na entrada 1: ativar Soros nível 1
+          state.vitoriasConsecutivas = 1;
+          state.ultimoLucro = result.profitLoss;
+          this.logger.log(
+            `[Veloz][Soros] ✅ Entrada 1 vitoriosa | Ativando Soros Nível 1 | ` +
+            `Próxima: $${stakeAmount.toFixed(2)} + $${result.profitLoss.toFixed(2)} = $${(stakeAmount + result.profitLoss).toFixed(2)}`,
+          );
+        } else if (entry === 2 && state.vitoriasConsecutivas === 1) {
+          // Vitória no Soros nível 1: ativar Soros nível 2
+          state.vitoriasConsecutivas = 2;
+          state.ultimoLucro = result.profitLoss;
+          this.logger.log(
+            `[Veloz][Soros] ✅ Soros Nível 1 vitorioso | Ativando Soros Nível 2 | ` +
+            `Próxima: $${stakeAmount.toFixed(2)} + $${result.profitLoss.toFixed(2)} = $${(stakeAmount + result.profitLoss).toFixed(2)}`,
+          );
+        } else if (entry === 3 && state.vitoriasConsecutivas === 2) {
+          // Vitória no Soros nível 2: ciclo perfeito, reiniciar tudo
+          this.logger.log(
+            `[Veloz][Soros] 🎉 CICLO PERFEITO! Soros Nível 2 completo | Reiniciando tudo`,
+          );
+          state.vitoriasConsecutivas = 0;
+          state.ultimoLucro = 0;
+          // Reiniciar para valor inicial
+        }
       } else {
-        // Se estava em martingale, resetar contador (martingale não conta para Soros)
+        // Vitória em martingale: resetar Soros
         state.vitoriasConsecutivas = 0;
+        state.ultimoLucro = 0;
         this.logger.log(`[Veloz][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
       }
       
@@ -1699,12 +1771,37 @@ export class AiService implements OnModuleInit {
       }
       
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
-      // Calcular próxima aposta com Soros aplicado
-      const proximaApostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (${state.vitoriasConsecutivas > 0 ? `Soros ${state.vitoriasConsecutivas}x` : 'normal'})`);
+      // Se completou Soros nível 2, reiniciar tudo
+      if (entry === 3 && state.vitoriasConsecutivas === 2) {
+        await this.saveLog(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
+        state.isOperationActive = false;
+        state.martingaleStep = 0;
+        state.perdaAcumulada = 0;
+        state.vitoriasConsecutivas = 0;
+        state.ultimoLucro = 0;
+        // Próxima entrada será o valor inicial
+        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+        return;
+      }
+      
+      // Se ainda está no Soros, calcular próxima aposta
+      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+        const proximaApostaComSoros = calcularApostaComSoros(
+          stakeAmount,
+          result.profitLoss,
+          state.vitoriasConsecutivas,
+        );
+        if (proximaApostaComSoros !== null) {
+          await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
+        }
+      } else {
+        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+      }
+      
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
       
-      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas)
+      // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
@@ -1717,15 +1814,26 @@ export class AiService implements OnModuleInit {
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
 
-    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS - Resetar vitórias consecutivas após perda
-    if (entry === 1) {
-      // Apenas resetar se foi operação normal (não martingale)
+    // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
+    // Se perder em qualquer entrada do Soros (1, 2 ou 3), entrar em recuperação
+    if (entry <= 3 && state.perdaAcumulada === stakeAmount) {
+      // Perdeu no Soros: resetar Soros e entrar em recuperação
       if (state.vitoriasConsecutivas > 0) {
         this.logger.log(
-          `[Veloz][Soros] 🔄 Resetando vitórias consecutivas (${state.vitoriasConsecutivas} → 0) após perda`,
+          `[Veloz][Soros] ❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação`,
+        );
+      } else {
+        this.logger.log(
+          `[Veloz][Soros] ❌ Entrada 1 falhou! Entrando em recuperação`,
         );
       }
       state.vitoriasConsecutivas = 0;
+      state.ultimoLucro = 0;
+      // perdaAcumulada já foi incrementada acima, então entrará em martingale
+    } else if (entry === 1) {
+      // Perda na primeira entrada (não estava no Soros)
+      state.vitoriasConsecutivas = 0;
+      state.ultimoLucro = 0;
     }
 
     this.logger.warn(
@@ -2576,6 +2684,7 @@ export class AiService implements OnModuleInit {
       lastOperationTickIndex: -1, // ✅ ZENIX v2.0: DEPRECATED - manter para compatibilidade
       ticksDesdeUltimaOp: -1, // ✅ ZENIX v2.0: Inicializar contador de ticks (-1 = pode operar imediatamente)
       vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+      ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
       apostaBase: stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
     });
   }
@@ -5259,16 +5368,45 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private async calculateModeradoStake(state: ModeradoUserState, proposal?: DigitParity): Promise<number> {
-    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
-    if (state.martingaleStep === 0 || state.martingaleStep === 1) {
-      // Garantir que apostaBase está inicializada
+    // ✅ ZENIX v2.0: Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
+    const entry = state.martingaleStep || 1;
+    
+    if (entry === 1) {
+      // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
         state.apostaBase = state.capital || MODERADO_CONFIG.minStake;
       }
-      
-      // Aplicar estratégia Soros se houver vitórias consecutivas
-      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
+      return Math.max(MODERADO_CONFIG.minStake, state.apostaBase);
+    }
+    
+    if (entry === 2) {
+      // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          1, // Soros nível 1
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
+        }
+      }
+    }
+    
+    if (entry === 3) {
+      // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          2, // Soros nível 2
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
+        }
+      }
     }
 
     // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
@@ -5405,6 +5543,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         apostaInicial: 0,
         lastOperationTimestamp: null, // ✅ ZENIX v2.0: Inicializar controle de intervalo
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+      ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
       });
     }
@@ -5983,16 +6122,45 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
   private async calculatePrecisoStake(state: PrecisoUserState, proposal?: DigitParity): Promise<number> {
-    // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
-    if (state.martingaleStep === 0 || state.martingaleStep === 1) {
-      // Garantir que apostaBase está inicializada
+    // ✅ ZENIX v2.0: Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
+    const entry = state.martingaleStep || 1;
+    
+    if (entry === 1) {
+      // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
         state.apostaBase = state.capital || PRECISO_CONFIG.minStake;
       }
-      
-      // Aplicar estratégia Soros se houver vitórias consecutivas
-      const apostaComSoros = calcularApostaComSoros(state.apostaBase, state.vitoriasConsecutivas);
-      return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
+      return Math.max(PRECISO_CONFIG.minStake, state.apostaBase);
+    }
+    
+    if (entry === 2) {
+      // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          1, // Soros nível 1
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
+        }
+      }
+    }
+    
+    if (entry === 3) {
+      // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
+      if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
+        const apostaComSoros = calcularApostaComSoros(
+          state.apostaInicial || state.apostaBase,
+          state.ultimoLucro,
+          2, // Soros nível 2
+        );
+        
+        if (apostaComSoros !== null) {
+          return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
+        }
+      }
     }
 
     // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
@@ -6139,6 +6307,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         perdaAcumulada: 0,
         apostaInicial: 0,
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
+      ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
       });
     }
