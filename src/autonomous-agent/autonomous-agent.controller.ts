@@ -178,7 +178,7 @@ export class AutonomousAgentController {
 
       return {
         success: true,
-        data: history,
+        data: history, // Array de PriceTick com { value, epoch, timestamp }
       };
     } catch (error) {
       this.logger.error(`[GetPriceHistory] Erro:`, error);
