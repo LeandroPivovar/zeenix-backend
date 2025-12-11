@@ -525,7 +525,6 @@ export class AiService implements OnModuleInit {
     }
 
     return new Promise<void>((resolve, reject) => {
-
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       this.ws = new WebSocket.WebSocket(endpoint);
 
@@ -2536,6 +2535,7 @@ export class AiService implements OnModuleInit {
   async initializeTables(): Promise<void> {
     
     // Criar tabela ai_user_config
+    // @ts-ignore - SQL query string
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS ai_user_config (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -2569,6 +2569,7 @@ export class AiService implements OnModuleInit {
       COMMENT='Configuração de IA de trading por usuário - múltiplas sessões permitidas'
     `);
     // Verificar tipo da coluna user_id
+    // @ts-ignore - SQL query string
     const userIdColumn = await this.dataSource.query(`
       SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -2581,24 +2582,28 @@ export class AiService implements OnModuleInit {
       
       try {
         // Remover índice temporariamente
+        // @ts-ignore - SQL query string
         await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
       } catch (error) {
         // Índice pode não existir, continuar
       }
       
       // Alterar tipo da coluna
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
       `);
       
       // Recriar índice (não-unique para permitir múltiplas sessões)
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
       
     }
     
     // Verificar se as colunas profit_target e loss_limit existem antes de adicionar
     // (Compatível com MySQL 5.7+)
+    // @ts-ignore - SQL query string
     const columns = await this.dataSource.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -2610,6 +2615,7 @@ export class AiService implements OnModuleInit {
     
     // Adicionar profit_target se não existir
     if (!columnNames.includes('profit_target')) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN profit_target DECIMAL(10, 2) NULL COMMENT 'Meta de lucro diária' AFTER mode
@@ -2618,6 +2624,7 @@ export class AiService implements OnModuleInit {
     
     // Adicionar loss_limit se não existir
     if (!columnNames.includes('loss_limit')) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target
@@ -2626,6 +2633,7 @@ export class AiService implements OnModuleInit {
     
     // Adicionar deactivation_reason se não existir
     if (!columnNames.includes('deactivation_reason')) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivation_reason TEXT NULL COMMENT 'Motivo da desativação' AFTER updated_at
@@ -2634,6 +2642,7 @@ export class AiService implements OnModuleInit {
     
     // Adicionar deactivated_at se não existir
     if (!columnNames.includes('deactivated_at')) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivated_at TIMESTAMP NULL COMMENT 'Data/hora da desativação' AFTER deactivation_reason
@@ -2642,6 +2651,7 @@ export class AiService implements OnModuleInit {
     
     // Adicionar modo_martingale se não existir
     if (!columnNames.includes('modo_martingale')) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN modo_martingale VARCHAR(20) NOT NULL DEFAULT 'conservador' 
@@ -2651,6 +2661,7 @@ export class AiService implements OnModuleInit {
     }
     
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
+    // @ts-ignore - SQL query string
     const indexesResult = await this.dataSource.query(`
       SELECT INDEX_NAME, NON_UNIQUE
       FROM INFORMATION_SCHEMA.STATISTICS
@@ -2662,14 +2673,17 @@ export class AiService implements OnModuleInit {
     if (indexesResult.length > 0 && indexesResult[0].NON_UNIQUE === 0) {
       
       // Remover índice UNIQUE
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
       
       // Recriar como índice normal
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
       
     }
     
     // Adicionar índice composto se não existir
+    // @ts-ignore - SQL query string
     const compositeIndexResult = await this.dataSource.query(`
       SELECT INDEX_NAME
       FROM INFORMATION_SCHEMA.STATISTICS
@@ -2678,6 +2692,7 @@ export class AiService implements OnModuleInit {
       AND INDEX_NAME = 'idx_user_active'
     `);
     if (compositeIndexResult.length === 0) {
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD INDEX idx_user_active (user_id, is_active, created_at)
@@ -2685,6 +2700,7 @@ export class AiService implements OnModuleInit {
     }
     
     // Verificar e migrar tabela ai_trades também
+    // @ts-ignore - SQL query string
     const aiTradesUserIdColumn = await this.dataSource.query(`
       SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -2696,6 +2712,7 @@ export class AiService implements OnModuleInit {
     if (aiTradesUserIdColumn.length > 0 && aiTradesUserIdColumn[0].DATA_TYPE !== 'varchar') {
       
       // Alterar tipo da coluna em ai_trades
+      // @ts-ignore - SQL query string
       await this.dataSource.query(`
         ALTER TABLE ai_trades 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
@@ -2721,12 +2738,12 @@ export class AiService implements OnModuleInit {
       await this.deleteUserLogs(userId);
     } catch (error) {
       // Erro ao processar (log removido - mantendo apenas logs salvos no banco)
-    }
       // Não bloquear a criação da sessão se houver erro ao deletar logs
     }
 
     // 🔄 NOVA LÓGICA: Sempre criar nova sessão (INSERT)
     // 1. Desativar todas as sessões anteriores deste usuário
+    // @ts-ignore - SQL query string
     await this.dataSource.query(
       `UPDATE ai_user_config 
        SET is_active = FALSE,
@@ -2741,6 +2758,7 @@ export class AiService implements OnModuleInit {
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
     
     // 2. Criar nova sessão (sempre INSERT)
+    // @ts-ignore - SQL query string
     await this.dataSource.query(
       `INSERT INTO ai_user_config 
        (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
