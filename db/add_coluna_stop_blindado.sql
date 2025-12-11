@@ -24,3 +24,4 @@ SELECT '✅ Coluna stop_blindado_percent adicionada!' as Resultado;
 
 
 
+

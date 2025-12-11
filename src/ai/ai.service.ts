@@ -800,8 +800,8 @@ export class AiService implements OnModuleInit {
         
         
         // ANÁLISE 2: Sequências Repetidas
-        const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
         const seqInfo = sinal.detalhes?.sequencias;
+        const bonusSeq = seqInfo?.bonus || 0;
         this.saveLogAsync(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
         if (seqInfo && seqInfo.tamanho >= 5) {
           this.saveLogAsync(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
@@ -813,8 +813,8 @@ export class AiService implements OnModuleInit {
         
         
         // ANÁLISE 3: Micro-Tendências
-        const bonusMicro = sinal.detalhes?.bonusMicro || 0;
         const microInfo = sinal.detalhes?.microTendencias;
+        const bonusMicro = microInfo?.bonus || 0;
         this.saveLogAsync(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
         if (microInfo && microInfo.aceleracao > 0.10) {
           this.saveLogAsync(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
@@ -826,8 +826,8 @@ export class AiService implements OnModuleInit {
         
         
         // ANÁLISE 4: Força do Desequilíbrio
-        const bonusForca = sinal.detalhes?.bonusForca || 0;
         const forcaInfo = sinal.detalhes?.forca;
+        const bonusForca = forcaInfo?.bonus || 0;
         this.saveLogAsync(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
         if (forcaInfo && forcaInfo.velocidade > 0.05) {
           this.saveLogAsync(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
@@ -4360,8 +4360,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       
       // ANÁLISE 2: Sequências Repetidas
-      const bonusSeq = sinal.detalhes?.bonusSequencias || 0;
       const seqInfo = sinal.detalhes?.sequencias;
+      const bonusSeq = seqInfo?.bonus || 0;
       await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
       if (seqInfo && seqInfo.tamanho >= 5) {
         await this.saveLog(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
@@ -4373,8 +4373,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       
       // ANÁLISE 3: Micro-Tendências
-      const bonusMicro = sinal.detalhes?.bonusMicro || 0;
       const microInfo = sinal.detalhes?.microTendencias;
+      const bonusMicro = microInfo?.bonus || 0;
       await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
       if (microInfo && microInfo.aceleracao > 0.10) {
         await this.saveLog(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
@@ -4386,8 +4386,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       
       
       // ANÁLISE 4: Força do Desequilíbrio
-      const bonusForca = sinal.detalhes?.bonusForca || 0;
       const forcaInfo = sinal.detalhes?.forca;
+      const bonusForca = forcaInfo?.bonus || 0;
       await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
       if (forcaInfo && forcaInfo.velocidade > 0.05) {
         await this.saveLog(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
