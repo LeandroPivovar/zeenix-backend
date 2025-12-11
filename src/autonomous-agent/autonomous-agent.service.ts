@@ -1312,11 +1312,27 @@ export class AutonomousAgentService implements OnModuleInit {
     // Fechar conexão anterior se existir e estiver aberta
     if (existingWs) {
       try {
-        if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
+        if (existingWs.readyState === WebSocket.OPEN) {
           existingWs.close();
+          // Aguardar um pouco para garantir que a conexão foi fechada
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } else if (existingWs.readyState === WebSocket.CONNECTING) {
+          // Se ainda estiver conectando, aguardar um pouco e verificar novamente
+          await new Promise(resolve => setTimeout(resolve, 200));
+          if (existingWs.readyState === WebSocket.OPEN) {
+            existingWs.close();
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } else {
+            // Se ainda estiver em CONNECTING, remover do map e deixar que expire naturalmente
+            this.wsConnections.delete(userId);
+          }
+        } else {
+          // Se estiver CLOSING ou CLOSED, apenas remover do map
+          this.wsConnections.delete(userId);
         }
       } catch (error) {
         this.logger.warn(`[EnsureWebSocket][${userId}] Erro ao fechar conexão anterior:`, error);
+        this.wsConnections.delete(userId);
       }
     }
 
