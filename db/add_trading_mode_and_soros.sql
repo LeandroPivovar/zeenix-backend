@@ -47,3 +47,4 @@ ADD COLUMN profit_peak DECIMAL(10, 2) DEFAULT 0
 COMMENT 'Pico de lucro do dia (para cálculo do Stop Loss Blindado)'
 AFTER daily_profit;
 
+

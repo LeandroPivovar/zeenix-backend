@@ -113,7 +113,6 @@ export class AutonomousAgentService implements OnModuleInit {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async onModuleInit() {
-    this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
     await this.syncActiveAgentsFromDb();
   }
 
@@ -153,8 +152,6 @@ export class AutonomousAgentService implements OnModuleInit {
          WHERE is_active = TRUE`,
       );
 
-      this.logger.log(`[SyncAgents] Sincronizando ${activeAgents.length} agentes ativos`);
-
       for (const agent of activeAgents) {
       this.upsertAgentState({
         userId: agent.user_id.toString(),
@@ -186,7 +183,7 @@ export class AutonomousAgentService implements OnModuleInit {
       await this.ensureWebSocketConnection(agent.user_id.toString());
       }
     } catch (error) {
-      this.logger.error('[SyncAgents] Erro ao sincronizar agentes:', error);
+      // Erro silencioso - logs são salvos via saveLog quando necessário
     }
   }
 
@@ -408,10 +405,8 @@ export class AutonomousAgentService implements OnModuleInit {
         },
       );
 
-      this.logger.log(`[ActivateAgent] ✅ Agente ativado para usuário ${userId}`);
     } catch (error) {
       await this.saveLog(userId, 'ERROR', 'CORE', `Falha ao ativar agente. erro=${error.message}`);
-      this.logger.error(`[ActivateAgent] ❌ Erro ao ativar agente:`, error);
       throw error;
     }
   }
@@ -437,10 +432,8 @@ export class AutonomousAgentService implements OnModuleInit {
       // Log detalhado
       await this.saveLog(userId, 'INFO', 'CORE', 'Agente parado.');
 
-      this.logger.log(`[DeactivateAgent] ✅ Agente desativado para usuário ${userId}`);
     } catch (error) {
       await this.saveLog(userId, 'ERROR', 'CORE', `Falha ao desativar agente. erro=${error.message}`);
-      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, error);
       throw error;
     }
   }
@@ -454,8 +447,6 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
     
-    this.logger.debug(`[ProcessActiveAgents] Processando ${this.agentStates.size} agente(s) ativo(s)`);
-
     const now = new Date();
 
     for (const [userId, state] of this.agentStates.entries()) {
@@ -497,7 +488,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // Processar agente
         await this.processAgent(state);
       } catch (error) {
-        this.logger.error(`[ProcessAgent][${userId}] Erro:`, error);
+        await this.saveLog(userId, 'ERROR', 'CORE', `Erro ao processar agente. erro=${error.message}`).catch(() => {});
       }
     }
   }
@@ -587,7 +578,6 @@ export class AutonomousAgentService implements OnModuleInit {
       const prices = await this.getPriceHistory(state.userId, state.symbol);
       
       if (prices.length < ticksRequired) {
-        this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/${ticksRequired}). Aguardando mais ticks...`);
         await this.saveLog(
           state.userId,
           'DEBUG',
@@ -608,10 +598,6 @@ export class AutonomousAgentService implements OnModuleInit {
       const analysis = this.performTechnicalAnalysis(recentPrices, state.userId);
 
       // Log detalhado da análise
-      this.logger.debug(
-        `[ProcessAgent][${state.userId}] Análise: direction=${analysis.direction}, confidence=${analysis.confidenceScore.toFixed(1)}%, ema10=${analysis.ema10.toFixed(2)}, rsi=${analysis.rsi.toFixed(1)}`,
-      );
-
       // Verificar score de confiança (usando mínimo do Trading Mode)
       if (analysis.confidenceScore < minConfidenceScore) {
         await this.saveLog(
@@ -669,12 +655,9 @@ export class AutonomousAgentService implements OnModuleInit {
         },
       );
 
-      this.logger.log(`[ProcessAgent][${state.userId}] ✅ Sinal válido encontrado! Executando trade...`);
-
       // Executar operação
       await this.executeTrade(state, analysis);
     } catch (error) {
-      this.logger.error(`[ProcessAgent][${state.userId}] Erro:`, error);
       await this.saveLog(
         state.userId,
         'ERROR',
@@ -707,7 +690,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Alinhamento de EMAs para RISE
     if (ema10 > ema25 && ema25 > ema50) {
-      if (rsi < 70 && momentum > 0) {
+      // Condições mais flexíveis: RSI não sobrecomprado E momentum positivo ou neutro
+      if (rsi < 75 && momentum >= -5) {
         direction = 'RISE';
         confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'RISE');
         reasoning = `EMAs alinhadas para alta (EMA10: ${ema10.toFixed(4)} > EMA25: ${ema25.toFixed(4)} > EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
@@ -715,10 +699,27 @@ export class AutonomousAgentService implements OnModuleInit {
     }
     // Alinhamento de EMAs para FALL
     else if (ema10 < ema25 && ema25 < ema50) {
-      if (rsi > 30 && momentum < 0) {
+      // Condições mais flexíveis: RSI não sobrevendido E momentum negativo ou neutro
+      if (rsi > 25 && momentum <= 5) {
         direction = 'FALL';
         confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'FALL');
         reasoning = `EMAs alinhadas para baixa (EMA10: ${ema10.toFixed(4)} < EMA25: ${ema25.toFixed(4)} < EMA50: ${ema50.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
+      }
+    }
+    
+    // Se não encontrou sinal com alinhamento completo, tentar sinais mais fracos
+    if (!direction) {
+      // Sinal fraco para RISE: EMA10 acima de EMA25 (sem necessidade de EMA50)
+      if (ema10 > ema25 && rsi < 70 && momentum > -10) {
+        direction = 'RISE';
+        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'RISE') * 0.7; // Reduzir confiança
+        reasoning = `Sinal fraco para alta (EMA10: ${ema10.toFixed(4)} > EMA25: ${ema25.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
+      }
+      // Sinal fraco para FALL: EMA10 abaixo de EMA25 (sem necessidade de EMA50)
+      else if (ema10 < ema25 && rsi > 30 && momentum < 10) {
+        direction = 'FALL';
+        confidenceScore = this.calculateConfidenceScore(ema10, ema25, ema50, rsi, momentum, 'FALL') * 0.7; // Reduzir confiança
+        reasoning = `Sinal fraco para baixa (EMA10: ${ema10.toFixed(4)} < EMA25: ${ema25.toFixed(4)}), RSI: ${rsi.toFixed(2)}, Momentum: ${momentum.toFixed(4)}`;
       }
     }
 
@@ -727,9 +728,20 @@ export class AutonomousAgentService implements OnModuleInit {
       userId,
       'DEBUG',
       'ANALYZER',
-      `EMA(10)=${ema10.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
+      `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
     ).catch(() => {}); // Não bloquear se houver erro
+    
+    // Log detalhado se não encontrou sinal
+    if (!direction) {
+      this.saveLog(
+        userId,
+        'DEBUG',
+        'ANALYZER',
+        `Nenhum sinal encontrado. EMA10=${ema10.toFixed(4)}, EMA25=${ema25.toFixed(4)}, EMA50=${ema50.toFixed(4)}, RSI=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}. Condições: ema10>ema25=${ema10 > ema25}, ema25>ema50=${ema25 > ema50}, ema10<ema25=${ema10 < ema25}, ema25<ema50=${ema25 < ema50}, rsi<75=${rsi < 75}, rsi>25=${rsi > 25}, momentum>=-5=${momentum >= -5}, momentum<=5=${momentum <= 5}`,
+        { ema10, ema25, ema50, rsi, momentum, direction, confidenceScore },
+      ).catch(() => {});
+    }
 
     return {
       ema10,
@@ -1055,7 +1067,7 @@ export class AutonomousAgentService implements OnModuleInit {
       );
       state.operationsSincePause++;
     } catch (error) {
-      this.logger.error(`[ExecuteTrade][${state.userId}] Erro:`, error);
+      await this.saveLog(state.userId, 'ERROR', 'TRADER', `Erro ao executar trade. erro=${error.message}`).catch(() => {});
       state.isOperationActive = false;
     }
   }
@@ -2380,22 +2392,7 @@ export class AutonomousAgentService implements OnModuleInit {
       
       // Formato da documentação: [TIMESTAMP] [LOG_LEVEL] [MÓDULO] - MENSAGEM
       // A mensagem já deve vir formatada, apenas adicionamos o prefixo
-      const logMessage = `[${timestampISO}] [${level}] [${module}] - ${message}`;
-      
-      // Log no console também
-      switch (level) {
-        case 'ERROR':
-          this.logger.error(logMessage);
-          break;
-        case 'WARN':
-          this.logger.warn(logMessage);
-          break;
-        case 'DEBUG':
-          this.logger.debug(logMessage);
-          break;
-        default:
-          this.logger.log(logMessage);
-      }
+      // Logs não são mais impressos no console, apenas salvos no banco
 
       // Converter para formato MySQL: YYYY-MM-DD HH:MM:SS.mmm
       const timestampMySQL = now
