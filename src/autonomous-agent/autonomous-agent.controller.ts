@@ -24,7 +24,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async activateAgent(@Body() body: any, @Req() req: any) {
     try {
-      const userId = req.user?.id || body.userId;
+      const userId = req.user?.userId || body.userId;
 
       if (!userId) {
         throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
@@ -66,7 +66,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async deactivateAgent(@Body() body: any, @Req() req: any) {
     try {
-      const userId = req.user?.id || body.userId;
+      const userId = req.user?.userId || body.userId;
 
       if (!userId) {
         throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
