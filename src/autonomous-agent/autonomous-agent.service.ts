@@ -2209,13 +2209,27 @@ export class AutonomousAgentService implements OnModuleInit {
     // Garantir que session_date seja retornado como string ISO se existir
     let sessionDate: string | null = null;
     if (cfg.session_date) {
-      if (cfg.session_date instanceof Date) {
-        sessionDate = cfg.session_date.toISOString();
-      } else if (typeof cfg.session_date === 'string') {
-        // Se já for string, garantir formato ISO
-        sessionDate = new Date(cfg.session_date).toISOString();
-      } else {
-        sessionDate = String(cfg.session_date);
+      try {
+        if (cfg.session_date instanceof Date) {
+          sessionDate = cfg.session_date.toISOString();
+        } else if (typeof cfg.session_date === 'string') {
+          // Se já for string, garantir formato ISO
+          // Se for apenas data (YYYY-MM-DD), adicionar hora atual
+          if (cfg.session_date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            // É apenas data, usar hora atual
+            const dateOnly = new Date(cfg.session_date);
+            const now = new Date();
+            dateOnly.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+            sessionDate = dateOnly.toISOString();
+          } else {
+            sessionDate = new Date(cfg.session_date).toISOString();
+          }
+        } else {
+          sessionDate = new Date(cfg.session_date).toISOString();
+        }
+      } catch (error) {
+        this.logger.warn(`[GetAgentConfig] Erro ao processar session_date:`, error);
+        sessionDate = null;
       }
     }
     
