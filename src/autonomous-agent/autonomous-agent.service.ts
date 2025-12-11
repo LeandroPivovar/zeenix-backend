@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import WebSocket from 'ws';
+import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream.service';
 
 // ============================================
 // INTERFACES E TIPOS
@@ -112,7 +113,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-    private readonly logsStreamService?: AutonomousAgentLogsStreamService,
+    @Optional() @Inject(AutonomousAgentLogsStreamService) private readonly logsStreamService?: AutonomousAgentLogsStreamService,
   ) {}
 
   async onModuleInit() {

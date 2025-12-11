@@ -13,7 +13,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { AutonomousAgentService } from './autonomous-agent.service';
 import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream.service';
 
