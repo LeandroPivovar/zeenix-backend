@@ -201,4 +201,3 @@ const stake = (meta * 100) / payoutCliente;
 
 **Status Geral:** ⏳ **30% Implementado** - Estrutura base pronta, falta lógica de negócio
 
-

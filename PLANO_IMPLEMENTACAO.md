@@ -107,4 +107,3 @@ mysql -u usuario -p database < backend/db/add_trading_mode_and_soros.sql
 - [ ] Stop Loss Blindado protege 50% do lucro
 - [ ] Logs seguem formato da documentação
 
-
