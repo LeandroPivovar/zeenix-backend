@@ -2567,7 +2567,7 @@ export class AiService implements OnModuleInit {
         INDEX idx_user_active (user_id, is_active, created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       COMMENT='Configuração de IA de trading por usuário - múltiplas sessões permitidas'
-    
+    `);
     // Verificar tipo da coluna user_id
     const userIdColumn = await this.dataSource.query(`
       SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
@@ -2575,7 +2575,7 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_user_config'
       AND COLUMN_NAME = 'user_id'
-    
+    `);
     // Se user_id for INT, migrar para VARCHAR
     if (userIdColumn.length > 0 && userIdColumn[0].DATA_TYPE !== 'varchar') {
       
@@ -2590,6 +2590,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
+      `);
       
       // Recriar índice (não-unique para permitir múltiplas sessões)
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
@@ -2603,6 +2604,7 @@ export class AiService implements OnModuleInit {
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_user_config'
+    `);
     
     const columnNames = columns.map((col: any) => col.COLUMN_NAME);
     
@@ -2611,6 +2613,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN profit_target DECIMAL(10, 2) NULL COMMENT 'Meta de lucro diária' AFTER mode
+      `);
     }
     
     // Adicionar loss_limit se não existir
@@ -2618,6 +2621,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target
+      `);
     }
     
     // Adicionar deactivation_reason se não existir
@@ -2625,6 +2629,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivation_reason TEXT NULL COMMENT 'Motivo da desativação' AFTER updated_at
+      `);
     }
     
     // Adicionar deactivated_at se não existir
@@ -2632,6 +2637,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD COLUMN deactivated_at TIMESTAMP NULL COMMENT 'Data/hora da desativação' AFTER deactivation_reason
+      `);
     }
     
     // Adicionar modo_martingale se não existir
@@ -2641,6 +2647,7 @@ export class AiService implements OnModuleInit {
         ADD COLUMN modo_martingale VARCHAR(20) NOT NULL DEFAULT 'conservador' 
         COMMENT 'Modo de martingale: conservador, moderado, agressivo' 
         AFTER mode
+      `);
     }
     
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
@@ -2650,6 +2657,7 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_id'
+    `);
     
     if (indexesResult.length > 0 && indexesResult[0].NON_UNIQUE === 0) {
       
@@ -2668,11 +2676,12 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_active'
-    
+    `);
     if (compositeIndexResult.length === 0) {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         ADD INDEX idx_user_active (user_id, is_active, created_at)
+      `);
     }
     
     // Verificar e migrar tabela ai_trades também
@@ -2682,7 +2691,7 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_trades'
       AND COLUMN_NAME = 'user_id'
-    
+    `);
     // Se user_id em ai_trades for INT, migrar para VARCHAR
     if (aiTradesUserIdColumn.length > 0 && aiTradesUserIdColumn[0].DATA_TYPE !== 'varchar') {
       
@@ -2690,6 +2699,7 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(`
         ALTER TABLE ai_trades 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
+      `);
       
     }
     
