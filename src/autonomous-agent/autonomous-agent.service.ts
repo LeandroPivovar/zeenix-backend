@@ -332,6 +332,8 @@ export class AutonomousAgentService implements OnModuleInit {
     if (this.agentStates.size === 0) {
       return;
     }
+    
+    this.logger.debug(`[ProcessActiveAgents] Processando ${this.agentStates.size} agente(s) ativo(s)`);
 
     const now = new Date();
 

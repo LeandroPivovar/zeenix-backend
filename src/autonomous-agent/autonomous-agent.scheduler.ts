@@ -12,6 +12,7 @@ export class AutonomousAgentScheduler {
   @Cron('*/30 * * * * *')
   async handleProcessAgents() {
     try {
+      this.logger.debug('[AutonomousAgentScheduler] Executando processamento de agentes autônomos');
       await this.agentService.processActiveAgents();
     } catch (error) {
       this.logger.error('[Scheduler] Erro ao processar agentes:', error);
