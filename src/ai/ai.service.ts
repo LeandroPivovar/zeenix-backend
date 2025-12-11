@@ -158,25 +158,21 @@ type ModoMartingale = 'conservador' | 'moderado' | 'agressivo';
 
 interface ConfigMartingale {
   maxEntradas: number;
-  multiplicadorLucro: number; // 0 = break-even, 1.0 = 100% da última aposta
 }
 
 const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
   conservador: {
     maxEntradas: 5, // ✅ ZENIX v2.0: Até 5ª entrada, depois reseta
-    multiplicadorLucro: 0, // ✅ Break-even (apenas recupera capital)
   },
   moderado: {
     maxEntradas: Infinity, // ✅ ZENIX v2.0: Infinito até recuperar
-    multiplicadorLucro: 0, // ✅ Break-even puro (não 0.5)
   },
   agressivo: {
     maxEntradas: Infinity, // ✅ ZENIX v2.0: Infinito até recuperar + lucro
-    multiplicadorLucro: 1.0, // ✅ 100% da ÚLTIMA aposta (não inicial)
   },
 };
 
-const PAYOUT_DERIV = 0.95; // ✅ ZENIX v2.0: Payout Deriv 95% (com spread)
+const MARKUP_ZENIX = 3; // Markup fixo em pontos percentuais
 
 // ============================================
 // ESTRATÉGIA SOROS - ZENIX v2.0
@@ -210,36 +206,43 @@ function calcularApostaComSoros(apostaBase: number, vitoriasConsecutivas: number
 }
 
 /**
- * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
+ * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0 CORRIGIDO
  * 
- * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.95
- * MODERADO: Próxima Aposta = Perda Acumulada / 0.95 (break-even puro)
- * AGRESSIVO: Próxima Aposta = (Perda Acumulada + Última Aposta) / 0.95
+ * Fórmula geral: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
  * 
- * @param perdaAcumulada - Total de perdas acumuladas no martingale
- * @param ultimaAposta - Valor da última aposta (para modo agressivo)
+ * CONSERVADOR: meta = perdas_totais (break-even)
+ * MODERADO:    meta = perdas_totais × 1,25 (100% das perdas + 25% de lucro)
+ * AGRESSIVO:   meta = perdas_totais × 1,50 (100% das perdas + 50% de lucro)
+ * 
+ * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
+ * @param payoutCliente - Payout do cliente (payout_original - 3)
  * @returns Valor da próxima aposta calculada
  */
 function calcularProximaAposta(
-  perdaAcumulada: number,
-  ultimaAposta: number,
+  perdasTotais: number,
   modo: ModoMartingale,
+  payoutCliente: number,
 ): number {
-  const config = CONFIGS_MARTINGALE[modo];
-  let aposta = 0;
+  let metaRecuperacao = 0;
   
   switch (modo) {
     case 'conservador':
+      // Meta: recuperar 100% das perdas (break-even)
+      metaRecuperacao = perdasTotais;
+      break;
     case 'moderado':
-      // Break-even: Recupera apenas o capital perdido
-      aposta = perdaAcumulada / PAYOUT_DERIV;
+      // Meta: recuperar 100% das perdas + 25% de lucro
+      metaRecuperacao = perdasTotais * 1.25;
       break;
     case 'agressivo':
-      // Recupera capital + gera lucro do tamanho da última aposta
-      aposta = (perdaAcumulada + ultimaAposta) / PAYOUT_DERIV;
+      // Meta: recuperar 100% das perdas + 50% de lucro
+      metaRecuperacao = perdasTotais * 1.50;
       break;
   }
+  
+  // Fórmula: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
+  const aposta = (metaRecuperacao * 100) / payoutCliente;
   
   return Math.round(aposta * 100) / 100; // 2 casas decimais
 }
@@ -1057,7 +1060,118 @@ export class AiService implements OnModuleInit {
     });
   }
 
-  private calculateVelozStake(state: VelozUserState, entry: number): number {
+  /**
+   * Consulta payout via API e calcula payout_cliente
+   * @param derivToken - Token de autenticação Deriv
+   * @param currency - Moeda da operação
+   * @param contractType - Tipo de contrato (DIGITEVEN ou DIGITODD)
+   * @returns payout_cliente (payout_original - 3)
+   */
+  private async consultarPayoutCliente(
+    derivToken: string,
+    currency: string,
+    contractType: 'DIGITEVEN' | 'DIGITODD',
+  ): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+      let isCompleted = false;
+
+      const timeout = setTimeout(() => {
+        if (!isCompleted) {
+          isCompleted = true;
+          ws.close();
+          reject(new Error('Timeout ao consultar payout'));
+        }
+      }, 10000);
+
+      const finalize = (error?: Error, payoutCliente?: number) => {
+        if (isCompleted) return;
+        isCompleted = true;
+        clearTimeout(timeout);
+        try {
+          ws.close();
+        } catch (e) {}
+        if (error) {
+          reject(error);
+        } else {
+          resolve(payoutCliente || 0);
+        }
+      };
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: derivToken }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.error) {
+            finalize(new Error(msg.error.message || 'Erro ao consultar payout'));
+            return;
+          }
+
+          if (msg.msg_type === 'authorize') {
+            // Enviar proposal para consultar payout (usar stake mínimo para consulta)
+            ws.send(JSON.stringify({
+              proposal: 1,
+              amount: 1, // Stake mínimo para consulta
+              basis: 'stake',
+              contract_type: contractType,
+              currency,
+              duration: 1,
+              duration_unit: 't',
+              symbol: this.symbol,
+            }));
+            return;
+          }
+
+          if (msg.msg_type === 'proposal') {
+            const proposal = msg.proposal;
+            if (!proposal) {
+              finalize(new Error('Proposta inválida'));
+              return;
+            }
+
+            const askPrice = Number(proposal.ask_price || 1);
+            const payoutAbsolute = Number(proposal.payout || 0);
+            
+            // Calcular payout percentual: (payout / ask_price - 1) × 100
+            const payoutPercentual = askPrice > 0 
+              ? ((payoutAbsolute / askPrice - 1) * 100) 
+              : 0;
+            
+            // Calcular payout_cliente = payout_original - 3%
+            const payoutCliente = payoutPercentual - MARKUP_ZENIX;
+
+            if (payoutCliente <= 0) {
+              finalize(new Error('Payout cliente inválido'));
+              return;
+            }
+
+            this.logger.debug(
+              `[ConsultarPayout] payout_original=${payoutPercentual.toFixed(2)}%, ` +
+              `payout_cliente=${payoutCliente.toFixed(2)}%`,
+            );
+
+            finalize(undefined, payoutCliente);
+          }
+        } catch (error) {
+          finalize(error as Error);
+        }
+      });
+
+      ws.on('error', (error) => finalize(error));
+      ws.on('close', () => {
+        if (!isCompleted) {
+          finalize(new Error('Conexão fechada antes de receber payout'));
+        }
+      });
+    });
+  }
+
+  private async calculateVelozStake(state: VelozUserState, entry: number, proposal?: DigitParity): Promise<number> {
     // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
     if (entry <= 1) {
       // Garantir que apostaBase está inicializada
@@ -1071,19 +1185,32 @@ export class AiService implements OnModuleInit {
     }
 
     // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
-    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    // Consultar payout via API antes de calcular
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+    let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+    
+    try {
+      payoutCliente = await this.consultarPayoutCliente(
+        state.derivToken,
+        state.currency || 'USD',
+        contractType,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[Veloz][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+      );
+    }
+
     const proximaAposta = calcularProximaAposta(
       state.perdaAcumulada,
-      state.apostaInicial,
       state.modoMartingale,
+      payoutCliente,
     );
-
-    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
     
     this.logger.debug(
       `[Veloz][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
+      `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Payout cliente: ${payoutCliente.toFixed(2)}% | ` +
       `Próxima aposta: $${proximaAposta.toFixed(2)}`,
     );
 
@@ -1108,7 +1235,7 @@ export class AiService implements OnModuleInit {
     state.ticksDesdeUltimaOp = 0;
 
     // ✅ ZENIX v2.0: Calcular stake (já aplica Soros se for primeira entrada)
-    let stakeAmount = this.calculateVelozStake(state, entry);
+    let stakeAmount = await this.calculateVelozStake(state, entry, proposal);
     const currentPrice = this.getCurrentPrice() || 0;
 
     // Se é primeira entrada, inicializar martingale e Soros
@@ -1133,13 +1260,15 @@ export class AiService implements OnModuleInit {
       state.perdaAcumulada = 0;
       
       const config = CONFIGS_MARTINGALE[state.modoMartingale];
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
+                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
       this.logger.log(
         `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
         `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
         `Aposta base: $${state.apostaBase.toFixed(2)} | ` +
         `Vitórias consecutivas: ${state.vitoriasConsecutivas} | ` +
-        `Máx entradas: ${config.maxEntradas} | ` +
-        `Multiplicador lucro: ${(config.multiplicadorLucro * 100).toFixed(0)}%`,
+        `Máx entradas: ${config.maxEntradas === Infinity ? '∞' : config.maxEntradas} | ` +
+        `Multiplicador lucro: ${(multiplicadorLucro * 100).toFixed(0)}%`,
       );
       
       // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
@@ -1616,10 +1745,26 @@ export class AiService implements OnModuleInit {
     // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
     // Alterado de < para <= para permitir exatamente maxEntradas entradas
     if (entry <= config.maxEntradas) {
+      // Consultar payout via API antes de calcular
+      const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+      let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+      
+      try {
+        payoutCliente = await this.consultarPayoutCliente(
+          state.derivToken,
+          state.currency || 'USD',
+          contractType,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `[Veloz][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+        );
+      }
+
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
-        state.apostaInicial,
         state.modoMartingale,
+        payoutCliente,
       );
       
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
@@ -1679,7 +1824,10 @@ export class AiService implements OnModuleInit {
         this.logger.error(`[Veloz][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
       
-      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      // Calcular lucro esperado baseado no modo
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
+                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
       
       this.logger.log(
         `[Veloz][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
@@ -4665,7 +4813,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.isOperationActive = true;
     state.martingaleStep = entry;
 
-    const stakeAmount = this.calculateModeradoStake(state);
+    const stakeAmount = await this.calculateModeradoStake(state, proposal);
     const currentPrice = this.getCurrentPrice() || 0;
 
     // 📋 LOG: Operação sendo executada
@@ -4938,10 +5086,26 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
     // Alterado de < para <= para permitir exatamente maxEntradas entradas
     if (entry <= config.maxEntradas) {
+      // Consultar payout via API antes de calcular
+      const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+      let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+      
+      try {
+        payoutCliente = await this.consultarPayoutCliente(
+          state.derivToken,
+          state.currency || 'USD',
+          contractType,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `[Moderado][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+        );
+      }
+
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
-        state.apostaInicial,
         state.modoMartingale,
+        payoutCliente,
       );
       
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
@@ -4997,7 +5161,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         this.logger.error(`[Moderado][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
       
-      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      // Calcular lucro esperado baseado no modo
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
+                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
       
       this.logger.log(
         `[Moderado][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
@@ -5091,7 +5258,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * Calcula stake para o modo moderado (valor configurado + martingale unificado)
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
-  private calculateModeradoStake(state: ModeradoUserState): number {
+  private async calculateModeradoStake(state: ModeradoUserState, proposal?: DigitParity): Promise<number> {
     // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
     if (state.martingaleStep === 0 || state.martingaleStep === 1) {
       // Garantir que apostaBase está inicializada
@@ -5104,20 +5271,33 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
     }
 
-    // SISTEMA UNIFICADO DE MARTINGALE
-    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
+    // Consultar payout via API antes de calcular
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+    let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+    
+    try {
+      payoutCliente = await this.consultarPayoutCliente(
+        state.derivToken,
+        state.currency || 'USD',
+        contractType,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[Moderado][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+      );
+    }
+
     const proximaAposta = calcularProximaAposta(
       state.perdaAcumulada,
-      state.apostaInicial,
       state.modoMartingale,
+      payoutCliente,
     );
-
-    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
     
     this.logger.debug(
       `[Moderado][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
-      `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
+      `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Payout cliente: ${payoutCliente.toFixed(2)}% | ` +
       `Próxima aposta: $${proximaAposta.toFixed(2)}`,
     );
 
@@ -5471,7 +5651,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.isOperationActive = true;
     state.martingaleStep = entry;
 
-    const stakeAmount = this.calculatePrecisoStake(state);
+    const stakeAmount = await this.calculatePrecisoStake(state, proposal);
     const currentPrice = this.getCurrentPrice() || 0;
 
     const tradeId = await this.createPrecisoTradeRecord(
@@ -5651,10 +5831,26 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
     // Alterado de < para <= para permitir exatamente maxEntradas entradas
     if (entry <= config.maxEntradas) {
+      // Consultar payout via API antes de calcular
+      const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+      let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+      
+      try {
+        payoutCliente = await this.consultarPayoutCliente(
+          state.derivToken,
+          state.currency || 'USD',
+          contractType,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `[Preciso][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+        );
+      }
+
       let proximaAposta = calcularProximaAposta(
         state.perdaAcumulada,
-        state.apostaInicial,
         state.modoMartingale,
+        payoutCliente,
       );
       
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
@@ -5710,7 +5906,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         this.logger.error(`[Preciso][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
       
-      const lucroEsperado = state.apostaInicial * config.multiplicadorLucro;
+      // Calcular lucro esperado baseado no modo
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
+                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
       
       this.logger.log(
         `[Preciso][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
@@ -5783,7 +5982,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    * Calcula stake para o modo preciso (valor configurado + martingale unificado)
    * ZENIX v2.0: Usa valor configurado diretamente (não porcentagem)
    */
-  private calculatePrecisoStake(state: PrecisoUserState): number {
+  private async calculatePrecisoStake(state: PrecisoUserState, proposal?: DigitParity): Promise<number> {
     // ✅ ZENIX v2.0: Se é primeira entrada, aplicar estratégia Soros
     if (state.martingaleStep === 0 || state.martingaleStep === 1) {
       // Garantir que apostaBase está inicializada
@@ -5796,19 +5995,38 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
     }
 
-    // SISTEMA UNIFICADO DE MARTINGALE
-    const config = CONFIGS_MARTINGALE[state.modoMartingale];
+    // SISTEMA UNIFICADO DE MARTINGALE (para entradas > 1)
+    // Consultar payout via API antes de calcular
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+    let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
+    
+    try {
+      payoutCliente = await this.consultarPayoutCliente(
+        state.derivToken,
+        state.currency || 'USD',
+        contractType,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[Preciso][Martingale] Erro ao consultar payout, usando padrão (92%): ${error.message}`,
+      );
+    }
+
     const proximaAposta = calcularProximaAposta(
       state.perdaAcumulada,
-      state.apostaInicial,
       state.modoMartingale,
+      payoutCliente,
     );
-
-    const lucroDesejado = state.apostaInicial * config.multiplicadorLucro;
+    
+    // Calcular lucro esperado baseado no modo
+    const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
+                                state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+    const lucroDesejado = state.perdaAcumulada * multiplicadorLucro;
     
     this.logger.debug(
       `[Preciso][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perda: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Payout cliente: ${payoutCliente.toFixed(2)}% | ` +
       `Lucro desejado: $${lucroDesejado.toFixed(2)} | ` +
       `Próxima aposta: $${proximaAposta.toFixed(2)}`,
     );
