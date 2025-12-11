@@ -613,7 +613,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Log detalhado da análise
       this.logger.debug(
-        `[ProcessAgent][${state.userId}] Análise: direction=${analysis.direction}, confidence=${analysis.confidenceScore.toFixed(1)}%, ema10=${analysis.ema10.toFixed(2)}, rsi=${analysis.rsi.toFixed(1)}`,
+        `[ProcessAgent][${state.userId}] Análise: direction=${analysis.direction}, confidence=${analysis.confidenceScore.toFixed(1)}%, ema10=${analysis.ema10.toFixed(2)}, ema25=${analysis.ema25.toFixed(2)}, ema50=${analysis.ema50.toFixed(2)}, rsi=${analysis.rsi.toFixed(1)}, momentum=${analysis.momentum.toFixed(4)}`,
       );
 
       // Verificar score de confiança (usando mínimo do Trading Mode)
@@ -729,14 +729,37 @@ export class AutonomousAgentService implements OnModuleInit {
       }
     }
 
-    // Log de análise técnica (formato da documentação)
+    // Log de análise técnica (formato da documentação) - mostrar todas as EMAs
     this.saveLog(
       userId,
       'DEBUG',
       'ANALYZER',
-      `EMA(10)=${ema10.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
+      `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
     ).catch(() => {}); // Não bloquear se houver erro
+
+    // Log adicional quando não há direção definida para debug
+    if (!direction) {
+      this.saveLog(
+        userId,
+        'DEBUG',
+        'ANALYZER',
+        `Nenhuma direção definida. Verificações: RISE(ema10>ema25>ema50=${ema10 > ema25 && ema25 > ema50}, rsi<70=${rsi < 70}, momentum>0=${momentum > 0}), FALL(ema10<ema25<ema50=${ema10 < ema25 && ema25 < ema50}, rsi>30=${rsi > 30}, momentum<0=${momentum < 0})`,
+        { 
+          ema10, ema25, ema50, rsi, momentum,
+          riseConditions: {
+            emaAligned: ema10 > ema25 && ema25 > ema50,
+            rsiOk: rsi < 70,
+            momentumOk: momentum > 0
+          },
+          fallConditions: {
+            emaAligned: ema10 < ema25 && ema25 < ema50,
+            rsiOk: rsi > 30,
+            momentumOk: momentum < 0
+          }
+        },
+      ).catch(() => {});
+    }
 
     return {
       ema10,
