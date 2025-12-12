@@ -5,6 +5,7 @@ import { CreateUserDto } from '../dto/user.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { USER_REPOSITORY_TOKEN } from '../../constants/tokens';
 import * as bcrypt from 'bcrypt';
+import { validateBrazilianPhone } from '../../utils/phone.validator';
 
 @Injectable()
 export class CreateUserUseCase {
@@ -20,18 +21,19 @@ export class CreateUserUseCase {
     // Validar e verificar telefone se fornecido
     let phoneToSave = createUserDto.phone;
     if (createUserDto.phone) {
-      const phoneDigits = createUserDto.phone.replace(/\D/g, '');
+      // Validar usando libphonenumber-js
+      const validation = validateBrazilianPhone(createUserDto.phone);
       
-      if (phoneDigits.length < 10 || phoneDigits.length > 11) {
-        throw new ConflictException('Telefone inválido. Use o formato: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX');
+      if (!validation.isValid || !validation.phoneDigits) {
+        throw new ConflictException(validation.error || 'Telefone inválido');
       }
 
-      const existingPhone = await this.userRepository.findByPhone(phoneDigits);
+      const existingPhone = await this.userRepository.findByPhone(validation.phoneDigits);
       if (existingPhone) {
         throw new ConflictException('Telefone já está em uso');
       }
 
-      phoneToSave = phoneDigits;
+      phoneToSave = validation.phoneDigits;
     }
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);

@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { User } from '../domain/entities/user.entity';
 import { EmailService } from './email.service';
 import { randomBytes } from 'crypto';
+import { validateBrazilianPhone } from '../utils/phone.validator';
 
 @Injectable()
 export class AuthService {
@@ -29,22 +30,21 @@ export class AuthService {
 
     // Validar e verificar telefone se fornecido
     if (payload.phone) {
-      // Remover caracteres não numéricos para validação
-      const phoneDigits = payload.phone.replace(/\D/g, '');
+      // Validar usando libphonenumber-js
+      const validation = validateBrazilianPhone(payload.phone);
       
-      // Validar formato brasileiro (10 ou 11 dígitos: DDD + número)
-      if (phoneDigits.length < 10 || phoneDigits.length > 11) {
-        throw new BadRequestException('Telefone inválido. Use o formato: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX');
+      if (!validation.isValid || !validation.phoneDigits) {
+        throw new BadRequestException(validation.error || 'Telefone inválido');
       }
 
       // Verificar se telefone já está em uso
-      const existingPhone = await this.userRepository.findByPhone(phoneDigits);
+      const existingPhone = await this.userRepository.findByPhone(validation.phoneDigits);
       if (existingPhone) {
         throw new ConflictException('Telefone já está em uso');
       }
 
-      // Usar apenas dígitos para armazenar
-      payload.phone = phoneDigits;
+      // Usar apenas dígitos validados para armazenar
+      payload.phone = validation.phoneDigits;
     }
 
     const hashed = await bcrypt.hash(payload.password, 10);
