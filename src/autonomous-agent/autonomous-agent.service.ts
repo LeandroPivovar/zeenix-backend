@@ -1697,7 +1697,8 @@ export class AutonomousAgentService implements OnModuleInit {
               if (!state.derivToken) {
                 this.logger.warn(`[ExecuteTrade] Token não disponível para consultar API da Deriv`);
               } else {
-                const derivToken = state.derivToken;
+                // Type assertion explícita para garantir que TypeScript reconhece que não é null
+                const derivToken: string = state.derivToken as string;
                 this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
                 try {
                   const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, derivToken);
@@ -2834,7 +2835,8 @@ export class AutonomousAgentService implements OnModuleInit {
       return { updated: 0, errors: tradesToUpdate.length };
     }
 
-    const derivToken = state.derivToken; // Garantir que não é null após verificação
+    // Type assertion explícita para garantir que TypeScript reconhece que não é null
+    const derivToken: string = state.derivToken as string;
     let updated = 0;
     let errors = 0;
 
