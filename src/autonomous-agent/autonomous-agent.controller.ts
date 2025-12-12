@@ -229,6 +229,31 @@ export class AutonomousAgentController {
     }
   }
 
+  @Post('update-missing-prices/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async updateMissingPrices(@Param('userId') userId: string, @Query('limit') limit?: string) {
+    try {
+      const limitNum = limit ? parseInt(limit, 10) : 10;
+      const result = await this.agentService.updateTradesWithMissingPrices(userId, limitNum);
+
+      return {
+        success: true,
+        message: `Atualização concluída: ${result.updated} trades atualizados, ${result.errors} erros`,
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`[UpdateMissingPrices] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao atualizar trades com preços faltantes',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('logs-stream/:userId')
   async streamLogs(
     @Param('userId') userId: string,

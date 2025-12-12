@@ -1235,6 +1235,105 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
+  /**
+   * Consulta a API da Deriv para obter detalhes do contrato usando contract_id
+   * Retorna entry_price e exit_price se disponíveis
+   */
+  private async fetchContractDetailsFromDeriv(
+    contractId: string,
+    derivToken: string,
+  ): Promise<{ entryPrice: number; exitPrice: number; profit: number; status: string } | null> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timeout ao consultar contrato na Deriv'));
+      }, 10000); // 10 segundos de timeout
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: derivToken }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.error) {
+            clearTimeout(timeout);
+            ws.close();
+            reject(new Error(msg.error.message || 'Erro da Deriv'));
+            return;
+          }
+
+          if (msg.msg_type === 'authorize') {
+            // Após autorização, consultar o contrato
+            ws.send(
+              JSON.stringify({
+                proposal_open_contract: 1,
+                contract_id: contractId,
+                subscribe: 0, // Não inscrever, apenas consultar
+              }),
+            );
+            return;
+          }
+
+          if (msg.msg_type === 'proposal_open_contract') {
+            const contract = msg.proposal_open_contract;
+            clearTimeout(timeout);
+            ws.close();
+
+            if (!contract) {
+              resolve(null);
+              return;
+            }
+
+            const entryPrice = Number(
+              contract.entry_spot ||
+                contract.entry_tick ||
+                contract.spot ||
+                0,
+            );
+            const exitPrice = Number(
+              contract.exit_spot ||
+                contract.exit_tick ||
+                contract.current_spot ||
+                contract.spot ||
+                0,
+            );
+            const profit = Number(contract.profit || contract.profit_percentage || 0);
+            const status = contract.is_sold === 1 || contract.status === 'sold' ? 'sold' : 'active';
+
+            this.logger.log(
+              `[FetchContractDetails] Contrato ${contractId}: entry=${entryPrice}, exit=${exitPrice}, profit=${profit}, status=${status}`,
+            );
+
+            resolve({
+              entryPrice,
+              exitPrice,
+              profit,
+              status,
+            });
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      ws.on('close', () => {
+        clearTimeout(timeout);
+      });
+    });
+  }
+
   private async createTradeRecord(
     state: AutonomousAgentState,
     trade: {
@@ -1293,6 +1392,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       let proposalId: string | null = null;
       let proposalPrice: number | null = null;
+      let proposalSpot: number | null = null; // Preço spot do ativo na proposta
       let contractId: string | null = null;
       let isCompleted = false;
 
@@ -1374,6 +1474,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
             proposalId = proposal.id;
             proposalPrice = Number(proposal.ask_price);
+            // Capturar o preço spot do ativo na proposta
+            proposalSpot = Number(proposal.spot || proposal.current_spot || 0);
             const payoutAbsolute = Number(proposal.payout || 0);
             
             // Calcular payout percentual: (payout / ask_price - 1) × 100
@@ -1412,6 +1514,9 @@ export class AutonomousAgentService implements OnModuleInit {
               'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
               [payoutLiquido, tradeId],
             );
+            
+            // Log para debug
+            this.logger.log(`[ExecuteTrade] Proposal recebida: spot=${proposalSpot}, ask_price=${proposalPrice}`);
 
             ws.send(
               JSON.stringify({
@@ -1443,11 +1548,18 @@ export class AutonomousAgentService implements OnModuleInit {
 
             // Log para debug - mostrar todos os campos disponíveis
             this.logger.log(`[ExecuteTrade] Buy confirmado: contract_id=${contractId}, buy_price=${buyPrice}`);
-            this.logger.log(`[ExecuteTrade] Campos disponíveis:`, JSON.stringify(buy, null, 2));
+            this.logger.log(`[ExecuteTrade] Campos disponíveis no buy:`, JSON.stringify(buy, null, 2));
             
-            // Se entry_spot ainda for 0, usar o buy_price como fallback
-            // O buy_price geralmente é o preço de entrada do contrato
-            const finalEntryPrice = entrySpot > 0 ? entrySpot : (buyPrice > 0 ? buyPrice : proposalPrice);
+            // Prioridade: entry_spot do buy > proposalSpot > buy_price (não usar buy_price como entry_price, é o preço do contrato)
+            const finalEntryPrice = entrySpot > 0 
+              ? entrySpot 
+              : (proposalSpot > 0 
+                ? proposalSpot 
+                : 0);
+
+            if (finalEntryPrice === 0) {
+              this.logger.warn(`[ExecuteTrade] ATENÇÃO: entry_price será 0! entry_spot=${entrySpot}, proposalSpot=${proposalSpot}`);
+            }
 
             await this.dataSource.query(
               `UPDATE autonomous_agent_trades 
@@ -1456,7 +1568,7 @@ export class AutonomousAgentService implements OnModuleInit {
               [contractId, finalEntryPrice, tradeId],
             );
 
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}`);
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}, proposalSpot=${proposalSpot}`);
 
             ws.send(
               JSON.stringify({
@@ -1471,31 +1583,67 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'proposal_open_contract') {
             const contract = msg.proposal_open_contract;
             
-            // Log para debug
+            // Log para debug - mostrar todos os campos disponíveis
             this.logger.log(`[ExecuteTrade] proposal_open_contract recebido: contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`);
+            this.logger.log(`[ExecuteTrade] Campos disponíveis no contract:`, JSON.stringify(contract, null, 2));
             
             // Verificar se o contrato foi vendido (fechado)
             // A Deriv pode retornar is_sold = 1 ou status = 'sold'
             const isSold = contract?.is_sold === 1 || contract?.status === 'sold' || contract?.is_expired === 1;
             
-            if (!contract || !isSold) {
+            if (!contract) {
+              this.logger.warn(`[ExecuteTrade] Contrato inválido recebido`);
+              return;
+            }
+            
+            if (!isSold) {
               // Contrato ainda ativo, continuar monitorando
+              // Mas atualizar entry_price se ainda estiver 0 e tiver entry_spot disponível
+              if (contract.entry_spot && contract.entry_spot > 0) {
+                const currentEntryPrice = Number(contract.entry_spot);
+                await this.dataSource.query(
+                  `UPDATE autonomous_agent_trades 
+                   SET entry_price = ? 
+                   WHERE id = ? AND (entry_price = 0 OR entry_price IS NULL)`,
+                  [currentEntryPrice, tradeId],
+                );
+                this.logger.log(`[ExecuteTrade] Entry price atualizado do contrato ativo: ${currentEntryPrice}`);
+              }
               return;
             }
 
-            const profit = Number(contract.profit || 0);
+            // O profit da Deriv pode vir em diferentes formatos
+            // Pode ser profit (lucro líquido) ou profit_percentage (percentual)
+            const profit = Number(contract.profit || contract.profit_percentage || 0);
+            
             // Tentar capturar exit_spot de diferentes campos possíveis
             const exitPrice = Number(
               contract.exit_spot || 
-              contract.current_spot || 
               contract.exit_tick || 
+              contract.current_spot || 
               contract.spot || 
+              contract.exit_spot_display || 
               0
             );
+            
+            // Se exit_price ainda for 0, tentar usar o entry_spot atual (caso o contrato tenha expirado no mesmo preço)
+            const finalExitPrice = exitPrice > 0 ? exitPrice : (contract.entry_spot ? Number(contract.entry_spot) : 0);
+            
             const status = profit >= 0 ? 'WON' : 'LOST';
 
             // Log para debug
-            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit}, exit_price=${exitPrice}, status=${status}`);
+            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit}, exit_price=${finalExitPrice}, status=${status}`);
+            this.logger.log(`[ExecuteTrade] Dados completos do contrato fechado:`, JSON.stringify({
+              contract_id: contract.contract_id,
+              profit,
+              exit_spot: contract.exit_spot,
+              exit_tick: contract.exit_tick,
+              current_spot: contract.current_spot,
+              spot: contract.spot,
+              entry_spot: contract.entry_spot,
+              is_sold: contract.is_sold,
+              status: contract.status,
+            }, null, 2));
 
             // Log de resultado da operação (formato da documentação)
             if (status === 'WON') {
@@ -1526,19 +1674,73 @@ export class AutonomousAgentService implements OnModuleInit {
               ).catch(() => {});
             }
 
-            await this.dataSource.query(
-              `UPDATE autonomous_agent_trades
-               SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-               WHERE id = ?`,
-              [exitPrice, profit, status, tradeId],
+            // Verificar entry_price atual no banco antes de atualizar
+            const currentTrade = await this.dataSource.query(
+              `SELECT entry_price FROM autonomous_agent_trades WHERE id = ?`,
+              [tradeId],
             );
+            const currentEntryPrice = currentTrade && currentTrade[0] ? Number(currentTrade[0].entry_price) : 0;
+            
+            // Se entry_price ou exit_price ainda estiverem zerados, consultar a API da Deriv
+            let needsApiFetch = (currentEntryPrice === 0 || finalExitPrice === 0) && contractId;
+            let finalEntryPriceToUpdate: number | null = null;
+            let finalExitPriceToUse = finalExitPrice;
+            let finalProfitToUse = profit;
+            
+            if (needsApiFetch) {
+              this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
+              try {
+                const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, state.derivToken);
+                if (contractDetails) {
+                  if (currentEntryPrice === 0 && contractDetails.entryPrice > 0) {
+                    finalEntryPriceToUpdate = contractDetails.entryPrice;
+                    this.logger.log(`[ExecuteTrade] Entry price obtido da API: ${finalEntryPriceToUpdate}`);
+                  }
+                  if (finalExitPriceToUse === 0 && contractDetails.exitPrice > 0) {
+                    finalExitPriceToUse = contractDetails.exitPrice;
+                    this.logger.log(`[ExecuteTrade] Exit price obtido da API: ${finalExitPriceToUse}`);
+                  }
+                  // Se o profit também estiver zerado, usar o da API
+                  if (profit === 0 && contractDetails.profit !== 0) {
+                    finalProfitToUse = contractDetails.profit;
+                    this.logger.log(`[ExecuteTrade] Profit obtido da API: ${finalProfitToUse}`);
+                  }
+                }
+              } catch (error) {
+                this.logger.warn(`[ExecuteTrade] Erro ao consultar API da Deriv:`, error);
+              }
+            }
+            
+            // Atualizar o banco com os valores obtidos
+            if (finalEntryPriceToUpdate !== null) {
+              await this.dataSource.query(
+                `UPDATE autonomous_agent_trades
+                 SET entry_price = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                 WHERE id = ?`,
+                [finalEntryPriceToUpdate, finalExitPriceToUse, finalProfitToUse, status, tradeId],
+              );
+            } else {
+              await this.dataSource.query(
+                `UPDATE autonomous_agent_trades
+                 SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                 WHERE id = ?`,
+                [finalExitPriceToUse, finalProfitToUse, status, tradeId],
+              );
+            }
+            
+            // Verificar se a atualização foi bem-sucedida
+            const updated = await this.dataSource.query(
+              `SELECT entry_price, exit_price, profit_loss, status FROM autonomous_agent_trades WHERE id = ?`,
+              [tradeId],
+            );
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado no banco:`, JSON.stringify(updated[0], null, 2));
 
             this.logger.log(`[ExecuteTrade] Trade ${tradeId} finalizado: exit_price=${exitPrice}, profit_loss=${profit}, status=${status}`);
 
             finalize(undefined, {
               profitLoss: profit,
               status,
-              exitPrice,
+              exitPrice: finalExitPrice,
               contractId: contract.contract_id || contractId || '',
             });
           }
@@ -2563,7 +2765,7 @@ export class AutonomousAgentService implements OnModuleInit {
       `SELECT 
         id, contract_type, contract_duration, entry_price, exit_price,
         stake_amount, profit_loss, status, confidence_score, martingale_level,
-        payout, created_at, started_at, closed_at
+        payout, contract_id, created_at, started_at, closed_at
        FROM autonomous_agent_trades
        WHERE user_id = ?
        ORDER BY created_at DESC
@@ -2583,10 +2785,91 @@ export class AutonomousAgentService implements OnModuleInit {
       confidenceScore: parseFloat(trade.confidence_score),
       martingaleLevel: trade.martingale_level,
       payout: trade.payout ? parseFloat(trade.payout) : null,
+      contractId: trade.contract_id,
       createdAt: trade.created_at,
       startedAt: trade.started_at,
       closedAt: trade.closed_at,
     }));
+  }
+
+  /**
+   * Atualiza trades com valores zerados consultando a API da Deriv
+   * Útil para corrigir trades antigos que não tiveram os valores capturados corretamente
+   */
+  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<{ updated: number; errors: number }> {
+    // Buscar trades com entry_price ou exit_price zerados e que tenham contract_id
+    const tradesToUpdate = await this.dataSource.query(
+      `SELECT id, contract_id, entry_price, exit_price, status
+       FROM autonomous_agent_trades
+       WHERE user_id = ? 
+         AND contract_id IS NOT NULL 
+         AND contract_id != ''
+         AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
+         AND status IN ('WON', 'LOST', 'ACTIVE')
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [userId, limit],
+    );
+
+    if (tradesToUpdate.length === 0) {
+      this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
+      return { updated: 0, errors: 0 };
+    }
+
+    // Obter o token do usuário
+    const state = this.agentStates.get(userId);
+    if (!state || !state.derivToken) {
+      this.logger.warn(`[UpdateTradesWithMissingPrices] Token não encontrado para userId=${userId}`);
+      return { updated: 0, errors: tradesToUpdate.length };
+    }
+
+    let updated = 0;
+    let errors = 0;
+
+    for (const trade of tradesToUpdate) {
+      try {
+        this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
+        const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, state.derivToken);
+        
+        if (contractDetails) {
+          const updates: string[] = [];
+          const values: any[] = [];
+          
+          if ((trade.entry_price === 0 || trade.entry_price === null) && contractDetails.entryPrice > 0) {
+            updates.push('entry_price = ?');
+            values.push(contractDetails.entryPrice);
+            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: entry_price atualizado para ${contractDetails.entryPrice}`);
+          }
+          
+          if ((trade.exit_price === 0 || trade.exit_price === null) && contractDetails.exitPrice > 0) {
+            updates.push('exit_price = ?');
+            values.push(contractDetails.exitPrice);
+            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: exit_price atualizado para ${contractDetails.exitPrice}`);
+          }
+          
+          if (updates.length > 0) {
+            values.push(trade.id);
+            await this.dataSource.query(
+              `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
+              values,
+            );
+            updated++;
+          }
+        } else {
+          this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}`);
+          errors++;
+        }
+      } catch (error) {
+        this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, error);
+        errors++;
+      }
+      
+      // Pequeno delay entre requisições para não sobrecarregar a API
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${errors} erros`);
+    return { updated, errors };
   }
 
   async getSessionStats(userId: string): Promise<any> {
