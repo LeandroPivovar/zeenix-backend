@@ -1406,12 +1406,11 @@ export class AutonomousAgentService implements OnModuleInit {
               `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
             ).catch(() => {});
 
-            // Atualizar entry_price e payout no banco
-            const currentPrice = Number(proposal.spot || 0);
+            // Não atualizar entry_price aqui - será atualizado após a compra confirmada
             const payoutLiquido = (stakeAmount * payoutCliente) / 100; // Lucro líquido esperado
             await this.dataSource.query(
-              'UPDATE autonomous_agent_trades SET entry_price = ?, payout = ? WHERE id = ?',
-              [currentPrice, payoutLiquido, tradeId],
+              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+              [payoutLiquido, tradeId],
             );
 
             ws.send(
@@ -1432,14 +1431,32 @@ export class AutonomousAgentService implements OnModuleInit {
 
             contractId = buy.contract_id;
             const buyPrice = Number(buy.buy_price);
-            const entrySpot = Number(buy.entry_spot || 0);
+            // Tentar capturar entry_spot de diferentes campos possíveis
+            const entrySpot = Number(
+              buy.entry_spot || 
+              buy.spot || 
+              buy.current_spot || 
+              buy.entry_tick || 
+              buy.entry_spot_display || 
+              0
+            );
+
+            // Log para debug - mostrar todos os campos disponíveis
+            this.logger.log(`[ExecuteTrade] Buy confirmado: contract_id=${contractId}, buy_price=${buyPrice}`);
+            this.logger.log(`[ExecuteTrade] Campos disponíveis:`, JSON.stringify(buy, null, 2));
+            
+            // Se entry_spot ainda for 0, usar o buy_price como fallback
+            // O buy_price geralmente é o preço de entrada do contrato
+            const finalEntryPrice = entrySpot > 0 ? entrySpot : (buyPrice > 0 ? buyPrice : proposalPrice);
 
             await this.dataSource.query(
               `UPDATE autonomous_agent_trades 
                SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
                WHERE id = ?`,
-              [contractId, entrySpot, tradeId],
+              [contractId, finalEntryPrice, tradeId],
             );
+
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}`);
 
             ws.send(
               JSON.stringify({
@@ -1453,13 +1470,32 @@ export class AutonomousAgentService implements OnModuleInit {
 
           if (msg.msg_type === 'proposal_open_contract') {
             const contract = msg.proposal_open_contract;
-            if (!contract || contract.is_sold !== 1) {
+            
+            // Log para debug
+            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido: contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`);
+            
+            // Verificar se o contrato foi vendido (fechado)
+            // A Deriv pode retornar is_sold = 1 ou status = 'sold'
+            const isSold = contract?.is_sold === 1 || contract?.status === 'sold' || contract?.is_expired === 1;
+            
+            if (!contract || !isSold) {
+              // Contrato ainda ativo, continuar monitorando
               return;
             }
 
             const profit = Number(contract.profit || 0);
-            const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+            // Tentar capturar exit_spot de diferentes campos possíveis
+            const exitPrice = Number(
+              contract.exit_spot || 
+              contract.current_spot || 
+              contract.exit_tick || 
+              contract.spot || 
+              0
+            );
             const status = profit >= 0 ? 'WON' : 'LOST';
+
+            // Log para debug
+            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit}, exit_price=${exitPrice}, status=${status}`);
 
             // Log de resultado da operação (formato da documentação)
             if (status === 'WON') {
@@ -1480,7 +1516,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 state.userId,
                 'ERROR',
                 'RISK',
-                `Trade LOSS. loss=${profit.toFixed(2)}`,
+                `Trade LOSS. loss=${Math.abs(profit).toFixed(2)}`,
                 {
                   result: status,
                   profit,
@@ -1496,6 +1532,8 @@ export class AutonomousAgentService implements OnModuleInit {
                WHERE id = ?`,
               [exitPrice, profit, status, tradeId],
             );
+
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} finalizado: exit_price=${exitPrice}, profit_loss=${profit}, status=${status}`);
 
             finalize(undefined, {
               profitLoss: profit,
