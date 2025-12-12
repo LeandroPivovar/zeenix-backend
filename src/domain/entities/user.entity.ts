@@ -6,6 +6,7 @@ export class User {
     public readonly password: string,
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
+    public readonly phone?: string | null,
   ) {}
 
   static create(
@@ -13,12 +14,13 @@ export class User {
     name: string,
     email: string,
     password: string,
+    phone?: string | null,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now);
+    return new User(id, name, email, password, now, now, phone);
   }
 
-  update(name?: string, email?: string): User {
+  update(name?: string, email?: string, phone?: string | null): User {
     return new User(
       this.id,
       name ?? this.name,
@@ -26,6 +28,7 @@ export class User {
       this.password,
       this.createdAt,
       new Date(),
+      phone ?? this.phone,
     );
   }
 
@@ -37,6 +40,7 @@ export class User {
       newPassword,
       this.createdAt,
       new Date(),
+      this.phone,
     );
   }
 }

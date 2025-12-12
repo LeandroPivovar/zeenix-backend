@@ -37,6 +37,18 @@ export class TypeOrmUserRepository implements UserRepository {
     return userEntity ? this.toDomain(userEntity) : null;
   }
 
+  async findByPhone(phone: string): Promise<User | null> {
+    if (!phone) return null;
+    console.log(`[TypeOrmUserRepository] Buscando usuário por telefone: ${phone}`);
+    const userEntity = await this.userRepository.findOne({ where: { phone } });
+    if (userEntity) {
+      console.log(`[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, phone: userEntity.phone })}`);
+    } else {
+      console.log(`[TypeOrmUserRepository] Usuário não encontrado para telefone: ${phone}`);
+    }
+    return userEntity ? this.toDomain(userEntity) : null;
+  }
+
   async findAll(): Promise<User[]> {
     const userEntities = await this.userRepository.find();
     return userEntities.map(entity => this.toDomain(entity));
@@ -107,6 +119,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.password,
       entity.createdAt,
       entity.updatedAt,
+      entity.phone ?? null,
     );
   }
 
@@ -116,6 +129,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.name = domain.name;
     entity.email = domain.email;
     entity.password = domain.password;
+    entity.phone = domain.phone ?? null;
     entity.role = 'user'; // Definir role como 'user' por padrão para novos usuários
     entity.createdAt = domain.createdAt;
     entity.updatedAt = domain.updatedAt;

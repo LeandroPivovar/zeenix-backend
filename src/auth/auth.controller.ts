@@ -24,6 +24,9 @@ class RegisterDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @IsString()
+  phone?: string;
 }
 
 @Controller('auth')

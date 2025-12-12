@@ -13,6 +13,9 @@ export class CreateUserRequestDto {
   @IsNotEmpty()
   @MinLength(6)
   password: string;
+
+  @IsString()
+  phone?: string;
 }
 
 export class UpdateUserRequestDto {

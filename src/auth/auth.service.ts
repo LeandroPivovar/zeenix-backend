@@ -27,8 +27,28 @@ export class AuthService {
       throw new ConflictException('Email já está em uso');
     }
 
+    // Validar e verificar telefone se fornecido
+    if (payload.phone) {
+      // Remover caracteres não numéricos para validação
+      const phoneDigits = payload.phone.replace(/\D/g, '');
+      
+      // Validar formato brasileiro (10 ou 11 dígitos: DDD + número)
+      if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+        throw new BadRequestException('Telefone inválido. Use o formato: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX');
+      }
+
+      // Verificar se telefone já está em uso
+      const existingPhone = await this.userRepository.findByPhone(phoneDigits);
+      if (existingPhone) {
+        throw new ConflictException('Telefone já está em uso');
+      }
+
+      // Usar apenas dígitos para armazenar
+      payload.phone = phoneDigits;
+    }
+
     const hashed = await bcrypt.hash(payload.password, 10);
-    const user = User.create(uuidv4(), payload.name, payload.email, hashed);
+    const user = User.create(uuidv4(), payload.name, payload.email, hashed, payload.phone);
     await this.userRepository.create(user);
     const token = await this.signToken(user.id, user.email, user.name, 'user');
     return { token };
