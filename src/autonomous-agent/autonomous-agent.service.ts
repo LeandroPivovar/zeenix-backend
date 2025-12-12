@@ -1386,6 +1386,11 @@ export class AutonomousAgentService implements OnModuleInit {
   }): Promise<TradeResult> {
     const { tradeId, state, contractType, stakeAmount, duration } = params;
 
+    // Verificar se o token existe
+    if (!state.derivToken) {
+      return Promise.reject(new Error('Token Deriv não configurado'));
+    }
+
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint);
@@ -1687,27 +1692,33 @@ export class AutonomousAgentService implements OnModuleInit {
             let finalExitPriceToUse = finalExitPrice;
             let finalProfitToUse = profit;
             
-            if (needsApiFetch && state.derivToken) {
-              this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
-              try {
-                const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, state.derivToken);
-                if (contractDetails) {
-                  if (currentEntryPrice === 0 && contractDetails.entryPrice > 0) {
-                    finalEntryPriceToUpdate = contractDetails.entryPrice;
-                    this.logger.log(`[ExecuteTrade] Entry price obtido da API: ${finalEntryPriceToUpdate}`);
+            if (needsApiFetch && contractId) {
+              // Verificar se o token existe antes de usar
+              if (!state.derivToken) {
+                this.logger.warn(`[ExecuteTrade] Token não disponível para consultar API da Deriv`);
+              } else {
+                const derivToken = state.derivToken;
+                this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
+                try {
+                  const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, derivToken);
+                  if (contractDetails) {
+                    if (currentEntryPrice === 0 && contractDetails.entryPrice > 0) {
+                      finalEntryPriceToUpdate = contractDetails.entryPrice;
+                      this.logger.log(`[ExecuteTrade] Entry price obtido da API: ${finalEntryPriceToUpdate}`);
+                    }
+                    if (finalExitPriceToUse === 0 && contractDetails.exitPrice > 0) {
+                      finalExitPriceToUse = contractDetails.exitPrice;
+                      this.logger.log(`[ExecuteTrade] Exit price obtido da API: ${finalExitPriceToUse}`);
+                    }
+                    // Se o profit também estiver zerado, usar o da API
+                    if (profit === 0 && contractDetails.profit !== 0) {
+                      finalProfitToUse = contractDetails.profit;
+                      this.logger.log(`[ExecuteTrade] Profit obtido da API: ${finalProfitToUse}`);
+                    }
                   }
-                  if (finalExitPriceToUse === 0 && contractDetails.exitPrice > 0) {
-                    finalExitPriceToUse = contractDetails.exitPrice;
-                    this.logger.log(`[ExecuteTrade] Exit price obtido da API: ${finalExitPriceToUse}`);
-                  }
-                  // Se o profit também estiver zerado, usar o da API
-                  if (profit === 0 && contractDetails.profit !== 0) {
-                    finalProfitToUse = contractDetails.profit;
-                    this.logger.log(`[ExecuteTrade] Profit obtido da API: ${finalProfitToUse}`);
-                  }
+                } catch (error) {
+                  this.logger.warn(`[ExecuteTrade] Erro ao consultar API da Deriv:`, error);
                 }
-              } catch (error) {
-                this.logger.warn(`[ExecuteTrade] Erro ao consultar API da Deriv:`, error);
               }
             }
             
@@ -2823,13 +2834,14 @@ export class AutonomousAgentService implements OnModuleInit {
       return { updated: 0, errors: tradesToUpdate.length };
     }
 
+    const derivToken = state.derivToken; // Garantir que não é null após verificação
     let updated = 0;
     let errors = 0;
 
     for (const trade of tradesToUpdate) {
       try {
         this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
-        const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, state.derivToken);
+        const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
         
         if (contractDetails) {
           const updates: string[] = [];
