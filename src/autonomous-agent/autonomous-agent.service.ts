@@ -1461,9 +1461,6 @@ export class AutonomousAgentService implements OnModuleInit {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint);
 
-      let proposalId: string | null = null;
-      let proposalPrice: number | null = null;
-      let proposalSpot: number | null = null; // Preço spot do ativo na proposta
       let contractId: string | null = null;
       let isCompleted = false;
 
@@ -1503,7 +1500,17 @@ export class AutonomousAgentService implements OnModuleInit {
         try {
           const msg = JSON.parse(data.toString());
 
+          // Log de debug: todas as mensagens recebidas
+          this.logger.debug(`[ExecuteTrade] Mensagem recebida. msg_type=${msg.msg_type || 'unknown'}, trade_id=${tradeId}`);
+
           if (msg.error) {
+            await this.saveLog(
+              state.userId,
+              'ERROR',
+              'API',
+              `Erro da Deriv API. erro=${msg.error.message || 'Erro desconhecido'}`,
+              { error: msg.error, tradeId },
+            ).catch(() => {});
             await this.dataSource.query(
               'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
               ['ERROR', msg.error.message || 'Erro da Deriv', tradeId],
@@ -1513,51 +1520,28 @@ export class AutonomousAgentService implements OnModuleInit {
           }
 
           if (msg.msg_type === 'authorize') {
-            this.saveLog(
+            await this.saveLog(
               state.userId,
               'INFO',
               'API',
               `Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`,
+              { loginid: msg.authorize?.loginid, tradeId },
             ).catch(() => {});
-            
-            const proposalPayload = {
-              proposal: 1,
-              amount: stakeAmount,
-              basis: 'stake',
-              contract_type: contractType,
-              currency: state.currency,
-              duration,
-              duration_unit: 't',
-              symbol: state.symbol,
+
+            // Comprar diretamente sem precisar de proposal separada
+            // A Deriv permite enviar buy diretamente com os parâmetros do contrato
+            const buyPayload = {
+              buy: 1,
+              price: stakeAmount,
+              parameters: {
+                contract_type: contractType,
+                duration: duration,
+                duration_unit: 't',
+                symbol: state.symbol,
+              },
             };
 
-            this.logger.log(`[ExecuteTrade] Enviando proposal`, proposalPayload);
-            ws.send(JSON.stringify(proposalPayload));
-            return;
-          }
-
-          if (msg.msg_type === 'proposal') {
-            const proposal = msg.proposal;
-            if (!proposal || !proposal.id) {
-              finalize(new Error('Proposta inválida'));
-              return;
-            }
-
-            proposalId = proposal.id;
-            proposalPrice = Number(proposal.ask_price);
-            // Capturar o preço spot do ativo na proposta
-            proposalSpot = Number(proposal.spot || proposal.current_spot || 0);
-            const payoutAbsolute = Number(proposal.payout || 0);
-            
-            // Calcular payout percentual: (payout / ask_price - 1) × 100
-            const payoutPercentual = proposalPrice > 0 
-              ? ((payoutAbsolute / proposalPrice - 1) * 100) 
-              : 0;
-            
-            // Calcular payout_cliente = payout_original - 3%
-            const payoutCliente = payoutPercentual - 3;
-            
-            // Logs de payout (formato da documentação) - SEMPRE logar, mesmo para M0
+            this.logger.log(`[ExecuteTrade] Enviando compra direta para trade ${tradeId}`, buyPayload);
             await this.saveLog(
               state.userId,
               'INFO',
@@ -1567,6 +1551,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 contractType,
                 martingaleLevel: state.martingaleLevel,
                 sorosLevel: state.sorosLevel,
+                method: 'direct_buy',
               },
             ).catch(() => {});
             
@@ -1574,55 +1559,35 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'DEBUG',
               'TRADER',
-              `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
-              {
-                payoutPercentual,
-                payoutAbsolute,
-                askPrice: proposalPrice,
-              },
+              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount}, duration=${duration}`,
+              { tradeId, buyPayload },
             ).catch(() => {});
             
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
-              {
-                payoutCliente,
-                payoutPercentual,
-                markup: 3,
-                calculation: `payoutPercentual - 3 = ${payoutPercentual.toFixed(2)} - 3 = ${payoutCliente.toFixed(2)}`,
-              },
-            ).catch(() => {});
-
-            // Não atualizar entry_price aqui - será atualizado após a compra confirmada
-            const payoutLiquido = (stakeAmount * payoutCliente) / 100; // Lucro líquido esperado
-            await this.dataSource.query(
-              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
-              [payoutLiquido, tradeId],
-            );
-            
-            // Log para debug
-            this.logger.log(`[ExecuteTrade] Proposal recebida: spot=${proposalSpot}, ask_price=${proposalPrice}`);
-
-            ws.send(
-              JSON.stringify({
-                buy: proposalId,
-                price: proposalPrice,
-              }),
-            );
+            ws.send(JSON.stringify(buyPayload));
             return;
           }
 
           if (msg.msg_type === 'buy') {
+            this.logger.log(`[ExecuteTrade] Mensagem de compra recebida para trade ${tradeId}`);
+            
             const buy = msg.buy;
             if (!buy || !buy.contract_id) {
+              await this.saveLog(
+                state.userId,
+                'ERROR',
+                'TRADER',
+                `Compra não confirmada. trade_id=${tradeId}`,
+                { tradeId, buy },
+              ).catch(() => {});
               finalize(new Error('Compra não confirmada'));
               return;
             }
 
             contractId = buy.contract_id;
             const buyPrice = Number(buy.buy_price);
+            
+            this.logger.log(`[ExecuteTrade] Compra confirmada. trade_id=${tradeId}, contract_id=${contractId}, buy_price=${buyPrice}`);
+            
             // Tentar capturar entry_spot de diferentes campos possíveis
             const entrySpot = Number(
               buy.entry_spot || 
@@ -1633,19 +1598,61 @@ export class AutonomousAgentService implements OnModuleInit {
               0
             );
 
+            // Extrair informações de payout da resposta do buy (se disponível)
+            // A resposta do buy pode conter informações sobre o payout esperado
+            const buyPayoutAbsolute = Number(buy.payout || buy.bid_price || 0);
+            const buyPayoutPercentual = buyPrice > 0 && buyPayoutAbsolute > 0
+              ? ((buyPayoutAbsolute / buyPrice - 1) * 100)
+              : 0;
+            const buyPayoutCliente = buyPayoutPercentual > 0 ? buyPayoutPercentual - 3 : 0;
+
+            // Logs de payout baseados na resposta do buy (se disponível)
+            if (buyPayoutPercentual > 0) {
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout from Deriv (buy response): ${buyPayoutPercentual.toFixed(2)}%`,
+                {
+                  payoutPercentual: buyPayoutPercentual,
+                  payoutAbsolute: buyPayoutAbsolute,
+                  buyPrice,
+                },
+              ).catch(() => {});
+              
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout ZENIX (after 3% markup): ${buyPayoutCliente.toFixed(2)}%`,
+                {
+                  payoutCliente: buyPayoutCliente,
+                  payoutPercentual: buyPayoutPercentual,
+                  markup: 3,
+                },
+              ).catch(() => {});
+
+              // Atualizar payout no banco
+              const payoutLiquido = (stakeAmount * buyPayoutCliente) / 100;
+              await this.dataSource.query(
+                'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+                [payoutLiquido, tradeId],
+              );
+            } else {
+              // Se não tiver payout na resposta, consultaremos depois via proposal_open_contract
+              this.logger.log(`[ExecuteTrade] Payout não disponível na resposta do buy. Será obtido via contract monitoring.`);
+            }
+
             // Log para debug - mostrar todos os campos disponíveis
             this.logger.log(`[ExecuteTrade] Buy confirmado: contract_id=${contractId}, buy_price=${buyPrice}`);
             this.logger.log(`[ExecuteTrade] Campos disponíveis no buy:`, JSON.stringify(buy, null, 2));
             
-            // Prioridade: entry_spot do buy > proposalSpot > buy_price (não usar buy_price como entry_price, é o preço do contrato)
-            const finalEntryPrice = entrySpot > 0 
-              ? entrySpot 
-              : (proposalSpot && proposalSpot > 0 
-                ? proposalSpot 
-                : 0);
+            // Prioridade: entry_spot do buy > 0
+            // Se entry_spot não estiver disponível, tentar outros campos
+            const finalEntryPrice = entrySpot > 0 ? entrySpot : 0;
 
             if (finalEntryPrice === 0) {
-              this.logger.warn(`[ExecuteTrade] ATENÇÃO: entry_price será 0! entry_spot=${entrySpot}, proposalSpot=${proposalSpot}`);
+              this.logger.warn(`[ExecuteTrade] ATENÇÃO: entry_price será 0! entry_spot=${entrySpot}. Tentando obter via contract monitoring.`);
             }
 
             await this.dataSource.query(
@@ -1655,24 +1662,63 @@ export class AutonomousAgentService implements OnModuleInit {
               [contractId, finalEntryPrice, tradeId],
             );
 
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}, proposalSpot=${proposalSpot ?? 'null'}`);
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}`);
 
-            ws.send(
-              JSON.stringify({
-                proposal_open_contract: 1,
-                contract_id: contractId,
-                subscribe: 1,
-              }),
-            );
+            // Log de compra executada
+            await this.saveLog(
+              state.userId,
+              'INFO',
+              'TRADER',
+              `Buy order executed. contract_id=${contractId}, trade_id=${tradeId}, entry_price=${finalEntryPrice.toFixed(2)}`,
+              {
+                tradeId,
+                contractId,
+                entryPrice: finalEntryPrice,
+                buyPrice,
+              },
+            ).catch(() => {});
+
+            // Inscrever para monitorar contrato
+            const subscribePayload = {
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            };
+            
+            this.logger.log(`[ExecuteTrade] Inscrevendo para monitorar contrato. trade_id=${tradeId}, contract_id=${contractId}`);
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Subscribing to contract. trade_id=${tradeId}, contract_id=${contractId}`,
+              { tradeId, contractId },
+            ).catch(() => {});
+            
+            ws.send(JSON.stringify(subscribePayload));
             return;
           }
 
           if (msg.msg_type === 'proposal_open_contract') {
+            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido para trade ${tradeId}`);
+            
             const contract = msg.proposal_open_contract;
             
             // Log para debug - mostrar todos os campos disponíveis
-            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido: contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`);
+            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido: trade_id=${tradeId}, contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`);
             this.logger.log(`[ExecuteTrade] Campos disponíveis no contract:`, JSON.stringify(contract, null, 2));
+            
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Contract update received. trade_id=${tradeId}, contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`,
+              {
+                tradeId,
+                contractId: contract?.contract_id,
+                isSold: contract?.is_sold,
+                status: contract?.status,
+              },
+            ).catch(() => {});
             
             // Verificar se o contrato foi vendido (fechado)
             // A Deriv pode retornar is_sold = 1 ou status = 'sold'
