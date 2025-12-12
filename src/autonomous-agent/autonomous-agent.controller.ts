@@ -117,6 +117,12 @@ export class AutonomousAgentController {
         };
       }
 
+      // Atualizar trades com valores faltantes em background (não bloqueante)
+      // Limita a 10 trades por vez para não sobrecarregar
+      this.agentService.updateTradesWithMissingPrices(userId, 10).catch((error) => {
+        this.logger.warn(`[GetConfig] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
+      });
+
       return {
         success: true,
         data: config,
@@ -140,6 +146,20 @@ export class AutonomousAgentController {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 50;
       const history = await this.agentService.getTradeHistory(userId, limitNum);
+
+      // Verificar se há trades com valores zerados no resultado
+      const hasMissingPrices = history.some(
+        (trade: any) =>
+          (trade.entryPrice === 0 || trade.entryPrice === null) ||
+          (trade.exitPrice === 0 || trade.exitPrice === null),
+      );
+
+      // Se houver trades com valores faltantes, atualizar em background (não bloqueante)
+      if (hasMissingPrices) {
+        this.agentService.updateTradesWithMissingPrices(userId, limitNum).catch((error) => {
+          this.logger.warn(`[GetTradeHistory] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
+        });
+      }
 
       return {
         success: true,

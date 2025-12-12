@@ -1553,7 +1553,7 @@ export class AutonomousAgentService implements OnModuleInit {
             // Prioridade: entry_spot do buy > proposalSpot > buy_price (não usar buy_price como entry_price, é o preço do contrato)
             const finalEntryPrice = entrySpot > 0 
               ? entrySpot 
-              : (proposalSpot > 0 
+              : (proposalSpot && proposalSpot > 0 
                 ? proposalSpot 
                 : 0);
 
@@ -1568,7 +1568,7 @@ export class AutonomousAgentService implements OnModuleInit {
               [contractId, finalEntryPrice, tradeId],
             );
 
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}, proposalSpot=${proposalSpot}`);
+            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}, proposalSpot=${proposalSpot ?? 'null'}`);
 
             ws.send(
               JSON.stringify({
@@ -1687,7 +1687,7 @@ export class AutonomousAgentService implements OnModuleInit {
             let finalExitPriceToUse = finalExitPrice;
             let finalProfitToUse = profit;
             
-            if (needsApiFetch) {
+            if (needsApiFetch && state.derivToken) {
               this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
               try {
                 const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, state.derivToken);
