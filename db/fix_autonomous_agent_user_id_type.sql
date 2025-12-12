@@ -18,3 +18,4 @@ MODIFY COLUMN `user_id` VARCHAR(36) NOT NULL COMMENT 'UUID do usuário (char(36)
 SELECT 'Colunas user_id alteradas para VARCHAR(36) com sucesso!' AS message;
 
 
+

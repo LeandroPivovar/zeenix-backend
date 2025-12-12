@@ -6,3 +6,4 @@ MODIFY COLUMN session_date TIMESTAMP NULL
 COMMENT 'Data e hora da sessão atual (para cálculo do tempo ativo)';
 
 
+

@@ -81,7 +81,7 @@ const SENTINEL_CONFIG = {
   // Trading Mode configurations
   tradingModes: {
     veloz: { ticksRequired: 10, minConfidenceScore: 65 },
-    normal: { ticksRequired: 20, minConfidenceScore: 75 },
+    normal: { ticksRequired: 20, minConfidenceScore: 50 },
     lento: { ticksRequired: 50, minConfidenceScore: 80 },
   },
   // Management Mode multipliers
@@ -1082,6 +1082,14 @@ export class AutonomousAgentService implements OnModuleInit {
         // Soros: usar stake calculado do Soros
         contractType = analysis.direction; // Rise/Fall para Soros
         stakeAmount = state.sorosStake;
+        
+        // Log de Soros ativo (formato da documentação)
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Soros active. level=${state.sorosLevel}, stake=${stakeAmount.toFixed(2)}`,
+        );
       } else if (state.martingaleLevel === 'M0') {
         // Operação normal: Rise/Fall
         contractType = analysis.direction;
@@ -1107,6 +1115,45 @@ export class AutonomousAgentService implements OnModuleInit {
           state.isOperationActive = false;
           return;
         }
+        
+        // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
+        const stopLossCheck = await this.checkStopLossAfterStake(state, stakeAmount);
+        if (!stopLossCheck.canProceed) {
+          await this.saveLog(
+            state.userId,
+            'WARN',
+            'RISK',
+            `STOP LOSS NORMAL: Próxima aposta ultrapassaria limite. ${stopLossCheck.message}`,
+          );
+          // Ajustar stake para não ultrapassar o limite
+          const config = await this.dataSource.query(
+            `SELECT daily_loss_limit, daily_loss FROM autonomous_agent_config WHERE user_id = ?`,
+            [state.userId],
+          );
+          
+          if (config && config.length > 0) {
+            const currentLoss = parseFloat(config[0].daily_loss) || 0;
+            const lossLimit = parseFloat(config[0].daily_loss_limit) || 0;
+            const maxAllowedStake = lossLimit - currentLoss;
+            
+            if (maxAllowedStake > 0 && maxAllowedStake < stakeAmount) {
+              stakeAmount = maxAllowedStake;
+              await this.saveLog(
+                state.userId,
+                'WARN',
+                'RISK',
+                `Stake ajustado para não ultrapassar limite. novo_stake=${stakeAmount.toFixed(2)}`,
+              );
+            } else {
+              // Não há espaço para operar
+              state.isOperationActive = false;
+              return;
+            }
+          } else {
+            state.isOperationActive = false;
+            return;
+          }
+        }
       } else {
         // Fallback
         contractType = analysis.direction;
@@ -1124,7 +1171,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.userId,
         'INFO',
         'TRADER',
-        `Proposta enviada. contract_type=${contractType}, stake=${stakeAmount.toFixed(2)}`,
+        `Proposal sent. contract_type=${contractType}, stake=${stakeAmount.toFixed(2)}`,
         {
           direction: contractType,
           stake: stakeAmount,
@@ -1151,13 +1198,13 @@ export class AutonomousAgentService implements OnModuleInit {
         duration,
       });
 
-      // Log de compra executada
+      // Log de compra executada (formato da documentação)
       if (result.contractId) {
         await this.saveLog(
           state.userId,
           'INFO',
           'TRADER',
-          `Ordem de compra executada. contrato_id=${result.contractId}`,
+          `Buy order executed. contract_id=${result.contractId}`,
           { contractId: result.contractId },
         );
       }
@@ -1342,21 +1389,21 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'INFO',
               'TRADER',
-              `Consultando payout para contract_type=${contractType}`,
+              `Querying payout for contract_type=${contractType}`,
             ).catch(() => {});
             
             this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
-              `Payout da Deriv: ${payoutPercentual.toFixed(2)}%`,
+              `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
             ).catch(() => {});
             
             this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
-              `Payout ZENIX (após markup de 3%): ${payoutCliente.toFixed(2)}%`,
+              `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
             ).catch(() => {});
 
             // Atualizar entry_price e payout no banco
@@ -1420,7 +1467,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 state.userId,
                 'INFO',
                 'RISK',
-                `Operação GANHO. lucro=${profit.toFixed(2)}`,
+                `Trade WIN. profit=${profit.toFixed(2)}`,
                 {
                   result: status,
                   profit,
@@ -1433,7 +1480,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 state.userId,
                 'ERROR',
                 'RISK',
-                `Operação PERDA. perda=${Math.abs(profit).toFixed(2)}`,
+                `Trade LOSS. loss=${profit.toFixed(2)}`,
                 {
                   result: status,
                   profit,
@@ -1472,6 +1519,54 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       });
     });
+  }
+
+  // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
+  private async checkStopLossAfterStake(
+    state: AutonomousAgentState,
+    calculatedStake: number,
+  ): Promise<{ canProceed: boolean; message?: string }> {
+    try {
+      // Obter configuração do Stop Loss
+      const config = await this.dataSource.query(
+        `SELECT stop_loss_type, daily_loss_limit, daily_loss FROM autonomous_agent_config WHERE user_id = ?`,
+        [state.userId],
+      );
+
+      if (config && config.length > 0) {
+        const cfg = config[0];
+
+        // Se for Stop Loss Blindado, não verificar aqui (é verificado após vitória)
+        if (cfg.stop_loss_type === 'blindado') {
+          return { canProceed: true };
+        }
+
+        // Para Stop Loss Normal: verificar se o stake calculado ultrapassaria o limite
+        const currentLoss = parseFloat(cfg.daily_loss) || 0;
+        const lossLimit = parseFloat(cfg.daily_loss_limit) || 0;
+
+        if (currentLoss >= lossLimit) {
+          return {
+            canProceed: false,
+            message: `Limite de perda diária atingido (${currentLoss.toFixed(2)} >= ${lossLimit.toFixed(2)})`,
+          };
+        }
+
+        // Verificar se a próxima perda potencial (stake calculado) ultrapassaria o limite
+        const potentialLoss = currentLoss + calculatedStake;
+        if (potentialLoss > lossLimit) {
+          return {
+            canProceed: false,
+            message: `Stake calculado (${calculatedStake.toFixed(2)}) ultrapassaria limite. perda_atual=${currentLoss.toFixed(2)}, limite=${lossLimit.toFixed(2)}, potencial=${potentialLoss.toFixed(2)}`,
+          };
+        }
+      }
+
+      return { canProceed: true };
+    } catch (error) {
+      this.logger.error(`[CheckStopLossAfterStake][${state.userId}] Erro:`, error);
+      return { canProceed: true }; // Em caso de erro, permitir prosseguir
+    }
   }
 
   // Método auxiliar para consultar payout e calcular stake de Martingale
@@ -1517,6 +1612,14 @@ export class AutonomousAgentService implements OnModuleInit {
           }
 
           if (msg.msg_type === 'authorize') {
+            // Log de consulta de payout (formato da documentação)
+            await this.saveLog(
+              state.userId,
+              'INFO',
+              'TRADER',
+              `Querying payout for contract_type=${contractType}`,
+            ).catch(() => {});
+            
             // Enviar proposal para consultar payout (usar stake mínimo para consulta)
             ws.send(JSON.stringify({
               proposal: 1,
@@ -1549,6 +1652,21 @@ export class AutonomousAgentService implements OnModuleInit {
             // Calcular payout_cliente = payout_original - 3%
             const payoutCliente = payoutPercentual - 3;
 
+            // Logs de payout (formato da documentação)
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+            ).catch(() => {});
+            
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+            ).catch(() => {});
+
             if (payoutCliente <= 0) {
               finalize(new Error('Payout cliente inválido'));
               return;
@@ -1577,12 +1695,20 @@ export class AutonomousAgentService implements OnModuleInit {
             // Calcular stake: (meta × 100) / payout_cliente
             const recoveryStake = (targetProfit * 100) / payoutCliente;
 
-            // Log do cálculo
+            // Log do cálculo (formato da documentação)
+            const modeName = mode === 'conservative' ? 'Conservador' : mode === 'aggressive' ? 'Agressivo' : 'Moderado';
+            await this.saveLog(
+              state.userId,
+              'INFO',
+              'RISK',
+              `Calculating recovery stake. total_losses=${totalLosses.toFixed(2)}, mode=${modeName}, multiplier=${multiplier.toFixed(2)}`,
+            ).catch(() => {});
+            
             await this.saveLog(
               state.userId,
               'DEBUG',
               'RISK',
-              `Calculando stake de recuperação. perdas_totais=${totalLosses.toFixed(2)}, modo=${mode}, multiplicador=${multiplier}, meta=${targetProfit.toFixed(2)}, payout_cliente=${payoutCliente.toFixed(2)}%, stake=${recoveryStake.toFixed(2)}`,
+              `Target profit: ${targetProfit.toFixed(2)}, payout: ${payoutCliente.toFixed(2)}%, stake: ${recoveryStake.toFixed(2)}`,
             ).catch(() => {});
 
             finalize(undefined, recoveryStake);
@@ -1674,7 +1800,7 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'INFO',
             'RISK',
-            `Soros completo. Ciclo finalizado. Retornando para stake inicial.`,
+            `Soros complete. Cycle finished. Returning to initial stake.`,
           );
         } else {
           // Avançar para próximo nível do Soros
@@ -1690,7 +1816,7 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'INFO',
             'RISK',
-            `Soros nível ${nextLevel} ativado. stake=${nextStake.toFixed(2)}, lucro_anterior=${result.profitLoss.toFixed(2)}`,
+            `Soros active. level=${nextLevel}, stake=${nextStake.toFixed(2)}`,
           );
         }
       } else if (state.martingaleLevel === 'M0') {
@@ -1706,7 +1832,7 @@ export class AutonomousAgentService implements OnModuleInit {
           state.userId,
           'INFO',
           'RISK',
-          `Soros ativado (nível 1). stake=${sorosStake.toFixed(2)}, lucro=${result.profitLoss.toFixed(2)}`,
+          `Soros activated (level 1)`,
         );
       }
 
@@ -1729,17 +1855,25 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Se estava em Soros, entrar em recuperação imediatamente
       if (state.sorosLevel > 0) {
+        // Calcular perda líquida: stake atual - lucro acumulado do Soros
+        // O lucro acumulado do Soros é a diferença entre sorosStake e initialStake
+        const sorosProfit = state.sorosStake > state.initialStake 
+          ? state.sorosStake - state.initialStake 
+          : 0;
+        const netLoss = stakeAmount - sorosProfit;
+        
         state.sorosLevel = 0;
         state.sorosStake = 0;
         await this.dataSource.query(
           `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0 WHERE user_id = ?`,
           [state.userId],
         );
+        
         await this.saveLog(
           state.userId,
           'WARN',
           'RISK',
-          `Soros falhou! Entrando em recuperação. martingale_level=M1, perda=${Math.abs(result.profitLoss).toFixed(2)}`,
+          `Soros failed! Entering recovery. martingale_level=M1, martingale_losses=${netLoss.toFixed(2)}`,
         );
       }
 
@@ -1843,14 +1977,7 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'WARN',
             'RISK',
-            `Martingale ativado. nível=${nextLevel}, perdas_totais=${totalLosses.toFixed(2)}, contador=${newCount}`,
-          );
-          
-          await this.saveLog(
-            state.userId,
-            'INFO',
-            'RISK',
-            `Calculando stake de recuperação. perdas_totais=${totalLosses.toFixed(2)}, modo=${modeName}`,
+            `Martingale activated. level=${nextLevel}, losses=${totalLosses.toFixed(2)}`,
           );
 
           this.logger.log(

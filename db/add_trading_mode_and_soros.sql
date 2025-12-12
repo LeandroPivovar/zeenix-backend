@@ -48,3 +48,4 @@ COMMENT 'Pico de lucro do dia (para cálculo do Stop Loss Blindado)'
 AFTER daily_profit;
 
 
+

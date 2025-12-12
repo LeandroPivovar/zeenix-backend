@@ -1326,15 +1326,33 @@ export class AiService implements OnModuleInit {
       this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
       this.saveLogAsync(state.userId, 'operacao', `Payout: 0.95 (95%)`);
       this.saveLogAsync(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+      // Verificar se está no Soros
+      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0) {
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+      } else {
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+      }
     } else {
-      // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
-      // 📋 LOG: Operação martingale
-      this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
-      this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
-      this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
-      this.saveLogAsync(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      // ✅ Verificar se é Soros ou Martingale
+      const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
+      
+      if (isSoros) {
+        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
+        // 📋 LOG: Operação Soros
+        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
+        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+        this.saveLogAsync(state.userId, 'operacao', `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`);
+      } else {
+        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
+        // 📋 LOG: Operação martingale
+        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+        this.saveLogAsync(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      }
     }
 
     const tradeId = await this.createVelozTradeRecord(
@@ -4933,14 +4951,33 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
       await this.saveLog(state.userId, 'operacao', `Payout: 0.95 (95%)`);
       await this.saveLog(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+      // Verificar se está no Soros (pode ter sido ativado na entrada anterior)
+      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0) {
+        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+      } else {
+        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+      }
     } else {
-      // 📋 LOG: Operação martingale
-      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
-      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
-      await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      // ✅ Verificar se é Soros ou Martingale ANTES de fazer os logs
+      const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
+      
+      if (isSoros) {
+        // 📋 LOG: Operação Soros
+        await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
+        await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+        await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+        if (state.ultimoLucro > 0) {
+          await this.saveLog(state.userId, 'operacao', `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`);
+        }
+      } else {
+        // 📋 LOG: Operação martingale
+        await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+        await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
+        await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+        await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      }
     }
 
     const tradeId = await this.createModeradoTradeRecord(
