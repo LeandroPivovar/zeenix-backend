@@ -1502,20 +1502,24 @@ export class AutonomousAgentService implements OnModuleInit {
 
           // Log de debug: todas as mensagens recebidas
           this.logger.debug(`[ExecuteTrade] Mensagem recebida. msg_type=${msg.msg_type || 'unknown'}, trade_id=${tradeId}`);
+          this.logger.debug(`[ExecuteTrade] Mensagem completa:`, JSON.stringify(msg, null, 2));
 
+          // Verificar erros (pode estar em msg.error ou em msg.echo_req com error)
           if (msg.error) {
+            const errorMessage = msg.error.message || msg.error.code || JSON.stringify(msg.error);
+            this.logger.error(`[ExecuteTrade] Erro recebido da Deriv API. trade_id=${tradeId}, error=`, msg.error);
             await this.saveLog(
               state.userId,
               'ERROR',
               'API',
-              `Erro da Deriv API. erro=${msg.error.message || 'Erro desconhecido'}`,
-              { error: msg.error, tradeId },
+              `Erro da Deriv API. erro=${errorMessage}`,
+              { error: msg.error, fullMessage: msg, tradeId },
             ).catch(() => {});
             await this.dataSource.query(
               'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
-              ['ERROR', msg.error.message || 'Erro da Deriv', tradeId],
+              ['ERROR', errorMessage, tradeId],
             );
-            finalize(new Error(msg.error.message || 'Erro da Deriv'));
+            finalize(new Error(errorMessage));
             return;
           }
 
@@ -1528,8 +1532,7 @@ export class AutonomousAgentService implements OnModuleInit {
               { loginid: msg.authorize?.loginid, tradeId },
             ).catch(() => {});
 
-            // Obter proposal primeiro (necessário para obter proposal_id e informações de payout)
-            // A API Deriv requer proposal antes do buy para contratos RISE/FALL
+            // Enviar proposal (seguindo padrão do AiService)
             const proposalPayload = {
               proposal: 1,
               amount: stakeAmount,
@@ -1554,19 +1557,11 @@ export class AutonomousAgentService implements OnModuleInit {
               },
             ).catch(() => {});
             
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Sending proposal to Deriv. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount}, duration=${duration}`,
-              { tradeId, proposalPayload },
-            ).catch(() => {});
-            
             ws.send(JSON.stringify(proposalPayload));
             return;
           }
 
-          // Processar resposta da proposal
+          // Processar resposta da proposal (seguindo padrão do AiService)
           if (msg.msg_type === 'proposal') {
             this.logger.log(`[ExecuteTrade] Proposal recebida para trade ${tradeId}`);
             
@@ -1585,17 +1580,19 @@ export class AutonomousAgentService implements OnModuleInit {
 
             const proposalId = proposal.id;
             const proposalPrice = Number(proposal.ask_price);
-            const proposalSpot = Number(proposal.spot || proposal.current_spot || 0);
             const payoutAbsolute = Number(proposal.payout || 0);
             
-            this.logger.log(`[ExecuteTrade] Proposal processada. trade_id=${tradeId}, proposal_id=${proposalId}, ask_price=${proposalPrice}, spot=${proposalSpot}, payout=${payoutAbsolute}`);
-            
-            // Calcular payout percentual: (payout / ask_price - 1) × 100
+            // Atualizar payout no banco (lucro líquido = payout - stakeAmount, como no AiService)
+            const payoutLiquido = payoutAbsolute - stakeAmount;
+            await this.dataSource.query(
+              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+              [payoutLiquido, tradeId],
+            );
+
+            // Calcular payout percentual para logs
             const payoutPercentual = proposalPrice > 0 
               ? ((payoutAbsolute / proposalPrice - 1) * 100) 
               : 0;
-            
-            // Calcular payout_cliente = payout_original - 3%
             const payoutCliente = payoutPercentual - 3;
             
             // Logs de payout (formato da documentação)
@@ -1620,39 +1617,21 @@ export class AutonomousAgentService implements OnModuleInit {
                 payoutCliente,
                 payoutPercentual,
                 markup: 3,
-                calculation: `payoutPercentual - 3 = ${payoutPercentual.toFixed(2)} - 3 = ${payoutCliente.toFixed(2)}`,
               },
             ).catch(() => {});
 
-            // Atualizar payout no banco
-            const payoutLiquido = (stakeAmount * payoutCliente) / 100;
-            await this.dataSource.query(
-              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
-              [payoutLiquido, tradeId],
+            // Enviar ordem de compra (seguindo padrão do AiService)
+            ws.send(
+              JSON.stringify({
+                buy: proposalId,
+                price: proposalPrice,
+              }),
             );
-
-            // Enviar ordem de compra usando o proposal_id
-            const buyPayload = {
-              buy: proposalId,
-              price: proposalPrice,
-            };
-            
-            this.logger.log(`[ExecuteTrade] Enviando ordem de compra. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice}`);
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Sending buy order. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice}`,
-              { tradeId, proposalId, price: proposalPrice },
-            ).catch(() => {});
-            
-            ws.send(JSON.stringify(buyPayload));
             return;
           }
 
+          // Processar resposta do buy (seguindo padrão do AiService)
           if (msg.msg_type === 'buy') {
-            this.logger.log(`[ExecuteTrade] Mensagem de compra recebida para trade ${tradeId}`);
-            
             const buy = msg.buy;
             if (!buy || !buy.contract_id) {
               await this.saveLog(
@@ -1668,263 +1647,78 @@ export class AutonomousAgentService implements OnModuleInit {
 
             contractId = buy.contract_id;
             const buyPrice = Number(buy.buy_price);
-            
-            this.logger.log(`[ExecuteTrade] Compra confirmada. trade_id=${tradeId}, contract_id=${contractId}, buy_price=${buyPrice}`);
-            
-            // Tentar capturar entry_spot de diferentes campos possíveis
-            const entrySpot = Number(
-              buy.entry_spot || 
-              buy.spot || 
-              buy.current_spot || 
-              buy.entry_tick || 
-              buy.entry_spot_display || 
-              0
+            const entrySpot = Number(buy.entry_spot || 0);
+
+            this.logger.log(
+              `[ExecuteTrade] Atualizando entry_price | tradeId=${tradeId} | entrySpot=${entrySpot} | buy.entry_spot=${buy.entry_spot}`,
             );
-
-            // Extrair informações de payout da resposta do buy (se disponível)
-            // A resposta do buy pode conter informações sobre o payout esperado
-            const buyPayoutAbsolute = Number(buy.payout || buy.bid_price || 0);
-            const buyPayoutPercentual = buyPrice > 0 && buyPayoutAbsolute > 0
-              ? ((buyPayoutAbsolute / buyPrice - 1) * 100)
-              : 0;
-            const buyPayoutCliente = buyPayoutPercentual > 0 ? buyPayoutPercentual - 3 : 0;
-
-            // Logs de payout baseados na resposta do buy (se disponível)
-            if (buyPayoutPercentual > 0) {
-              await this.saveLog(
-                state.userId,
-                'DEBUG',
-                'TRADER',
-                `Payout from Deriv (buy response): ${buyPayoutPercentual.toFixed(2)}%`,
-                {
-                  payoutPercentual: buyPayoutPercentual,
-                  payoutAbsolute: buyPayoutAbsolute,
-                  buyPrice,
-                },
-              ).catch(() => {});
-              
-              await this.saveLog(
-                state.userId,
-                'DEBUG',
-                'TRADER',
-                `Payout ZENIX (after 3% markup): ${buyPayoutCliente.toFixed(2)}%`,
-                {
-                  payoutCliente: buyPayoutCliente,
-                  payoutPercentual: buyPayoutPercentual,
-                  markup: 3,
-                },
-              ).catch(() => {});
-
-              // Atualizar payout no banco
-              const payoutLiquido = (stakeAmount * buyPayoutCliente) / 100;
-              await this.dataSource.query(
-                'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
-                [payoutLiquido, tradeId],
-              );
-            } else {
-              // Se não tiver payout na resposta, consultaremos depois via proposal_open_contract
-              this.logger.log(`[ExecuteTrade] Payout não disponível na resposta do buy. Será obtido via contract monitoring.`);
-            }
-
-            // Log para debug - mostrar todos os campos disponíveis
-            this.logger.log(`[ExecuteTrade] Buy confirmado: contract_id=${contractId}, buy_price=${buyPrice}`);
-            this.logger.log(`[ExecuteTrade] Campos disponíveis no buy:`, JSON.stringify(buy, null, 2));
-            
-            // Prioridade: entry_spot do buy > 0
-            // Se entry_spot não estiver disponível, tentar outros campos
-            const finalEntryPrice = entrySpot > 0 ? entrySpot : 0;
-
-            if (finalEntryPrice === 0) {
-              this.logger.warn(`[ExecuteTrade] ATENÇÃO: entry_price será 0! entry_spot=${entrySpot}. Tentando obter via contract monitoring.`);
-            }
 
             await this.dataSource.query(
               `UPDATE autonomous_agent_trades 
                SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
                WHERE id = ?`,
-              [contractId, finalEntryPrice, tradeId],
+              [contractId, entrySpot, tradeId],
             );
+            
+            this.logger.log(`[ExecuteTrade] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado: entry_price=${finalEntryPrice}, contract_id=${contractId}, buy_price=${buyPrice}`);
-
-            // Log de compra executada
+            // Inscrever para monitorar contrato (seguindo padrão do AiService)
+            ws.send(
+              JSON.stringify({
+                proposal_open_contract: 1,
+                contract_id: contractId,
+                subscribe: 1,
+              }),
+            );
+            
+            this.logger.log(
+              `[ExecuteTrade] Compra confirmada | trade=${tradeId} | contrato=${contractId} | preço=${buyPrice}`,
+            );
+            
             await this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
-              `Buy order executed. contract_id=${contractId}, trade_id=${tradeId}, entry_price=${finalEntryPrice.toFixed(2)}`,
+              `Buy order executed. contract_id=${contractId}, trade_id=${tradeId}, entry_price=${entrySpot.toFixed(2)}`,
               {
                 tradeId,
                 contractId,
-                entryPrice: finalEntryPrice,
+                entryPrice: entrySpot,
                 buyPrice,
               },
             ).catch(() => {});
-
-            // Inscrever para monitorar contrato
-            const subscribePayload = {
-              proposal_open_contract: 1,
-              contract_id: contractId,
-              subscribe: 1,
-            };
             
-            this.logger.log(`[ExecuteTrade] Inscrevendo para monitorar contrato. trade_id=${tradeId}, contract_id=${contractId}`);
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Subscribing to contract. trade_id=${tradeId}, contract_id=${contractId}`,
-              { tradeId, contractId },
-            ).catch(() => {});
-            
-            ws.send(JSON.stringify(subscribePayload));
             return;
           }
 
+          // Processar proposal_open_contract (seguindo padrão do AiService)
           if (msg.msg_type === 'proposal_open_contract') {
-            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido para trade ${tradeId}`);
-            
             const contract = msg.proposal_open_contract;
             
-            // Log para debug - mostrar todos os campos disponíveis
-            this.logger.log(`[ExecuteTrade] proposal_open_contract recebido: trade_id=${tradeId}, contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`);
-            this.logger.log(`[ExecuteTrade] Campos disponíveis no contract:`, JSON.stringify(contract, null, 2));
-            
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Contract update received. trade_id=${tradeId}, contract_id=${contract?.contract_id}, is_sold=${contract?.is_sold}, status=${contract?.status}`,
-              {
-                tradeId,
-                contractId: contract?.contract_id,
-                isSold: contract?.is_sold,
-                status: contract?.status,
-              },
-            ).catch(() => {});
-            
-            // Verificar se o contrato foi vendido (fechado)
-            // A Deriv pode retornar is_sold = 1 ou status = 'sold'
-            const isSold = contract?.is_sold === 1 || contract?.status === 'sold' || contract?.is_expired === 1;
-            
-            if (!contract) {
-              this.logger.warn(`[ExecuteTrade] Contrato inválido recebido`);
-              return;
-            }
-            
-            if (!isSold) {
-              // Contrato ainda ativo, continuar monitorando
-              // Mas atualizar entry_price se ainda estiver 0 e tiver entry_spot disponível
-              if (contract.entry_spot && contract.entry_spot > 0) {
-                const currentEntryPrice = Number(contract.entry_spot);
-                await this.dataSource.query(
-                  `UPDATE autonomous_agent_trades 
-                   SET entry_price = ? 
-                   WHERE id = ? AND (entry_price = 0 OR entry_price IS NULL)`,
-                  [currentEntryPrice, tradeId],
-                );
-                this.logger.log(`[ExecuteTrade] Entry price atualizado do contrato ativo: ${currentEntryPrice}`);
-              }
+            // Se contrato ainda não foi vendido, apenas retornar (continuar monitorando)
+            if (!contract || contract.is_sold !== 1) {
               return;
             }
 
-            // O profit da Deriv retorna o lucro líquido (pode ser positivo, negativo ou zero)
-            // Se profit existir e não for null/undefined, usar diretamente
-            // Caso contrário, calcular baseado no sell_price e buy_price
-            let profit = 0;
-            
-            if (contract.profit !== null && contract.profit !== undefined) {
-              profit = Number(contract.profit);
-            } else if (contract.sell_price && contract.buy_price) {
-              // Calcular profit = sell_price - buy_price
-              const sellPrice = Number(contract.sell_price);
-              const buyPrice = Number(contract.buy_price);
-              profit = sellPrice - buyPrice;
-            } else if (contract.profit_percentage !== null && contract.profit_percentage !== undefined) {
-              // Se só tiver profit_percentage, calcular baseado no stake
-              const profitPct = Number(contract.profit_percentage);
-              profit = (stakeAmount * profitPct) / 100;
-            }
-            
-            // Tentar capturar exit_spot de diferentes campos possíveis
-            const exitPrice = Number(
-              contract.exit_spot || 
-              contract.exit_tick || 
-              contract.current_spot || 
-              contract.spot || 
-              contract.exit_spot_display || 
-              0
+            // Contrato foi vendido - processar resultado
+            const profit = Number(contract.profit || 0);
+            const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+            const status = profit >= 0 ? 'WON' : 'LOST';
+
+            this.logger.log(
+              `[ExecuteTrade] Atualizando exit_price | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`,
             );
-            
-            // Se exit_price ainda for 0, tentar usar o entry_spot atual (caso o contrato tenha expirado no mesmo preço)
-            const finalExitPrice = exitPrice > 0 ? exitPrice : (contract.entry_spot ? Number(contract.entry_spot) : 0);
-            
-            // Status: WIN se profit > 0, LOST se profit < 0
-            // Se profit = 0, verificar pelo campo is_sold e status
-            let status: 'WON' | 'LOST';
-            if (profit > 0) {
-              status = 'WON';
-            } else if (profit < 0) {
-              status = 'LOST';
-            } else {
-              // Profit = 0, verificar outros indicadores
-              // Se is_sold = 1 e não há profit, geralmente é perda (stake perdido)
-              // Mas se status indicar win, considerar win
-              if (contract.is_sold === 1 && contract.status === 'won') {
-                status = 'WON';
-                // Ajustar profit para o valor esperado do payout (se disponível)
-                const expectedProfit = (stakeAmount * (contract.payout_percentage || 0)) / 100 - stakeAmount;
-                if (expectedProfit > 0) {
-                  profit = expectedProfit;
-                }
-              } else if (contract.is_sold === 1 && contract.status === 'lost') {
-                status = 'LOST';
-                profit = -stakeAmount; // Perda total do stake
-              } else {
-                // Default: se vendido, considerar perda se profit = 0
-                status = contract.is_sold === 1 ? 'LOST' : 'WON';
-                if (status === 'LOST') {
-                  profit = -stakeAmount;
-                }
-              }
-            }
 
-            // Log detalhado para debug
-            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit.toFixed(2)}, exit_price=${finalExitPrice}, status=${status}`);
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Contract closed. trade_id=${tradeId}, profit=${profit.toFixed(2)}, exit_price=${finalExitPrice.toFixed(2)}, status=${status}`,
-              {
-                tradeId,
-                profit,
-                exitPrice: finalExitPrice,
-                status,
-                contract_id: contract.contract_id,
-              },
-            ).catch(() => {});
-            
-            this.logger.log(`[ExecuteTrade] Dados completos do contrato fechado:`, JSON.stringify({
-              contract_id: contract.contract_id,
-              profit: contract.profit,
-              profit_percentage: contract.profit_percentage,
-              sell_price: contract.sell_price,
-              buy_price: contract.buy_price,
-              calculated_profit: profit,
-              exit_spot: contract.exit_spot,
-              exit_tick: contract.exit_tick,
-              current_spot: contract.current_spot,
-              spot: contract.spot,
-              entry_spot: contract.entry_spot,
-              is_sold: contract.is_sold,
-              status: contract.status,
-              final_status: status,
-            }, null, 2));
+            await this.dataSource.query(
+              `UPDATE autonomous_agent_trades
+               SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+               WHERE id = ?`,
+              [exitPrice, profit, status, tradeId],
+            );
 
-            // Log de resultado da operação (formato da documentação)
+            // Log de resultado (seguindo padrão do AiService)
             if (status === 'WON') {
-              this.saveLog(
+              await this.saveLog(
                 state.userId,
                 'INFO',
                 'RISK',
@@ -1932,12 +1726,12 @@ export class AutonomousAgentService implements OnModuleInit {
                 {
                   result: status,
                   profit,
-                  contractId,
+                  contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
               ).catch(() => {});
             } else {
-              this.saveLog(
+              await this.saveLog(
                 state.userId,
                 'ERROR',
                 'RISK',
@@ -1945,86 +1739,17 @@ export class AutonomousAgentService implements OnModuleInit {
                 {
                   result: status,
                   profit,
-                  contractId,
+                  contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
               ).catch(() => {});
             }
 
-            // Verificar entry_price atual no banco antes de atualizar
-            const currentTrade = await this.dataSource.query(
-              `SELECT entry_price FROM autonomous_agent_trades WHERE id = ?`,
-              [tradeId],
-            );
-            const currentEntryPrice = currentTrade && currentTrade[0] ? Number(currentTrade[0].entry_price) : 0;
-            
-            // Se entry_price ou exit_price ainda estiverem zerados, consultar a API da Deriv
-            let needsApiFetch = (currentEntryPrice === 0 || finalExitPrice === 0) && contractId;
-            let finalEntryPriceToUpdate: number | null = null;
-            let finalExitPriceToUse = finalExitPrice;
-            let finalProfitToUse = profit;
-            
-            if (needsApiFetch && contractId) {
-              // Verificar se o token existe antes de usar
-              if (!state.derivToken) {
-                this.logger.warn(`[ExecuteTrade] Token não disponível para consultar API da Deriv`);
-              } else {
-                // Type assertion explícita para garantir que TypeScript reconhece que não é null
-                const derivToken: string = state.derivToken as string;
-                this.logger.log(`[ExecuteTrade] Valores zerados detectados (entry=${currentEntryPrice}, exit=${finalExitPrice}). Consultando API da Deriv para contract_id=${contractId}`);
-                try {
-                  const contractDetails = await this.fetchContractDetailsFromDeriv(contractId, derivToken);
-                  if (contractDetails) {
-                    if (currentEntryPrice === 0 && contractDetails.entryPrice > 0) {
-                      finalEntryPriceToUpdate = contractDetails.entryPrice;
-                      this.logger.log(`[ExecuteTrade] Entry price obtido da API: ${finalEntryPriceToUpdate}`);
-                    }
-                    if (finalExitPriceToUse === 0 && contractDetails.exitPrice > 0) {
-                      finalExitPriceToUse = contractDetails.exitPrice;
-                      this.logger.log(`[ExecuteTrade] Exit price obtido da API: ${finalExitPriceToUse}`);
-                    }
-                    // Se o profit também estiver zerado, usar o da API
-                    if (profit === 0 && contractDetails.profit !== 0) {
-                      finalProfitToUse = contractDetails.profit;
-                      this.logger.log(`[ExecuteTrade] Profit obtido da API: ${finalProfitToUse}`);
-                    }
-                  }
-                } catch (error) {
-                  this.logger.warn(`[ExecuteTrade] Erro ao consultar API da Deriv:`, error);
-                }
-              }
-            }
-            
-            // Atualizar o banco com os valores obtidos
-            if (finalEntryPriceToUpdate !== null) {
-              await this.dataSource.query(
-                `UPDATE autonomous_agent_trades
-                 SET entry_price = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-                 WHERE id = ?`,
-                [finalEntryPriceToUpdate, finalExitPriceToUse, finalProfitToUse, status, tradeId],
-              );
-            } else {
-              await this.dataSource.query(
-                `UPDATE autonomous_agent_trades
-                 SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-                 WHERE id = ?`,
-                [finalExitPriceToUse, finalProfitToUse, status, tradeId],
-              );
-            }
-            
-            // Verificar se a atualização foi bem-sucedida
-            const updated = await this.dataSource.query(
-              `SELECT entry_price, exit_price, profit_loss, status FROM autonomous_agent_trades WHERE id = ?`,
-              [tradeId],
-            );
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} atualizado no banco:`, JSON.stringify(updated[0], null, 2));
-
-            this.logger.log(`[ExecuteTrade] Trade ${tradeId} finalizado: exit_price=${exitPrice}, profit_loss=${profit}, status=${status}`);
-
+            // Finalizar com resultado
             finalize(undefined, {
               profitLoss: profit,
               status,
-              exitPrice: finalExitPrice,
+              exitPrice,
               contractId: contract.contract_id || contractId || '',
             });
           }
