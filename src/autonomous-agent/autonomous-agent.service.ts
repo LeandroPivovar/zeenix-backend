@@ -1083,17 +1083,35 @@ export class AutonomousAgentService implements OnModuleInit {
         contractType = analysis.direction; // Rise/Fall para Soros
         stakeAmount = state.sorosStake;
         
-        // Log de Soros ativo (formato da documentação)
+            // Log de Soros ativo (formato da documentação)
         await this.saveLog(
           state.userId,
           'INFO',
           'RISK',
-          `Soros active. level=${state.sorosLevel}, stake=${stakeAmount.toFixed(2)}`,
+          `Soros active. level=${state.sorosLevel}, stake=${stakeAmount.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}`,
+          {
+            sorosLevel: state.sorosLevel,
+            sorosStake: stakeAmount,
+            initialStake: state.initialStake,
+          },
         );
       } else if (state.martingaleLevel === 'M0') {
         // Operação normal: Rise/Fall
         contractType = analysis.direction;
         stakeAmount = state.initialStake;
+        
+        // Log de operação normal
+        await this.saveLog(
+          state.userId,
+          'DEBUG',
+          'RISK',
+          `Normal operation (M0). initial_stake=${stakeAmount.toFixed(2)}, contract_type=${contractType}`,
+          {
+            martingaleLevel: 'M0',
+            stake: stakeAmount,
+            contractType,
+          },
+        ).catch(() => {});
       } else if (state.martingaleLevel === 'M1' || state.martingaleLevel === 'M2') {
         // Recuperação M1 ou M2: Precisa consultar payout primeiro para calcular stake
         if (state.martingaleLevel === 'M1') {
@@ -1102,20 +1120,48 @@ export class AutonomousAgentService implements OnModuleInit {
           contractType = analysis.direction === 'RISE' ? 'ONETOUCH' : 'NOTOUCH';
         }
         
+        // Log antes de calcular stake de Martingale
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Calculating Martingale stake. level=${state.martingaleLevel}, contract_type=${contractType}`,
+          {
+            martingaleLevel: state.martingaleLevel,
+            contractType,
+          },
+        ).catch(() => {});
+
         // Consultar payout e calcular stake de recuperação
         stakeAmount = await this.calculateMartingaleStake(state, contractType);
         
-        if (stakeAmount <= 0) {
+        if (stakeAmount <= 0 || !isFinite(stakeAmount)) {
           await this.saveLog(
             state.userId,
             'ERROR',
             'RISK',
-            `Erro ao calcular stake de Martingale. Abortando operação.`,
+            `Erro ao calcular stake de Martingale. calculated_stake=${stakeAmount}, abortando operação.`,
+            {
+              calculatedStake: stakeAmount,
+              martingaleLevel: state.martingaleLevel,
+            },
           );
           state.isOperationActive = false;
           return;
         }
         
+        // Log após calcular stake de Martingale
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Martingale stake calculated. level=${state.martingaleLevel}, calculated_stake=${stakeAmount.toFixed(2)}`,
+          {
+            martingaleLevel: state.martingaleLevel,
+            calculatedStake: stakeAmount,
+          },
+        ).catch(() => {});
+
         // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
         const stopLossCheck = await this.checkStopLossAfterStake(state, stakeAmount);
         if (!stopLossCheck.canProceed) {
@@ -1124,6 +1170,10 @@ export class AutonomousAgentService implements OnModuleInit {
             'WARN',
             'RISK',
             `STOP LOSS NORMAL: Próxima aposta ultrapassaria limite. ${stopLossCheck.message}`,
+            {
+              calculatedStake: stakeAmount,
+              message: stopLossCheck.message,
+            },
           );
           // Ajustar stake para não ultrapassar o limite
           const config = await this.dataSource.query(
@@ -1208,6 +1258,22 @@ export class AutonomousAgentService implements OnModuleInit {
           { contractId: result.contractId },
         );
       }
+
+      // Log antes de processar resultado
+      await this.saveLog(
+        state.userId,
+        'DEBUG',
+        'RISK',
+        `Processing trade result. trade_id=${tradeId}, profit_loss=${result.profitLoss.toFixed(2)}, status=${result.status}, stake=${stakeAmount.toFixed(2)}`,
+        {
+          tradeId,
+          profitLoss: result.profitLoss,
+          status: result.status,
+          stake: stakeAmount,
+          martingaleLevel: state.martingaleLevel,
+          sorosLevel: state.sorosLevel,
+        },
+      ).catch(() => {});
 
       // Processar resultado
       await this.handleTradeResult(state, tradeId, result, stakeAmount);
@@ -1491,26 +1557,42 @@ export class AutonomousAgentService implements OnModuleInit {
             // Calcular payout_cliente = payout_original - 3%
             const payoutCliente = payoutPercentual - 3;
             
-            // Logs de payout (formato da documentação)
-            this.saveLog(
+            // Logs de payout (formato da documentação) - SEMPRE logar, mesmo para M0
+            await this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
               `Querying payout for contract_type=${contractType}`,
+              {
+                contractType,
+                martingaleLevel: state.martingaleLevel,
+                sorosLevel: state.sorosLevel,
+              },
             ).catch(() => {});
             
-            this.saveLog(
+            await this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
               `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+              {
+                payoutPercentual,
+                payoutAbsolute,
+                askPrice: proposalPrice,
+              },
             ).catch(() => {});
             
-            this.saveLog(
+            await this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
               `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+              {
+                payoutCliente,
+                payoutPercentual,
+                markup: 3,
+                calculation: `payoutPercentual - 3 = ${payoutPercentual.toFixed(2)} - 3 = ${payoutCliente.toFixed(2)}`,
+              },
             ).catch(() => {});
 
             // Não atualizar entry_price aqui - será atualizado após a compra confirmada
@@ -1617,9 +1699,23 @@ export class AutonomousAgentService implements OnModuleInit {
               return;
             }
 
-            // O profit da Deriv pode vir em diferentes formatos
-            // Pode ser profit (lucro líquido) ou profit_percentage (percentual)
-            const profit = Number(contract.profit || contract.profit_percentage || 0);
+            // O profit da Deriv retorna o lucro líquido (pode ser positivo, negativo ou zero)
+            // Se profit existir e não for null/undefined, usar diretamente
+            // Caso contrário, calcular baseado no sell_price e buy_price
+            let profit = 0;
+            
+            if (contract.profit !== null && contract.profit !== undefined) {
+              profit = Number(contract.profit);
+            } else if (contract.sell_price && contract.buy_price) {
+              // Calcular profit = sell_price - buy_price
+              const sellPrice = Number(contract.sell_price);
+              const buyPrice = Number(contract.buy_price);
+              profit = sellPrice - buyPrice;
+            } else if (contract.profit_percentage !== null && contract.profit_percentage !== undefined) {
+              // Se só tiver profit_percentage, calcular baseado no stake
+              const profitPct = Number(contract.profit_percentage);
+              profit = (stakeAmount * profitPct) / 100;
+            }
             
             // Tentar capturar exit_spot de diferentes campos possíveis
             const exitPrice = Number(
@@ -1634,13 +1730,59 @@ export class AutonomousAgentService implements OnModuleInit {
             // Se exit_price ainda for 0, tentar usar o entry_spot atual (caso o contrato tenha expirado no mesmo preço)
             const finalExitPrice = exitPrice > 0 ? exitPrice : (contract.entry_spot ? Number(contract.entry_spot) : 0);
             
-            const status = profit >= 0 ? 'WON' : 'LOST';
+            // Status: WIN se profit > 0, LOST se profit < 0
+            // Se profit = 0, verificar pelo campo is_sold e status
+            let status: 'WON' | 'LOST';
+            if (profit > 0) {
+              status = 'WON';
+            } else if (profit < 0) {
+              status = 'LOST';
+            } else {
+              // Profit = 0, verificar outros indicadores
+              // Se is_sold = 1 e não há profit, geralmente é perda (stake perdido)
+              // Mas se status indicar win, considerar win
+              if (contract.is_sold === 1 && contract.status === 'won') {
+                status = 'WON';
+                // Ajustar profit para o valor esperado do payout (se disponível)
+                const expectedProfit = (stakeAmount * (contract.payout_percentage || 0)) / 100 - stakeAmount;
+                if (expectedProfit > 0) {
+                  profit = expectedProfit;
+                }
+              } else if (contract.is_sold === 1 && contract.status === 'lost') {
+                status = 'LOST';
+                profit = -stakeAmount; // Perda total do stake
+              } else {
+                // Default: se vendido, considerar perda se profit = 0
+                status = contract.is_sold === 1 ? 'LOST' : 'WON';
+                if (status === 'LOST') {
+                  profit = -stakeAmount;
+                }
+              }
+            }
 
-            // Log para debug
-            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit}, exit_price=${finalExitPrice}, status=${status}`);
+            // Log detalhado para debug
+            this.logger.log(`[ExecuteTrade] Contrato fechado: trade_id=${tradeId}, profit=${profit.toFixed(2)}, exit_price=${finalExitPrice}, status=${status}`);
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Contract closed. trade_id=${tradeId}, profit=${profit.toFixed(2)}, exit_price=${finalExitPrice.toFixed(2)}, status=${status}`,
+              {
+                tradeId,
+                profit,
+                exitPrice: finalExitPrice,
+                status,
+                contract_id: contract.contract_id,
+              },
+            ).catch(() => {});
+            
             this.logger.log(`[ExecuteTrade] Dados completos do contrato fechado:`, JSON.stringify({
               contract_id: contract.contract_id,
-              profit,
+              profit: contract.profit,
+              profit_percentage: contract.profit_percentage,
+              sell_price: contract.sell_price,
+              buy_price: contract.buy_price,
+              calculated_profit: profit,
               exit_spot: contract.exit_spot,
               exit_tick: contract.exit_tick,
               current_spot: contract.current_spot,
@@ -1648,6 +1790,7 @@ export class AutonomousAgentService implements OnModuleInit {
               entry_spot: contract.entry_spot,
               is_sold: contract.is_sold,
               status: contract.status,
+              final_status: status,
             }, null, 2));
 
             // Log de resultado da operação (formato da documentação)
@@ -1954,6 +2097,11 @@ export class AutonomousAgentService implements OnModuleInit {
               'INFO',
               'RISK',
               `Calculating recovery stake. total_losses=${totalLosses.toFixed(2)}, mode=${modeName}, multiplier=${multiplier.toFixed(2)}`,
+              {
+                totalLosses,
+                mode: modeName,
+                multiplier,
+              },
             ).catch(() => {});
             
             await this.saveLog(
@@ -1961,6 +2109,12 @@ export class AutonomousAgentService implements OnModuleInit {
               'DEBUG',
               'RISK',
               `Target profit: ${targetProfit.toFixed(2)}, payout: ${payoutCliente.toFixed(2)}%, stake: ${recoveryStake.toFixed(2)}`,
+              {
+                targetProfit,
+                payoutCliente,
+                recoveryStake,
+                calculation: `(targetProfit * 100) / payoutCliente = (${targetProfit.toFixed(2)} * 100) / ${payoutCliente.toFixed(2)} = ${recoveryStake.toFixed(2)}`,
+              },
             ).catch(() => {});
 
             finalize(undefined, recoveryStake);
@@ -1985,6 +2139,24 @@ export class AutonomousAgentService implements OnModuleInit {
     result: TradeResult,
     stakeAmount: number,
   ): Promise<void> {
+    // Log de entrada no handleTradeResult
+    this.logger.log(`[HandleTradeResult][${state.userId}] Iniciando processamento. trade_id=${tradeId}, status=${result.status}, profit_loss=${result.profitLoss.toFixed(2)}`);
+    
+    await this.saveLog(
+      state.userId,
+      'DEBUG',
+      'RISK',
+      `handleTradeResult called. trade_id=${tradeId}, status=${result.status}, profit_loss=${result.profitLoss.toFixed(2)}, stake=${stakeAmount.toFixed(2)}, martingale=${state.martingaleLevel}, soros=${state.sorosLevel}`,
+      {
+        tradeId,
+        result: result.status,
+        profitLoss: result.profitLoss,
+        stake: stakeAmount,
+        martingaleLevelBefore: state.martingaleLevel,
+        sorosLevelBefore: state.sorosLevel,
+      },
+    ).catch(() => {});
+
     const won = result.status === 'WON';
 
     // Atualizar estatísticas
@@ -2034,7 +2206,13 @@ export class AutonomousAgentService implements OnModuleInit {
           state.userId,
           'INFO',
           'RISK',
-          `Martingale resetado. motivo=OperaçãoGanhou, lucro=${result.profitLoss.toFixed(2)}`,
+          `Martingale resetado. motivo=OperaçãoGanhou, lucro=${result.profitLoss.toFixed(2)}, level_anterior=${state.martingaleLevel}`,
+          {
+            martingaleLevelBefore: state.martingaleLevel,
+            martingaleLevelAfter: 'M0',
+            profit: result.profitLoss,
+            reason: 'OperaçãoGanhou',
+          },
         );
       }
 
@@ -2052,7 +2230,13 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'INFO',
             'RISK',
-            `Soros complete. Cycle finished. Returning to initial stake.`,
+            `Soros complete. Cycle finished. Returning to initial stake. profit=${result.profitLoss.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}`,
+            {
+              sorosLevelBefore: 2,
+              sorosLevelAfter: 0,
+              profit: result.profitLoss,
+              initialStake: state.initialStake,
+            },
           );
         } else {
           // Avançar para próximo nível do Soros
@@ -2068,7 +2252,14 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'INFO',
             'RISK',
-            `Soros active. level=${nextLevel}, stake=${nextStake.toFixed(2)}`,
+            `Soros active. level=${nextLevel}, stake=${nextStake.toFixed(2)}, previous_stake=${stakeAmount.toFixed(2)}, profit=${result.profitLoss.toFixed(2)}`,
+            {
+              sorosLevelBefore: state.sorosLevel,
+              sorosLevelAfter: nextLevel,
+              sorosStakeBefore: stakeAmount,
+              sorosStakeAfter: nextStake,
+              profit: result.profitLoss,
+            },
           );
         }
       } else if (state.martingaleLevel === 'M0') {
@@ -2084,7 +2275,13 @@ export class AutonomousAgentService implements OnModuleInit {
           state.userId,
           'INFO',
           'RISK',
-          `Soros activated (level 1)`,
+          `Soros activated (level 1). initial_stake=${state.initialStake.toFixed(2)}, profit=${result.profitLoss.toFixed(2)}, soros_stake=${sorosStake.toFixed(2)}`,
+          {
+            sorosLevel: 1,
+            initialStake: state.initialStake,
+            profit: result.profitLoss,
+            sorosStake,
+          },
         );
       }
 
@@ -2105,8 +2302,26 @@ export class AutonomousAgentService implements OnModuleInit {
       state.dailyLoss += Math.abs(result.profitLoss);
       state.isOperationActive = false;
 
+      // Log de perda detectada
+      await this.saveLog(
+        state.userId,
+        'ERROR',
+        'RISK',
+        `Trade LOSS detected. loss=${Math.abs(result.profitLoss).toFixed(2)}, stake=${stakeAmount.toFixed(2)}, current_martingale=${state.martingaleLevel}, current_soros=${state.sorosLevel}`,
+        {
+          loss: Math.abs(result.profitLoss),
+          stake: stakeAmount,
+          martingaleLevel: state.martingaleLevel,
+          sorosLevel: state.sorosLevel,
+        },
+      ).catch(() => {});
+
       // Se estava em Soros, entrar em recuperação imediatamente
       if (state.sorosLevel > 0) {
+        // Salvar estado antes de resetar
+        const sorosLevelBefore = state.sorosLevel;
+        const sorosStakeBefore = state.sorosStake;
+        
         // Calcular perda líquida: stake atual - lucro acumulado do Soros
         // O lucro acumulado do Soros é a diferença entre sorosStake e initialStake
         const sorosProfit = state.sorosStake > state.initialStake 
@@ -2114,6 +2329,14 @@ export class AutonomousAgentService implements OnModuleInit {
           : 0;
         const netLoss = stakeAmount - sorosProfit;
         
+        await this.saveLog(
+          state.userId,
+          'DEBUG',
+          'RISK',
+          `Soros loss calculation. soros_stake=${sorosStakeBefore.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}, soros_profit=${sorosProfit.toFixed(2)}, stake_lost=${stakeAmount.toFixed(2)}, net_loss=${netLoss.toFixed(2)}`,
+        ).catch(() => {});
+        
+        // Resetar Soros
         state.sorosLevel = 0;
         state.sorosStake = 0;
         await this.dataSource.query(
@@ -2126,7 +2349,16 @@ export class AutonomousAgentService implements OnModuleInit {
           'WARN',
           'RISK',
           `Soros failed! Entering recovery. martingale_level=M1, martingale_losses=${netLoss.toFixed(2)}`,
+          {
+            sorosLevelBefore,
+            sorosStakeBefore,
+            netLoss,
+            nextMartingaleLevel: 'M1',
+          },
         );
+        
+        // Atualizar lastLossAmount para o cálculo de Martingale
+        state.lastLossAmount = netLoss;
       }
 
       // Obter configuração do modo
@@ -2229,7 +2461,15 @@ export class AutonomousAgentService implements OnModuleInit {
             state.userId,
             'WARN',
             'RISK',
-            `Martingale activated. level=${nextLevel}, losses=${totalLosses.toFixed(2)}`,
+            `Martingale activated. level=${nextLevel}, losses=${totalLosses.toFixed(2)}, count=${newCount}`,
+            {
+              martingaleLevelBefore: state.martingaleLevel,
+              martingaleLevelAfter: nextLevel,
+              martingaleCount: newCount,
+              totalLosses,
+              mode: modeName,
+              lastLossAmount: stakeAmount,
+            },
           );
 
           this.logger.log(
