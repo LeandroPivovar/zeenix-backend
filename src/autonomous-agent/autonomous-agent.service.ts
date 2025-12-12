@@ -1528,20 +1528,20 @@ export class AutonomousAgentService implements OnModuleInit {
               { loginid: msg.authorize?.loginid, tradeId },
             ).catch(() => {});
 
-            // Comprar diretamente sem precisar de proposal separada
-            // A Deriv permite enviar buy diretamente com os parâmetros do contrato
-            const buyPayload = {
-              buy: 1,
-              price: stakeAmount,
-              parameters: {
-                contract_type: contractType,
-                duration: duration,
-                duration_unit: 't',
-                symbol: state.symbol,
-              },
+            // Obter proposal primeiro (necessário para obter proposal_id e informações de payout)
+            // A API Deriv requer proposal antes do buy para contratos RISE/FALL
+            const proposalPayload = {
+              proposal: 1,
+              amount: stakeAmount,
+              basis: 'stake',
+              contract_type: contractType,
+              currency: state.currency,
+              duration: duration,
+              duration_unit: 't',
+              symbol: state.symbol,
             };
 
-            this.logger.log(`[ExecuteTrade] Enviando compra direta para trade ${tradeId}`, buyPayload);
+            this.logger.log(`[ExecuteTrade] Enviando proposal para trade ${tradeId}`, proposalPayload);
             await this.saveLog(
               state.userId,
               'INFO',
@@ -1551,7 +1551,6 @@ export class AutonomousAgentService implements OnModuleInit {
                 contractType,
                 martingaleLevel: state.martingaleLevel,
                 sorosLevel: state.sorosLevel,
-                method: 'direct_buy',
               },
             ).catch(() => {});
             
@@ -1559,8 +1558,92 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'DEBUG',
               'TRADER',
-              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount}, duration=${duration}`,
-              { tradeId, buyPayload },
+              `Sending proposal to Deriv. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount}, duration=${duration}`,
+              { tradeId, proposalPayload },
+            ).catch(() => {});
+            
+            ws.send(JSON.stringify(proposalPayload));
+            return;
+          }
+
+          // Processar resposta da proposal
+          if (msg.msg_type === 'proposal') {
+            this.logger.log(`[ExecuteTrade] Proposal recebida para trade ${tradeId}`);
+            
+            const proposal = msg.proposal;
+            if (!proposal || !proposal.id) {
+              await this.saveLog(
+                state.userId,
+                'ERROR',
+                'TRADER',
+                `Proposta inválida recebida. trade_id=${tradeId}`,
+                { tradeId, proposal },
+              ).catch(() => {});
+              finalize(new Error('Proposta inválida'));
+              return;
+            }
+
+            const proposalId = proposal.id;
+            const proposalPrice = Number(proposal.ask_price);
+            const proposalSpot = Number(proposal.spot || proposal.current_spot || 0);
+            const payoutAbsolute = Number(proposal.payout || 0);
+            
+            this.logger.log(`[ExecuteTrade] Proposal processada. trade_id=${tradeId}, proposal_id=${proposalId}, ask_price=${proposalPrice}, spot=${proposalSpot}, payout=${payoutAbsolute}`);
+            
+            // Calcular payout percentual: (payout / ask_price - 1) × 100
+            const payoutPercentual = proposalPrice > 0 
+              ? ((payoutAbsolute / proposalPrice - 1) * 100) 
+              : 0;
+            
+            // Calcular payout_cliente = payout_original - 3%
+            const payoutCliente = payoutPercentual - 3;
+            
+            // Logs de payout (formato da documentação)
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+              {
+                payoutPercentual,
+                payoutAbsolute,
+                askPrice: proposalPrice,
+              },
+            ).catch(() => {});
+            
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+              {
+                payoutCliente,
+                payoutPercentual,
+                markup: 3,
+                calculation: `payoutPercentual - 3 = ${payoutPercentual.toFixed(2)} - 3 = ${payoutCliente.toFixed(2)}`,
+              },
+            ).catch(() => {});
+
+            // Atualizar payout no banco
+            const payoutLiquido = (stakeAmount * payoutCliente) / 100;
+            await this.dataSource.query(
+              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+              [payoutLiquido, tradeId],
+            );
+
+            // Enviar ordem de compra usando o proposal_id
+            const buyPayload = {
+              buy: proposalId,
+              price: proposalPrice,
+            };
+            
+            this.logger.log(`[ExecuteTrade] Enviando ordem de compra. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice}`);
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Sending buy order. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice}`,
+              { tradeId, proposalId, price: proposalPrice },
             ).catch(() => {});
             
             ws.send(JSON.stringify(buyPayload));
