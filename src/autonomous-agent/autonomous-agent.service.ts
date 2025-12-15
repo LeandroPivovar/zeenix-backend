@@ -300,8 +300,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (existing && existing.length > 0) {
         // Atualizar existente
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET
+        // Verificar se a coluna soros_profit existe antes de usá-la
+        let updateQuery = `UPDATE autonomous_agent_config SET
             is_active = TRUE,
             initial_stake = ?,
             daily_profit_target = ?,
@@ -323,27 +323,40 @@ export class AutonomousAgentService implements OnModuleInit {
             martingale_count = 0,
             soros_level = 0,
             soros_stake = 0,
-            soros_profit = 0,
             session_status = 'active',
             next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
-            updated_at = NOW()
-           WHERE user_id = ?`,
-          [
-            config.initialStake,
-            config.dailyProfitTarget,
-            config.dailyLossLimit,
-            initialBalance,
-            config.derivToken,
-            config.currency || 'USD',
-            symbol,
-            strategy,
-            riskLevel,
-            tradingMode,
-            stopLossType,
-            this.getRandomInterval(),
-            userId,
-          ],
-        );
+            updated_at = NOW()`;
+        
+        const updateParams = [
+          config.initialStake,
+          config.dailyProfitTarget,
+          config.dailyLossLimit,
+          initialBalance,
+          config.derivToken,
+          config.currency || 'USD',
+          symbol,
+          strategy,
+          riskLevel,
+          tradingMode,
+          stopLossType,
+          this.getRandomInterval(),
+        ];
+
+        // Tentar adicionar soros_profit se a coluna existir
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          updateQuery = updateQuery.replace(
+            'soros_stake = 0,',
+            'soros_stake = 0,\n            soros_profit = 0,'
+          );
+        } else {
+          this.logger.warn(`[ActivateAgent] Coluna soros_profit não existe. Execute a migration: backend/db/add_soros_profit_to_autonomous_agent.sql`);
+        }
+
+        updateQuery += '\n           WHERE user_id = ?';
+        updateParams.push(userId);
+
+        await this.dataSource.query(updateQuery, updateParams);
       } else {
         // Criar novo
         await this.dataSource.query(
@@ -1834,6 +1847,25 @@ export class AutonomousAgentService implements OnModuleInit {
     });
   }
 
+  /**
+   * Verifica se a coluna soros_profit existe no banco de dados
+   * Retorna true se existir, false caso contrário
+   */
+  private async hasSorosProfitColumn(): Promise<boolean> {
+    try {
+      const result = await this.dataSource.query(
+        `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'autonomous_agent_config' 
+         AND COLUMN_NAME = 'soros_profit'`
+      );
+      return result && result.length > 0 && result[0].count > 0;
+    } catch (error) {
+      this.logger.warn(`[HasSorosProfitColumn] Erro ao verificar coluna: ${error.message}`);
+      return false;
+    }
+  }
+
   // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
   private async checkStopLossAfterStake(
     state: AutonomousAgentState,
@@ -2117,10 +2149,20 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 2;
         state.sorosStake = nextStake;
         state.sorosProfit = result.profitLoss; // Profit da última operação ganha
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 2, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
-          [nextStake, result.profitLoss, state.userId],
-        );
+        
+        // Verificar se a coluna soros_profit existe antes de usar
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 2, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+            [nextStake, result.profitLoss, state.userId],
+          );
+        } else {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 2, soros_stake = ? WHERE user_id = ?`,
+            [nextStake, state.userId],
+          );
+        }
         await this.saveLog(
           state.userId,
           'INFO',
@@ -2139,10 +2181,20 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 0;
         state.sorosStake = 0;
         state.sorosProfit = 0.0; // Resetar profit (conforme documentação)
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
-          [state.userId],
-        );
+        
+        // Verificar se a coluna soros_profit existe antes de usar
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
+            [state.userId],
+          );
+        } else {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0 WHERE user_id = ?`,
+            [state.userId],
+          );
+        }
         await this.saveLog(
           state.userId,
           'INFO',
@@ -2191,10 +2243,20 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 1;
         state.sorosStake = sorosStake;
         state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
-          [sorosStake, result.profitLoss, state.userId],
-        );
+        
+        // Verificar se a coluna soros_profit existe antes de usar
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+            [sorosStake, result.profitLoss, state.userId],
+          );
+        } else {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ? WHERE user_id = ?`,
+            [sorosStake, state.userId],
+          );
+        }
         await this.saveLog(
           state.userId,
           'INFO',
@@ -2213,10 +2275,20 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 1;
         state.sorosStake = sorosStake;
         state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
-          [sorosStake, result.profitLoss, state.userId],
-        );
+        
+        // Verificar se a coluna soros_profit existe antes de usar
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+            [sorosStake, result.profitLoss, state.userId],
+          );
+        } else {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ? WHERE user_id = ?`,
+            [sorosStake, state.userId],
+          );
+        }
         await this.saveLog(
           state.userId,
           'INFO',
@@ -2284,10 +2356,20 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 0;
         state.sorosStake = 0;
         state.sorosProfit = 0;
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
-          [state.userId],
-        );
+        
+        // Verificar se a coluna soros_profit existe antes de usar
+        const hasSorosProfit = await this.hasSorosProfitColumn();
+        if (hasSorosProfit) {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
+            [state.userId],
+          );
+        } else {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0 WHERE user_id = ?`,
+            [state.userId],
+          );
+        }
         
         await this.saveLog(
           state.userId,
