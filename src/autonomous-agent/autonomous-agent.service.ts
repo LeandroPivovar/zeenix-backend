@@ -3453,10 +3453,10 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId],
     );
 
-    const initialStake = config && config.length > 0 ? parseFloat(config[0].initial_stake) || 0 : 0;
     const initialBalance = config && config.length > 0 ? parseFloat(config[0].initial_balance) || 0 : 0;
-    // Usar initialBalance se disponível, senão usar initialStake * 10 como estimativa
-    const totalCapital = initialBalance > 0 ? initialBalance : (initialStake * 10);
+    // Usar initialBalance como valor total da conta configurada (sempre usar este valor quando disponível)
+    // Se initialBalance for 0, significa que não foi configurado ainda, então retornar 0 para evitar cálculos incorretos
+    const totalCapital = initialBalance > 0 ? initialBalance : 0;
 
     // Contar TODAS as operações do dia de autonomous_agent_trades (independente do status)
     const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
