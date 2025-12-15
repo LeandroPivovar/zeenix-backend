@@ -1526,13 +1526,26 @@ export class AutonomousAgentService implements OnModuleInit {
           // Verificar erros (pode estar em msg.error ou em msg.echo_req com error)
           if (msg.error) {
             const errorMessage = msg.error.message || msg.error.code || JSON.stringify(msg.error);
+            const errorDetails = JSON.stringify(msg.error);
             this.logger.error(`[ExecuteTrade] Erro recebido da Deriv API. trade_id=${tradeId}, error=`, msg.error);
+            this.logger.error(`[ExecuteTrade] Mensagem completa:`, JSON.stringify(msg));
             await this.saveLog(
               state.userId,
               'ERROR',
               'API',
               `Erro da Deriv API. erro=${errorMessage}`,
-              { error: msg.error, fullMessage: msg, tradeId },
+              { 
+                error: msg.error, 
+                errorDetails,
+                fullMessage: msg, 
+                tradeId,
+                contractType,
+                derivContractType: contractType === 'RISE' ? 'CALL' : (contractType === 'FALL' ? 'PUT' : contractType),
+                stakeAmount,
+                duration,
+                symbol: state.symbol,
+                currency: state.currency,
+              },
             ).catch(() => {});
             await this.dataSource.query(
               'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
@@ -1573,6 +1586,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 duration: duration,
                 duration_unit: 't',
                 symbol: state.symbol,
+                currency: state.currency || 'USD', // Currency é obrigatório para R_75
               },
             };
 
@@ -1971,12 +1985,23 @@ export class AutonomousAgentService implements OnModuleInit {
           }
 
           if (msg.msg_type === 'authorize') {
+            // Mapear RISE/FALL para CALL/PUT (Deriv API espera CALL/PUT para R_75)
+            let derivContractType: string;
+            if (contractType === 'RISE') {
+              derivContractType = 'CALL';
+            } else if (contractType === 'FALL') {
+              derivContractType = 'PUT';
+            } else {
+              // Para outros tipos (HIGHER, LOWER, ONETOUCH, NOTOUCH), usar como está
+              derivContractType = contractType;
+            }
+            
             // Log de consulta de payout (formato da documentação)
             await this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
-              `Querying payout for contract_type=${contractType}`,
+              `Querying payout for contract_type=${contractType} (Deriv: ${derivContractType})`,
             ).catch(() => {});
             
             // Enviar proposal para consultar payout (usar stake mínimo para consulta)
@@ -1984,8 +2009,8 @@ export class AutonomousAgentService implements OnModuleInit {
               proposal: 1,
               amount: 1, // Stake mínimo para consulta
               basis: 'stake',
-              contract_type: contractType,
-              currency: state.currency,
+              contract_type: derivContractType, // Usar o tipo mapeado
+              currency: state.currency || 'USD', // Garantir que currency existe
               duration: 7,
               duration_unit: 't',
               symbol: state.symbol,
