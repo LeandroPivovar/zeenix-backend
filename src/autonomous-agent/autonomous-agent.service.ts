@@ -3459,24 +3459,54 @@ export class AutonomousAgentService implements OnModuleInit {
     let totalCapital = initialBalance > 0 ? initialBalance : 0;
     
     // Se initialBalance não estiver configurado, tentar buscar saldo atual da conta
-    if (totalCapital === 0 && config && config.length > 0 && this.derivService) {
-      try {
-        const derivToken = config[0].deriv_token;
-        const currency = config[0].currency || 'USD';
-        if (derivToken) {
-          // Buscar saldo atual da conta Deriv
-          const accountInfo = await this.derivService.connectAndGetAccount(derivToken, parseInt(this.appId), currency);
-          if (accountInfo && accountInfo.balance && accountInfo.balance.value) {
-            totalCapital = accountInfo.balance.value;
-            this.logger.log(`[GetSessionStats][${userId}] initial_balance não configurado, usando saldo atual da conta: ${totalCapital}`);
+    if (totalCapital === 0 && config && config.length > 0) {
+      if (!this.derivService) {
+        this.logger.warn(`[GetSessionStats][${userId}] DerivService não disponível, não é possível buscar saldo da conta`);
+      } else {
+        try {
+          const derivToken = config[0].deriv_token;
+          const currency = config[0].currency || 'USD';
+          if (derivToken) {
+            this.logger.log(`[GetSessionStats][${userId}] Tentando buscar saldo da conta Deriv (token disponível: ${!!derivToken})`);
+            // Buscar saldo atual da conta Deriv
+            const appId = parseInt(this.appId) || 1089;
+            const accountInfo = await this.derivService.connectAndGetAccount(derivToken, appId, currency);
+            if (accountInfo && accountInfo.balance) {
+              // accountInfo.balance pode ser um objeto {value, currency} ou um número
+              const balanceValue = typeof accountInfo.balance === 'object' 
+                ? accountInfo.balance.value 
+                : accountInfo.balance;
+              
+              if (balanceValue && balanceValue > 0) {
+                totalCapital = typeof balanceValue === 'number' ? balanceValue : parseFloat(String(balanceValue)) || 0;
+                this.logger.log(`[GetSessionStats][${userId}] ✅ initial_balance não configurado, usando saldo atual da conta: ${totalCapital}`);
+                
+                // Atualizar initial_balance no banco para próximas consultas
+                try {
+                  await this.dataSource.query(
+                    `UPDATE autonomous_agent_config SET initial_balance = ? WHERE user_id = ?`,
+                    [totalCapital, userId]
+                  );
+                  this.logger.log(`[GetSessionStats][${userId}] ✅ initial_balance atualizado no banco: ${totalCapital}`);
+                } catch (updateError) {
+                  this.logger.warn(`[GetSessionStats][${userId}] Erro ao atualizar initial_balance no banco: ${updateError.message}`);
+                }
+              } else {
+                this.logger.warn(`[GetSessionStats][${userId}] Saldo retornado é inválido ou zero: ${balanceValue}`);
+              }
+            } else {
+              this.logger.warn(`[GetSessionStats][${userId}] accountInfo ou balance não disponível: ${JSON.stringify(accountInfo)}`);
+            }
+          } else {
+            this.logger.warn(`[GetSessionStats][${userId}] derivToken não disponível na configuração`);
           }
+        } catch (error) {
+          this.logger.error(`[GetSessionStats][${userId}] ❌ Erro ao buscar saldo da conta Deriv: ${error.message}`, error.stack);
         }
-      } catch (error) {
-        this.logger.warn(`[GetSessionStats][${userId}] Erro ao buscar saldo da conta Deriv: ${error.message}`);
       }
     }
     
-    this.logger.log(`[GetSessionStats][${userId}] totalCapital: ${totalCapital}, initialBalance: ${initialBalance}`);
+    this.logger.log(`[GetSessionStats][${userId}] 📊 totalCapital: ${totalCapital}, initialBalance: ${initialBalance}`);
 
     // Contar TODAS as operações do dia de autonomous_agent_trades (independente do status)
     const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
