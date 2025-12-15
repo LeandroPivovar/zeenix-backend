@@ -3408,14 +3408,6 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId, todayStr],
     );
 
-    // Buscar operações de ai_trades do dia de hoje (todas as operações, independente do status)
-    const aiTradesStats = await this.dataSource.query(
-      `SELECT COUNT(*) as total_trades
-       FROM ai_trades
-       WHERE user_id = ? AND DATE(created_at) = ?`,
-      [userId, todayStr],
-    );
-
     // Buscar capital inicial da configuração do agente
     const config = await this.dataSource.query(
       `SELECT initial_stake, initial_balance 
@@ -3429,10 +3421,9 @@ export class AutonomousAgentService implements OnModuleInit {
     // Usar initialBalance se disponível, senão usar initialStake * 10 como estimativa
     const totalCapital = initialBalance > 0 ? initialBalance : (initialStake * 10);
 
-    // Contar TODAS as operações do dia (independente do status)
+    // Contar TODAS as operações do dia de autonomous_agent_trades (independente do status)
     const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
-    const aiTrades = aiTradesStats && aiTradesStats.length > 0 ? parseInt(aiTradesStats[0].total_trades) || 0 : 0;
-    const totalTradesToday = autonomousTradesAll + aiTrades;
+    const totalTradesToday = autonomousTradesAll;
     
     // Para estatísticas (wins/losses), usar apenas trades finalizados
     const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
@@ -3459,7 +3450,7 @@ export class AutonomousAgentService implements OnModuleInit {
     const netProfit = totalProfit - totalLoss;
 
     this.logger.log(
-      `[GetSessionStats][${userId}] Operações hoje: autonomous=${autonomousTradesAll}, ai=${aiTrades}, total=${totalTradesToday}`,
+      `[GetSessionStats][${userId}] Operações hoje: autonomous=${autonomousTradesAll}, total=${totalTradesToday}`,
     );
 
     return {
