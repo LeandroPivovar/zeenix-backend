@@ -3382,10 +3382,28 @@ export class AutonomousAgentService implements OnModuleInit {
           hour12: false,
         });
         
+        // Converter timestamp do banco para ISO string para o frontend poder parsear
+        let timestampISO: string | null = null;
+        if (log.timestamp) {
+          try {
+            if (typeof log.timestamp === 'string') {
+              // Se for string MySQL (YYYY-MM-DD HH:MM:SS.mmm), converter para ISO
+              const mysqlDate = new Date(log.timestamp.replace(' ', 'T') + 'Z');
+              if (!isNaN(mysqlDate.getTime())) {
+                timestampISO = mysqlDate.toISOString();
+              }
+            } else if (log.timestamp instanceof Date) {
+              timestampISO = log.timestamp.toISOString();
+            }
+          } catch (error) {
+            this.logger.warn(`[GetLogs] Erro ao converter timestamp do log ${log.id}:`, error);
+          }
+        }
+        
         return {
           id: log.id,
-          timestamp: formattedTime,
-          created_at: log.timestamp, // Usar timestamp como created_at (a tabela não tem created_at)
+          timestamp: timestampISO || formattedTime, // Retornar ISO string para o frontend parsear, ou formato formatado como fallback
+          created_at: timestampISO || log.timestamp, // Usar timestamp ISO ou original
           type,
           icon,
           message: log.message,
