@@ -1564,8 +1564,9 @@ export class AutonomousAgentService implements OnModuleInit {
               { loginid: msg.authorize?.loginid, tradeId },
             ).catch(() => {});
 
-            // Compra direta (conforme MUDANCA_FLUXO_COMPRA_DIRETA.md e padrão da IA)
-            // Enviar buy diretamente com parâmetros do contrato (sem proposal prévia)
+            // Usar o mesmo fluxo da IA: proposal → buy (conforme padrão da Deriv API)
+            // A API da Deriv não aceita compra direta com parameters para RISE/FALL
+            // Deve usar proposal primeiro para obter proposal_id e ask_price
             
             // Mapear RISE/FALL para CALL/PUT (Deriv API espera CALL/PUT para R_75)
             let derivContractType: string;
@@ -1578,20 +1579,19 @@ export class AutonomousAgentService implements OnModuleInit {
               derivContractType = contractType;
             }
             
-            const buyPayload = {
-              buy: 1,
-              amount: stakeAmount, // Usar 'amount' ao invés de 'price' quando usando basis: 'stake'
-              basis: 'stake', // Especificar que amount é o stake
-              parameters: {
-                contract_type: derivContractType,
-                duration: duration,
-                duration_unit: 't',
-                symbol: state.symbol,
-                currency: state.currency || 'USD', // Currency é obrigatório para R_75
-              },
+            // Enviar proposal para obter proposal_id e payout (conforme padrão da IA)
+            const proposalPayload = {
+              proposal: 1,
+              amount: stakeAmount,
+              basis: 'stake',
+              contract_type: derivContractType,
+              currency: state.currency || 'USD',
+              duration: duration,
+              duration_unit: 't',
+              symbol: state.symbol,
             };
 
-            this.logger.log(`[ExecuteTrade] Enviando compra direta para trade ${tradeId}`, buyPayload);
+            this.logger.log(`[ExecuteTrade] Enviando proposal para trade ${tradeId}`, proposalPayload);
             await this.saveLog(
               state.userId,
               'INFO',
@@ -1609,7 +1609,7 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'DEBUG',
               'TRADER',
-              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType} (Deriv: ${derivContractType}), stake=${stakeAmount.toFixed(2)}`,
+              `Sending proposal. trade_id=${tradeId}, contract_type=${contractType} (Deriv: ${derivContractType}), stake=${stakeAmount.toFixed(2)}`,
               {
                 tradeId,
                 contractType,
@@ -1619,11 +1619,92 @@ export class AutonomousAgentService implements OnModuleInit {
               },
             ).catch(() => {});
             
+            ws.send(JSON.stringify(proposalPayload));
+            return;
+          }
+
+          // Processar resposta do proposal e enviar buy (seguindo padrão da IA)
+          if (msg.msg_type === 'proposal') {
+            const proposal = msg.proposal;
+            if (!proposal || !proposal.id) {
+              await this.saveLog(
+                state.userId,
+                'ERROR',
+                'TRADER',
+                `Proposta inválida. trade_id=${tradeId}`,
+                { tradeId, proposal },
+              ).catch(() => {});
+              finalize(new Error('Proposta inválida'));
+              return;
+            }
+
+            const proposalId = proposal.id;
+            const proposalPrice = Number(proposal.ask_price || stakeAmount);
+            const payoutAbsolute = Number(proposal.payout || 0);
+            
+            // Atualizar payout no banco (lucro líquido = payout - stakeAmount)
+            if (payoutAbsolute > 0) {
+              const payoutLiquido = payoutAbsolute - stakeAmount;
+              await this.dataSource.query(
+                'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+                [payoutLiquido, tradeId],
+              ).catch(() => {});
+
+              // Calcular payout percentual para logs
+              const payoutPercentual = proposalPrice > 0 
+                ? ((payoutAbsolute / proposalPrice - 1) * 100) 
+                : 0;
+              const payoutCliente = payoutPercentual - 3;
+              
+              // Logs de payout (formato da documentação)
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+                {
+                  payoutPercentual,
+                  payoutAbsolute,
+                  proposalPrice,
+                },
+              ).catch(() => {});
+              
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+                {
+                  payoutCliente,
+                  payoutPercentual,
+                  markup: 3,
+                },
+              ).catch(() => {});
+            }
+
+            // Enviar buy com proposal_id (seguindo padrão da IA)
+            const buyPayload = {
+              buy: proposalId,
+              price: proposalPrice,
+            };
+
+            await this.saveLog(
+              state.userId,
+              'INFO',
+              'TRADER',
+              `Proposal received. Sending buy order. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice.toFixed(2)}`,
+              {
+                tradeId,
+                proposalId,
+                proposalPrice,
+              },
+            ).catch(() => {});
+
             ws.send(JSON.stringify(buyPayload));
             return;
           }
 
-          // Processar resposta do buy (compra direta - conforme MUDANCA_FLUXO_COMPRA_DIRETA.md)
+          // Processar resposta do buy (seguindo padrão da IA)
           if (msg.msg_type === 'buy') {
             const buy = msg.buy;
             if (!buy || !buy.contract_id) {
