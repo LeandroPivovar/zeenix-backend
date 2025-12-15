@@ -1553,11 +1553,23 @@ export class AutonomousAgentService implements OnModuleInit {
 
             // Compra direta (conforme MUDANCA_FLUXO_COMPRA_DIRETA.md e padrão da IA)
             // Enviar buy diretamente com parâmetros do contrato (sem proposal prévia)
+            
+            // Mapear RISE/FALL para CALL/PUT (Deriv API espera CALL/PUT para R_75)
+            let derivContractType: string;
+            if (contractType === 'RISE') {
+              derivContractType = 'CALL';
+            } else if (contractType === 'FALL') {
+              derivContractType = 'PUT';
+            } else {
+              // Para outros tipos (HIGHER, LOWER, ONETOUCH, NOTOUCH), usar como está
+              derivContractType = contractType;
+            }
+            
             const buyPayload = {
               buy: 1,
               price: stakeAmount,
               parameters: {
-                contract_type: contractType,
+                contract_type: derivContractType,
                 duration: duration,
                 duration_unit: 't',
                 symbol: state.symbol,
@@ -1569,9 +1581,10 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'INFO',
               'TRADER',
-              `Querying payout for contract_type=${contractType}`,
+              `Querying payout for contract_type=${contractType} (Deriv: ${derivContractType})`,
               {
                 contractType,
+                derivContractType,
                 martingaleLevel: state.martingaleLevel,
                 sorosLevel: state.sorosLevel,
               },
@@ -1581,10 +1594,11 @@ export class AutonomousAgentService implements OnModuleInit {
               state.userId,
               'DEBUG',
               'TRADER',
-              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount.toFixed(2)}`,
+              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType} (Deriv: ${derivContractType}), stake=${stakeAmount.toFixed(2)}`,
               {
                 tradeId,
                 contractType,
+                derivContractType,
                 stake: stakeAmount,
                 duration,
               },
