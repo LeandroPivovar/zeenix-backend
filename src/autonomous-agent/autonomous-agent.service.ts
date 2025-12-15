@@ -1827,7 +1827,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
             contractId = buy.contract_id;
             const buyPrice = Number(buy.buy_price || stakeAmount);
-            const entrySpot = Number(buy.entry_spot || 0);
+            // Tentar múltiplas fontes para entry_spot
+            const entrySpot = Number(
+              buy.entry_spot || 
+              buy.spot || 
+              buy.current_spot || 
+              buy.entry_tick || 
+              0
+            );
             
             // Extrair payout da resposta do buy (se disponível)
             const payoutAbsolute = Number(buy.payout || 0);
@@ -1928,8 +1935,38 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'proposal_open_contract') {
             const contract = msg.proposal_open_contract;
             
-            // Se contrato ainda não foi vendido, verificar se podemos obter payout
+            // Se contrato ainda não foi vendido, verificar se podemos obter payout e entry_price
             if (!contract || contract.is_sold !== 1) {
+              // Atualizar entry_price se ainda não foi atualizado e estiver disponível no contract
+              const contractEntrySpot = Number(
+                contract.entry_spot || 
+                contract.entry_tick || 
+                contract.spot || 
+                0
+              );
+              
+              if (contractEntrySpot > 0) {
+                // Verificar se entry_price ainda está zerado no banco
+                const currentTrade = await this.dataSource.query(
+                  'SELECT entry_price FROM autonomous_agent_trades WHERE id = ?',
+                  [tradeId],
+                );
+                
+                if (currentTrade && currentTrade.length > 0 && 
+                    (currentTrade[0].entry_price === 0 || currentTrade[0].entry_price === null)) {
+                  await this.dataSource.query(
+                    `UPDATE autonomous_agent_trades 
+                     SET entry_price = ? 
+                     WHERE id = ? AND (entry_price = 0 OR entry_price IS NULL)`,
+                    [contractEntrySpot, tradeId],
+                  );
+                  
+                  this.logger.log(
+                    `[ExecuteTrade] ✅ entry_price atualizado via proposal_open_contract | tradeId=${tradeId} | entryPrice=${contractEntrySpot}`,
+                  );
+                }
+              }
+              
               // Obter payout via proposal_open_contract se não foi obtido na resposta do buy
               if (contract.payout && contract.buy_price) {
                 const payoutAbsolute = Number(contract.payout || 0);
