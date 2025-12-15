@@ -34,3 +34,4 @@ SELECT
     ELSE 'Coluna phone já existe na tabela users'
   END AS result;
 
+

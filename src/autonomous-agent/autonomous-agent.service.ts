@@ -35,6 +35,7 @@ interface AutonomousAgentState {
   lastLossAmount: number;
   sorosLevel: number; // 0 = inativo, 1, 2
   sorosStake: number;
+  sorosProfit: number; // Profit da última operação ganha no Soros (para cálculo de net_loss)
   operationsSincePause: number;
   lastTradeAt: Date | null;
   nextTradeAt: Date | null;
@@ -146,6 +147,7 @@ export class AutonomousAgentService implements OnModuleInit {
           last_loss_amount,
           soros_level,
           soros_stake,
+          soros_profit,
           operations_since_pause,
           last_trade_at,
           next_trade_at,
@@ -177,6 +179,7 @@ export class AutonomousAgentService implements OnModuleInit {
         lastLossAmount: parseFloat(agent.last_loss_amount) || 0,
         sorosLevel: agent.soros_level || 0,
         sorosStake: parseFloat(agent.soros_stake) || 0,
+        sorosProfit: parseFloat(agent.soros_profit) || 0,
         operationsSincePause: agent.operations_since_pause || 0,
         lastTradeAt: agent.last_trade_at ? new Date(agent.last_trade_at) : null,
         nextTradeAt: agent.next_trade_at ? new Date(agent.next_trade_at) : null,
@@ -211,6 +214,7 @@ export class AutonomousAgentService implements OnModuleInit {
     lastLossAmount: number;
     sorosLevel: number;
     sorosStake: number;
+    sorosProfit: number;
     operationsSincePause: number;
     lastTradeAt: Date | null;
     nextTradeAt: Date | null;
@@ -244,6 +248,7 @@ export class AutonomousAgentService implements OnModuleInit {
         lastLossAmount: config.lastLossAmount,
         sorosLevel: config.sorosLevel,
         sorosStake: config.sorosStake,
+        sorosProfit: config.sorosProfit,
         operationsSincePause: config.operationsSincePause,
         lastTradeAt: config.lastTradeAt,
         nextTradeAt: config.nextTradeAt,
@@ -318,6 +323,7 @@ export class AutonomousAgentService implements OnModuleInit {
             martingale_count = 0,
             soros_level = 0,
             soros_stake = 0,
+            soros_profit = 0,
             session_status = 'active',
             next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
             updated_at = NOW()
@@ -1532,19 +1538,20 @@ export class AutonomousAgentService implements OnModuleInit {
               { loginid: msg.authorize?.loginid, tradeId },
             ).catch(() => {});
 
-            // Enviar proposal (seguindo padrão do AiService)
-            const proposalPayload = {
-              proposal: 1,
-              amount: stakeAmount,
-              basis: 'stake',
-              contract_type: contractType,
-              currency: state.currency,
-              duration: duration,
-              duration_unit: 't',
-              symbol: state.symbol,
+            // Compra direta (conforme MUDANCA_FLUXO_COMPRA_DIRETA.md e padrão da IA)
+            // Enviar buy diretamente com parâmetros do contrato (sem proposal prévia)
+            const buyPayload = {
+              buy: 1,
+              price: stakeAmount,
+              parameters: {
+                contract_type: contractType,
+                duration: duration,
+                duration_unit: 't',
+                symbol: state.symbol,
+              },
             };
 
-            this.logger.log(`[ExecuteTrade] Enviando proposal para trade ${tradeId}`, proposalPayload);
+            this.logger.log(`[ExecuteTrade] Enviando compra direta para trade ${tradeId}`, buyPayload);
             await this.saveLog(
               state.userId,
               'INFO',
@@ -1557,80 +1564,24 @@ export class AutonomousAgentService implements OnModuleInit {
               },
             ).catch(() => {});
             
-            ws.send(JSON.stringify(proposalPayload));
-            return;
-          }
-
-          // Processar resposta da proposal (seguindo padrão do AiService)
-          if (msg.msg_type === 'proposal') {
-            this.logger.log(`[ExecuteTrade] Proposal recebida para trade ${tradeId}`);
-            
-            const proposal = msg.proposal;
-            if (!proposal || !proposal.id) {
-              await this.saveLog(
-                state.userId,
-                'ERROR',
-                'TRADER',
-                `Proposta inválida recebida. trade_id=${tradeId}`,
-                { tradeId, proposal },
-              ).catch(() => {});
-              finalize(new Error('Proposta inválida'));
-              return;
-            }
-
-            const proposalId = proposal.id;
-            const proposalPrice = Number(proposal.ask_price);
-            const payoutAbsolute = Number(proposal.payout || 0);
-            
-            // Atualizar payout no banco (lucro líquido = payout - stakeAmount, como no AiService)
-            const payoutLiquido = payoutAbsolute - stakeAmount;
-            await this.dataSource.query(
-              'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
-              [payoutLiquido, tradeId],
-            );
-
-            // Calcular payout percentual para logs
-            const payoutPercentual = proposalPrice > 0 
-              ? ((payoutAbsolute / proposalPrice - 1) * 100) 
-              : 0;
-            const payoutCliente = payoutPercentual - 3;
-            
-            // Logs de payout (formato da documentação)
             await this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
-              `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+              `Sending direct buy order. trade_id=${tradeId}, contract_type=${contractType}, stake=${stakeAmount.toFixed(2)}`,
               {
-                payoutPercentual,
-                payoutAbsolute,
-                askPrice: proposalPrice,
+                tradeId,
+                contractType,
+                stake: stakeAmount,
+                duration,
               },
             ).catch(() => {});
             
-            await this.saveLog(
-              state.userId,
-              'DEBUG',
-              'TRADER',
-              `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
-              {
-                payoutCliente,
-                payoutPercentual,
-                markup: 3,
-              },
-            ).catch(() => {});
-
-            // Enviar ordem de compra (seguindo padrão do AiService)
-            ws.send(
-              JSON.stringify({
-                buy: proposalId,
-                price: proposalPrice,
-              }),
-            );
+            ws.send(JSON.stringify(buyPayload));
             return;
           }
 
-          // Processar resposta do buy (seguindo padrão do AiService)
+          // Processar resposta do buy (compra direta - conforme MUDANCA_FLUXO_COMPRA_DIRETA.md)
           if (msg.msg_type === 'buy') {
             const buy = msg.buy;
             if (!buy || !buy.contract_id) {
@@ -1646,8 +1597,50 @@ export class AutonomousAgentService implements OnModuleInit {
             }
 
             contractId = buy.contract_id;
-            const buyPrice = Number(buy.buy_price);
+            const buyPrice = Number(buy.buy_price || stakeAmount);
             const entrySpot = Number(buy.entry_spot || 0);
+            
+            // Extrair payout da resposta do buy (se disponível)
+            const payoutAbsolute = Number(buy.payout || 0);
+            if (payoutAbsolute > 0) {
+              // Atualizar payout no banco (lucro líquido = payout - stakeAmount)
+              const payoutLiquido = payoutAbsolute - stakeAmount;
+              await this.dataSource.query(
+                'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+                [payoutLiquido, tradeId],
+              );
+
+              // Calcular payout percentual para logs
+              const payoutPercentual = buyPrice > 0 
+                ? ((payoutAbsolute / buyPrice - 1) * 100) 
+                : 0;
+              const payoutCliente = payoutPercentual - 3;
+              
+              // Logs de payout (formato da documentação)
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout from Deriv (buy response): ${payoutPercentual.toFixed(2)}%`,
+                {
+                  payoutPercentual,
+                  payoutAbsolute,
+                  buyPrice,
+                },
+              ).catch(() => {});
+              
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+                {
+                  payoutCliente,
+                  payoutPercentual,
+                  markup: 3,
+                },
+              ).catch(() => {});
+            }
 
             this.logger.log(
               `[ExecuteTrade] Atualizando entry_price | tradeId=${tradeId} | entrySpot=${entrySpot} | buy.entry_spot=${buy.entry_spot}`,
@@ -1663,6 +1656,17 @@ export class AutonomousAgentService implements OnModuleInit {
             this.logger.log(`[ExecuteTrade] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
             // Inscrever para monitorar contrato (seguindo padrão do AiService)
+            await this.saveLog(
+              state.userId,
+              'DEBUG',
+              'TRADER',
+              `Subscribing to contract. trade_id=${tradeId}, contract_id=${contractId}`,
+              {
+                tradeId,
+                contractId,
+              },
+            ).catch(() => {});
+            
             ws.send(
               JSON.stringify({
                 proposal_open_contract: 1,
@@ -1695,8 +1699,68 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'proposal_open_contract') {
             const contract = msg.proposal_open_contract;
             
-            // Se contrato ainda não foi vendido, apenas retornar (continuar monitorando)
+            // Se contrato ainda não foi vendido, verificar se podemos obter payout
             if (!contract || contract.is_sold !== 1) {
+              // Obter payout via proposal_open_contract se não foi obtido na resposta do buy
+              if (contract.payout && contract.buy_price) {
+                const payoutAbsolute = Number(contract.payout || 0);
+                const buyPrice = Number(contract.buy_price || stakeAmount);
+                
+                if (payoutAbsolute > 0) {
+                  // Atualizar payout no banco (lucro líquido = payout - stakeAmount)
+                  const payoutLiquido = payoutAbsolute - stakeAmount;
+                  await this.dataSource.query(
+                    'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+                    [payoutLiquido, tradeId],
+                  ).catch(() => {});
+
+                  // Calcular payout percentual para logs
+                  const payoutPercentual = buyPrice > 0 
+                    ? ((payoutAbsolute / buyPrice - 1) * 100) 
+                    : 0;
+                  const payoutCliente = payoutPercentual - 3;
+                  
+                  // Logs de payout (formato da documentação)
+                  await this.saveLog(
+                    state.userId,
+                    'DEBUG',
+                    'TRADER',
+                    `Payout from Deriv (proposal_open_contract): ${payoutPercentual.toFixed(2)}%`,
+                    {
+                      payoutPercentual,
+                      payoutAbsolute,
+                      buyPrice,
+                    },
+                  ).catch(() => {});
+                  
+                  await this.saveLog(
+                    state.userId,
+                    'DEBUG',
+                    'TRADER',
+                    `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+                    {
+                      payoutCliente,
+                      payoutPercentual,
+                      markup: 3,
+                    },
+                  ).catch(() => {});
+                }
+              }
+              
+              // Log de atualização do contrato (seguindo padrão do AiService)
+              await this.saveLog(
+                state.userId,
+                'DEBUG',
+                'TRADER',
+                `Contract update received. trade_id=${tradeId}, contract_id=${contract.contract_id || contractId}, is_sold=${contract.is_sold || 0}, status=${contract.status || 'active'}`,
+                {
+                  tradeId,
+                  contractId: contract.contract_id || contractId,
+                  isSold: contract.is_sold || 0,
+                  status: contract.status || 'active',
+                },
+              ).catch(() => {});
+              
               return;
             }
 
@@ -2029,6 +2093,11 @@ export class AutonomousAgentService implements OnModuleInit {
 
     if (won) {
       // Vitória: Processar Soros ou resetar Martingale
+      // Seguindo a ordem exata da documentação:
+      // 1. Verificar Soros primeiro
+      // 2. Se não estiver em Soros, verificar Martingale
+      // 3. Se estiver em Martingale, resetar E ativar Soros
+      // 4. Se não estiver em Martingale, ativar Soros
       state.dailyProfit += result.profitLoss;
       
       // Atualizar profit_peak para Stop Loss Blindado
@@ -2040,8 +2109,56 @@ export class AutonomousAgentService implements OnModuleInit {
         );
       }
 
-      // Se estava em Martingale, resetar
-      if (state.martingaleLevel !== 'M0') {
+      // 1. Verificar Soros primeiro (conforme documentação)
+      if (state.sorosLevel === 1) {
+        // Vitória no Soros 1 -> Vai para o Nível 2
+        // Armazenar profit da última operação (conforme documentação)
+        const nextStake = stakeAmount + result.profitLoss;
+        state.sorosLevel = 2;
+        state.sorosStake = nextStake;
+        state.sorosProfit = result.profitLoss; // Profit da última operação ganha
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config SET soros_level = 2, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+          [nextStake, result.profitLoss, state.userId],
+        );
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Soros active. level=2, stake=${nextStake.toFixed(2)}, previous_stake=${stakeAmount.toFixed(2)}, profit=${result.profitLoss.toFixed(2)}`,
+          {
+            sorosLevelBefore: 1,
+            sorosLevelAfter: 2,
+            sorosStakeBefore: stakeAmount,
+            sorosStakeAfter: nextStake,
+            profit: result.profitLoss,
+          },
+        );
+      } else if (state.sorosLevel === 2) {
+        // Vitória no Soros 2 -> Ciclo completo!
+        state.sorosLevel = 0;
+        state.sorosStake = 0;
+        state.sorosProfit = 0.0; // Resetar profit (conforme documentação)
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
+          [state.userId],
+        );
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Soros complete. Cycle finished. Returning to initial stake. profit=${result.profitLoss.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}`,
+          {
+            sorosLevelBefore: 2,
+            sorosLevelAfter: 0,
+            profit: result.profitLoss,
+            initialStake: state.initialStake,
+          },
+        );
+      } else if (state.martingaleLevel !== 'M0') {
+        // 2. Se não estiver em Soros, verificar Martingale
+        // 3. Vitória na recuperação -> Reseta tudo e ativa Soros 1
+        const martingaleLevelBefore = state.martingaleLevel;
         state.martingaleLevel = 'M0';
         state.martingaleCount = 0;
         state.lastLossAmount = 0;
@@ -2060,70 +2177,45 @@ export class AutonomousAgentService implements OnModuleInit {
           state.userId,
           'INFO',
           'RISK',
-          `Martingale resetado. motivo=OperaçãoGanhou, lucro=${result.profitLoss.toFixed(2)}, level_anterior=${state.martingaleLevel}`,
+          `Martingale resetado. motivo=OperaçãoGanhou, lucro=${result.profitLoss.toFixed(2)}, level_anterior=${martingaleLevelBefore}`,
           {
-            martingaleLevelBefore: state.martingaleLevel,
+            martingaleLevelBefore,
             martingaleLevelAfter: 'M0',
             profit: result.profitLoss,
             reason: 'OperaçãoGanhou',
           },
         );
-      }
 
-      // Se estava em Soros, avançar ou resetar
-      if (state.sorosLevel > 0) {
-        if (state.sorosLevel === 2) {
-          // Soros Nível 2 completo: resetar para M0
-          state.sorosLevel = 0;
-          state.sorosStake = 0;
-          await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0 WHERE user_id = ?`,
-            [state.userId],
-          );
-          await this.saveLog(
-            state.userId,
-            'INFO',
-            'RISK',
-            `Soros complete. Cycle finished. Returning to initial stake. profit=${result.profitLoss.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}`,
-            {
-              sorosLevelBefore: 2,
-              sorosLevelAfter: 0,
-              profit: result.profitLoss,
-              initialStake: state.initialStake,
-            },
-          );
-        } else {
-          // Avançar para próximo nível do Soros
-          const nextLevel = state.sorosLevel + 1;
-          const nextStake = stakeAmount + result.profitLoss;
-          state.sorosLevel = nextLevel;
-          state.sorosStake = nextStake;
-          await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET soros_level = ?, soros_stake = ? WHERE user_id = ?`,
-            [nextLevel, nextStake, state.userId],
-          );
-          await this.saveLog(
-            state.userId,
-            'INFO',
-            'RISK',
-            `Soros active. level=${nextLevel}, stake=${nextStake.toFixed(2)}, previous_stake=${stakeAmount.toFixed(2)}, profit=${result.profitLoss.toFixed(2)}`,
-            {
-              sorosLevelBefore: state.sorosLevel,
-              sorosLevelAfter: nextLevel,
-              sorosStakeBefore: stakeAmount,
-              sorosStakeAfter: nextStake,
-              profit: result.profitLoss,
-            },
-          );
-        }
-      } else if (state.martingaleLevel === 'M0') {
-        // Vitória em M0: ativar Soros Nível 1
+        // Ativar Soros Nível 1 após resetar Martingale
         const sorosStake = state.initialStake + result.profitLoss;
         state.sorosLevel = 1;
         state.sorosStake = sorosStake;
+        state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ? WHERE user_id = ?`,
-          [sorosStake, state.userId],
+          `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+          [sorosStake, result.profitLoss, state.userId],
+        );
+        await this.saveLog(
+          state.userId,
+          'INFO',
+          'RISK',
+          `Soros activated (level 1). initial_stake=${state.initialStake.toFixed(2)}, profit=${result.profitLoss.toFixed(2)}, soros_stake=${sorosStake.toFixed(2)}`,
+          {
+            sorosLevel: 1,
+            initialStake: state.initialStake,
+            profit: result.profitLoss,
+            sorosStake,
+          },
+        );
+      } else {
+        // 4. Vitória normal (M0 e não em Soros) -> Ativa Soros 1
+        const sorosStake = state.initialStake + result.profitLoss;
+        state.sorosLevel = 1;
+        state.sorosStake = sorosStake;
+        state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config SET soros_level = 1, soros_stake = ?, soros_profit = ? WHERE user_id = ?`,
+          [sorosStake, result.profitLoss, state.userId],
         );
         await this.saveLog(
           state.userId,
@@ -2175,26 +2267,25 @@ export class AutonomousAgentService implements OnModuleInit {
         // Salvar estado antes de resetar
         const sorosLevelBefore = state.sorosLevel;
         const sorosStakeBefore = state.sorosStake;
+        const sorosProfitBefore = state.sorosProfit;
         
-        // Calcular perda líquida: stake atual - lucro acumulado do Soros
-        // O lucro acumulado do Soros é a diferença entre sorosStake e initialStake
-        const sorosProfit = state.sorosStake > state.initialStake 
-          ? state.sorosStake - state.initialStake 
-          : 0;
-        const netLoss = stakeAmount - sorosProfit;
+        // Calcular perda líquida: stake atual - profit da última operação ganha (conforme documentação)
+        // net_loss = stake - soros_profit
+        const netLoss = stakeAmount - state.sorosProfit;
         
         await this.saveLog(
           state.userId,
           'DEBUG',
           'RISK',
-          `Soros loss calculation. soros_stake=${sorosStakeBefore.toFixed(2)}, initial_stake=${state.initialStake.toFixed(2)}, soros_profit=${sorosProfit.toFixed(2)}, stake_lost=${stakeAmount.toFixed(2)}, net_loss=${netLoss.toFixed(2)}`,
+          `Soros loss calculation. soros_stake=${sorosStakeBefore.toFixed(2)}, soros_profit=${sorosProfitBefore.toFixed(2)}, stake_lost=${stakeAmount.toFixed(2)}, net_loss=${netLoss.toFixed(2)}`,
         ).catch(() => {});
         
         // Resetar Soros
         state.sorosLevel = 0;
         state.sorosStake = 0;
+        state.sorosProfit = 0;
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0 WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET soros_level = 0, soros_stake = 0, soros_profit = 0 WHERE user_id = ?`,
           [state.userId],
         );
         

@@ -54,3 +54,4 @@ SELECT '✅ Stop-Loss Blindado (ZENIX v2.0) configurado!' as Resultado;
 
 
 
+
