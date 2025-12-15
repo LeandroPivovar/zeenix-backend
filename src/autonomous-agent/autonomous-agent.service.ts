@@ -3400,11 +3400,11 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId, todayStr],
     );
 
-    // Buscar TODAS as operações do agente autônomo do dia (independente do status)
+    // Buscar TODAS as operações do agente autônomo do dia (excluindo status ERROR)
     const allAutonomousTrades = await this.dataSource.query(
       `SELECT COUNT(*) as total_trades
        FROM autonomous_agent_trades
-       WHERE user_id = ? AND DATE(created_at) = ?`,
+       WHERE user_id = ? AND DATE(created_at) = ? AND status != 'ERROR'`,
       [userId, todayStr],
     );
 
