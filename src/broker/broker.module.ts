@@ -16,7 +16,7 @@ import { TradeEntity } from '../infrastructure/database/entities/trade.entity';
   ],
   controllers: [DerivController],
   providers: [DerivService, DerivWebSocketService, DerivWebSocketManagerService],
-  exports: [DerivWebSocketService, DerivWebSocketManagerService],
+  exports: [DerivService, DerivWebSocketService, DerivWebSocketManagerService],
 })
 export class BrokerModule {}
 
