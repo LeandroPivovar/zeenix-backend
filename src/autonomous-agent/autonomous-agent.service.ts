@@ -1580,7 +1580,8 @@ export class AutonomousAgentService implements OnModuleInit {
             
             const buyPayload = {
               buy: 1,
-              price: stakeAmount,
+              amount: stakeAmount, // Usar 'amount' ao invés de 'price' quando usando basis: 'stake'
+              basis: 'stake', // Especificar que amount é o stake
               parameters: {
                 contract_type: derivContractType,
                 duration: duration,
