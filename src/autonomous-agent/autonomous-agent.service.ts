@@ -3381,30 +3381,39 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   async getSessionStats(userId: string): Promise<any> {
+    // Usar data de hoje no timezone local (Brasil)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
 
-    // Buscar estatísticas do agente autônomo
+    // Buscar estatísticas do agente autônomo (apenas finalizados para wins/losses/profit)
     const stats = await this.dataSource.query(
       `SELECT 
-        COUNT(*) as total_trades,
+        COUNT(CASE WHEN status IN ('WON', 'LOST') THEN 1 END) as total_trades,
         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
         SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
         SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as total_profit,
         SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as total_loss
        FROM autonomous_agent_trades
-       WHERE user_id = ? AND DATE(created_at) = DATE(?)
+       WHERE user_id = ? AND DATE(created_at) = ?
        AND status IN ('WON', 'LOST')`,
-      [userId, today],
+      [userId, todayStr],
     );
 
-    // Buscar operações de ai_trades do dia de hoje
+    // Buscar TODAS as operações do agente autônomo do dia (independente do status)
+    const allAutonomousTrades = await this.dataSource.query(
+      `SELECT COUNT(*) as total_trades
+       FROM autonomous_agent_trades
+       WHERE user_id = ? AND DATE(created_at) = ?`,
+      [userId, todayStr],
+    );
+
+    // Buscar operações de ai_trades do dia de hoje (todas as operações, independente do status)
     const aiTradesStats = await this.dataSource.query(
       `SELECT COUNT(*) as total_trades
        FROM ai_trades
-       WHERE user_id = ? AND DATE(created_at) = DATE(?)
-       AND status IN ('WON', 'LOST')`,
-      [userId, today],
+       WHERE user_id = ? AND DATE(created_at) = ?`,
+      [userId, todayStr],
     );
 
     // Buscar capital inicial da configuração do agente
@@ -3420,9 +3429,13 @@ export class AutonomousAgentService implements OnModuleInit {
     // Usar initialBalance se disponível, senão usar initialStake * 10 como estimativa
     const totalCapital = initialBalance > 0 ? initialBalance : (initialStake * 10);
 
-    const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
+    // Contar TODAS as operações do dia (independente do status)
+    const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
     const aiTrades = aiTradesStats && aiTradesStats.length > 0 ? parseInt(aiTradesStats[0].total_trades) || 0 : 0;
-    const totalTradesToday = autonomousTrades + aiTrades;
+    const totalTradesToday = autonomousTradesAll + aiTrades;
+    
+    // Para estatísticas (wins/losses), usar apenas trades finalizados
+    const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
 
     if (!stats || stats.length === 0) {
       return {
@@ -3444,6 +3457,10 @@ export class AutonomousAgentService implements OnModuleInit {
     const totalProfit = parseFloat(s.total_profit) || 0;
     const totalLoss = parseFloat(s.total_loss) || 0;
     const netProfit = totalProfit - totalLoss;
+
+    this.logger.log(
+      `[GetSessionStats][${userId}] Operações hoje: autonomous=${autonomousTradesAll}, ai=${aiTrades}, total=${totalTradesToday}`,
+    );
 
     return {
       totalTrades: autonomousTrades,
