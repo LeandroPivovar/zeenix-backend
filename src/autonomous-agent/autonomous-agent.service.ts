@@ -3455,8 +3455,28 @@ export class AutonomousAgentService implements OnModuleInit {
 
     const initialBalance = config && config.length > 0 ? parseFloat(config[0].initial_balance) || 0 : 0;
     // Usar initialBalance como valor total da conta configurada (sempre usar este valor quando disponível)
-    // Se initialBalance for 0, significa que não foi configurado ainda, então retornar 0 para evitar cálculos incorretos
-    const totalCapital = initialBalance > 0 ? initialBalance : 0;
+    // Se initialBalance for 0, tentar buscar o saldo atual da conta Deriv como fallback
+    let totalCapital = initialBalance > 0 ? initialBalance : 0;
+    
+    // Se initialBalance não estiver configurado, tentar buscar saldo atual da conta
+    if (totalCapital === 0 && config && config.length > 0 && this.derivService) {
+      try {
+        const derivToken = config[0].deriv_token;
+        const currency = config[0].currency || 'USD';
+        if (derivToken) {
+          // Buscar saldo atual da conta Deriv
+          const accountInfo = await this.derivService.connectAndGetAccount(derivToken, parseInt(this.appId), currency);
+          if (accountInfo && accountInfo.balance && accountInfo.balance.value) {
+            totalCapital = accountInfo.balance.value;
+            this.logger.log(`[GetSessionStats][${userId}] initial_balance não configurado, usando saldo atual da conta: ${totalCapital}`);
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`[GetSessionStats][${userId}] Erro ao buscar saldo da conta Deriv: ${error.message}`);
+      }
+    }
+    
+    this.logger.log(`[GetSessionStats][${userId}] totalCapital: ${totalCapital}, initialBalance: ${initialBalance}`);
 
     // Contar TODAS as operações do dia de autonomous_agent_trades (independente do status)
     const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
