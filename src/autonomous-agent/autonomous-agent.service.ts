@@ -3384,6 +3384,7 @@ export class AutonomousAgentService implements OnModuleInit {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Buscar estatísticas do agente autônomo
     const stats = await this.dataSource.query(
       `SELECT 
         COUNT(*) as total_trades,
@@ -3397,33 +3398,63 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId, today],
     );
 
+    // Buscar operações de ai_trades do dia de hoje
+    const aiTradesStats = await this.dataSource.query(
+      `SELECT COUNT(*) as total_trades
+       FROM ai_trades
+       WHERE user_id = ? AND DATE(created_at) = DATE(?)
+       AND status IN ('WON', 'LOST')`,
+      [userId, today],
+    );
+
+    // Buscar capital inicial da configuração do agente
+    const config = await this.dataSource.query(
+      `SELECT initial_stake, initial_balance 
+       FROM autonomous_agent_config 
+       WHERE user_id = ?`,
+      [userId],
+    );
+
+    const initialStake = config && config.length > 0 ? parseFloat(config[0].initial_stake) || 0 : 0;
+    const initialBalance = config && config.length > 0 ? parseFloat(config[0].initial_balance) || 0 : 0;
+    // Usar initialBalance se disponível, senão usar initialStake * 10 como estimativa
+    const totalCapital = initialBalance > 0 ? initialBalance : (initialStake * 10);
+
+    const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
+    const aiTrades = aiTradesStats && aiTradesStats.length > 0 ? parseInt(aiTradesStats[0].total_trades) || 0 : 0;
+    const totalTradesToday = autonomousTrades + aiTrades;
+
     if (!stats || stats.length === 0) {
       return {
-        totalTrades: 0,
+        totalTrades: totalTradesToday,
         wins: 0,
         losses: 0,
         winRate: 0,
         totalProfit: 0,
         totalLoss: 0,
         netProfit: 0,
+        totalCapital,
+        operationsToday: totalTradesToday,
       };
     }
 
     const s = stats[0];
-    const totalTrades = parseInt(s.total_trades) || 0;
     const wins = parseInt(s.wins) || 0;
     const losses = parseInt(s.losses) || 0;
     const totalProfit = parseFloat(s.total_profit) || 0;
     const totalLoss = parseFloat(s.total_loss) || 0;
+    const netProfit = totalProfit - totalLoss;
 
     return {
-      totalTrades,
+      totalTrades: autonomousTrades,
       wins,
       losses,
-      winRate: totalTrades > 0 ? (wins / totalTrades) * 100 : 0,
+      winRate: autonomousTrades > 0 ? (wins / autonomousTrades) * 100 : 0,
       totalProfit,
       totalLoss,
-      netProfit: totalProfit - totalLoss,
+      netProfit,
+      totalCapital,
+      operationsToday: totalTradesToday,
     };
   }
 
