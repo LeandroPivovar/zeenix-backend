@@ -1078,7 +1078,7 @@ export class TrinityStrategy implements IStrategy {
             }
 
             // ✅ Log: Status do contrato (apenas quando muda ou é importante)
-            if (contract.status && (contract.status === 'sold' || contract.is_sold)) {
+            if (contract.status && (contract.status === 'won' || contract.status === 'lost' || contract.is_sold)) {
               this.saveTrinityLog(state.userId, symbol, 'info', 
                 `Contrato monitorado | Status: ${contract.status} | is_sold: ${contract.is_sold} | Profit: $${(contract.profit || 0).toFixed(2)}`, {
                   contractId,
@@ -1088,8 +1088,8 @@ export class TrinityStrategy implements IStrategy {
                 });
             }
 
-            // Contrato finalizado
-            if (contract.is_sold && contract.status === 'sold') {
+            // Contrato finalizado (verificar apenas is_sold, como a Orion faz)
+            if (contract.is_sold === 1) {
               clearTimeout(timeout);
               
               if (contractSubscriptionId) {
@@ -1104,7 +1104,8 @@ export class TrinityStrategy implements IStrategy {
               
               const profit = Number(contract.profit || 0);
               const isWin = profit > 0;
-              const exitPrice = Number(contract.exit_tick || contract.exit_tick_display_value || 0);
+              // ✅ Usar exit_spot ou current_spot como a Orion faz
+              const exitPrice = Number(contract.exit_spot || contract.exit_tick || contract.exit_tick_display_value || contract.current_spot || 0);
               
               // ✅ Log: Contrato finalizado
               this.saveTrinityLog(state.userId, symbol, 'info', 
