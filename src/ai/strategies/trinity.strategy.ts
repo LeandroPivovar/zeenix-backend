@@ -1550,6 +1550,11 @@ export class TrinityStrategy implements IStrategy {
     // Adicionar à fila
     this.logQueue.push({ userId, symbol, type, message, details });
 
+    // ✅ Log: Debug - verificar se está adicionando à fila
+    if (this.logQueue.length % 10 === 0) {
+      this.logger.debug(`[TRINITY][SaveLog] Fila de logs: ${this.logQueue.length} logs pendentes`);
+    }
+
     // Processar fila em background (não bloqueia)
     this.processTrinityLogQueue().catch(error => {
       this.logger.error(`[TRINITY][SaveLog] Erro ao processar fila de logs:`, error);
@@ -1574,6 +1579,9 @@ export class TrinityStrategy implements IStrategy {
         this.logProcessing = false;
         return;
       }
+
+      // ✅ Log: Debug - processando batch
+      this.logger.debug(`[TRINITY][ProcessLogQueue] Processando ${batch.length} logs, ${this.logQueue.length} restantes na fila`);
 
       // Agrupar por userId para otimizar
       const logsByUser = new Map<string, typeof batch>();
@@ -1626,7 +1634,6 @@ export class TrinityStrategy implements IStrategy {
         resultado: '✅',
         alerta: '⚠️',
         erro: '🚫',
-        evento: 'ℹ️',
       };
 
       // Preparar valores para INSERT em batch
@@ -1642,10 +1649,10 @@ export class TrinityStrategy implements IStrategy {
           log.type,
           icon,
           messageWithSymbol.substring(0, 5000),
-          JSON.stringify({
+          log.details ? JSON.stringify({
             symbol: log.symbol,
             ...(log.details || {}),
-          }).substring(0, 10000),
+          }).substring(0, 10000) : JSON.stringify({ symbol: log.symbol }).substring(0, 10000),
           userId, // session_id (usando userId como fallback)
         ];
       });
@@ -1659,8 +1666,16 @@ export class TrinityStrategy implements IStrategy {
          VALUES ${placeholders}`,
         flatValues,
       );
+      
+      // ✅ Log: Confirmar salvamento
+      this.logger.log(`[TRINITY][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`);
     } catch (error) {
       this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro ao salvar logs em batch:`, error);
+      // ✅ Log detalhado do erro
+      if (error instanceof Error) {
+        this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro detalhado: ${error.message}`);
+        this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Stack: ${error.stack}`);
+      }
     }
   }
 
