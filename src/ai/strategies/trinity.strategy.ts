@@ -687,9 +687,12 @@ export class TrinityStrategy implements IStrategy {
   }): void {
     const existing = this.trinityUsers.get(params.userId);
     if (existing) {
+      // ✅ Quando reativar, atualizar capitalInicial para o capital atual (nova sessão)
+      // Isso garante que o stop-loss seja calculado corretamente a partir do novo capital
+      const novoCapitalInicial = params.stakeAmount;
       Object.assign(existing, {
         capital: params.stakeAmount,
-        capitalInicial: existing.capitalInicial || params.stakeAmount,
+        capitalInicial: novoCapitalInicial,
         derivToken: params.derivToken,
         currency: params.currency,
         mode: params.mode,
@@ -697,7 +700,13 @@ export class TrinityStrategy implements IStrategy {
         profitTarget: params.profitTarget || null,
         stopLoss: params.lossLimit || null,
         isStopped: false,
+        totalProfitLoss: 0, // Resetar P&L total para nova sessão
       });
+      
+      // ✅ Log: Reativação
+      this.logger.log(
+        `[TRINITY] 🔄 Usuário REATIVADO | Capital: $${params.stakeAmount.toFixed(2)} | Capital Inicial: $${novoCapitalInicial.toFixed(2)} | Stop-loss: ${params.lossLimit ? `-$${Math.abs(params.lossLimit).toFixed(2)}` : 'N/A'}`,
+      );
       return;
     }
 
@@ -1375,6 +1384,11 @@ export class TrinityStrategy implements IStrategy {
   private async checkTrinityLimits(state: TrinityUserState): Promise<void> {
     const lucroAtual = state.capital - state.capitalInicial;
     
+    // ✅ Log: Debug - valores para verificação
+    this.logger.debug(
+      `[TRINITY][CheckLimits] Capital: $${state.capital.toFixed(2)} | Capital Inicial: $${state.capitalInicial.toFixed(2)} | Lucro Atual: $${lucroAtual.toFixed(2)} | Stop-loss: ${state.stopLoss ? `-$${Math.abs(state.stopLoss).toFixed(2)}` : 'N/A'}`,
+    );
+    
     // ✅ Verificar META DIÁRIA
     if (state.profitTarget && lucroAtual >= state.profitTarget) {
       state.isStopped = true;
@@ -1392,7 +1406,11 @@ export class TrinityStrategy implements IStrategy {
     }
 
     // ✅ Verificar STOP-LOSS NORMAL
-    if (state.stopLoss && lucroAtual <= state.stopLoss) {
+    // Stop-loss só deve ser acionado se:
+    // 1. Há um stop-loss configurado (negativo, ex: -25.00)
+    // 2. O lucro atual é negativo (há perda)
+    // 3. A perda atual é maior ou igual ao stop-loss (mais negativo)
+    if (state.stopLoss && lucroAtual < 0 && lucroAtual <= state.stopLoss) {
       state.isStopped = true;
       const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
       this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
