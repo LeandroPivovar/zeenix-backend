@@ -537,6 +537,8 @@ export class OrionStrategy implements IStrategy {
     mode: string,
   ): Promise<void> {
     return new Promise((resolve) => {
+      this.logger.log(`[ORION][${mode}] 🔍 Iniciando monitoramento do contrato ${contractId} (tradeId: ${tradeId})`);
+      
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint, {
         headers: {
@@ -547,11 +549,12 @@ export class OrionStrategy implements IStrategy {
       const timeout = setTimeout(() => {
         ws.close();
         state.isOperationActive = false;
-        this.logger.warn(`[ORION][${mode}] Timeout ao monitorar contrato ${contractId}`);
+        this.logger.warn(`[ORION][${mode}] ⏱️ Timeout ao monitorar contrato ${contractId}`);
         resolve();
       }, 120000); // 2 minutos
 
       ws.on('open', () => {
+        this.logger.debug(`[ORION][${mode}] 🔌 WebSocket aberto para monitoramento do contrato ${contractId}`);
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
 
@@ -560,6 +563,7 @@ export class OrionStrategy implements IStrategy {
           const msg = JSON.parse(data.toString());
           
           if (msg.authorize) {
+            this.logger.debug(`[ORION][${mode}] ✅ Autorizado, inscrevendo no contrato ${contractId}`);
             ws.send(JSON.stringify({
               proposal_open_contract: 1,
               contract_id: contractId,
@@ -570,15 +574,22 @@ export class OrionStrategy implements IStrategy {
 
           if (msg.proposal_open_contract) {
             const contract = msg.proposal_open_contract;
+            this.logger.debug(`[ORION][${mode}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
             
             // Verificar se contrato foi finalizado
-            if (contract.is_sold === 1 || contract.is_sold === true) {
+            // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
+            const isFinalized = contract.is_sold === 1 || contract.is_sold === true || 
+                               contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
+            
+            if (isFinalized) {
               clearTimeout(timeout);
               ws.close();
               
               const profit = Number(contract.profit || 0);
-              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || contract.exit_tick || 0);
               const status = profit >= 0 ? 'WON' : 'LOST';
+
+              this.logger.log(`[ORION][${mode}] ✅ Contrato ${contractId} finalizado: ${status} | P&L: $${profit.toFixed(2)} | Exit: ${exitPrice}`);
 
               // Atualizar trade no banco
               await this.dataSource.query(
@@ -629,9 +640,13 @@ export class OrionStrategy implements IStrategy {
 
       ws.on('error', (error) => {
         clearTimeout(timeout);
-        this.logger.error(`[ORION][${mode}] Erro no WebSocket de monitoramento:`, error);
+        this.logger.error(`[ORION][${mode}] ❌ Erro no WebSocket de monitoramento do contrato ${contractId}:`, error);
         state.isOperationActive = false;
         resolve();
+      });
+
+      ws.on('close', () => {
+        this.logger.debug(`[ORION][${mode}] 🔌 WebSocket fechado para contrato ${contractId}`);
       });
     });
   }
