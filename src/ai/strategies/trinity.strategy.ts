@@ -129,13 +129,17 @@ export class TrinityStrategy implements IStrategy {
   }
 
   async initialize(): Promise<void> {
-    this.logger.log('[TRINITY] Estratégia TRINITY inicializada');
+    this.logger.log('[TRINITY] 🔵 Estratégia TRINITY inicializada');
     await this.initializeTrinityWebSockets();
     
     // ✅ Log: Sistema inicializado
-    for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-        `Sistema INICIADO | Conectando 3 ativos (R_10, R_25, R_50)...`);
+    if (this.trinityUsers.size > 0) {
+      for (const userId of this.trinityUsers.keys()) {
+        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
+          `Sistema INICIADO | Conectando 3 ativos (R_10, R_25, R_50)...`);
+      }
+    } else {
+      this.logger.log('[TRINITY] ⚠️ Nenhum usuário ativo - WebSockets conectados, aguardando usuários...');
     }
   }
 
@@ -200,27 +204,37 @@ export class TrinityStrategy implements IStrategy {
   private async initializeTrinityWebSockets(): Promise<void> {
     const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
     
+    this.logger.log(`[TRINITY] 🔌 Inicializando WebSockets para ${symbols.join(', ')}...`);
+    
     // ✅ Log: Iniciando conexões
-    for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-        `Conectando 3 ativos...`);
-      for (const symbol of symbols) {
-        this.saveTrinityLog(userId, symbol, 'info', `Conectando ao WebSocket...`);
+    if (this.trinityUsers.size > 0) {
+      for (const userId of this.trinityUsers.keys()) {
+        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
+          `Conectando 3 ativos...`);
+        for (const symbol of symbols) {
+          this.saveTrinityLog(userId, symbol, 'info', `Conectando ao WebSocket...`);
+        }
       }
     }
     
     for (const symbol of symbols) {
       if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
+        this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
         continue;
       }
+      this.logger.log(`[TRINITY][${symbol}] 🔌 Conectando WebSocket...`);
       await this.initializeTrinityWebSocket(symbol);
     }
     
     // ✅ Log: Todas conexões estabelecidas
     const totalConectados = symbols.filter(s => this.trinityConnected[s]).length;
-    for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-        `${totalConectados} ativos conectados | Iniciando coleta`);
+    this.logger.log(`[TRINITY] ✅ ${totalConectados}/3 WebSockets conectados`);
+    
+    if (this.trinityUsers.size > 0) {
+      for (const userId of this.trinityUsers.keys()) {
+        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
+          `${totalConectados} ativos conectados | Iniciando coleta`);
+      }
     }
   }
 
@@ -360,9 +374,9 @@ export class TrinityStrategy implements IStrategy {
       return;
     }
 
-    // ✅ Log: Tick recebido (apenas se houver usuários ativos)
-    if (this.trinityUsers.size > 0) {
-      this.logger.debug(`[TRINITY][${symbol}] 📊 Tick recebido: valor=${rawQuote} | usuários ativos=${this.trinityUsers.size}`);
+    // ✅ Log: Tick recebido (a cada 100 ticks para não poluir)
+    if (this.trinityTicks[symbol].length % 100 === 0) {
+      this.logger.debug(`[TRINITY][${symbol}] 📊 Tick recebido: valor=${rawQuote} | total ticks=${this.trinityTicks[symbol].length} | usuários ativos=${this.trinityUsers.size}`);
     }
 
     const value = Number(rawQuote);

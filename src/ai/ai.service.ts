@@ -3755,6 +3755,7 @@ export class AiService implements OnModuleInit {
     // ✅ Usar StrategyManager para ativar usuário na estratégia correta
     if (this.strategyManager) {
       try {
+        this.logger.log(`[ActivateAI] 🔵 Ativando usuário ${userId} na estratégia ${strategy} via StrategyManager...`);
         await this.strategyManager.activateUser(userId, strategy, {
           mode: mode || 'veloz',
           stakeAmount,
@@ -3764,6 +3765,13 @@ export class AiService implements OnModuleInit {
           profitTarget: profitTarget || null,
           lossLimit: lossLimit || null,
         });
+        this.logger.log(`[ActivateAI] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
+        
+        // ✅ Se for Trinity, sincronizar imediatamente para garantir que está carregado
+        if (strategy && strategy.toLowerCase() === 'trinity') {
+          this.logger.log(`[ActivateAI] 🔄 Sincronizando Trinity imediatamente após ativação...`);
+          await this.syncTrinityUsersFromDb();
+        }
       } catch (error) {
         this.logger.error(`[ActivateAI] Erro ao ativar usuário na estratégia ${strategy}:`, error);
       }
