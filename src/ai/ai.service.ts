@@ -2910,6 +2910,101 @@ export class AiService implements OnModuleInit {
     }
   }
 
+  /**
+   * ✅ TRINITY: Sincroniza usuários da Trinity do banco de dados
+   */
+  private async syncTrinityUsersFromDb(): Promise<void> {
+    const configs = await this.dataSource.query(
+      `SELECT 
+        user_id as userId,
+        stake_amount as stakeAmount,
+        deriv_token as derivToken,
+        currency,
+        modo_martingale as modoMartingale,
+        mode,
+        profit_target as profitTarget,
+        loss_limit as lossLimit
+       FROM ai_user_config
+       WHERE is_active = TRUE
+         AND LOWER(strategy) = 'trinity'`,
+    );
+
+    if (configs.length > 0) {
+      this.logger.log(
+        `[SyncTrinity] Sincronizando ${configs.length} usuários do banco`,
+      );
+    }
+
+    const activeIds = new Set<string>();
+
+    // ✅ Usar StrategyManager para ativar usuários na classe TrinityStrategy
+    if (this.strategyManager) {
+      for (const config of configs) {
+        activeIds.add(config.userId);
+        this.logger.debug(
+          `[SyncTrinity] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | mode=${config.mode} | martingale=${config.modoMartingale}`,
+        );
+        
+        try {
+          await this.strategyManager.activateUser(config.userId, 'trinity', {
+            mode: config.mode || 'veloz',
+            stakeAmount: Number(config.stakeAmount) || 0,
+            derivToken: config.derivToken,
+            currency: config.currency || 'USD',
+            modoMartingale: config.modoMartingale || 'conservador',
+            profitTarget: config.profitTarget || null,
+            lossLimit: config.lossLimit || null,
+          });
+        } catch (error) {
+          this.logger.error(`[SyncTrinity] Erro ao ativar usuário ${config.userId}:`, error);
+        }
+      }
+
+      // Remover usuários que não estão mais ativos
+      const trinityStrategy = this.strategyManager.getTrinityStrategy();
+      if (trinityStrategy) {
+        // Obter lista de usuários ativos da estratégia
+        // Nota: A classe TrinityStrategy não expõe getUsers(), então precisamos verificar de outra forma
+        // Por enquanto, vamos apenas ativar os que estão no banco e deixar a desativação para quando o usuário for desativado manualmente
+      }
+    } else {
+      // Fallback: usar código legado (não recomendado)
+      this.logger.warn(`[SyncTrinity] StrategyManager não disponível, usando código legado`);
+      for (const config of configs) {
+        activeIds.add(config.userId);
+        this.upsertTrinityUserState({
+          userId: config.userId,
+          stakeAmount: Number(config.stakeAmount) || 0,
+          derivToken: config.derivToken,
+          currency: config.currency || 'USD',
+          mode: config.mode || 'veloz',
+          modoMartingale: config.modoMartingale || 'conservador',
+        });
+      }
+
+      // Remover usuários que não estão mais ativos
+      for (const existingId of Array.from(this.trinityUsers.keys())) {
+        if (!activeIds.has(existingId)) {
+          this.removeTrinityUserState(existingId);
+        }
+      }
+
+      // ✅ Inicializar WebSockets se houver usuários ativos e ainda não estiverem conectados
+      if (this.trinityUsers.size > 0) {
+        const needsInit = ['R_10', 'R_25', 'R_50'].some(
+          symbol => !this.trinityConnected[symbol] || this.trinityWebSockets[symbol]?.readyState !== WebSocket.OPEN
+        );
+        
+        if (needsInit) {
+          this.logger.log(`[SyncTrinity] Inicializando WebSockets para ${this.trinityUsers.size} usuário(s) ativo(s)`);
+          await this.initializeTrinityWebSockets().catch(error => {
+            this.logger.error(`[SyncTrinity] Erro ao inicializar WebSockets:`, error);
+          });
+        }
+      }
+    }
+  }
+
   private upsertVelozUserState(params: {
     userId: string;
     stakeAmount: number;
@@ -3888,6 +3983,7 @@ export class AiService implements OnModuleInit {
         await this.syncVelozUsersFromDb();
         await this.syncModeradoUsersFromDb();
         await this.syncPrecisoUsersFromDb();
+        await this.syncTrinityUsersFromDb();
 
         // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
         const usersToProcess = await this.dataSource.query(
