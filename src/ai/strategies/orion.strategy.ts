@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import * as WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
@@ -83,10 +84,14 @@ export class OrionStrategy implements IStrategy {
     details?: any;
   }> = [];
   private logProcessing = false;
+  private appId: string;
+  private symbol = 'R_10';
 
   constructor(
     private dataSource: DataSource,
-  ) {}
+  ) {
+    this.appId = process.env.DERIV_APP_ID || '111346';
+  }
 
   async initialize(): Promise<void> {
     this.logger.log('[ORION] Estratégia ORION inicializada');
@@ -202,8 +207,8 @@ export class OrionStrategy implements IStrategy {
       }
       this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
 
-      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
-      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
+      // ✅ Executar operação
+      await this.executeOrionOperation(state, sinal.sinal, 'veloz');
     }
   }
 
@@ -243,8 +248,8 @@ export class OrionStrategy implements IStrategy {
       }
       this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
 
-      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
-      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
+      // ✅ Executar operação
+      await this.executeOrionOperation(state, sinal.sinal, 'moderado');
     }
   }
 
@@ -278,9 +283,349 @@ export class OrionStrategy implements IStrategy {
       }
       this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
 
-      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
-      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
+      // ✅ Executar operação
+      await this.executeOrionOperation(state, sinal.sinal, 'preciso');
     }
+  }
+
+  /**
+   * ✅ ORION: Executa operação completa
+   */
+  private async executeOrionOperation(
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    operation: DigitParity,
+    mode: 'veloz' | 'moderado' | 'preciso',
+  ): Promise<void> {
+    if (state.isOperationActive) {
+      this.logger.warn(`[ORION][${mode}] Usuário ${state.userId} já possui operação ativa`);
+      return;
+    }
+
+    state.isOperationActive = true;
+    state.martingaleStep = state.martingaleStep || 0;
+
+    // Resetar contador de ticks
+    if ('ticksDesdeUltimaOp' in state) {
+      state.ticksDesdeUltimaOp = 0;
+    }
+
+    // Calcular stake (simplificado - usar aposta inicial)
+    const stakeAmount = state.apostaInicial || state.capital || 0.35;
+    const currentPrice = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 0;
+
+    // ✅ Logs da operação
+    this.saveOrionLog(state.userId, 'R_10', 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${(state.martingaleStep || 0) + 1}`);
+    this.saveOrionLog(state.userId, 'R_10', 'operacao', `Ativo: R_10`);
+    this.saveOrionLog(state.userId, 'R_10', 'operacao', `Direção: ${operation}`);
+    this.saveOrionLog(state.userId, 'R_10', 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+    this.saveOrionLog(state.userId, 'R_10', 'operacao', `Payout: 0.95 (95%)`);
+
+    try {
+      // Criar registro de trade
+      const tradeId = await this.createOrionTradeRecord(
+        state.userId,
+        operation,
+        stakeAmount,
+        currentPrice,
+        mode,
+      );
+
+      // Executar trade via WebSocket
+      const contractId = await this.executeOrionTradeViaWebSocket(
+        state.derivToken,
+        {
+          contract_type: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          amount: stakeAmount,
+          currency: state.currency || 'USD',
+        },
+      );
+
+      if (!contractId) {
+        state.isOperationActive = false;
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
+        return;
+      }
+
+      // Atualizar trade com contractId
+      await this.dataSource.query(
+        `UPDATE ai_trades SET contract_id = ?, status = 'ACTIVE', started_at = NOW() WHERE id = ?`,
+        [contractId, tradeId],
+      );
+
+      // Monitorar contrato
+      await this.monitorOrionContract(contractId, state, stakeAmount, operation, tradeId, mode);
+    } catch (error) {
+      this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
+      state.isOperationActive = false;
+      this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação: ${error.message}`);
+    }
+  }
+
+  /**
+   * ✅ ORION: Cria registro de trade no banco
+   */
+  private async createOrionTradeRecord(
+    userId: string,
+    operation: DigitParity,
+    stakeAmount: number,
+    entryPrice: number,
+    mode: string,
+  ): Promise<number> {
+    const analysisData = {
+      strategy: 'orion',
+      mode,
+      operation,
+      timestamp: new Date().toISOString(),
+    };
+
+    let insertResult: any;
+    try {
+      insertResult = await this.dataSource.query(
+        `INSERT INTO ai_trades 
+         (user_id, gemini_signal, entry_price, stake_amount, status, 
+          gemini_duration, contract_type, created_at, analysis_data, symbol)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+        [
+          userId,
+          operation,
+          entryPrice,
+          stakeAmount,
+          'PENDING',
+          1,
+          operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          JSON.stringify(analysisData),
+          this.symbol,
+        ],
+      );
+    } catch (error: any) {
+      // Se o campo symbol não existir, inserir sem ele
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        insertResult = await this.dataSource.query(
+          `INSERT INTO ai_trades 
+           (user_id, gemini_signal, entry_price, stake_amount, status, 
+            gemini_duration, contract_type, created_at, analysis_data)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          [
+            userId,
+            operation,
+            entryPrice,
+            stakeAmount,
+            'PENDING',
+            1,
+            operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+            JSON.stringify(analysisData),
+          ],
+        );
+      } else {
+        throw error;
+      }
+    }
+
+    const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+    return result?.insertId || null;
+  }
+
+  /**
+   * ✅ ORION: Executa trade via WebSocket
+   */
+  private async executeOrionTradeViaWebSocket(
+    token: string,
+    contractParams: {
+      contract_type: 'DIGITEVEN' | 'DIGITODD';
+      amount: number;
+      currency: string;
+    },
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+
+      let proposalId: string | null = null;
+      
+      const timeout = setTimeout(() => {
+        ws.close();
+        resolve(null);
+      }, 30000);
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: token }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          
+          if (msg.authorize) {
+            if (msg.authorize.error) {
+              clearTimeout(timeout);
+              ws.close();
+              resolve(null);
+              return;
+            }
+            
+            const proposalPayload = {
+              proposal: 1,
+              amount: contractParams.amount,
+              basis: 'stake',
+              contract_type: contractParams.contract_type,
+              currency: contractParams.currency || 'USD',
+              duration: 1,
+              duration_unit: 't',
+              symbol: this.symbol,
+            };
+            
+            ws.send(JSON.stringify(proposalPayload));
+            return;
+          }
+
+          if (msg.proposal) {
+            if (msg.proposal.error) {
+              clearTimeout(timeout);
+              ws.close();
+              resolve(null);
+              return;
+            }
+            
+            proposalId = msg.proposal.id;
+            const proposalPrice = Number(msg.proposal.ask_price);
+            
+            ws.send(JSON.stringify({
+              buy: proposalId,
+              price: proposalPrice,
+            }));
+            return;
+          }
+
+          if (msg.buy) {
+            clearTimeout(timeout);
+            ws.close();
+            
+            if (msg.buy.error) {
+              resolve(null);
+              return;
+            }
+            
+            resolve(msg.buy.contract_id);
+            return;
+          }
+        } catch (error) {
+          this.logger.error(`[ORION] Erro ao processar mensagem WebSocket:`, error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        this.logger.error(`[ORION] Erro no WebSocket:`, error);
+        resolve(null);
+      });
+    });
+  }
+
+  /**
+   * ✅ ORION: Monitora contrato e processa resultado
+   */
+  private async monitorOrionContract(
+    contractId: string,
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    stakeAmount: number,
+    operation: DigitParity,
+    tradeId: number,
+    mode: string,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        state.isOperationActive = false;
+        this.logger.warn(`[ORION][${mode}] Timeout ao monitorar contrato ${contractId}`);
+        resolve();
+      }, 120000); // 2 minutos
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: state.derivToken }));
+      });
+
+      ws.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          
+          if (msg.authorize) {
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            }));
+            return;
+          }
+
+          if (msg.proposal_open_contract) {
+            const contract = msg.proposal_open_contract;
+            
+            // Verificar se contrato foi finalizado
+            if (contract.is_sold === 1 || contract.is_sold === true) {
+              clearTimeout(timeout);
+              ws.close();
+              
+              const profit = Number(contract.profit || 0);
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              const status = profit >= 0 ? 'WON' : 'LOST';
+
+              // Atualizar trade no banco
+              await this.dataSource.query(
+                `UPDATE ai_trades
+                 SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                 WHERE id = ?`,
+                [exitPrice, profit, status, tradeId],
+              );
+
+              // Atualizar estado do usuário
+              state.isOperationActive = false;
+              state.capital += profit;
+              
+              if (profit > 0) {
+                if ('vitoriasConsecutivas' in state) {
+                  state.vitoriasConsecutivas = (state.vitoriasConsecutivas || 0) + 1;
+                }
+                if ('ultimoLucro' in state) {
+                  state.ultimoLucro = profit;
+                }
+                if ('perdaAcumulada' in state) {
+                  state.perdaAcumulada = 0;
+                }
+              } else {
+                if ('vitoriasConsecutivas' in state) {
+                  state.vitoriasConsecutivas = 0;
+                }
+                if ('perdaAcumulada' in state) {
+                  state.perdaAcumulada = (state.perdaAcumulada || 0) + Math.abs(profit);
+                }
+              }
+
+              // Logs do resultado
+              this.saveOrionLog(state.userId, 'R_10', 'resultado', 
+                `${status === 'WON' ? '✅ GANHOU' : '❌ PERDEU'} | ${operation} | P&L: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`);
+              
+              this.logger.log(
+                `[ORION][${mode}] ${status} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`,
+              );
+
+              resolve();
+            }
+          }
+        } catch (error) {
+          this.logger.error(`[ORION][${mode}] Erro ao monitorar contrato:`, error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        this.logger.error(`[ORION][${mode}] Erro no WebSocket de monitoramento:`, error);
+        state.isOperationActive = false;
+        resolve();
+      });
+    });
   }
 
   private upsertVelozUserState(params: {
