@@ -116,7 +116,7 @@ export class TrinityStrategy implements IStrategy {
   private logQueue: Array<{
     userId: string;
     symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA';
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento';
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
     message: string;
     details?: any;
   }> = [];
@@ -134,7 +134,7 @@ export class TrinityStrategy implements IStrategy {
     
     // ✅ Log: Sistema inicializado
     for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
         `Sistema INICIADO | Conectando 3 ativos (R_10, R_25, R_50)...`);
     }
   }
@@ -170,7 +170,7 @@ export class TrinityStrategy implements IStrategy {
     });
     
     // ✅ Log: Usuário ativado
-    this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+    this.saveTrinityLog(userId, 'SISTEMA', 'info', 
       `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | ` +
       `Martingale: ${modoMartingale || 'conservador'} | ` +
       `Meta: ${profitTarget ? `+$${profitTarget.toFixed(2)}` : 'Não definida'} | ` +
@@ -198,7 +198,7 @@ export class TrinityStrategy implements IStrategy {
     
     // ✅ Log: Iniciando conexões
     for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
         `Conectando 3 ativos...`);
       for (const symbol of symbols) {
         this.saveTrinityLog(userId, symbol, 'info', `Conectando ao WebSocket...`);
@@ -215,7 +215,7 @@ export class TrinityStrategy implements IStrategy {
     // ✅ Log: Todas conexões estabelecidas
     const totalConectados = symbols.filter(s => this.trinityConnected[s]).length;
     for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
         `${totalConectados} ativos conectados | Iniciando coleta`);
     }
   }
@@ -397,7 +397,7 @@ export class TrinityStrategy implements IStrategy {
       if (state) {
         const modeConfig = this.getModeConfig(state.mode);
         if (modeConfig && tickNumero === modeConfig.amostraInicial) {
-          this.saveTrinityLog(userId, symbol, 'evento', 
+          this.saveTrinityLog(userId, symbol, 'info', 
             `Coleta: ${tickNumero}/${modeConfig.amostraInicial} ticks (100%) ✅ | Amostra completa`);
         }
       }
@@ -428,7 +428,7 @@ export class TrinityStrategy implements IStrategy {
       if (this.trinityUsers.size > 0) {
         const firstUserId = Array.from(this.trinityUsers.keys())[0];
         if (firstUserId === userId) { // Log apenas para o primeiro usuário para não poluir
-          this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+          this.saveTrinityLog(userId, 'SISTEMA', 'info', 
             `Rotação: Próximo ativo = ${nextAsset}, Tick recebido = ${symbol}`, {
               proximoAtivo: nextAsset,
               tickRecebido: symbol,
@@ -445,7 +445,7 @@ export class TrinityStrategy implements IStrategy {
                !state.assets[s as 'R_10' | 'R_25' | 'R_50'].isOperationActive
         );
         if (assetInMartingale && assetInMartingale === nextAsset) {
-          this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+          this.saveTrinityLog(userId, 'SISTEMA', 'info', 
             `Prioridade: ${nextAsset} (martingale ativo) | Pulando rotação normal`, {
               ativoPrioritario: nextAsset,
               motivo: 'martingale_ativo',
@@ -471,13 +471,13 @@ export class TrinityStrategy implements IStrategy {
       if (!this.canProcessTrinityAsset(state, symbol)) {
         // ✅ Log: Por que não pode processar
         if (asset.isOperationActive) {
-          this.saveTrinityLog(userId, symbol, 'evento', 
+          this.saveTrinityLog(userId, symbol, 'info', 
             `Aguardando resultado da operação anterior...`);
         } else {
           const modeConfig = this.getModeConfig(state.mode);
           if (modeConfig && state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks) {
             if (asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
-              this.saveTrinityLog(userId, symbol, 'evento', 
+              this.saveTrinityLog(userId, symbol, 'info', 
                 `Aguardando intervalo mínimo: ${asset.ticksDesdeUltimaOp}/${modeConfig.intervaloTicks} ticks`);
             }
           }
@@ -1079,7 +1079,7 @@ export class TrinityStrategy implements IStrategy {
 
             // ✅ Log: Status do contrato (apenas quando muda ou é importante)
             if (contract.status && (contract.status === 'sold' || contract.is_sold)) {
-              this.saveTrinityLog(state.userId, symbol, 'evento', 
+              this.saveTrinityLog(state.userId, symbol, 'info', 
                 `Contrato monitorado | Status: ${contract.status} | is_sold: ${contract.is_sold} | Profit: $${(contract.profit || 0).toFixed(2)}`, {
                   contractId,
                   status: contract.status,
@@ -1107,7 +1107,7 @@ export class TrinityStrategy implements IStrategy {
               const exitPrice = Number(contract.exit_tick || contract.exit_tick_display_value || 0);
               
               // ✅ Log: Contrato finalizado
-              this.saveTrinityLog(state.userId, symbol, 'evento', 
+              this.saveTrinityLog(state.userId, symbol, 'info', 
                 `Contrato FINALIZADO | Profit: $${profit.toFixed(2)} | isWin: ${isWin}`, {
                   contractId,
                   profit,
@@ -1173,7 +1173,7 @@ export class TrinityStrategy implements IStrategy {
         const perdaRecuperada = asset.perdaAcumulada;
         
         // ✅ Log: Martingale recuperado
-        this.saveTrinityLog(state.userId, symbol, 'evento', 
+        this.saveTrinityLog(state.userId, symbol, 'info', 
           `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 (resetado) | Perda recuperada: $${perdaRecuperada.toFixed(2)}`, {
             evento: 'recuperacao',
             nivelAntes,
@@ -1236,7 +1236,7 @@ export class TrinityStrategy implements IStrategy {
         );
         
         // ✅ Log: Martingale ativado
-        this.saveTrinityLog(state.userId, symbol, 'evento', 
+        this.saveTrinityLog(state.userId, symbol, 'info', 
           `MARTINGALE ATIVADO | Nível: 1 | Perda acumulada: $${perda.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)} (modo: ${state.modoMartingale})`, {
             evento: 'ativacao',
             nivel: 1,
@@ -1267,7 +1267,7 @@ export class TrinityStrategy implements IStrategy {
         // ✅ Conservador: Resetar após 5 perdas
         if (state.modoMartingale === 'conservador' && asset.martingaleStep >= 5) {
           // ✅ Log: Martingale resetado (conservador)
-          this.saveTrinityLog(state.userId, symbol, 'evento', 
+          this.saveTrinityLog(state.userId, symbol, 'info', 
             `MARTINGALE RESETADO (Conservador) | Após 5 perdas consecutivas`, {
               evento: 'reset',
               motivo: 'conservador_limite',
@@ -1283,7 +1283,7 @@ export class TrinityStrategy implements IStrategy {
           asset.apostaInicial = asset.apostaBase;
         } else {
           // ✅ Log: Martingale incrementado
-          this.saveTrinityLog(state.userId, symbol, 'evento', 
+          this.saveTrinityLog(state.userId, symbol, 'info', 
             `MARTINGALE INCREMENTADO | Nível: ${nivelAntes} → ${asset.martingaleStep} | Perda acumulada: $${perdaAntes.toFixed(2)} → $${asset.perdaAcumulada.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)}`, {
               evento: 'incremento',
               nivelAntes,
@@ -1318,7 +1318,7 @@ export class TrinityStrategy implements IStrategy {
 
     // ✅ Log: Rotação de ativo
     const nextAsset = this.getNextAssetInRotation(state);
-    this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+    this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
       `Rotação: ${symbol} → ${nextAsset}`, {
         ativoAnterior: symbol,
         ativoProximo: nextAsset,
@@ -1364,7 +1364,7 @@ export class TrinityStrategy implements IStrategy {
     if (state.profitTarget && lucroAtual >= state.profitTarget) {
       state.isStopped = true;
       const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
-      this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+      this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
         `META DIÁRIA ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | ROI: +${roi}% | Parando sistema...`, {
           meta: state.profitTarget,
           lucroAtual,
@@ -1380,7 +1380,7 @@ export class TrinityStrategy implements IStrategy {
     if (state.stopLoss && lucroAtual <= state.stopLoss) {
       state.isStopped = true;
       const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
-      this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+      this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
         `STOP-LOSS ATINGIDO! ⚠️ | Stop-loss: -$${Math.abs(state.stopLoss).toFixed(2)} | Perda atual: -$${Math.abs(lucroAtual).toFixed(2)} | ROI: ${roi}% | Parando sistema...`, {
           stopLoss: state.stopLoss,
           perdaAtual: lucroAtual,
@@ -1398,7 +1398,7 @@ export class TrinityStrategy implements IStrategy {
       
       if (state.capital <= stopBlindado) {
         state.isStopped = true;
-        this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+        this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
           `STOP-LOSS BLINDADO ATIVADO! 🛡️ | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Parando sistema...`, {
             capital: state.capital,
             stopBlindado,
@@ -1533,7 +1533,7 @@ export class TrinityStrategy implements IStrategy {
   private saveTrinityLog(
     userId: string,
     symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA',
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento',
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
     message: string,
     details?: any,
   ): void {
@@ -1604,7 +1604,7 @@ export class TrinityStrategy implements IStrategy {
     userId: string,
     logs: Array<{
       symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA';
-      type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento';
+      type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
       message: string;
       details?: any;
     }>,
