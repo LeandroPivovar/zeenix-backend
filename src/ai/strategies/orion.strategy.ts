@@ -74,6 +74,16 @@ export class OrionStrategy implements IStrategy {
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
 
+  // ✅ Sistema de logs (similar à Trinity)
+  private logQueue: Array<{
+    userId: string;
+    symbol: string;
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+    message: string;
+    details?: any;
+  }> = [];
+  private logProcessing = false;
+
   constructor(
     private dataSource: DataSource,
   ) {}
@@ -106,6 +116,10 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
       });
+      
+      // ✅ Log: Usuário ativado
+      this.saveOrionLog(userId, 'SISTEMA', 'info', 
+        `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -114,6 +128,10 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
       });
+      
+      // ✅ Log: Usuário ativado
+      this.saveOrionLog(userId, 'SISTEMA', 'info', 
+        `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -122,7 +140,13 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
       });
+      
+      // ✅ Log: Usuário ativado
+      this.saveOrionLog(userId, 'SISTEMA', 'info', 
+        `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     }
+    
+    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -163,7 +187,23 @@ export class OrionStrategy implements IStrategy {
         `[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
       );
 
-      // TODO: Executar operação
+      // ✅ Salvar logs do sinal
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      
+      // ✅ Salvar logs da análise
+      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
+      const deseq = sinal.detalhes?.desequilibrio;
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+
+      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
+      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
     }
   }
 
@@ -188,7 +228,23 @@ export class OrionStrategy implements IStrategy {
         `[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
       );
 
-      // TODO: Executar operação
+      // ✅ Salvar logs do sinal
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      
+      // ✅ Salvar logs da análise
+      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
+      const deseq = sinal.detalhes?.desequilibrio;
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+
+      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
+      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
     }
   }
 
@@ -207,7 +263,23 @@ export class OrionStrategy implements IStrategy {
         `[ORION][Preciso] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
       );
 
-      // TODO: Executar operação
+      // ✅ Salvar logs do sinal
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      
+      // ✅ Salvar logs da análise
+      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
+      const deseq = sinal.detalhes?.desequilibrio;
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+
+      // ✅ TODO: Executar operação (placeholder - por enquanto só salva logs)
+      this.saveOrionLog(userId, 'R_10', 'operacao', `⚠️ Execução de trade ainda não implementada`);
     }
   }
 
@@ -339,6 +411,121 @@ export class OrionStrategy implements IStrategy {
 
   getPrecisoUsers(): Map<string, PrecisoUserState> {
     return this.precisoUsers;
+  }
+
+  /**
+   * ✅ ORION: Sistema de Logs Detalhados
+   * Salva log de forma assíncrona (não bloqueia execução)
+   */
+  private saveOrionLog(
+    userId: string,
+    symbol: string,
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
+    message: string,
+    details?: any,
+  ): void {
+    // Validar parâmetros
+    if (!userId || !type || !message || message.trim() === '') {
+      return;
+    }
+
+    // Adicionar à fila
+    this.logQueue.push({ userId, symbol, type, message, details });
+
+    // Processar fila em background (não bloqueia)
+    this.processOrionLogQueue().catch(error => {
+      this.logger.error(`[ORION][SaveLog] Erro ao processar fila de logs:`, error);
+    });
+  }
+
+  /**
+   * ✅ ORION: Processa fila de logs em batch (otimizado)
+   */
+  private async processOrionLogQueue(): Promise<void> {
+    if (this.logProcessing || this.logQueue.length === 0) {
+      return;
+    }
+
+    this.logProcessing = true;
+
+    try {
+      // Processar até 50 logs por vez
+      const batch = this.logQueue.splice(0, 50);
+      
+      if (batch.length === 0) {
+        this.logProcessing = false;
+        return;
+      }
+
+      // Agrupar por userId para otimizar
+      const logsByUser = new Map<string, typeof batch>();
+      for (const log of batch) {
+        if (!logsByUser.has(log.userId)) {
+          logsByUser.set(log.userId, []);
+        }
+        logsByUser.get(log.userId)!.push(log);
+      }
+
+      // Salvar logs por usuário
+      for (const [userId, logs] of logsByUser.entries()) {
+        await this.saveOrionLogsBatch(userId, logs);
+      }
+    } catch (error) {
+      this.logger.error(`[ORION][ProcessLogQueue] Erro ao processar logs:`, error);
+    } finally {
+      this.logProcessing = false;
+
+      // Se ainda há logs na fila, processar novamente
+      if (this.logQueue.length > 0) {
+        setImmediate(() => this.processOrionLogQueue());
+      }
+    }
+  }
+
+  /**
+   * ✅ ORION: Salva batch de logs no banco
+   */
+  private async saveOrionLogsBatch(userId: string, logs: typeof this.logQueue): Promise<void> {
+    if (logs.length === 0) return;
+
+    try {
+      const icons: Record<string, string> = {
+        'info': 'ℹ️',
+        'tick': '📊',
+        'analise': '🔍',
+        'sinal': '🎯',
+        'operacao': '⚡',
+        'resultado': '💰',
+        'alerta': '⚠️',
+        'erro': '❌',
+      };
+
+      const placeholders = logs.map(() => '(?, ?, ?, ?, ?, NOW())').join(', ');
+      const flatValues: any[] = [];
+
+      for (const log of logs) {
+        const icon = icons[log.type] || 'ℹ️';
+        const detailsJson = log.details ? JSON.stringify(log.details) : JSON.stringify({ symbol: log.symbol });
+        
+        flatValues.push(
+          userId,
+          log.type,
+          icon,
+          log.message,
+          detailsJson,
+        );
+      }
+
+      await this.dataSource.query(
+        `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp)
+         VALUES ${placeholders}`,
+        flatValues,
+      );
+      
+      this.logger.debug(`[ORION][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`);
+    } catch (error) {
+      this.logger.error(`[ORION][SaveLogsBatch][${userId}] Erro ao salvar logs:`, error);
+    }
   }
 }
 

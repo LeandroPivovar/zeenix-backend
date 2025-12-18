@@ -1720,14 +1720,14 @@ export class TrinityStrategy implements IStrategy {
       const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, NOW(3))').join(', ');
       const flatValues = values.flat();
 
-      await this.dataSource.query(
+      const result = await this.dataSource.query(
         `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id, timestamp)
          VALUES ${placeholders}`,
         flatValues,
       );
       
       // ✅ Log: Confirmar salvamento
-      this.logger.log(`[TRINITY][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`);
+      this.logger.log(`[TRINITY][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso | Resultado: ${JSON.stringify(result)}`);
     } catch (error) {
       this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro ao salvar logs em batch:`, error);
       // ✅ Log detalhado do erro
