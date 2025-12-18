@@ -518,9 +518,9 @@ export class TrinityStrategy implements IStrategy {
       assets,
       currentAssetIndex: 0,
       totalProfitLoss: 0,
-      stopLoss: params.lossLimit || null,
+      stopLoss: params.lossLimit || undefined,
       stopLossBlindado: false,
-      profitTarget: params.profitTarget || null,
+      profitTarget: params.profitTarget || undefined,
       isStopped: false,
     });
   }
