@@ -1106,15 +1106,20 @@ export class TrinityStrategy implements IStrategy {
               
               ws.close();
               
-              const profit = Number(contract.profit || 0);
+              // ✅ Calcular profit corretamente (pode vir como string ou número)
+              const rawProfit = contract.profit;
+              const profit = typeof rawProfit === 'string' ? parseFloat(rawProfit) : Number(rawProfit || 0);
               const isWin = profit > 0;
               // ✅ Usar exit_spot ou current_spot como a Orion faz
               const exitPrice = Number(contract.exit_spot || contract.exit_tick || contract.exit_tick_display_value || contract.current_spot || 0);
               
-              // ✅ Log: Contrato finalizado
+              // ✅ Log: Contrato finalizado com detalhes
+              this.logger.log(`[TRINITY][${symbol}] Contrato FINALIZADO | rawProfit=${rawProfit} (tipo: ${typeof rawProfit}) | profit=${profit} | isWin=${isWin} | exitPrice=${exitPrice}`);
+              
               this.saveTrinityLog(state.userId, symbol, 'info', 
                 `Contrato FINALIZADO | Profit: $${profit.toFixed(2)} | isWin: ${isWin}`, {
                   contractId,
+                  rawProfit,
                   profit,
                   isWin,
                   exitPrice,
@@ -1334,11 +1339,16 @@ export class TrinityStrategy implements IStrategy {
 
     // ✅ Atualizar trade no banco de dados
     if (tradeId) {
+      // ✅ Log: Debug - valores antes de atualizar
+      this.logger.log(`[TRINITY][${symbol}] Atualizando trade ID=${tradeId} | status=${isWin ? 'WON' : 'LOST'} | profitLoss=${profit} | exitPrice=${exitPrice}`);
+      
       await this.updateTrinityTrade(tradeId, {
         status: isWin ? 'WON' : 'LOST',
         profitLoss: profit,
         exitPrice: exitPrice || 0,
       });
+    } else {
+      this.logger.warn(`[TRINITY][${symbol}] ⚠️ Trade ID não encontrado, não foi possível atualizar no banco`);
     }
 
     // ✅ Verificar limites (meta, stop-loss)
