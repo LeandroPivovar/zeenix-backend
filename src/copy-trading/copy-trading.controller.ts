@@ -346,5 +346,42 @@ export class CopyTradingController {
       );
     }
   }
+
+  @Get('copiers')
+  @UseGuards(AuthGuard('jwt'))
+  async getCopiers(@Req() req: any) {
+    try {
+      const masterUserId = req.user?.userId || req.user?.sub || req.user?.id;
+
+      if (!masterUserId) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Usuário não identificado',
+          },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+
+      const copiers = await this.copyTradingService.getCopiers(masterUserId);
+
+      return {
+        success: true,
+        data: copiers,
+      };
+    } catch (error) {
+      this.logger.error(
+        `[GetCopiers] Erro ao buscar copiadores: ${error.message}`,
+        error.stack,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Erro ao buscar copiadores',
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

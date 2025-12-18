@@ -347,5 +347,81 @@ export class EmailService {
       throw new Error('Falha ao enviar email de boas-vindas');
     }
   }
+
+  async sendConfirmationEmail(email: string, name: string, confirmationToken: string, confirmationUrl: string): Promise<void> {
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+
+    const mailOptions = {
+      from: `"${fromName}" <${fromEmail}>`,
+      to: email,
+      subject: 'Confirme sua conta - ULTRA Academy',
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #22C55E; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+            .button { display: inline-block; padding: 12px 30px; background-color: #22C55E; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+            .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+            .token { background-color: #fff; padding: 15px; border-radius: 5px; margin: 20px 0; font-family: monospace; word-break: break-all; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Confirme sua conta</h1>
+            </div>
+            <div class="content">
+              <p>Olá ${name},</p>
+              <p>Obrigado por se cadastrar na plataforma ULTRA Academy!</p>
+              <p>Para ativar sua conta, clique no botão abaixo:</p>
+              <p style="text-align: center;">
+                <a href="${confirmationUrl}" class="button">Confirmar Conta</a>
+              </p>
+              <p>Ou copie e cole o link abaixo no seu navegador:</p>
+              <div class="token">${confirmationUrl}</div>
+              <p><strong>Este link expira em 24 horas.</strong></p>
+              <p>Se você não se cadastrou nesta plataforma, ignore este e-mail.</p>
+              <p>Atenciosamente,<br>Equipe ULTRA Academy</p>
+            </div>
+            <div class="footer">
+              <p>Este é um e-mail automático, por favor não responda.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+      text: `
+        Confirme sua conta - ULTRA Academy
+        
+        Olá ${name},
+        
+        Obrigado por se cadastrar na plataforma ULTRA Academy!
+        
+        Para ativar sua conta, acesse o link abaixo:
+        ${confirmationUrl}
+        
+        Este link expira em 24 horas.
+        
+        Se você não se cadastrou nesta plataforma, ignore este e-mail.
+        
+        Atenciosamente,
+        Equipe ULTRA Academy
+      `,
+    };
+
+    try {
+      await this.transporter.sendMail(mailOptions);
+      this.logger.log(`Email de confirmação enviado para ${email}`);
+    } catch (error) {
+      this.logger.error(`Erro ao enviar email de confirmação: ${error.message}`, error.stack);
+      throw new Error('Falha ao enviar email de confirmação');
+    }
+  }
 }
 

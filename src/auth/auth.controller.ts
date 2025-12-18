@@ -38,8 +38,9 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(@Body() body: RegisterDto) {
-    return this.authService.register(body);
+  async register(@Body() body: RegisterDto, @Req() req: any) {
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    return this.authService.register(body, frontendUrl);
   }
 
   @Post('login')
@@ -85,6 +86,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() body: { token: string; password: string }) {
     return await this.authService.resetPassword(body.token, body.password);
+  }
+
+  @Post('confirm-account')
+  @HttpCode(HttpStatus.OK)
+  async confirmAccount(@Body() body: { token: string }) {
+    return await this.authService.confirmAccount(body.token);
   }
 
   @Get('me')

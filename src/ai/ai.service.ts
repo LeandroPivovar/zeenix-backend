@@ -3660,6 +3660,8 @@ export class AiService implements OnModuleInit {
           derivToken,
           currency,
           modoMartingale: modoMartingale || 'conservador',
+          profitTarget: profitTarget || null,
+          lossLimit: lossLimit || null,
         });
       } catch (error) {
         this.logger.error(`[ActivateAI] Erro ao ativar usuário na estratégia ${strategy}:`, error);

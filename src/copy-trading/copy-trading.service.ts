@@ -820,6 +820,92 @@ export class CopyTradingService {
   }
 
   /**
+   * Busca todos os copiadores (usuários que configuraram copy trade para o trader mestre)
+   */
+  async getCopiers(masterUserId: string) {
+    try {
+      // Buscar todas as configurações de copy trade onde o trader_id é o masterUserId
+      const copiers = await this.dataSource.query(
+        `SELECT 
+          c.id,
+          c.user_id,
+          c.trader_id,
+          c.trader_name,
+          c.allocation_type,
+          c.allocation_value,
+          c.allocation_percentage,
+          c.leverage,
+          c.stop_loss,
+          c.take_profit,
+          c.blind_stop_loss,
+          c.is_active,
+          c.session_status,
+          c.session_balance,
+          c.total_operations,
+          c.total_wins,
+          c.total_losses,
+          c.activated_at,
+          c.created_at,
+          u.name as user_name,
+          u.email as user_email,
+          COALESCE((
+            SELECT SUM(profit) 
+            FROM copy_trading_operations 
+            WHERE user_id = c.user_id 
+            AND result IN ('win', 'loss')
+          ), 0) as total_profit
+        FROM copy_trading_config c
+        INNER JOIN users u ON c.user_id = u.id
+        WHERE c.trader_id = ?
+        ORDER BY c.created_at DESC`,
+        [masterUserId],
+      );
+
+      // Formatar dados dos copiadores
+      return copiers.map((copier) => {
+        // Calcular multiplicador baseado na alavancagem
+        const leverageMultiplier = this.parseLeverage(copier.leverage || '1x');
+        const multiplier = `${leverageMultiplier}x`;
+
+        // Calcular PnL (Profit and Loss) baseado no lucro total das operações
+        // Se não houver operações, usar session_balance como fallback
+        const pnl = parseFloat(copier.total_profit || copier.session_balance || '0');
+
+        // Determinar tag baseado no status
+        const tag = copier.is_active ? 'ATIVO' : 'INATIVO';
+
+        return {
+          id: copier.id,
+          userId: copier.user_id,
+          name: copier.user_name || 'Usuário',
+          email: copier.user_email || '',
+          tag: tag,
+          multiplier: multiplier,
+          profitTarget: parseFloat(copier.take_profit || '0'),
+          lossLimit: parseFloat(copier.stop_loss || '0'),
+          balance: parseFloat(copier.session_balance || '0'),
+          pnl: pnl,
+          isActive: copier.is_active === 1 || copier.is_active === true,
+          allocationType: copier.allocation_type,
+          allocationValue: parseFloat(copier.allocation_value || '0'),
+          allocationPercentage: copier.allocation_percentage ? parseFloat(copier.allocation_percentage) : null,
+          totalOperations: copier.total_operations || 0,
+          totalWins: copier.total_wins || 0,
+          totalLosses: copier.total_losses || 0,
+          activatedAt: copier.activated_at,
+          createdAt: copier.created_at,
+        };
+      });
+    } catch (error) {
+      this.logger.error(
+        `[GetCopiers] Erro ao buscar copiadores: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Parse leverage string (ex: "1x", "2x", "5x") para número
    */
   private parseLeverage(leverage: string): number {

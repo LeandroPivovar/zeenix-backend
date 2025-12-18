@@ -21,7 +21,7 @@ export class AuthService {
     private readonly emailService: EmailService,
   ) {}
 
-  async register(payload: CreateUserDto): Promise<{ token: string }>
+  async register(payload: CreateUserDto, frontendUrl?: string): Promise<{ message: string }>
   {
     const existing = await this.userRepository.findByEmail(payload.email);
     if (existing) {
@@ -48,10 +48,37 @@ export class AuthService {
     }
 
     const hashed = await bcrypt.hash(payload.password, 10);
-    const user = User.create(uuidv4(), payload.name, payload.email, hashed, payload.phone);
+    const userId = uuidv4();
+    const user = User.create(userId, payload.name, payload.email, hashed, payload.phone);
     await this.userRepository.create(user);
-    const token = await this.signToken(user.id, user.email, user.name, 'user');
-    return { token };
+
+    // Salvar usuário como inativo (status = 0)
+    await this.dataSource.query(
+      `UPDATE users SET is_active = 0 WHERE id = ?`,
+      [userId]
+    );
+
+    // Gerar token de confirmação
+    const confirmationToken = randomBytes(32).toString('hex');
+    const confirmationTokenExpiry = new Date();
+    confirmationTokenExpiry.setHours(confirmationTokenExpiry.getHours() + 24); // Expira em 24 horas
+
+    // Salvar token no banco de dados
+    await this.dataSource.query(
+      `UPDATE users 
+       SET reset_token = ?, reset_token_expiry = ? 
+       WHERE id = ?`,
+      [confirmationToken, confirmationTokenExpiry, userId]
+    );
+
+    // Construir URL de confirmação
+    const url = frontendUrl || process.env.FRONTEND_URL || 'https://taxafacil.site';
+    const confirmationUrl = `${url}/confirm-account?token=${confirmationToken}`;
+
+    // Enviar email de confirmação
+    await this.emailService.sendConfirmationEmail(payload.email, payload.name, confirmationToken, confirmationUrl);
+
+    return { message: 'Cadastro realizado com sucesso! Verifique seu e-mail para confirmar a conta.' };
   }
 
   async login(email: string, password: string): Promise<{ token: string }>
@@ -64,12 +91,15 @@ export class AuthService {
     if (!valid) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
-    // Buscar role diretamente do banco
-    const userWithRole = await this.dataSource.query(
-      'SELECT role FROM users WHERE id = ?',
+    // Verificar se o usuário está ativo
+    const userStatus = await this.dataSource.query(
+      'SELECT is_active, role FROM users WHERE id = ?',
       [user.id]
     );
-    const userRole = userWithRole && userWithRole.length > 0 ? userWithRole[0].role : 'user';
+    if (!userStatus || userStatus.length === 0 || !userStatus[0].is_active) {
+      throw new UnauthorizedException('Sua conta ainda não foi confirmada. Verifique seu e-mail para confirmar a conta.');
+    }
+    const userRole = userStatus[0].role || 'user';
     const token = await this.signToken(user.id, user.email, user.name, userRole);
     return { token };
   }
@@ -152,6 +182,40 @@ export class AuthService {
     );
 
     return { message: 'Senha redefinida com sucesso!' };
+  }
+
+  async confirmAccount(token: string): Promise<{ message: string }> {
+    // Buscar usuário pelo token
+    const users = await this.dataSource.query(
+      `SELECT id, email, reset_token_expiry 
+       FROM users 
+       WHERE reset_token = ?`,
+      [token]
+    );
+
+    if (!users || users.length === 0) {
+      throw new BadRequestException('Token inválido ou expirado');
+    }
+
+    const user = users[0];
+
+    // Verificar se o token expirou
+    const now = new Date();
+    const expiryDate = new Date(user.reset_token_expiry);
+    
+    if (now > expiryDate) {
+      throw new BadRequestException('Token expirado. Solicite um novo link de confirmação.');
+    }
+
+    // Ativar conta e limpar token
+    await this.dataSource.query(
+      `UPDATE users 
+       SET is_active = 1, reset_token = NULL, reset_token_expiry = NULL 
+       WHERE id = ?`,
+      [user.id]
+    );
+
+    return { message: 'Conta confirmada com sucesso! Você já pode fazer login.' };
   }
 
   private async signToken(sub: string, email: string, name: string, role: string = 'user'): Promise<string> {
