@@ -438,7 +438,11 @@ export class OrionStrategy implements IStrategy {
   ): Promise<string | null> {
     return new Promise((resolve) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      const ws = new WebSocket(endpoint, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
 
       let proposalId: string | null = null;
       
@@ -534,7 +538,11 @@ export class OrionStrategy implements IStrategy {
   ): Promise<void> {
     return new Promise((resolve) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      const ws = new WebSocket(endpoint, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
 
       const timeout = setTimeout(() => {
         ws.close();
