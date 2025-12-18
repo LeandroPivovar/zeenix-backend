@@ -3209,6 +3209,17 @@ export class AiService implements OnModuleInit {
       this.logger.log('✅ Coluna modo_martingale adicionada');
     }
     
+    // Adicionar strategy se não existir
+    if (!columnNames.includes('strategy')) {
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN strategy VARCHAR(20) NOT NULL DEFAULT 'orion' 
+        COMMENT 'Estratégia IA: orion, trinity' 
+        AFTER modo_martingale
+      `);
+      this.logger.log('✅ Coluna strategy adicionada');
+    }
+    
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
     const indexesResult = await this.dataSource.query(`
       SELECT INDEX_NAME, NON_UNIQUE
@@ -3281,9 +3292,10 @@ export class AiService implements OnModuleInit {
     profitTarget?: number,
     lossLimit?: number,
     modoMartingale: ModoMartingale = 'conservador',
+    strategy: string = 'orion',
   ): Promise<void> {
     this.logger.log(
-      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
+      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
     );
 
     // 🗑️ PRIMEIRA AÇÃO: DELETAR TODOS OS LOGS DO USUÁRIO ANTES DE INICIAR NOVA SESSÃO
@@ -3321,9 +3333,9 @@ export class AiService implements OnModuleInit {
     // 2. Criar nova sessão (sempre INSERT)
     await this.dataSource.query(
       `INSERT INTO ai_user_config 
-       (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-       VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-      [userId, stakeAmount, derivToken, currency, mode, modoMartingale, profitTarget || null, lossLimit || null, nextTradeAt],
+       (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+      [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
     );
 
     this.logger.log(
@@ -3479,6 +3491,7 @@ export class AiService implements OnModuleInit {
         currency,
         mode,
         modo_martingale as modoMartingale,
+        strategy,
         profit_target as profitTarget,
         loss_limit as lossLimit,
         last_trade_at as lastTradeAt,

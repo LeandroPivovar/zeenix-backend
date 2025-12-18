@@ -288,10 +288,11 @@ export class AiController {
       profitTarget?: number;
       lossLimit?: number;
       modoMartingale?: 'conservador' | 'moderado' | 'agressivo';
+      strategy?: string;
     },
   ) {
     try {
-      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}`);
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}`);
       
       await this.aiService.activateUserAI(
         body.userId,
@@ -302,10 +303,11 @@ export class AiController {
         body.profitTarget,
         body.lossLimit,
         body.modoMartingale || 'conservador',
+        body.strategy || 'orion',
       );
       return {
         success: true,
-        message: `IA ativada com sucesso | Modo: ${body.mode || 'veloz'} | Martingale: ${body.modoMartingale || 'conservador'}`,
+        message: `IA ativada com sucesso | Modo: ${body.mode || 'veloz'} | Martingale: ${body.modoMartingale || 'conservador'} | Estratégia: ${body.strategy || 'orion'}`,
       };
     } catch (error) {
       throw new HttpException(
