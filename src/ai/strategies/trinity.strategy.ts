@@ -424,6 +424,19 @@ export class TrinityStrategy implements IStrategy {
       // ✅ ROTAÇÃO SEQUENCIAL: Obter próximo ativo na rotação
       const nextAsset = this.getNextAssetInRotation(state);
       
+      // ✅ Log: Debug de rotação
+      if (this.trinityUsers.size > 0) {
+        const firstUserId = Array.from(this.trinityUsers.keys())[0];
+        if (firstUserId === userId) { // Log apenas para o primeiro usuário para não poluir
+          this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+            `Rotação: Próximo ativo = ${nextAsset}, Tick recebido = ${symbol}`, {
+              proximoAtivo: nextAsset,
+              tickRecebido: symbol,
+              currentAssetIndex: state.currentAssetIndex,
+            });
+        }
+      }
+      
       // ✅ Se o tick recebido não é do próximo ativo na rotação, pular
       if (nextAsset !== symbol) {
         // Log de prioridade de martingale se aplicável
@@ -456,6 +469,19 @@ export class TrinityStrategy implements IStrategy {
 
       // Verificar se pode processar
       if (!this.canProcessTrinityAsset(state, symbol)) {
+        // ✅ Log: Por que não pode processar
+        if (asset.isOperationActive) {
+          this.saveTrinityLog(userId, symbol, 'evento', 
+            `Aguardando resultado da operação anterior...`);
+        } else {
+          const modeConfig = this.getModeConfig(state.mode);
+          if (modeConfig && state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks) {
+            if (asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
+              this.saveTrinityLog(userId, symbol, 'evento', 
+                `Aguardando intervalo mínimo: ${asset.ticksDesdeUltimaOp}/${modeConfig.intervaloTicks} ticks`);
+            }
+          }
+        }
         continue;
       }
 
@@ -1051,6 +1077,17 @@ export class TrinityStrategy implements IStrategy {
               contractSubscriptionId = msg.subscription.id;
             }
 
+            // ✅ Log: Status do contrato (apenas quando muda ou é importante)
+            if (contract.status && (contract.status === 'sold' || contract.is_sold)) {
+              this.saveTrinityLog(state.userId, symbol, 'evento', 
+                `Contrato monitorado | Status: ${contract.status} | is_sold: ${contract.is_sold} | Profit: $${(contract.profit || 0).toFixed(2)}`, {
+                  contractId,
+                  status: contract.status,
+                  isSold: contract.is_sold,
+                  profit: contract.profit || 0,
+                });
+            }
+
             // Contrato finalizado
             if (contract.is_sold && contract.status === 'sold') {
               clearTimeout(timeout);
@@ -1068,6 +1105,15 @@ export class TrinityStrategy implements IStrategy {
               const profit = Number(contract.profit || 0);
               const isWin = profit > 0;
               const exitPrice = Number(contract.exit_tick || contract.exit_tick_display_value || 0);
+              
+              // ✅ Log: Contrato finalizado
+              this.saveTrinityLog(state.userId, symbol, 'evento', 
+                `Contrato FINALIZADO | Profit: $${profit.toFixed(2)} | isWin: ${isWin}`, {
+                  contractId,
+                  profit,
+                  isWin,
+                  exitPrice,
+                });
               
               await this.processTrinityResult(state, symbol, isWin, stakeAmount, operation, profit, exitPrice, tradeId);
               resolve();
@@ -1105,6 +1151,8 @@ export class TrinityStrategy implements IStrategy {
     // Marcar operação como inativa
     asset.isOperationActive = false;
     asset.lastOperationTimestamp = new Date();
+    // ✅ Resetar contador de ticks para permitir nova operação
+    asset.ticksDesdeUltimaOp = 0;
 
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return;
