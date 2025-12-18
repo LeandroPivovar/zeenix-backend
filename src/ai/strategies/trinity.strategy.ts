@@ -111,6 +111,16 @@ export class TrinityStrategy implements IStrategy {
   
   private appId: string;
   private maxTicks = 2000;
+  
+  // ✅ Sistema de logs (similar à Orion)
+  private logQueue: Array<{
+    userId: string;
+    symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA';
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento';
+    message: string;
+    details?: any;
+  }> = [];
+  private logProcessing = false;
 
   constructor(
     private dataSource: DataSource,
@@ -121,6 +131,12 @@ export class TrinityStrategy implements IStrategy {
   async initialize(): Promise<void> {
     this.logger.log('[TRINITY] Estratégia TRINITY inicializada');
     await this.initializeTrinityWebSockets();
+    
+    // ✅ Log: Sistema inicializado
+    for (const userId of this.trinityUsers.keys()) {
+      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+        `Sistema INICIADO | Conectando 3 ativos (R_10, R_25, R_50)...`);
+    }
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -152,6 +168,19 @@ export class TrinityStrategy implements IStrategy {
       profitTarget: profitTarget || null,
       lossLimit: lossLimit || null,
     });
+    
+    // ✅ Log: Usuário ativado
+    this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | ` +
+      `Martingale: ${modoMartingale || 'conservador'} | ` +
+      `Meta: ${profitTarget ? `+$${profitTarget.toFixed(2)}` : 'Não definida'} | ` +
+      `Stop-loss: ${lossLimit ? `-$${Math.abs(lossLimit).toFixed(2)}` : 'Não definido'}`, {
+        mode: mode || 'veloz',
+        capital: stakeAmount,
+        modoMartingale: modoMartingale || 'conservador',
+        profitTarget: profitTarget || null,
+        lossLimit: lossLimit || null,
+      });
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -167,11 +196,27 @@ export class TrinityStrategy implements IStrategy {
   private async initializeTrinityWebSockets(): Promise<void> {
     const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
     
+    // ✅ Log: Iniciando conexões
+    for (const userId of this.trinityUsers.keys()) {
+      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+        `Conectando 3 ativos...`);
+      for (const symbol of symbols) {
+        this.saveTrinityLog(userId, symbol, 'info', `Conectando ao WebSocket...`);
+      }
+    }
+    
     for (const symbol of symbols) {
       if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
         continue;
       }
       await this.initializeTrinityWebSocket(symbol);
+    }
+    
+    // ✅ Log: Todas conexões estabelecidas
+    const totalConectados = symbols.filter(s => this.trinityConnected[s]).length;
+    for (const userId of this.trinityUsers.keys()) {
+      this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+        `${totalConectados} ativos conectados | Iniciando coleta`);
     }
   }
 
@@ -185,6 +230,16 @@ export class TrinityStrategy implements IStrategy {
         this.logger.log(`[TRINITY][${symbol}] ✅ Conexão WebSocket aberta`);
         this.trinityConnected[symbol] = true;
         this.subscribeToTrinityTicks(symbol);
+        
+        // ✅ Log de conexão para todos os usuários ativos
+        for (const userId of this.trinityUsers.keys()) {
+          this.saveTrinityLog(userId, symbol, 'info', `Conectado ✅ | Subscrito em ticks`, {
+            url: endpoint,
+            appId: this.appId,
+            status: 'connected',
+          });
+        }
+        
         resolve();
       });
 
@@ -200,6 +255,16 @@ export class TrinityStrategy implements IStrategy {
       ws.on('error', (error) => {
         this.logger.error(`[TRINITY][${symbol}] Erro no WebSocket:`, error.message);
         this.trinityConnected[symbol] = false;
+        
+        // ✅ Log de erro de conexão
+        for (const userId of this.trinityUsers.keys()) {
+          this.saveTrinityLog(userId, symbol, 'erro', 
+            `Erro na conexão ❌ | ${error.message}`, {
+              error: error.message,
+              status: 'error',
+            });
+        }
+        
         reject(error);
       });
 
@@ -273,6 +338,14 @@ export class TrinityStrategy implements IStrategy {
 
     this.trinityTicks[symbol] = ticks;
     this.logger.log(`[TRINITY][${symbol}] ✅ Histórico carregado: ${ticks.length} ticks`);
+    
+    // ✅ Log: Histórico carregado
+    for (const userId of this.trinityUsers.keys()) {
+      this.saveTrinityLog(userId, symbol, 'info', 
+        `Histórico carregado: ${ticks.length} ticks`, {
+          totalTicks: ticks.length,
+        });
+    }
   }
 
   private processTrinityTick(symbol: 'R_10' | 'R_25' | 'R_50', tickData: any): void {
@@ -304,6 +377,32 @@ export class TrinityStrategy implements IStrategy {
       this.trinityTicks[symbol].shift();
     }
 
+    // ✅ Log de tick para todos os usuários ativos
+    const tickNumero = this.trinityTicks[symbol].length;
+    const tipo = tick.parity;
+    for (const userId of this.trinityUsers.keys()) {
+      this.saveTrinityLog(userId, symbol, 'tick', 
+        `Tick #${tickNumero} | Preço: ${tick.value.toFixed(3)} → Dígito: ${tick.digit} (${tipo})`, {
+        tickNumero,
+        preco: tick.value,
+        digito: tick.digit,
+        tipo,
+        historicoAtual: tickNumero,
+        amostraMinima: 20, // Será ajustado pelo modo
+        progresso: `${Math.round((tickNumero / 20) * 100)}%`,
+      });
+      
+      // Log de progresso quando completa amostra
+      const state = this.trinityUsers.get(userId);
+      if (state) {
+        const modeConfig = this.getModeConfig(state.mode);
+        if (modeConfig && tickNumero === modeConfig.amostraInicial) {
+          this.saveTrinityLog(userId, symbol, 'evento', 
+            `Coleta: ${tickNumero}/${modeConfig.amostraInicial} ticks (100%) ✅ | Amostra completa`);
+        }
+      }
+    }
+
     // Processar estratégias TRINITY
     if (this.trinityUsers.size > 0) {
       this.processTrinityStrategies(symbol, tick).catch((error) => {
@@ -327,6 +426,19 @@ export class TrinityStrategy implements IStrategy {
       
       // ✅ Se o tick recebido não é do próximo ativo na rotação, pular
       if (nextAsset !== symbol) {
+        // Log de prioridade de martingale se aplicável
+        const assetInMartingale = ['R_10', 'R_25', 'R_50'].find(
+          s => state.assets[s as 'R_10' | 'R_25' | 'R_50'].martingaleStep > 0 && 
+               !state.assets[s as 'R_10' | 'R_25' | 'R_50'].isOperationActive
+        );
+        if (assetInMartingale && assetInMartingale === nextAsset) {
+          this.saveTrinityLog(userId, 'SISTEMA', 'evento', 
+            `Prioridade: ${nextAsset} (martingale ativo) | Pulando rotação normal`, {
+              ativoPrioritario: nextAsset,
+              motivo: 'martingale_ativo',
+            });
+        }
+        
         // Ainda assim, incrementar contador do ativo atual
         const asset = state.assets[symbol];
         if (asset.ticksDesdeUltimaOp !== undefined && asset.ticksDesdeUltimaOp >= 0) {
@@ -356,14 +468,117 @@ export class TrinityStrategy implements IStrategy {
         continue;
       }
 
+      // ✅ Log: Análise iniciada
+      this.saveTrinityLog(userId, symbol, 'analise', `ANÁLISE INICIADA | Modo: ${state.mode.toUpperCase()}`);
+      
       // Gerar sinal
       const sinal = gerarSinalZenix(this.trinityTicks[symbol], modeConfig, state.mode.toUpperCase());
       
       if (!sinal || !sinal.sinal) {
+        // ✅ Log: Sinal rejeitado
+        this.saveTrinityLog(userId, symbol, 'alerta', `SINAL REJEITADO | Motivo: ${sinal ? 'Critérios não atendidos' : 'Sem sinal gerado'}`, {
+          motivo: sinal ? 'criterios_nao_atendidos' : 'sem_sinal',
+          desequilibrio: sinal?.detalhes?.desequilibrio?.desequilibrio ? sinal.detalhes.desequilibrio.desequilibrio * 100 : 0,
+          confianca: sinal?.confianca || 0,
+        });
+        
         // ✅ Sem sinal válido: avançar para próximo ativo na rotação
         this.advanceToNextAsset(state);
         continue;
       }
+      
+      // ✅ Log: Análises detalhadas (4 análises)
+      const detalhes = sinal.detalhes || {};
+      
+      // Análise 1: Desequilíbrio Estatístico
+      if (detalhes.desequilibrio) {
+        const deseq = detalhes.desequilibrio;
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        const desequilibrioPerc = (deseq.desequilibrio * 100).toFixed(1);
+        this.saveTrinityLog(userId, symbol, 'analise', 
+          `Análise 1/4: Desequilíbrio Estatístico | Últimos ${modeConfig.amostraInicial} ticks: ${deseq.percentualPar > deseq.percentualImpar ? percPar : percImpar}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'} | Desequilíbrio: ${desequilibrioPerc}% (mínimo: ${(modeConfig.desequilibrioMin * 100).toFixed(0)}%) ✅`, {
+          analise: 'desequilibrio',
+          janela: modeConfig.amostraInicial,
+          pares: Math.round(deseq.percentualPar * modeConfig.amostraInicial),
+          impares: Math.round(deseq.percentualImpar * modeConfig.amostraInicial),
+          percPar: parseFloat(percPar),
+          percImpar: parseFloat(percImpar),
+          desequilibrio: parseFloat(desequilibrioPerc),
+          desequilibrioMinimo: modeConfig.desequilibrioMin * 100,
+          atendeCriterio: true,
+          direcao: sinal.sinal,
+          confiancaBase: detalhes.confiancaBase || sinal.confianca,
+        });
+      }
+      
+      // Análise 2: Sequências Repetidas
+      if (detalhes.sequencias) {
+        const seq = detalhes.sequencias;
+        const bonus = seq.bonus || 0;
+        this.saveTrinityLog(userId, symbol, 'analise', 
+          `Análise 2/4: Sequências Repetidas | Maior sequência: ${seq.tamanho || 0} ${seq.paridade || ''} consecutivos | Critério: ≥5 consecutivos ${seq.tamanho >= 5 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          analise: 'sequencias',
+          maiorSequencia: seq.tamanho || 0,
+          tipoSequencia: seq.paridade || '',
+          criterioMinimo: 5,
+          atendeCriterio: seq.tamanho >= 5,
+          bonus,
+          confiancaAntes: detalhes.confiancaBase || sinal.confianca,
+          confiancaDepois: (detalhes.confiancaBase || sinal.confianca) + bonus,
+        });
+      }
+      
+      // Análise 3: Micro-Tendências
+      if (detalhes.microTendencias) {
+        const micro = detalhes.microTendencias;
+        const bonus = micro.bonus || 0;
+        this.saveTrinityLog(userId, symbol, 'analise', 
+          `Análise 3/4: Micro-Tendências | Diferença: ${(micro.aceleracao ? (micro.aceleracao * 100).toFixed(1) : '0')}% (mínimo: 10%) ${micro.aceleracao > 0.10 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          analise: 'microTendencias',
+          aceleracao: micro.aceleracao || 0,
+          criterioMinimo: 10,
+          atendeCriterio: micro.aceleracao > 0.10,
+          bonus,
+        });
+      }
+      
+      // Análise 4: Força do Desequilíbrio
+      if (detalhes.forca) {
+        const forca = detalhes.forca;
+        const bonus = forca.bonus || 0;
+        this.saveTrinityLog(userId, symbol, 'analise', 
+          `Análise 4/4: Força do Desequilíbrio | Ticks consecutivos com desequilíbrio >60%: ${forca.velocidade ? Math.round(forca.velocidade * 100) : 0} | Critério: >5 ticks ${(forca.velocidade || 0) > 0.05 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          analise: 'forca',
+          ticksConsecutivos: forca.velocidade ? Math.round(forca.velocidade * 100) : 0,
+          criterioMinimo: 5,
+          atendeCriterio: (forca.velocidade || 0) > 0.05,
+          bonus,
+        });
+      }
+      
+      // Log final da análise
+      this.saveTrinityLog(userId, symbol, 'analise', 
+        `ANÁLISE COMPLETA ✅ | Confiança final: ${sinal.confianca.toFixed(1)}% | Direção: ${sinal.sinal}`, {
+          criteriosAtendidos: 4,
+          criteriosTotais: 4,
+          desequilibrio: detalhes.desequilibrio ? (detalhes.desequilibrio.desequilibrio * 100) : 0,
+          sequencia: detalhes.sequencias?.tamanho || 0,
+          microTendencia: detalhes.microTendencias ? (detalhes.microTendencias.aceleracao * 100) : 0,
+          forca: detalhes.forca ? (detalhes.forca.velocidade * 100) : 0,
+          confiancaFinal: sinal.confianca,
+          direcao: sinal.sinal,
+          sinalValido: true,
+        });
+      
+      // ✅ Log: Sinal gerado
+      this.saveTrinityLog(userId, symbol, 'sinal', 
+        `SINAL GERADO ✅ | ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}% | ${sinal.motivo}`, {
+          direcao: sinal.sinal,
+          confianca: sinal.confianca,
+          desequilibrio: detalhes.desequilibrio ? (detalhes.desequilibrio.desequilibrio * 100) : 0,
+          timestamp: Date.now(),
+        });
       
       this.logger.log(
         `[TRINITY][${symbol}] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}% | ${sinal.motivo}`,
@@ -609,11 +824,49 @@ export class TrinityStrategy implements IStrategy {
 
       if (!contractId) {
         asset.isOperationActive = false;
+        // ✅ Log: Erro ao executar operação
+        this.saveTrinityLog(state.userId, symbol, 'erro', 
+          `Erro ao executar operação | Não foi possível criar contrato`);
         return;
       }
 
+      // ✅ Salvar trade no banco de dados (status PENDING)
+      const entryPrice = this.trinityTicks[symbol].length > 0 
+        ? this.trinityTicks[symbol][this.trinityTicks[symbol].length - 1].value 
+        : 0;
+      const tradeId = await this.saveTrinityTrade({
+        userId: state.userId,
+        contractId,
+        symbol,
+        contractType,
+        entryPrice,
+        stakeAmount,
+        operation,
+        mode: state.mode,
+      });
+      
+      // ✅ Log: Operação executada (após ter contractId e tradeId)
+      const operacaoNumero = (asset.martingaleStep > 0 ? asset.martingaleStep : 0) + 1;
+      this.saveTrinityLog(state.userId, symbol, 'operacao', 
+        `OPERAÇÃO #${operacaoNumero} EXECUTADA | ${operation} | $${stakeAmount.toFixed(2)} | ` +
+        `Martingale: ${asset.martingaleStep > 0 ? `Nível ${asset.martingaleStep}` : 'Não'} | ` +
+        `Contrato: ${contractId}`, {
+          operacaoNumero,
+          direcao: operation,
+          aposta: stakeAmount,
+          confianca: 0, // Será preenchido se disponível
+          martingale: {
+            ativo: asset.martingaleStep > 0,
+            nivel: asset.martingaleStep,
+          },
+          capitalAntes: state.capital,
+          contractId,
+          tradeId,
+          timestamp: Date.now(),
+        });
+
       // ✅ Monitorar contrato e processar resultado
-      await this.monitorTrinityContract(contractId, state, symbol, stakeAmount, operation);
+      await this.monitorTrinityContract(contractId, state, symbol, stakeAmount, operation, tradeId);
       
     } catch (error) {
       this.logger.error(`[TRINITY][${symbol}] Erro ao executar operação:`, error);
@@ -748,6 +1001,7 @@ export class TrinityStrategy implements IStrategy {
     symbol: 'R_10' | 'R_25' | 'R_50',
     stakeAmount: number,
     operation: DigitParity,
+    tradeId?: number | null,
   ): Promise<void> {
     const asset = state.assets[symbol];
     
@@ -769,7 +1023,7 @@ export class TrinityStrategy implements IStrategy {
           }
         }
         ws.close();
-        this.processTrinityResult(state, symbol, false, stakeAmount, operation); // Timeout = derrota
+        this.processTrinityResult(state, symbol, false, stakeAmount, operation, 0, 0, null); // Timeout = derrota
         resolve();
       }, 120000);
 
@@ -813,8 +1067,9 @@ export class TrinityStrategy implements IStrategy {
               
               const profit = Number(contract.profit || 0);
               const isWin = profit > 0;
+              const exitPrice = Number(contract.exit_tick || contract.exit_tick_display_value || 0);
               
-              await this.processTrinityResult(state, symbol, isWin, stakeAmount, operation, profit);
+              await this.processTrinityResult(state, symbol, isWin, stakeAmount, operation, profit, exitPrice, tradeId);
               resolve();
             }
           }
@@ -826,7 +1081,7 @@ export class TrinityStrategy implements IStrategy {
       ws.on('error', () => {
         clearTimeout(timeout);
         ws.close();
-        this.processTrinityResult(state, symbol, false, stakeAmount, operation);
+        this.processTrinityResult(state, symbol, false, stakeAmount, operation, 0, 0, tradeId);
         resolve();
       });
     });
@@ -842,6 +1097,8 @@ export class TrinityStrategy implements IStrategy {
     stakeAmount: number,
     operation: DigitParity,
     profit: number = 0,
+    exitPrice: number = 0,
+    tradeId?: number | null,
   ): Promise<void> {
     const asset = state.assets[symbol];
     
@@ -855,6 +1112,8 @@ export class TrinityStrategy implements IStrategy {
     if (isWin) {
       // ✅ VITÓRIA
       const lucro = profit > 0 ? profit : stakeAmount * modeConfig.payout;
+      const capitalDepois = state.capital + lucro;
+      const roi = ((lucro / state.capital) * 100).toFixed(2);
       
       // Atualizar capital
       state.capital += lucro;
@@ -862,6 +1121,21 @@ export class TrinityStrategy implements IStrategy {
       
       // ✅ Resetar martingale se estava ativo
       if (asset.martingaleStep > 0) {
+        const nivelAntes = asset.martingaleStep;
+        const perdaRecuperada = asset.perdaAcumulada;
+        
+        // ✅ Log: Martingale recuperado
+        this.saveTrinityLog(state.userId, symbol, 'evento', 
+          `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 (resetado) | Perda recuperada: $${perdaRecuperada.toFixed(2)}`, {
+            evento: 'recuperacao',
+            nivelAntes,
+            nivelDepois: 0,
+            perdaRecuperada,
+            ganho: lucro,
+            lucroLiquido: lucro - perdaRecuperada,
+            proximaAposta: asset.apostaBase,
+          });
+        
         this.logger.log(
           `[TRINITY][${symbol}] ✅ VITÓRIA - Martingale recuperado | Nível: ${asset.martingaleStep} | Lucro: $${lucro.toFixed(2)}`,
         );
@@ -874,12 +1148,26 @@ export class TrinityStrategy implements IStrategy {
         );
       }
       
+      // ✅ Log: Resultado vitória
+      this.saveTrinityLog(state.userId, symbol, 'resultado', 
+        `✅ VITÓRIA! | Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${lucro.toFixed(2)} (payout 95%) | Capital: $${capitalDepois.toFixed(2)} | ROI: +${roi}%`, {
+          resultado: 'vitoria',
+          apostado: stakeAmount,
+          ganho: lucro,
+          capitalAntes: state.capital - lucro,
+          capitalDepois,
+          lucroOperacao: lucro,
+          roi: parseFloat(roi),
+        });
+      
       asset.vitoriasConsecutivas += 1;
       asset.ultimoLucro = lucro;
       
     } else {
       // ✅ DERROTA
       const perda = stakeAmount;
+      const capitalDepois = state.capital - perda;
+      const roi = ((perda / state.capital) * 100).toFixed(2);
       
       // Atualizar capital
       state.capital -= perda;
@@ -890,16 +1178,55 @@ export class TrinityStrategy implements IStrategy {
         // Primeira derrota: ativar martingale
         asset.martingaleStep = 1;
         asset.perdaAcumulada = perda;
+        
+        // Calcular próxima aposta
+        const proximaAposta = calcularProximaAposta(
+          asset.perdaAcumulada,
+          state.modoMartingale,
+          modeConfig.payout * 100,
+          state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
+        );
+        
+        // ✅ Log: Martingale ativado
+        this.saveTrinityLog(state.userId, symbol, 'evento', 
+          `MARTINGALE ATIVADO | Nível: 1 | Perda acumulada: $${perda.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)} (modo: ${state.modoMartingale})`, {
+            evento: 'ativacao',
+            nivel: 1,
+            perdaAcumulada: perda,
+            proximaAposta,
+            modoMartingale: state.modoMartingale,
+            objetivo: 'recuperar_total',
+          });
+        
         this.logger.log(
           `[TRINITY][${symbol}] ❌ DERROTA - Martingale ATIVADO | Perda: $${perda.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`,
         );
       } else {
         // Já estava em martingale: incrementar nível
+        const nivelAntes = asset.martingaleStep;
+        const perdaAntes = asset.perdaAcumulada;
         asset.martingaleStep += 1;
         asset.perdaAcumulada += perda;
         
+        // Calcular próxima aposta
+        const proximaAposta = calcularProximaAposta(
+          asset.perdaAcumulada,
+          state.modoMartingale,
+          modeConfig.payout * 100,
+          state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
+        );
+        
         // ✅ Conservador: Resetar após 5 perdas
         if (state.modoMartingale === 'conservador' && asset.martingaleStep >= 5) {
+          // ✅ Log: Martingale resetado (conservador)
+          this.saveTrinityLog(state.userId, symbol, 'evento', 
+            `MARTINGALE RESETADO (Conservador) | Após 5 perdas consecutivas`, {
+              evento: 'reset',
+              motivo: 'conservador_limite',
+              nivelAntes,
+              nivelDepois: 0,
+            });
+          
           this.logger.warn(
             `[TRINITY][${symbol}] ⚠️ Conservador: Resetando após 5 perdas consecutivas`,
           );
@@ -907,6 +1234,17 @@ export class TrinityStrategy implements IStrategy {
           asset.perdaAcumulada = 0;
           asset.apostaInicial = asset.apostaBase;
         } else {
+          // ✅ Log: Martingale incrementado
+          this.saveTrinityLog(state.userId, symbol, 'evento', 
+            `MARTINGALE INCREMENTADO | Nível: ${nivelAntes} → ${asset.martingaleStep} | Perda acumulada: $${perdaAntes.toFixed(2)} → $${asset.perdaAcumulada.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)}`, {
+              evento: 'incremento',
+              nivelAntes,
+              nivelDepois: asset.martingaleStep,
+              perdaAntes,
+              perdaDepois: asset.perdaAcumulada,
+              proximaAposta,
+            });
+          
           this.logger.log(
             `[TRINITY][${symbol}] ❌ DERROTA - Martingale Nível ${asset.martingaleStep} | ` +
             `Perda acumulada: $${asset.perdaAcumulada.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`,
@@ -914,12 +1252,41 @@ export class TrinityStrategy implements IStrategy {
         }
       }
       
+      // ✅ Log: Resultado derrota
+      this.saveTrinityLog(state.userId, symbol, 'resultado', 
+        `❌ DERROTA! | Aposta: $${stakeAmount.toFixed(2)} | Perda: -$${perda.toFixed(2)} | Capital: $${capitalDepois.toFixed(2)} | ROI: -${roi}%`, {
+          resultado: 'derrota',
+          apostado: stakeAmount,
+          perda: -perda,
+          capitalAntes: state.capital + perda,
+          capitalDepois,
+          lucroOperacao: -perda,
+          roi: -parseFloat(roi),
+        });
+      
       asset.vitoriasConsecutivas = 0;
       asset.ultimoLucro = -perda;
     }
 
+    // ✅ Log: Rotação de ativo
+    const nextAsset = this.getNextAssetInRotation(state);
+    this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+      `Rotação: ${symbol} → ${nextAsset}`, {
+        ativoAnterior: symbol,
+        ativoProximo: nextAsset,
+      });
+    
     // ✅ Avançar para próximo ativo na rotação
     this.advanceToNextAsset(state);
+
+    // ✅ Atualizar trade no banco de dados
+    if (tradeId) {
+      await this.updateTrinityTrade(tradeId, {
+        status: isWin ? 'WON' : 'LOST',
+        profitLoss: profit,
+        exitPrice: exitPrice || 0,
+      });
+    }
 
     // ✅ Verificar limites (meta, stop-loss)
     await this.checkTrinityLimits(state);
@@ -948,6 +1315,13 @@ export class TrinityStrategy implements IStrategy {
     // ✅ Verificar META DIÁRIA
     if (state.profitTarget && lucroAtual >= state.profitTarget) {
       state.isStopped = true;
+      const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
+      this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+        `META DIÁRIA ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | ROI: +${roi}% | Parando sistema...`, {
+          meta: state.profitTarget,
+          lucroAtual,
+          roi: parseFloat(roi),
+        });
       this.logger.log(
         `[TRINITY] 🎯 META ATINGIDA! | Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget}`,
       );
@@ -957,6 +1331,13 @@ export class TrinityStrategy implements IStrategy {
     // ✅ Verificar STOP-LOSS NORMAL
     if (state.stopLoss && lucroAtual <= state.stopLoss) {
       state.isStopped = true;
+      const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
+      this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+        `STOP-LOSS ATINGIDO! ⚠️ | Stop-loss: -$${Math.abs(state.stopLoss).toFixed(2)} | Perda atual: -$${Math.abs(lucroAtual).toFixed(2)} | ROI: ${roi}% | Parando sistema...`, {
+          stopLoss: state.stopLoss,
+          perdaAtual: lucroAtual,
+          roi: parseFloat(roi),
+        });
       this.logger.log(
         `[TRINITY] 🛑 STOP-LOSS ATINGIDO! | Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(state.stopLoss)}`,
       );
@@ -969,11 +1350,264 @@ export class TrinityStrategy implements IStrategy {
       
       if (state.capital <= stopBlindado) {
         state.isStopped = true;
+        this.saveTrinityLog(state.userId, 'SISTEMA', 'evento', 
+          `STOP-LOSS BLINDADO ATIVADO! 🛡️ | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Parando sistema...`, {
+            capital: state.capital,
+            stopBlindado,
+          });
         this.logger.log(
           `[TRINITY] 🛡️ STOP-LOSS BLINDADO ATIVADO! | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`,
         );
         return;
       }
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Salva trade no banco de dados (status PENDING)
+   */
+  private async saveTrinityTrade(trade: {
+    userId: string;
+    contractId: string;
+    symbol: 'R_10' | 'R_25' | 'R_50';
+    contractType: string;
+    entryPrice: number;
+    stakeAmount: number;
+    operation: DigitParity;
+    mode: string;
+  }): Promise<number | null> {
+    try {
+      const analysisData = {
+        strategy: 'trinity',
+        mode: trade.mode,
+        symbol: trade.symbol,
+        operation: trade.operation,
+        timestamp: new Date().toISOString(),
+      };
+
+      let insertResult: any;
+      try {
+        insertResult = await this.dataSource.query(
+          `INSERT INTO ai_trades 
+           (user_id, gemini_signal, entry_price, stake_amount, status, 
+            gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+          [
+            trade.userId,
+            trade.operation,
+            trade.entryPrice,
+            trade.stakeAmount,
+            'PENDING',
+            1,
+            trade.contractType,
+            trade.contractId,
+            JSON.stringify(analysisData),
+            trade.symbol,
+          ]
+        );
+      } catch (error: any) {
+        // Se o campo symbol não existir, inserir sem ele
+        if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+          this.logger.warn(`[TRINITY][SaveTrade] Campo 'symbol' não existe, inserindo sem ele`);
+          insertResult = await this.dataSource.query(
+            `INSERT INTO ai_trades 
+             (user_id, gemini_signal, entry_price, stake_amount, status, 
+              gemini_duration, contract_type, contract_id, created_at, analysis_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+            [
+              trade.userId,
+              trade.operation,
+              trade.entryPrice,
+              trade.stakeAmount,
+              'PENDING',
+              1,
+              trade.contractType,
+              trade.contractId,
+              JSON.stringify(analysisData),
+            ]
+          );
+        } else {
+          throw error;
+        }
+      }
+
+      const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+      const tradeId = result?.insertId || null;
+      
+      if (tradeId) {
+        this.logger.log(`[TRINITY][${trade.symbol}] ✅ Trade salvo no banco: ID=${tradeId}`);
+      }
+      
+      return tradeId;
+    } catch (error) {
+      this.logger.error(`[TRINITY][${trade.symbol}] Erro ao salvar trade no banco:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Atualiza trade no banco de dados (status WON/LOST)
+   */
+  private async updateTrinityTrade(
+    tradeId: number,
+    update: {
+      status: 'WON' | 'LOST';
+      profitLoss: number;
+      exitPrice: number;
+    }
+  ): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades 
+         SET status = ?,
+             profit_loss = ?,
+             exit_price = ?,
+             closed_at = NOW()
+         WHERE id = ?`,
+        [
+          update.status,
+          update.profitLoss,
+          update.exitPrice,
+          tradeId,
+        ]
+      );
+      
+      this.logger.log(`[TRINITY] ✅ Trade atualizado no banco: ID=${tradeId}, Status=${update.status}, P&L=${update.profitLoss.toFixed(2)}`);
+    } catch (error) {
+      this.logger.error(`[TRINITY] Erro ao atualizar trade no banco (ID=${tradeId}):`, error);
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Sistema de Logs Detalhados
+   * Salva log de forma assíncrona (não bloqueia execução)
+   */
+  private saveTrinityLog(
+    userId: string,
+    symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA',
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento',
+    message: string,
+    details?: any,
+  ): void {
+    // Validar parâmetros
+    if (!userId || !type || !message || message.trim() === '') {
+      return;
+    }
+
+    // Adicionar à fila
+    this.logQueue.push({ userId, symbol, type, message, details });
+
+    // Processar fila em background (não bloqueia)
+    this.processTrinityLogQueue().catch(error => {
+      this.logger.error(`[TRINITY][SaveLog] Erro ao processar fila de logs:`, error);
+    });
+  }
+
+  /**
+   * ✅ TRINITY: Processa fila de logs em batch (otimizado)
+   */
+  private async processTrinityLogQueue(): Promise<void> {
+    if (this.logProcessing || this.logQueue.length === 0) {
+      return;
+    }
+
+    this.logProcessing = true;
+
+    try {
+      // Processar até 50 logs por vez
+      const batch = this.logQueue.splice(0, 50);
+      
+      if (batch.length === 0) {
+        this.logProcessing = false;
+        return;
+      }
+
+      // Agrupar por userId para otimizar
+      const logsByUser = new Map<string, typeof batch>();
+      for (const log of batch) {
+        if (!logsByUser.has(log.userId)) {
+          logsByUser.set(log.userId, []);
+        }
+        logsByUser.get(log.userId)!.push(log);
+      }
+
+      // Processar cada usuário em paralelo
+      await Promise.all(
+        Array.from(logsByUser.entries()).map(([userId, logs]) =>
+          this.saveTrinityLogsBatch(userId, logs)
+        )
+      );
+
+      // Se ainda há logs na fila, processar novamente
+      if (this.logQueue.length > 0) {
+        setImmediate(() => this.processTrinityLogQueue());
+      }
+    } catch (error) {
+      this.logger.error(`[TRINITY][ProcessLogQueue] Erro:`, error);
+    } finally {
+      this.logProcessing = false;
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Salva múltiplos logs de um usuário em uma única query (otimizado)
+   */
+  private async saveTrinityLogsBatch(
+    userId: string,
+    logs: Array<{
+      symbol: 'R_10' | 'R_25' | 'R_50' | 'SISTEMA';
+      type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'evento';
+      message: string;
+      details?: any;
+    }>,
+  ): Promise<void> {
+    if (logs.length === 0) return;
+
+    try {
+      const icons = {
+        info: 'ℹ️',
+        tick: '📊',
+        analise: '🔍',
+        sinal: '⚡',
+        operacao: '💰',
+        resultado: '✅',
+        alerta: '⚠️',
+        erro: '🚫',
+        evento: 'ℹ️',
+      };
+
+      // Preparar valores para INSERT em batch
+      const values = logs.map(log => {
+        const icon = icons[log.type] || 'ℹ️';
+        // Incluir símbolo do ativo na mensagem
+        const messageWithSymbol = log.symbol === 'SISTEMA' 
+          ? log.message 
+          : `[${log.symbol}] ${log.message}`;
+        
+        return [
+          userId,
+          log.type,
+          icon,
+          messageWithSymbol.substring(0, 5000),
+          JSON.stringify({
+            symbol: log.symbol,
+            ...(log.details || {}),
+          }).substring(0, 10000),
+          userId, // session_id (usando userId como fallback)
+        ];
+      });
+
+      // INSERT em batch (muito mais rápido)
+      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, NOW(3))').join(', ');
+      const flatValues = values.flat();
+
+      await this.dataSource.query(
+        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id, timestamp)
+         VALUES ${placeholders}`,
+        flatValues,
+      );
+    } catch (error) {
+      this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro ao salvar logs em batch:`, error);
     }
   }
 
