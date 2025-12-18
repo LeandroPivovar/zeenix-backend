@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { Tick } from '../ai.service';
 import { IStrategy } from './common.types';
 import { OrionStrategy } from './orion.strategy';

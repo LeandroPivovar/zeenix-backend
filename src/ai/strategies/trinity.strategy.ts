@@ -322,7 +322,7 @@ export class TrinityStrategy implements IStrategy {
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return false;
 
-    if (state.mode === 'veloz' && asset.ticksDesdeUltimaOp < (modeConfig.intervaloTicks || 0)) {
+    if (state.mode === 'veloz' && 'intervaloTicks' in modeConfig && asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks!) {
       return false;
     }
 

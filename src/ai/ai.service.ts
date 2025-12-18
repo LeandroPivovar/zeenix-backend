@@ -841,6 +841,7 @@ export class AiService implements OnModuleInit {
     const tick: Tick = {
       value,
       epoch,
+      timestamp: new Date(epoch * 1000).toLocaleTimeString('pt-BR'),
       digit,
       parity: this.getParityFromDigit(digit),
     };
@@ -6901,14 +6902,14 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     }
 
     // Verificar intervalo de ticks (modo veloz)
-    if (state.mode === 'veloz' && asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
+    if (state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks && asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
       return false;
     }
 
     // Verificar intervalo de tempo (modo moderado)
     if (state.mode === 'moderado' && asset.lastOperationTimestamp) {
       const secondsSinceLastOp = (Date.now() - asset.lastOperationTimestamp.getTime()) / 1000;
-      if (secondsSinceLastOp < (modeConfig as any).intervaloSegundos) {
+      if ('intervaloSegundos' in modeConfig && modeConfig.intervaloSegundos && secondsSinceLastOp < modeConfig.intervaloSegundos) {
         return false;
       }
     }
