@@ -1088,8 +1088,12 @@ export class TrinityStrategy implements IStrategy {
                 });
             }
 
+            // ✅ Log: Debug - verificar valores
+            this.logger.log(`[TRINITY][${symbol}] Contrato monitorado: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+
             // Contrato finalizado (verificar apenas is_sold, como a Orion faz)
-            if (contract.is_sold === 1) {
+            // ✅ Aceitar tanto 1 quanto true (a API pode retornar boolean)
+            if (contract.is_sold === 1 || contract.is_sold === true) {
               clearTimeout(timeout);
               
               if (contractSubscriptionId) {
