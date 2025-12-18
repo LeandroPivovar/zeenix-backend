@@ -416,10 +416,17 @@ export class EmailService {
     };
 
     try {
+      this.logger.log(`[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`);
+      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`);
+      this.logger.log(`[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`);
+      
       await this.transporter.sendMail(mailOptions);
-      this.logger.log(`Email de confirmação enviado para ${email}`);
+      this.logger.log(`✅ [sendConfirmationEmail] Email de confirmação enviado com sucesso para ${email}`);
     } catch (error) {
-      this.logger.error(`Erro ao enviar email de confirmação: ${error.message}`, error.stack);
+      this.logger.error(`❌ [sendConfirmationEmail] Erro ao enviar email de confirmação para ${email}`);
+      this.logger.error(`[sendConfirmationEmail] Mensagem: ${error.message}`);
+      this.logger.error(`[sendConfirmationEmail] Stack: ${error.stack}`);
+      this.logger.error(`[sendConfirmationEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       throw new Error('Falha ao enviar email de confirmação');
     }
   }

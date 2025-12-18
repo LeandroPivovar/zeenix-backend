@@ -76,7 +76,15 @@ export class AuthService {
     const confirmationUrl = `${url}/confirm-account?token=${confirmationToken}`;
 
     // Enviar email de confirmação
-    await this.emailService.sendConfirmationEmail(payload.email, payload.name, confirmationToken, confirmationUrl);
+    try {
+      console.log(`[AuthService] Tentando enviar email de confirmação para ${payload.email}`);
+      await this.emailService.sendConfirmationEmail(payload.email, payload.name, confirmationToken, confirmationUrl);
+      console.log(`[AuthService] Email de confirmação enviado com sucesso para ${payload.email}`);
+    } catch (error) {
+      console.error(`[AuthService] Erro ao enviar email de confirmação para ${payload.email}:`, error);
+      // Não falhar o registro se o email falhar, mas logar o erro
+      // O usuário pode solicitar reenvio do email depois
+    }
 
     return { message: 'Cadastro realizado com sucesso! Verifique seu e-mail para confirmar a conta.' };
   }
