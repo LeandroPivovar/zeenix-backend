@@ -157,7 +157,9 @@ export class TrinityStrategy implements IStrategy {
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
+    this.logger.log(`[TRINITY] 🔵 Ativando usuário ${userId}...`);
     const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit } = config;
+    
     this.upsertTrinityUserState({
       userId,
       stakeAmount,
@@ -168,6 +170,8 @@ export class TrinityStrategy implements IStrategy {
       profitTarget: profitTarget || null,
       lossLimit: lossLimit || null,
     });
+    
+    this.logger.log(`[TRINITY] ✅ Usuário ${userId} ativado | Total de usuários: ${this.trinityUsers.size}`);
     
     // ✅ Log: Usuário ativado
     this.saveTrinityLog(userId, 'SISTEMA', 'info', 
@@ -356,6 +360,11 @@ export class TrinityStrategy implements IStrategy {
       return;
     }
 
+    // ✅ Log: Tick recebido (apenas se houver usuários ativos)
+    if (this.trinityUsers.size > 0) {
+      this.logger.debug(`[TRINITY][${symbol}] 📊 Tick recebido: valor=${rawQuote} | usuários ativos=${this.trinityUsers.size}`);
+    }
+
     const value = Number(rawQuote);
     const epoch = Number(rawEpoch);
 
@@ -412,7 +421,15 @@ export class TrinityStrategy implements IStrategy {
   }
 
   private async processTrinityStrategies(symbol: 'R_10' | 'R_25' | 'R_50', latestTick: Tick): Promise<void> {
-    if (this.trinityUsers.size === 0) return;
+    if (this.trinityUsers.size === 0) {
+      // ✅ Log: Sem usuários ativos (apenas a cada 100 ticks para não poluir)
+      if (this.trinityTicks[symbol].length % 100 === 0) {
+        this.logger.debug(`[TRINITY][${symbol}] ⚠️ Sem usuários ativos para processar (ticks: ${this.trinityTicks[symbol].length})`);
+      }
+      return;
+    }
+
+    this.logger.debug(`[TRINITY][${symbol}] 🔄 Processando ${this.trinityUsers.size} usuário(s) | Ticks: ${this.trinityTicks[symbol].length}`);
 
     // Processar cada usuário TRINITY
     for (const [userId, state] of this.trinityUsers.entries()) {

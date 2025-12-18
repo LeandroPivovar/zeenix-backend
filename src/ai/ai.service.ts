@@ -2914,6 +2914,8 @@ export class AiService implements OnModuleInit {
    * ✅ TRINITY: Sincroniza usuários da Trinity do banco de dados
    */
   private async syncTrinityUsersFromDb(): Promise<void> {
+    this.logger.debug(`[SyncTrinity] 🔍 Buscando usuários Trinity no banco...`);
+    
     const configs = await this.dataSource.query(
       `SELECT 
         user_id as userId,
@@ -2927,6 +2929,10 @@ export class AiService implements OnModuleInit {
        FROM ai_user_config
        WHERE is_active = TRUE
          AND LOWER(strategy) = 'trinity'`,
+    );
+
+    this.logger.log(
+      `[SyncTrinity] 📊 Encontrados ${configs.length} usuário(s) Trinity no banco`,
     );
 
     if (configs.length > 0) {
