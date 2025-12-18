@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { StatsIAsService } from './stats-ias.service';
 import { CopyTradingService } from '../copy-trading/copy-trading.service';
+import { StrategyManagerService } from './strategies/strategy-manager.service';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
@@ -74,6 +75,39 @@ interface PrecisoUserState {
   vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
   ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+}
+
+// ✅ TRINITY: Estado individual por ativo
+interface TrinityAssetState {
+  symbol: 'R_10' | 'R_25' | 'R_50';
+  ticks: Tick[]; // Histórico de ticks deste ativo
+  isOperationActive: boolean; // Se há operação ativa neste ativo
+  martingaleStep: number; // Nível de martingale isolado
+  perdaAcumulada: number; // Perdas acumuladas isoladas
+  apostaInicial: number; // Aposta inicial isolada
+  ticksDesdeUltimaOp: number; // Contador de ticks desde última operação
+  vitoriasConsecutivas: number; // Vitórias consecutivas para Soros
+  apostaBase: number; // Valor base da aposta
+  ultimoLucro: number; // Último lucro obtido
+  lastOperationTimestamp: Date | null; // Timestamp da última operação
+}
+
+// ✅ TRINITY: Estado do usuário (contém 3 ativos)
+interface TrinityUserState {
+  userId: string;
+  derivToken: string;
+  currency: string;
+  capital: number; // Capital global
+  virtualCapital: number; // Capital virtual global
+  modoMartingale: ModoMartingale;
+  mode: string; // Modo de negociação (veloz, moderado, preciso)
+  assets: {
+    R_10: TrinityAssetState;
+    R_25: TrinityAssetState;
+    R_50: TrinityAssetState;
+  };
+  currentAssetIndex: number; // Índice do ativo atual na rotação (0=R_10, 1=R_25, 2=R_50)
+  totalProfitLoss: number; // Lucro/prejuízo total acumulado
 }
 
 interface DigitTradeResult {
@@ -508,13 +542,57 @@ export class AiService implements OnModuleInit {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
+  private trinityUsers = new Map<string, TrinityUserState>(); // ✅ TRINITY: Usuários usando estratégia TRINITY
   private userSessionIds = new Map<string, string>(); // Mapeia userId para sessionId único
+  
+  // ✅ TRINITY: WebSockets e ticks separados por ativo
+  private trinityWebSockets: {
+    R_10: WebSocket.WebSocket | null;
+    R_25: WebSocket.WebSocket | null;
+    R_50: WebSocket.WebSocket | null;
+  } = {
+    R_10: null,
+    R_25: null,
+    R_50: null,
+  };
+  
+  private trinityTicks: {
+    R_10: Tick[];
+    R_25: Tick[];
+    R_50: Tick[];
+  } = {
+    R_10: [],
+    R_25: [],
+    R_50: [],
+  };
+  
+  private trinitySubscriptions: {
+    R_10: string | null;
+    R_25: string | null;
+    R_50: string | null;
+  } = {
+    R_10: null,
+    R_25: null,
+    R_50: null,
+  };
+  
+  private trinityConnected: {
+    R_10: boolean;
+    R_25: boolean;
+    R_50: boolean;
+  } = {
+    R_10: false,
+    R_25: false,
+    R_50: false,
+  };
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
     private readonly statsIAsService: StatsIAsService,
     @Inject(forwardRef(() => CopyTradingService))
     private readonly copyTradingService?: CopyTradingService,
+    @Inject(forwardRef(() => StrategyManagerService))
+    private readonly strategyManager?: StrategyManagerService, // ✅ Injetar StrategyManager
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -597,6 +675,187 @@ export class AiService implements OnModuleInit {
       style: 'ticks',
     });
     this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
+  }
+
+  // ======================== TRINITY: Inicialização de WebSockets ========================
+  
+  /**
+   * ✅ TRINITY: Inicializa conexões WebSocket para os 3 ativos (R_10, R_25, R_50)
+   */
+  async initializeTrinityWebSockets(): Promise<void> {
+    const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
+    
+    for (const symbol of symbols) {
+      if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
+        this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
+        continue;
+      }
+
+      await this.initializeTrinityWebSocket(symbol);
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Inicializa conexão WebSocket para um ativo específico
+   */
+  private async initializeTrinityWebSocket(symbol: 'R_10' | 'R_25' | 'R_50'): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.logger.log(`[TRINITY][${symbol}] 🔌 Inicializando conexão WebSocket...`);
+
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket.WebSocket(endpoint);
+      this.trinityWebSockets[symbol] = ws;
+
+      ws.on('open', () => {
+        this.logger.log(`[TRINITY][${symbol}] ✅ Conexão WebSocket aberta`);
+        this.trinityConnected[symbol] = true;
+        this.subscribeToTrinityTicks(symbol);
+        resolve();
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          this.handleTrinityMessage(symbol, msg);
+        } catch (error) {
+          this.logger.error(`[TRINITY][${symbol}] Erro ao processar mensagem:`, error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error(`[TRINITY][${symbol}] Erro no WebSocket:`, error.message);
+        this.trinityConnected[symbol] = false;
+        reject(error);
+      });
+
+      ws.on('close', () => {
+        this.logger.log(`[TRINITY][${symbol}] Conexão WebSocket fechada`);
+        this.trinityConnected[symbol] = false;
+        this.trinityWebSockets[symbol] = null;
+      });
+
+      setTimeout(() => {
+        if (!this.trinityConnected[symbol]) {
+          reject(new Error(`Timeout ao conectar ${symbol}`));
+        }
+      }, 10000);
+    });
+  }
+
+  /**
+   * ✅ TRINITY: Inscreve-se nos ticks de um ativo específico
+   */
+  private subscribeToTrinityTicks(symbol: 'R_10' | 'R_25' | 'R_50'): void {
+    this.logger.log(`[TRINITY][${symbol}] 📡 Inscrevendo-se nos ticks...`);
+    const ws = this.trinityWebSockets[symbol];
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      this.logger.warn(`[TRINITY][${symbol}] WebSocket não está aberto`);
+      return;
+    }
+
+    ws.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: this.maxTicks,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    }));
+  }
+
+  /**
+   * ✅ TRINITY: Processa mensagens recebidas dos WebSockets
+   */
+  private handleTrinityMessage(symbol: 'R_10' | 'R_25' | 'R_50', msg: any): void {
+    if (msg.error) {
+      this.logger.error(`[TRINITY][${symbol}] Erro da API:`, msg.error.message);
+      return;
+    }
+
+    switch (msg.msg_type) {
+      case 'history':
+        if (msg.history?.prices) {
+          this.processTrinityHistory(symbol, msg.history.prices, msg.subscription?.id);
+        }
+        break;
+
+      case 'tick':
+        if (msg.tick) {
+          this.processTrinityTick(symbol, msg.tick);
+        }
+        break;
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Processa histórico de ticks recebido
+   */
+  private processTrinityHistory(symbol: 'R_10' | 'R_25' | 'R_50', prices: any[], subscriptionId?: string): void {
+    if (subscriptionId) {
+      this.trinitySubscriptions[symbol] = subscriptionId;
+    }
+
+    const ticks: Tick[] = prices
+      .map((price: any) => {
+        const value = Number(price.quote || price);
+        if (!isFinite(value) || value <= 0) {
+          return null;
+        }
+        const digit = this.extractLastDigit(value);
+        const epoch = Number(price.epoch || price.time || Date.now() / 1000);
+        if (!isFinite(epoch) || epoch <= 0) {
+          return null;
+        }
+        return {
+          value,
+          epoch,
+          digit,
+          parity: this.getParityFromDigit(digit),
+        };
+      })
+      .filter((t): t is Tick => t !== null);
+
+    this.trinityTicks[symbol] = ticks;
+    this.logger.log(`[TRINITY][${symbol}] ✅ Histórico carregado: ${ticks.length} ticks`);
+  }
+
+  /**
+   * ✅ TRINITY: Processa um novo tick recebido
+   */
+  private processTrinityTick(symbol: 'R_10' | 'R_25' | 'R_50', tickData: any): void {
+    const rawQuote = tickData.quote;
+    const rawEpoch = tickData.epoch;
+
+    if (rawQuote == null || rawQuote === '' || rawEpoch == null || rawEpoch === '') {
+      return;
+    }
+
+    const value = Number(rawQuote);
+    const epoch = Number(rawEpoch);
+
+    if (!isFinite(value) || value <= 0 || !isFinite(epoch) || epoch <= 0) {
+      return;
+    }
+
+    const digit = this.extractLastDigit(value);
+    const tick: Tick = {
+      value,
+      epoch,
+      digit,
+      parity: this.getParityFromDigit(digit),
+    };
+
+    this.trinityTicks[symbol].push(tick);
+    if (this.trinityTicks[symbol].length > this.maxTicks) {
+      this.trinityTicks[symbol].shift();
+    }
+
+    // Processar estratégias TRINITY se houver usuários ativos
+    if (this.trinityUsers.size > 0) {
+      this.processTrinityStrategies(symbol, tick).catch((error) => {
+        this.logger.error(`[TRINITY][${symbol}] Erro ao processar estratégias:`, error);
+      });
+    }
   }
 
   private handleMessage(msg: any) {
@@ -682,16 +941,23 @@ export class AiService implements OnModuleInit {
       );
     }
 
-    // Processar estratégias de todos os modos ativos
-    this.processVelozStrategies(newTick).catch((error) => {
-      this.logger.error(`[ProcessVelozStrategies] Erro:`, error);
-    });
-    this.processModeradoStrategies(newTick).catch((error) => {
-      this.logger.error(`[ProcessModeradoStrategies] Erro:`, error);
-    });
-    this.processPrecisoStrategies(newTick).catch((error) => {
-      this.logger.error(`[ProcessPrecisoStrategies] Erro:`, error);
-    });
+    // ✅ Usar StrategyManager para processar tick em todas as estratégias
+    if (this.strategyManager) {
+      this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
+        this.logger.error('[StrategyManager] Erro ao processar tick:', error);
+      });
+    } else {
+      // Fallback para código legado
+      this.processVelozStrategies(newTick).catch((error) => {
+        this.logger.error(`[ProcessVelozStrategies] Erro:`, error);
+      });
+      this.processModeradoStrategies(newTick).catch((error) => {
+        this.logger.error(`[ProcessModeradoStrategies] Erro:`, error);
+      });
+      this.processPrecisoStrategies(newTick).catch((error) => {
+        this.logger.error(`[ProcessPrecisoStrategies] Erro:`, error);
+      });
+    }
   }
 
   private extractLastDigit(value: number): number {
@@ -3383,6 +3649,24 @@ export class AiService implements OnModuleInit {
       this.removeModeradoUserState(userId);
       this.removePrecisoUserState(userId);
     }
+    
+    // ✅ Usar StrategyManager para ativar usuário na estratégia correta
+    if (this.strategyManager) {
+      try {
+        await this.strategyManager.activateUser(userId, strategy, {
+          mode: mode || 'veloz',
+          stakeAmount,
+          derivToken,
+          currency,
+          modoMartingale: modoMartingale || 'conservador',
+        });
+      } catch (error) {
+        this.logger.error(`[ActivateAI] Erro ao ativar usuário na estratégia ${strategy}:`, error);
+      }
+    } else {
+      // Fallback para código legado (manter compatibilidade)
+      this.logger.warn('[ActivateAI] StrategyManager não disponível, usando código legado');
+    }
   }
 
   /**
@@ -3403,9 +3687,17 @@ export class AiService implements OnModuleInit {
     );
 
     this.logger.log(`IA desativada para usuário ${userId}`);
-    this.removeVelozUserState(userId);
-    this.removeModeradoUserState(userId);
-    this.removePrecisoUserState(userId);
+    
+    // ✅ Usar StrategyManager para desativar usuário de todas as estratégias
+    if (this.strategyManager) {
+      await this.strategyManager.deactivateUser(userId);
+    } else {
+      // Fallback para código legado
+      this.removeVelozUserState(userId);
+      this.removeModeradoUserState(userId);
+      this.removePrecisoUserState(userId);
+      this.removeTrinityUserState(userId);
+    }
   }
 
   /**
@@ -6432,6 +6724,236 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       this.precisoUsers.delete(userId);
       this.logger.log(`[Preciso] Estado removido para usuário ${userId}`);
     }
+  }
+
+  // ======================== ESTRATÉGIA TRINITY ========================
+
+  /**
+   * ✅ TRINITY: Cria ou atualiza estado do usuário para estratégia TRINITY
+   */
+  private upsertTrinityUserState(params: {
+    userId: string;
+    stakeAmount: number;
+    derivToken: string;
+    currency: string;
+    mode: string;
+    modoMartingale?: ModoMartingale;
+  }): void {
+    const { userId, stakeAmount, derivToken, currency, mode, modoMartingale = 'conservador' } = params;
+    
+    this.logger.log(
+      `[TRINITY][UpsertState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
+    );
+    
+    const existing = this.trinityUsers.get(userId);
+
+    if (existing) {
+      // Atualizar estado existente
+      existing.capital = stakeAmount;
+      existing.derivToken = derivToken;
+      existing.currency = currency;
+      existing.mode = mode;
+      existing.modoMartingale = modoMartingale;
+      if (existing.virtualCapital <= 0) {
+        existing.virtualCapital = stakeAmount;
+      }
+      this.trinityUsers.set(userId, existing);
+      return;
+    }
+
+    // Criar novo estado TRINITY
+    const assetSymbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
+    const assets: TrinityUserState['assets'] = {
+      R_10: {
+        symbol: 'R_10',
+        ticks: [],
+        isOperationActive: false,
+        martingaleStep: 0,
+        perdaAcumulada: 0,
+        apostaInicial: stakeAmount,
+        ticksDesdeUltimaOp: 0,
+        vitoriasConsecutivas: 0,
+        apostaBase: stakeAmount,
+        ultimoLucro: 0,
+        lastOperationTimestamp: null,
+      },
+      R_25: {
+        symbol: 'R_25',
+        ticks: [],
+        isOperationActive: false,
+        martingaleStep: 0,
+        perdaAcumulada: 0,
+        apostaInicial: stakeAmount,
+        ticksDesdeUltimaOp: 0,
+        vitoriasConsecutivas: 0,
+        apostaBase: stakeAmount,
+        ultimoLucro: 0,
+        lastOperationTimestamp: null,
+      },
+      R_50: {
+        symbol: 'R_50',
+        ticks: [],
+        isOperationActive: false,
+        martingaleStep: 0,
+        perdaAcumulada: 0,
+        apostaInicial: stakeAmount,
+        ticksDesdeUltimaOp: 0,
+        vitoriasConsecutivas: 0,
+        apostaBase: stakeAmount,
+        ultimoLucro: 0,
+        lastOperationTimestamp: null,
+      },
+    };
+
+    this.trinityUsers.set(userId, {
+      userId,
+      derivToken,
+      currency,
+      capital: stakeAmount,
+      virtualCapital: stakeAmount,
+      modoMartingale,
+      mode,
+      assets,
+      currentAssetIndex: 0, // Começa com R_10
+      totalProfitLoss: 0,
+    });
+
+    this.logger.log(`[TRINITY] Estado criado para usuário ${userId}`);
+  }
+
+  /**
+   * ✅ TRINITY: Remove estado do usuário
+   */
+  private removeTrinityUserState(userId: string): void {
+    if (this.trinityUsers.has(userId)) {
+      this.trinityUsers.delete(userId);
+      this.logger.log(`[TRINITY] Estado removido para usuário ${userId}`);
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Processa estratégias TRINITY quando recebe um tick
+   * Implementa rotação sequencial entre os 3 ativos
+   */
+  private async processTrinityStrategies(symbol: 'R_10' | 'R_25' | 'R_50', latestTick: Tick): Promise<void> {
+    if (this.trinityUsers.size === 0) {
+      return;
+    }
+
+    // Obter configuração baseada no modo
+    const modeConfig = this.getModeConfig('veloz'); // Por enquanto usa veloz como padrão
+    if (!modeConfig) {
+      return;
+    }
+
+    // Verificar amostra mínima para este ativo
+    if (this.trinityTicks[symbol].length < modeConfig.amostraInicial) {
+      return;
+    }
+
+    // Processar cada usuário TRINITY
+    for (const [userId, state] of this.trinityUsers.entries()) {
+      const asset = state.assets[symbol];
+      
+      // Incrementar contador de ticks desde última operação
+      if (asset.ticksDesdeUltimaOp !== undefined && asset.ticksDesdeUltimaOp >= 0) {
+        asset.ticksDesdeUltimaOp += 1;
+      }
+
+      // Verificar se pode processar este ativo
+      if (!this.canProcessTrinityAsset(state, symbol)) {
+        continue;
+      }
+
+      // Gerar sinal usando análise completa
+      const sinal = gerarSinalZenix(this.trinityTicks[symbol], modeConfig, state.mode.toUpperCase());
+      
+      if (!sinal || !sinal.sinal) {
+        continue; // Sem sinal válido
+      }
+      
+      this.logger.log(
+        `[TRINITY][${symbol}] 🎯 SINAL GERADO | User: ${userId} | ` +
+        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
+        `  └─ ${sinal.motivo}`,
+      );
+      
+      // Executar operação TRINITY
+      await this.executeTrinityOperation(state, symbol, sinal.sinal, 1);
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Verifica se pode processar um ativo específico
+   */
+  private canProcessTrinityAsset(state: TrinityUserState, symbol: 'R_10' | 'R_25' | 'R_50'): boolean {
+    const asset = state.assets[symbol];
+    
+    // Não pode processar se já há operação ativa neste ativo
+    if (asset.isOperationActive) {
+      return false;
+    }
+
+    // Verificar intervalo mínimo baseado no modo
+    const modeConfig = this.getModeConfig(state.mode);
+    if (!modeConfig) {
+      return false;
+    }
+
+    // Verificar intervalo de ticks (modo veloz)
+    if (state.mode === 'veloz' && asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
+      return false;
+    }
+
+    // Verificar intervalo de tempo (modo moderado)
+    if (state.mode === 'moderado' && asset.lastOperationTimestamp) {
+      const secondsSinceLastOp = (Date.now() - asset.lastOperationTimestamp.getTime()) / 1000;
+      if (secondsSinceLastOp < (modeConfig as any).intervaloSegundos) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * ✅ TRINITY: Obtém configuração do modo
+   */
+  private getModeConfig(mode: string): typeof VELOZ_CONFIG | typeof MODERADO_CONFIG | typeof PRECISO_CONFIG | null {
+    const modeLower = (mode || 'veloz').toLowerCase();
+    if (modeLower === 'veloz') {
+      return VELOZ_CONFIG;
+    } else if (modeLower === 'moderado') {
+      return MODERADO_CONFIG;
+    } else if (modeLower === 'preciso') {
+      return PRECISO_CONFIG;
+    }
+    return null;
+  }
+
+  /**
+   * ✅ TRINITY: Executa operação em um ativo específico
+   * Este método será implementado posteriormente com a lógica completa de execução
+   */
+  private async executeTrinityOperation(
+    state: TrinityUserState,
+    symbol: 'R_10' | 'R_25' | 'R_50',
+    operation: DigitParity,
+    entry: number = 1,
+  ): Promise<void> {
+    const asset = state.assets[symbol];
+    
+    // Por enquanto, apenas log (implementação completa será feita depois)
+    this.logger.log(
+      `[TRINITY][${symbol}] Executando operação ${operation} para usuário ${state.userId} | Entry: ${entry}`,
+    );
+    
+    // TODO: Implementar lógica completa de execução de operação
+    // - Calcular stake (considerar martingale isolado do ativo)
+    // - Enviar proposta para Deriv
+    // - Aguardar resultado
+    // - Atualizar estado do ativo
+    // - Rotacionar para próximo ativo
   }
 }
 
