@@ -436,14 +436,24 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     this.logger.log(`Inscrevendo-se no símbolo: ${symbol}`);
     
+    // Para 10 minutos de histórico, calcular o start time como 10 minutos atrás
+    // Isso garante que recebemos apenas ticks dos últimos 10 minutos
+    const now = Math.floor(Date.now() / 1000);
+    const tenMinutesAgo = now - (10 * 60); // 10 minutos em segundos
+    
+    // Para 10 minutos de histórico, usar ~1000 ticks (assumindo ~1 tick por segundo)
+    // Usar count: 1000 para garantir que temos ticks suficientes dos últimos 10 minutos
     this.send({
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 500,
+      count: 1000,
+      start: tenMinutesAgo,
       end: 'latest',
       subscribe: 1,
       style: 'ticks',
     });
+    
+    this.logger.log(`Solicitando histórico de ${symbol} a partir de ${tenMinutesAgo} (10 minutos atrás)`);
   }
 
   subscribeToProposal(config: {
