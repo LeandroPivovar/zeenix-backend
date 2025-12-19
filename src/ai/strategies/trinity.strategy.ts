@@ -1289,7 +1289,10 @@ export class TrinityStrategy implements IStrategy {
       // ✅ VITÓRIA
       const lucro = profit > 0 ? profit : stakeAmount * modeConfig.payout;
       const capitalDepois = state.capital + lucro;
-      const roi = ((lucro / state.capital) * 100).toFixed(2);
+      // ✅ ROI calculado em relação ao capital inicial (não ao capital atual)
+      const roi = state.capitalInicial > 0 
+        ? ((lucro / state.capitalInicial) * 100).toFixed(2)
+        : '0.00';
       
       // Atualizar capital
       state.capital += lucro;
@@ -1364,7 +1367,10 @@ export class TrinityStrategy implements IStrategy {
       // ✅ DERROTA
       const perda = stakeAmount;
       const capitalDepois = state.capital - perda;
-      const roi = ((perda / state.capital) * 100).toFixed(2);
+      // ✅ ROI calculado em relação ao capital inicial (não ao capital atual)
+      const roi = state.capitalInicial > 0
+        ? ((perda / state.capitalInicial) * 100).toFixed(2)
+        : '0.00';
       
       // Atualizar capital
       state.capital -= perda;
