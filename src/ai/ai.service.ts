@@ -3050,11 +3050,13 @@ export class AiService implements OnModuleInit {
   private upsertVelozUserState(params: {
     userId: string;
     stakeAmount: number;
+    entryValue?: number; // ✅ Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }) {
-    const { userId, stakeAmount, derivToken, currency, modoMartingale = 'conservador' } = params;
+    const { userId, stakeAmount, entryValue, derivToken, currency, modoMartingale = 'conservador' } = params;
+    const apostaInicial = entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
     
     this.logger.log(
       `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | martingale=${modoMartingale}`,
@@ -3073,9 +3075,13 @@ export class AiService implements OnModuleInit {
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = stakeAmount;
       }
-      // ✅ ZENIX v2.0: Atualizar apostaBase se necessário (mas manter vitoriasConsecutivas)
-      if (existing.apostaBase <= 0) {
-        existing.apostaBase = stakeAmount;
+      // ✅ ZENIX v2.0: Atualizar apostaBase e apostaInicial se necessário (mas manter vitoriasConsecutivas)
+      if (entryValue !== undefined) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
+      } else if (existing.apostaBase <= 0) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
       }
       // ✅ Resetar intervalo se não há operação ativa (permite nova operação imediatamente)
       if (!existing.isOperationActive) {
@@ -3102,12 +3108,12 @@ export class AiService implements OnModuleInit {
       martingaleStep: 0,
       modoMartingale: modoMartingale,
       perdaAcumulada: 0,
-      apostaInicial: 0,
+      apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
       lastOperationTickIndex: -1, // ✅ ZENIX v2.0: DEPRECATED - manter para compatibilidade
       ticksDesdeUltimaOp: -1, // ✅ ZENIX v2.0: Inicializar contador de ticks (-1 = pode operar imediatamente)
       vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
-      apostaBase: stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+      apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
       ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
     });
   }
@@ -6188,11 +6194,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   private upsertModeradoUserState(params: {
     userId: string;
     stakeAmount: number;
+    entryValue?: number; // ✅ Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
+    const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
     
     this.logger.log(
       `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
@@ -6215,6 +6223,14 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = params.stakeAmount;
       }
+      // ✅ Atualizar apostaBase e apostaInicial se entryValue foi fornecido
+      if (params.entryValue !== undefined) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
+      } else if (existing.apostaBase <= 0) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
+      }
     } else {
       // Criar novo
       this.logger.debug(`[UpsertModeradoState] Criando novo usuário | capital=${params.stakeAmount} | martingale=${modoMartingale}`);
@@ -6232,11 +6248,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         martingaleStep: 0,
         modoMartingale: modoMartingale,
         perdaAcumulada: 0,
-        apostaInicial: 0,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         lastOperationTimestamp: null, // ✅ ZENIX v2.0: Inicializar controle de intervalo
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
-        apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+        apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
@@ -6969,11 +6985,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   private upsertPrecisoUserState(params: {
     userId: string;
     stakeAmount: number;
+    entryValue?: number; // ✅ Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
+    const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
     
     this.logger.log(
       `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
@@ -6997,9 +7015,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         existing.virtualCapital = params.stakeAmount;
       }
       
-      // ✅ ZENIX v2.0: Atualizar apostaBase se necessário (mas manter vitoriasConsecutivas)
-      if (existing.apostaBase <= 0) {
-        existing.apostaBase = params.stakeAmount;
+      // ✅ ZENIX v2.0: Atualizar apostaBase e apostaInicial se entryValue foi fornecido
+      if (params.entryValue !== undefined) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
+      } else if (existing.apostaBase <= 0) {
+        existing.apostaBase = apostaInicial;
+        existing.apostaInicial = apostaInicial;
       }
     } else {
       // Criar novo
@@ -7018,10 +7040,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         martingaleStep: 0,
         modoMartingale: modoMartingale,
         perdaAcumulada: 0,
-        apostaInicial: 0,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
-        apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+        apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
