@@ -486,7 +486,14 @@ export class OrionStrategy implements IStrategy {
 
       if (!contractId) {
         state.isOperationActive = false;
+        // ✅ CORREÇÃO: Se falhou na criação do contrato, resetar contador de ticks para permitir nova tentativa
+        if ('ticksDesdeUltimaOp' in state) {
+          state.ticksDesdeUltimaOp = 0;
+        }
         this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
+        this.logger.warn(
+          `[ORION][${mode}][${state.userId}] ❌ Falha ao criar contrato | Tipo: ${operation} | Valor: $${stakeAmount.toFixed(2)} | Entry: ${entry}`,
+        );
         return;
       }
 
@@ -589,13 +596,19 @@ export class OrionStrategy implements IStrategy {
       });
 
       let proposalId: string | null = null;
+      let hasResolved = false;
       
       const timeout = setTimeout(() => {
-        ws.close();
-        resolve(null);
+        if (!hasResolved) {
+          hasResolved = true;
+          this.logger.warn(`[ORION] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          ws.close();
+          resolve(null);
+        }
       }, 30000);
 
       ws.on('open', () => {
+        this.logger.debug(`[ORION] 🔌 WebSocket aberto, autorizando...`);
         ws.send(JSON.stringify({ authorize: token }));
       });
 
@@ -605,12 +618,19 @@ export class OrionStrategy implements IStrategy {
           
           if (msg.authorize) {
             if (msg.authorize.error) {
-              clearTimeout(timeout);
-              ws.close();
-              resolve(null);
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                this.logger.error(
+                  `[ORION] ❌ Erro na autorização: ${JSON.stringify(msg.authorize.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+                );
+                ws.close();
+                resolve(null);
+              }
               return;
             }
             
+            this.logger.debug(`[ORION] ✅ Autorizado, solicitando proposta...`);
             const proposalPayload = {
               proposal: 1,
               amount: contractParams.amount,
@@ -628,15 +648,22 @@ export class OrionStrategy implements IStrategy {
 
           if (msg.proposal) {
             if (msg.proposal.error) {
-              clearTimeout(timeout);
-              ws.close();
-              resolve(null);
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                this.logger.error(
+                  `[ORION] ❌ Erro na proposta: ${JSON.stringify(msg.proposal.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+                );
+                ws.close();
+                resolve(null);
+              }
               return;
             }
             
             proposalId = msg.proposal.id;
             const proposalPrice = Number(msg.proposal.ask_price);
             
+            this.logger.debug(`[ORION] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`);
             ws.send(JSON.stringify({
               buy: proposalId,
               price: proposalPrice,
@@ -645,26 +672,55 @@ export class OrionStrategy implements IStrategy {
           }
 
           if (msg.buy) {
-            clearTimeout(timeout);
-            ws.close();
-            
-            if (msg.buy.error) {
-              resolve(null);
+            if (!hasResolved) {
+              hasResolved = true;
+              clearTimeout(timeout);
+              ws.close();
+              
+              if (msg.buy.error) {
+                this.logger.error(
+                  `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(msg.buy.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
+                );
+                resolve(null);
+                return;
+              }
+              
+              this.logger.log(`[ORION] ✅ Contrato criado com sucesso: ${msg.buy.contract_id}`);
+              resolve(msg.buy.contract_id);
               return;
             }
-            
-            resolve(msg.buy.contract_id);
-            return;
           }
         } catch (error) {
-          this.logger.error(`[ORION] Erro ao processar mensagem WebSocket:`, error);
+          if (!hasResolved) {
+            hasResolved = true;
+            clearTimeout(timeout);
+            this.logger.error(`[ORION] ❌ Erro ao processar mensagem WebSocket:`, error);
+            ws.close();
+            resolve(null);
+          }
         }
       });
 
       ws.on('error', (error) => {
-        clearTimeout(timeout);
-        this.logger.error(`[ORION] Erro no WebSocket:`, error);
-        resolve(null);
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+          this.logger.error(
+            `[ORION] ❌ Erro no WebSocket: ${error.message} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+          );
+          resolve(null);
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+          this.logger.warn(
+            `[ORION] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+          );
+          resolve(null);
+        }
       });
     });
   }
