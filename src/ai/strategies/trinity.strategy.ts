@@ -169,21 +169,36 @@ export class TrinityStrategy implements IStrategy {
   async activateUser(userId: string, config: any): Promise<void> {
     this.logger.log(`[TRINITY] 🔵 Ativando usuário ${userId}...`);
     const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit, entryValue } = config;
-    const stopLossNormalized = lossLimit != null ? -Math.abs(lossLimit) : null; // garantir negativo
+
+    const stakeAmountNum = Number(stakeAmount);
+    const profitTargetNum = profitTarget != null ? Number(profitTarget) : null;
+    const lossLimitNum = lossLimit != null ? Number(lossLimit) : null;
+
+    const capitalDisplay = Number.isFinite(stakeAmountNum) ? stakeAmountNum.toFixed(2) : '0.00';
+    const profitTargetDisplay =
+      typeof profitTargetNum === 'number' && Number.isFinite(profitTargetNum)
+        ? `+$${profitTargetNum.toFixed(2)}`
+        : 'Não definida';
+    const stopLossDisplay =
+      typeof lossLimitNum === 'number' && Number.isFinite(lossLimitNum)
+        ? `-$${Math.abs(lossLimitNum).toFixed(2)}`
+        : 'Não definido';
+
+    const stopLossNormalized = lossLimitNum != null ? -Math.abs(lossLimitNum) : null; // garantir negativo
     
     // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
     // ✅ stakeAmount é o capital total da conta (ex: $8953.20)
-    const apostaInicial = entryValue || 0.35; // Usar entryValue se fornecido, senão 0.35 (mínimo)
+    const apostaInicial = entryValue != null ? Number(entryValue) : 0.35; // Usar entryValue se fornecido, senão 0.35 (mínimo)
     
     this.upsertTrinityUserState({
       userId,
-      stakeAmount, // Capital total
+      stakeAmount: stakeAmountNum, // Capital total
       apostaInicial, // Valor de entrada por operação
       derivToken,
       currency,
       mode: mode || 'veloz',
       modoMartingale: modoMartingale || 'conservador',
-      profitTarget: profitTarget || null,
+      profitTarget: profitTargetNum,
       lossLimit: stopLossNormalized,
     });
     
@@ -191,15 +206,15 @@ export class TrinityStrategy implements IStrategy {
     
     // ✅ Log: Usuário ativado
     this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | ` +
+      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${capitalDisplay} | ` +
       `Martingale: ${modoMartingale || 'conservador'} | ` +
-      `Meta: ${profitTarget ? `+$${profitTarget.toFixed(2)}` : 'Não definida'} | ` +
-      `Stop-loss: ${lossLimit ? `-$${Math.abs(lossLimit).toFixed(2)}` : 'Não definido'}`, {
+      `Meta: ${profitTargetDisplay} | ` +
+      `Stop-loss: ${stopLossDisplay}`, {
         mode: mode || 'veloz',
-        capital: stakeAmount,
+        capital: stakeAmountNum,
         modoMartingale: modoMartingale || 'conservador',
-        profitTarget: profitTarget || null,
-        lossLimit: lossLimit || null,
+        profitTarget: profitTargetNum,
+        lossLimit: lossLimitNum,
       });
   }
 
