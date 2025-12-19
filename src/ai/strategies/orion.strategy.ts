@@ -177,8 +177,6 @@ export class OrionStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    // ✅ Verificar e limpar contratos travados (ACTIVE há mais de 15 segundos)
-    await this.cleanupStuckContracts();
     this.ticks.push(tick);
     if (this.ticks.length > 2000) {
       this.ticks.shift();
