@@ -68,6 +68,40 @@ export interface PrecisoUserState {
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
 }
 
+// ============================================
+// ESTRATÉGIA SOROS - ZENIX v2.0
+// ============================================
+const SOROS_MAX_NIVEL = 2; // Soros tem apenas 2 níveis (entrada 1, 2, 3)
+
+/**
+ * Calcula aposta com estratégia Soros aplicada
+ * Soros funciona apenas até o nível 2 (3 entradas):
+ * - Entrada 1: valor inicial
+ * - Entrada 2 (Soros Nível 1): entrada anterior + lucro da entrada anterior
+ * - Entrada 3 (Soros Nível 2): entrada anterior + lucro da entrada anterior
+ * 
+ * @param entradaAnterior - Valor da entrada anterior
+ * @param lucroAnterior - Lucro obtido na entrada anterior
+ * @param vitoriasConsecutivas - Número de vitórias consecutivas (0, 1, ou 2)
+ * @returns Valor da aposta com Soros aplicado, ou null se Soros não deve ser aplicado
+ */
+function calcularApostaComSoros(
+  entradaAnterior: number,
+  lucroAnterior: number,
+  vitoriasConsecutivas: number,
+): number | null {
+  // Soros só funciona até o nível 2 (vitoriasConsecutivas = 0, 1, ou 2)
+  if (vitoriasConsecutivas <= 0 || vitoriasConsecutivas > SOROS_MAX_NIVEL) {
+    return null; // Não está no Soros ou já passou do limite
+  }
+  
+  // Soros: entrada anterior + lucro anterior
+  const apostaComSoros = entradaAnterior + lucroAnterior;
+  
+  // Arredondar para 2 casas decimais
+  return Math.round(apostaComSoros * 100) / 100;
+}
+
 /**
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * 
@@ -427,11 +461,43 @@ export class OrionStrategy implements IStrategy {
       state.lastOperationTimestamp = new Date();
     }
 
-    // Calcular stake baseado no martingale
+    // ✅ ZENIX v2.0: Calcular stake baseado em Soros ou Martingale
     let stakeAmount: number;
+    
     if (entry === 1) {
-      // Primeira entrada: usar aposta inicial
-      stakeAmount = state.apostaInicial || state.capital || 0.35;
+      // Primeira entrada: verificar se está no Soros
+      const vitoriasAtuais = state.vitoriasConsecutivas || 0;
+      this.logger.debug(
+        `[ORION][${mode}][${state.userId}] 🔍 Verificando Soros | Vitórias consecutivas: ${vitoriasAtuais} | ApostaBase: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} | UltimoLucro: $${(state.ultimoLucro || 0).toFixed(2)}`,
+      );
+      
+      if (vitoriasAtuais > 0 && vitoriasAtuais <= SOROS_MAX_NIVEL) {
+        // ✅ SOROS: Entrada anterior + lucro anterior
+        const apostaAnterior = state.apostaBase || state.apostaInicial || 0.35;
+        const lucroAnterior = state.ultimoLucro || 0;
+        const apostaSoros = calcularApostaComSoros(apostaAnterior, lucroAnterior, vitoriasAtuais);
+        
+        this.logger.debug(
+          `[ORION][${mode}][${state.userId}] 🔍 Cálculo Soros | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Resultado: ${apostaSoros !== null ? '$' + apostaSoros.toFixed(2) : 'null'}`,
+        );
+        
+        if (apostaSoros !== null) {
+          stakeAmount = apostaSoros;
+          this.logger.log(
+            `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${vitoriasAtuais} | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Nova aposta: $${stakeAmount.toFixed(2)}`,
+          );
+        } else {
+          // Fallback: usar aposta inicial
+          this.logger.warn(
+            `[ORION][${mode}][${state.userId}] ⚠️ Soros retornou null, usando aposta inicial`,
+          );
+          stakeAmount = state.apostaInicial || state.capital || 0.35;
+        }
+      } else {
+        // Primeira entrada normal: usar aposta inicial
+        stakeAmount = state.apostaInicial || state.capital || 0.35;
+      }
+      
       // ✅ Garantir que martingaleStep está em 0 para primeira entrada
       if ('martingaleStep' in state) {
         state.martingaleStep = 0;
@@ -462,6 +528,8 @@ export class OrionStrategy implements IStrategy {
     this.saveOrionLog(state.userId, 'R_10', 'operacao', `Payout: 0.95 (95%)`);
     if (entry > 1) {
       this.saveOrionLog(state.userId, 'R_10', 'operacao', `🔄 MARTINGALE (${state.modoMartingale.toUpperCase()}) | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+    } else if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+      this.saveOrionLog(state.userId, 'R_10', 'operacao', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Aposta anterior: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} | Lucro anterior: $${(state.ultimoLucro || 0).toFixed(2)}`);
     }
 
     try {
@@ -804,27 +872,105 @@ export class OrionStrategy implements IStrategy {
               state.capital += profit;
               
               if (profit > 0) {
-                // ✅ VITÓRIA: Resetar martingale
+                // ✅ VITÓRIA: Implementar estratégia Soros
+                // Incrementar vitórias consecutivas primeiro
+                const vitoriasAntes = state.vitoriasConsecutivas || 0;
                 if ('vitoriasConsecutivas' in state) {
-                  state.vitoriasConsecutivas = (state.vitoriasConsecutivas || 0) + 1;
+                  state.vitoriasConsecutivas = vitoriasAntes + 1;
                 }
-                if ('ultimoLucro' in state) {
-                  state.ultimoLucro = profit;
-                }
-                if ('perdaAcumulada' in state) {
+                
+                // ✅ DEBUG: Log do estado antes de processar Soros
+                this.logger.debug(
+                  `[ORION][${mode}][${state.userId}] ✅ VITÓRIA | Stake: $${stakeAmount.toFixed(2)} | Lucro: $${profit.toFixed(2)} | Vitórias consecutivas: ${state.vitoriasConsecutivas} | ApostaBase: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`,
+                );
+                
+                // ✅ ZENIX v2.0: Se completou Soros nível 2 (3 vitórias consecutivas), reiniciar tudo
+                if (state.vitoriasConsecutivas === 3) {
+                  this.logger.log(
+                    `[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas. Reiniciando para entrada inicial.`,
+                  );
+                  this.saveOrionLog(state.userId, 'R_10', 'resultado', `🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas`);
+                  this.saveOrionLog(state.userId, 'R_10', 'resultado', `Reiniciando para entrada inicial: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`);
+                  
+                  // Resetar tudo
+                  state.vitoriasConsecutivas = 0;
+                  state.ultimoLucro = 0;
                   state.perdaAcumulada = 0;
-                }
-                if ('ultimaDirecaoMartingale' in state) {
-                  state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
-                }
-                if ('martingaleStep' in state) {
                   state.martingaleStep = 0;
+                  state.ultimaDirecaoMartingale = null;
+                  state.apostaBase = state.apostaInicial || state.capital || 0.35;
+                } else {
+                  // Atualizar lucro e aposta base para próximo Soros
+                  // ✅ IMPORTANTE: Atualizar apostaBase ANTES de calcular próxima aposta Soros
+                  if ('ultimoLucro' in state) {
+                    state.ultimoLucro = profit;
+                  }
+                  if ('apostaBase' in state) {
+                    // Atualizar apostaBase com o valor da aposta atual para próximo Soros
+                    state.apostaBase = stakeAmount;
+                  }
+                  
+                  // Resetar martingale
+                  if ('perdaAcumulada' in state) {
+                    state.perdaAcumulada = 0;
+                  }
+                  if ('ultimaDirecaoMartingale' in state) {
+                    state.ultimaDirecaoMartingale = null;
+                  }
+                  if ('martingaleStep' in state) {
+                    state.martingaleStep = 0;
+                  }
+                  
+                  // ✅ DEBUG: Log do estado após vitória
+                  this.logger.debug(
+                    `[ORION][${mode}][${state.userId}] ✅ Estado após vitória | Vitórias consecutivas: ${state.vitoriasConsecutivas} | ApostaBase: $${state.apostaBase.toFixed(2)} | UltimoLucro: $${state.ultimoLucro.toFixed(2)}`,
+                  );
+                  
+                  // Log do Soros
+                  if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+                    const proximaApostaSoros = calcularApostaComSoros(stakeAmount, profit, state.vitoriasConsecutivas);
+                    if (proximaApostaSoros !== null) {
+                      this.logger.log(
+                        `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima aposta: $${proximaApostaSoros.toFixed(2)}`,
+                      );
+                      this.saveOrionLog(state.userId, 'R_10', 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima aposta: $${proximaApostaSoros.toFixed(2)}`);
+                    } else {
+                      this.logger.warn(
+                        `[ORION][${mode}][${state.userId}] ⚠️ calcularApostaComSoros retornou null | Vitórias: ${state.vitoriasConsecutivas} | Stake: $${stakeAmount.toFixed(2)} | Lucro: $${profit.toFixed(2)}`,
+                      );
+                    }
+                  } else {
+                    // Se não está mais no Soros, logar próxima aposta inicial
+                    this.saveOrionLog(state.userId, 'R_10', 'resultado', `Próxima aposta: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} (entrada inicial)`);
+                  }
                 }
               } else {
-                // ❌ PERDA: Ativar martingale
-                if ('vitoriasConsecutivas' in state) {
+                // ❌ PERDA: Resetar Soros e ativar martingale
+                const entryNumber = (state.martingaleStep || 0) + 1;
+                
+                // ✅ ZENIX v2.0: Se perder em qualquer entrada do Soros (1, 2 ou 3), resetar Soros
+                if (entryNumber <= 3 && state.perdaAcumulada === stakeAmount) {
+                  // Perdeu no Soros: resetar Soros e entrar em recuperação
+                  if (state.vitoriasConsecutivas > 0) {
+                    this.logger.log(
+                      `[ORION][${mode}][${state.userId}] ❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação (martingale)`,
+                    );
+                    this.saveOrionLog(state.userId, 'R_10', 'resultado', `❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação`);
+                  } else {
+                    this.logger.log(
+                      `[ORION][${mode}][${state.userId}] ❌ Entrada 1 falhou! Entrando em recuperação (martingale)`,
+                    );
+                  }
                   state.vitoriasConsecutivas = 0;
+                  state.ultimoLucro = 0;
+                  // perdaAcumulada já será incrementada abaixo
+                } else if (entryNumber === 1) {
+                  // Perda na primeira entrada (não estava no Soros)
+                  state.vitoriasConsecutivas = 0;
+                  state.ultimoLucro = 0;
                 }
+                
+                // Ativar martingale
                 if ('perdaAcumulada' in state) {
                   // ✅ CORREÇÃO: Somar o stakeAmount (valor apostado), não o profit
                   state.perdaAcumulada = (state.perdaAcumulada || 0) + stakeAmount;
