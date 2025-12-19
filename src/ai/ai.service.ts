@@ -3356,6 +3356,24 @@ export class AiService implements OnModuleInit {
     // Buscar histórico de trades do usuário (últimas 20 por padrão)
     this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}, limit=${limit}`);
     
+    // ✅ CORREÇÃO: Buscar data de criação da sessão atual para filtrar apenas operações da sessão
+    const sessionQuery = `
+      SELECT created_at as sessionCreatedAt
+      FROM ai_user_config
+      WHERE user_id = ? AND is_active = TRUE
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    
+    const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
+    const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
+    
+    if (sessionCreatedAt) {
+      this.logger.log(`[GetTradeHistory] 📅 Filtrando operações da sessão atual (desde ${sessionCreatedAt})`);
+    } else {
+      this.logger.warn(`[GetTradeHistory] ⚠️ Nenhuma sessão ativa encontrada, retornando todas as operações`);
+    }
+    
     // ✅ Tentar buscar com symbol, se falhar, buscar sem symbol (campo pode não existir ainda)
     let query = `
       SELECT 
@@ -3374,14 +3392,17 @@ export class AiService implements OnModuleInit {
         closed_at as closedAt
       FROM ai_trades
       WHERE user_id = ? 
+      ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
       ORDER BY COALESCE(closed_at, created_at) DESC
       LIMIT ?
     `;
     
     let result;
+    const queryParams = sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit];
+    
     try {
-      result = await this.dataSource.query(query, [userId, limit]);
-      this.logger.debug(`[GetTradeHistory] 📝 Query executada com symbol`);
+      result = await this.dataSource.query(query, queryParams);
+      this.logger.debug(`[GetTradeHistory] 📝 Query executada com symbol${sessionCreatedAt ? ' e filtro de sessão' : ''}`);
     } catch (error: any) {
       // Se o campo symbol não existir, buscar sem ele
       if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
@@ -3402,11 +3423,12 @@ export class AiService implements OnModuleInit {
             closed_at as closedAt
           FROM ai_trades
           WHERE user_id = ? 
+          ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
           ORDER BY COALESCE(closed_at, created_at) DESC
           LIMIT ?
         `;
-        result = await this.dataSource.query(query, [userId, limit]);
-        this.logger.debug(`[GetTradeHistory] 📝 Query executada sem symbol`);
+        result = await this.dataSource.query(query, queryParams);
+        this.logger.debug(`[GetTradeHistory] 📝 Query executada sem symbol${sessionCreatedAt ? ' e filtro de sessão' : ''}`);
       } else {
         throw error;
       }
