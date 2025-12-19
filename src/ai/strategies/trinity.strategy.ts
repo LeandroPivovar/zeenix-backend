@@ -1583,7 +1583,7 @@ export class TrinityStrategy implements IStrategy {
           roi: parseFloat(roi),
         });
       this.logger.log(
-        `[TRINITY] 🛑 STOP-LOSS ATINGIDO! | Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(state.stopLoss)}`,
+        `[TRINITY] 🛑 STOP-LOSS ATINGIDO! | Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(stopLossValue).toFixed(2)}`,
       );
       return;
     }
