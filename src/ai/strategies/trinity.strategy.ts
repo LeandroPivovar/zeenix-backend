@@ -162,11 +162,16 @@ export class TrinityStrategy implements IStrategy {
 
   async activateUser(userId: string, config: any): Promise<void> {
     this.logger.log(`[TRINITY] 🔵 Ativando usuário ${userId}...`);
-    const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit } = config;
+    const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit, entryValue } = config;
+    
+    // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
+    // ✅ stakeAmount é o capital total da conta (ex: $8953.20)
+    const apostaInicial = entryValue || 0.35; // Usar entryValue se fornecido, senão 0.35 (mínimo)
     
     this.upsertTrinityUserState({
       userId,
-      stakeAmount,
+      stakeAmount, // Capital total
+      apostaInicial, // Valor de entrada por operação
       derivToken,
       currency,
       mode: mode || 'veloz',
@@ -780,7 +785,8 @@ export class TrinityStrategy implements IStrategy {
 
   private upsertTrinityUserState(params: {
     userId: string;
-    stakeAmount: number;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional, padrão: 0.35)
     derivToken: string;
     currency: string;
     mode: string;
@@ -793,6 +799,8 @@ export class TrinityStrategy implements IStrategy {
       // ✅ Quando reativar, atualizar capitalInicial para o capital atual (nova sessão)
       // Isso garante que o stop-loss seja calculado corretamente a partir do novo capital
       const novoCapitalInicial = params.stakeAmount;
+      const apostaInicial = params.apostaInicial || existing.assets.R_10.apostaBase || 0.35;
+      
       Object.assign(existing, {
         capital: params.stakeAmount,
         capitalInicial: novoCapitalInicial,
@@ -806,6 +814,15 @@ export class TrinityStrategy implements IStrategy {
         totalProfitLoss: 0, // Resetar P&L total para nova sessão
       });
       
+      // ✅ Atualizar aposta inicial de todos os ativos se fornecido
+      if (params.apostaInicial) {
+        for (const assetKey of ['R_10', 'R_25', 'R_50'] as const) {
+          existing.assets[assetKey].apostaInicial = apostaInicial;
+          existing.assets[assetKey].apostaBase = apostaInicial;
+          existing.assets[assetKey].ultimaApostaUsada = apostaInicial;
+        }
+      }
+      
       // ✅ Log: Reativação
       this.logger.log(
         `[TRINITY] 🔄 Usuário REATIVADO | Capital: $${params.stakeAmount.toFixed(2)} | Capital Inicial: $${novoCapitalInicial.toFixed(2)} | Stop-loss: ${params.lossLimit ? `-$${Math.abs(params.lossLimit).toFixed(2)}` : 'N/A'}`,
@@ -813,7 +830,10 @@ export class TrinityStrategy implements IStrategy {
       return;
     }
 
-    // Criar novo estado
+      // Criar novo estado
+    // ✅ Usar apostaInicial se fornecido, senão usar mínimo de 0.35
+    const apostaInicial = params.apostaInicial || 0.35;
+    
     const assets: TrinityUserState['assets'] = {
       R_10: {
         symbol: 'R_10',
@@ -821,11 +841,11 @@ export class TrinityStrategy implements IStrategy {
         isOperationActive: false,
         martingaleStep: 0,
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
-        ultimaApostaUsada: params.stakeAmount,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
+        ultimaApostaUsada: apostaInicial,
         ticksDesdeUltimaOp: 0,
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial, // ✅ Base para cálculos de martingale
         ultimoLucro: 0,
         lastOperationTimestamp: null,
       },
@@ -835,11 +855,11 @@ export class TrinityStrategy implements IStrategy {
         isOperationActive: false,
         martingaleStep: 0,
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
-        ultimaApostaUsada: params.stakeAmount,
+        apostaInicial: apostaInicial,
+        ultimaApostaUsada: apostaInicial,
         ticksDesdeUltimaOp: 0,
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial,
         ultimoLucro: 0,
         lastOperationTimestamp: null,
       },
@@ -849,11 +869,11 @@ export class TrinityStrategy implements IStrategy {
         isOperationActive: false,
         martingaleStep: 0,
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
-        ultimaApostaUsada: params.stakeAmount,
+        apostaInicial: apostaInicial,
+        ultimaApostaUsada: apostaInicial,
         ticksDesdeUltimaOp: 0,
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial,
         ultimoLucro: 0,
         lastOperationTimestamp: null,
       },

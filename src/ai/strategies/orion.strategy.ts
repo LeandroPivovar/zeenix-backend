@@ -189,13 +189,18 @@ export class OrionStrategy implements IStrategy {
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
-    const { mode, stakeAmount, derivToken, currency, modoMartingale } = config;
+    const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue } = config;
     const modeLower = (mode || 'veloz').toLowerCase();
+    
+    // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
+    // ✅ stakeAmount é o capital total da conta (ex: $8953.20)
+    const apostaInicial = entryValue || 0.35; // Usar entryValue se fornecido, senão 0.35 (mínimo)
 
     if (modeLower === 'veloz') {
       this.upsertVelozUserState({
         userId,
-        stakeAmount,
+        stakeAmount, // Capital total
+        apostaInicial, // Valor de entrada por operação
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
@@ -207,7 +212,8 @@ export class OrionStrategy implements IStrategy {
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
-        stakeAmount,
+        stakeAmount, // Capital total
+        apostaInicial, // Valor de entrada por operação
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
@@ -219,7 +225,8 @@ export class OrionStrategy implements IStrategy {
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
-        stakeAmount,
+        stakeAmount, // Capital total
+        apostaInicial, // Valor de entrada por operação
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
@@ -1266,11 +1273,13 @@ export class OrionStrategy implements IStrategy {
 
   private upsertVelozUserState(params: {
     userId: string;
-    stakeAmount: number;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }): void {
+    const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.velozUsers.get(params.userId);
     if (existing) {
       Object.assign(existing, {
@@ -1278,6 +1287,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
+        // ✅ Atualizar aposta inicial se fornecido
+        apostaInicial: params.apostaInicial || existing.apostaInicial,
+        apostaBase: params.apostaInicial || existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -1294,10 +1306,10 @@ export class OrionStrategy implements IStrategy {
         martingaleStep: 0,
         modoMartingale: params.modoMartingale || 'conservador',
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         ticksDesdeUltimaOp: 0,
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
@@ -1306,11 +1318,13 @@ export class OrionStrategy implements IStrategy {
 
   private upsertModeradoUserState(params: {
     userId: string;
-    stakeAmount: number;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }): void {
+    const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.moderadoUsers.get(params.userId);
     if (existing) {
       Object.assign(existing, {
@@ -1318,6 +1332,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
+        // ✅ Atualizar aposta inicial se fornecido
+        apostaInicial: params.apostaInicial || existing.apostaInicial,
+        apostaBase: params.apostaInicial || existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -1334,10 +1351,10 @@ export class OrionStrategy implements IStrategy {
         martingaleStep: 0,
         modoMartingale: params.modoMartingale || 'conservador',
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         lastOperationTimestamp: null,
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
@@ -1346,11 +1363,13 @@ export class OrionStrategy implements IStrategy {
 
   private upsertPrecisoUserState(params: {
     userId: string;
-    stakeAmount: number;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional)
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
   }): void {
+    const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.precisoUsers.get(params.userId);
     if (existing) {
       Object.assign(existing, {
@@ -1358,6 +1377,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
+        // ✅ Atualizar aposta inicial se fornecido
+        apostaInicial: params.apostaInicial || existing.apostaInicial,
+        apostaBase: params.apostaInicial || existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -1374,9 +1396,9 @@ export class OrionStrategy implements IStrategy {
         martingaleStep: 0,
         modoMartingale: params.modoMartingale || 'conservador',
         perdaAcumulada: 0,
-        apostaInicial: params.stakeAmount,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         vitoriasConsecutivas: 0,
-        apostaBase: params.stakeAmount,
+        apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });

@@ -3715,7 +3715,7 @@ export class AiService implements OnModuleInit {
 
   async activateUserAI(
     userId: string,
-    stakeAmount: number,
+    stakeAmount: number, // Capital total da conta
     derivToken: string,
     currency: string,
     mode: string = 'veloz',
@@ -3723,6 +3723,7 @@ export class AiService implements OnModuleInit {
     lossLimit?: number,
     modoMartingale: ModoMartingale = 'conservador',
     strategy: string = 'orion',
+    entryValue?: number, // ✅ Valor de entrada por operação (opcional)
   ): Promise<void> {
     this.logger.log(
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
@@ -3820,7 +3821,8 @@ export class AiService implements OnModuleInit {
         this.logger.log(`[ActivateAI] 🔵 Ativando usuário ${userId} na estratégia ${strategy} via StrategyManager...`);
         await this.strategyManager.activateUser(userId, strategy, {
           mode: mode || 'veloz',
-          stakeAmount,
+          stakeAmount, // Capital total da conta
+          entryValue: entryValue || 0.35, // ✅ Valor de entrada por operação (padrão: 0.35)
           derivToken,
           currency,
           modoMartingale: modoMartingale || 'conservador',

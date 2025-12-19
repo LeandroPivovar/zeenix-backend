@@ -281,7 +281,8 @@ export class AiController {
   async activateAI(
     @Body() body: {
       userId: string;
-      stakeAmount: number;
+      stakeAmount: number; // Capital total da conta
+      entryValue?: number; // ✅ Valor de entrada por operação (opcional)
       derivToken: string;
       currency: string;
       mode?: string;
@@ -296,7 +297,7 @@ export class AiController {
       
       await this.aiService.activateUserAI(
         body.userId,
-        body.stakeAmount,
+        body.stakeAmount, // Capital total da conta
         body.derivToken,
         body.currency,
         body.mode || 'veloz',
@@ -304,6 +305,7 @@ export class AiController {
         body.lossLimit,
         body.modoMartingale || 'conservador',
         body.strategy || 'orion',
+        body.entryValue, // ✅ Valor de entrada por operação (opcional)
       );
       return {
         success: true,
