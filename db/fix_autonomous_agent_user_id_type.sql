@@ -20,3 +20,5 @@ SELECT 'Colunas user_id alteradas para VARCHAR(36) com sucesso!' AS message;
 
 
 
+
+

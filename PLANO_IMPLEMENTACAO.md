@@ -110,3 +110,5 @@ mysql -u usuario -p database < backend/db/add_trading_mode_and_soros.sql
 
 
 
+
+

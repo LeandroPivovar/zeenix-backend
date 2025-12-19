@@ -35,6 +35,7 @@ interface VelozUserState {
   vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
   ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
 }
 
 interface ModeradoUserState {
@@ -55,6 +56,7 @@ interface ModeradoUserState {
   vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
   ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
 }
 
 interface PrecisoUserState {
@@ -75,6 +77,7 @@ interface PrecisoUserState {
   vitoriasConsecutivas: number; // ✅ ZENIX v2.0: Estratégia Soros - rastrear vitórias consecutivas (0, 1, 2)
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
   ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
 }
 
 // ✅ TRINITY: Estado individual por ativo
@@ -1006,6 +1009,34 @@ export class AiService implements OnModuleInit {
       try {
         // Pular se já tem operação ativa (martingale)
         if (state.isOperationActive) {
+          return;
+        }
+
+        // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
+        if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+          // Verificar se pode continuar com martingale
+          const canProcess = await this.canProcessVelozState(state);
+          if (!canProcess) {
+            return;
+          }
+
+          // Verificar intervalo entre operações (3 ticks)
+          if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
+            if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
+              this.logger.debug(
+                `[Veloz][${userId}] ⏱️ Aguardando intervalo (martingale): ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
+              );
+              return;
+            }
+          }
+
+          // Continuar com martingale usando a mesma direção
+          const proximaEntrada = state.martingaleStep + 1;
+          this.logger.log(
+            `[Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+          );
+          
+          await this.executeVelozOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
           return;
         }
 
@@ -2090,6 +2121,7 @@ export class AiService implements OnModuleInit {
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
+      state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
       // ✅ CORREÇÃO: Não resetar apostaInicial para 0, manter com valor atual
       // state.apostaInicial mantém o valor da última aposta para referência
       return;
@@ -2098,6 +2130,8 @@ export class AiService implements OnModuleInit {
     // ❌ PERDA
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
+    // ✅ CORREÇÃO: Salvar direção da operação para continuar martingale
+    state.ultimaDirecaoMartingale = proposal;
 
     // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
     // Se perder em qualquer entrada do Soros (1, 2 ou 3), entrar em recuperação
@@ -2205,6 +2239,7 @@ export class AiService implements OnModuleInit {
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
+              state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
               
               this.logger.log(
                 `[Veloz][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
@@ -2266,6 +2301,7 @@ export class AiService implements OnModuleInit {
     state.martingaleStep = 0;
     state.perdaAcumulada = 0;
     state.apostaInicial = 0;
+    state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
   }
 
   private async incrementVelozStats(
@@ -3072,6 +3108,7 @@ export class AiService implements OnModuleInit {
       vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
       apostaBase: stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+      ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
     });
   }
 
@@ -5003,6 +5040,35 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         continue;
       }
 
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+        // Verificar se pode continuar com martingale
+        const canProcess = await this.canProcessModeradoState(state);
+        if (!canProcess) {
+          continue;
+        }
+
+        // Verificar intervalo entre operações (15-20 segundos)
+        if (state.lastOperationTimestamp) {
+          const segundosDesdeUltimaOp = (Date.now() - state.lastOperationTimestamp.getTime()) / 1000;
+          if (segundosDesdeUltimaOp < MODERADO_CONFIG.intervaloSegundos) {
+            this.logger.debug(
+              `[Moderado][${userId}] ⏱️ Aguardando intervalo (martingale): ${segundosDesdeUltimaOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos}s`,
+            );
+            continue;
+          }
+        }
+
+        // Continuar com martingale usando a mesma direção
+        const proximaEntrada = state.martingaleStep + 1;
+        this.logger.log(
+          `[Moderado][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        
+        await this.executeModeradoOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
+        continue;
+      }
+
       // Verificar se pode processar
       const canProcess = await this.canProcessModeradoState(state);
       if (!canProcess) {
@@ -5664,6 +5730,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.isOperationActive = false;
       state.martingaleStep = 0;
       state.perdaAcumulada = 0;
+      state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
       // ✅ CORREÇÃO: Não resetar apostaInicial para 0, manter com valor atual
       return;
     }
@@ -5671,6 +5738,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // ❌ PERDA
     state.virtualCapital += result.profitLoss;
     state.perdaAcumulada += stakeAmount;
+    // ✅ CORREÇÃO: Salvar direção da operação para continuar martingale
+    state.ultimaDirecaoMartingale = proposal;
 
     // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
     // Se perder em qualquer entrada do Soros (1, 2 ou 3), entrar em recuperação
@@ -5774,6 +5843,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
+              state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
               
               this.logger.log(
                 `[Moderado][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
@@ -5835,6 +5905,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.martingaleStep = 0;
     state.perdaAcumulada = 0;
     state.apostaInicial = 0;
+    state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
   }
 
   /**
@@ -6061,6 +6132,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+        ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
   }
@@ -6104,6 +6176,24 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     for (const [userId, state] of this.precisoUsers.entries()) {
       // Pular se já tem operação ativa (martingale)
       if (state.isOperationActive) {
+        continue;
+      }
+
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+        // Verificar se pode continuar com martingale
+        const canProcess = await this.canProcessPrecisoState(state);
+        if (!canProcess) {
+          continue;
+        }
+
+        // Continuar com martingale usando a mesma direção (PRECISO não tem intervalo fixo)
+        const proximaEntrada = state.martingaleStep + 1;
+        this.logger.log(
+          `[Preciso][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        
+        await this.executePrecisoOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
         continue;
       }
 
@@ -6549,6 +6639,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
+              state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
               
               this.logger.log(
                 `[Preciso][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
@@ -6589,6 +6680,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     state.martingaleStep = 0;
     state.perdaAcumulada = 0;
     state.apostaInicial = 0;
+    state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
   }
 
   /**
@@ -6825,6 +6917,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
       ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: params.stakeAmount, // ✅ ZENIX v2.0: Inicializar aposta base
+        ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
   }
