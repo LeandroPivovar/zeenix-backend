@@ -450,6 +450,7 @@ export class OrionStrategy implements IStrategy {
       return;
     }
 
+    // ✅ VALIDAÇÕES PREVENTIVAS serão feitas APÓS calcular o stakeAmount
     state.isOperationActive = true;
     // ✅ CORREÇÃO: martingaleStep é gerenciado após perda/vitória, não aqui
     // entry é apenas para logs e cálculo do stake
@@ -521,6 +522,35 @@ export class OrionStrategy implements IStrategy {
       );
     }
     
+    // ✅ VALIDAÇÕES PREVENTIVAS após calcular stakeAmount
+    // 1. Validar valor mínimo da Deriv ($0.35)
+    if (stakeAmount < 0.35) {
+      this.logger.warn(
+        `[ORION][${mode}][${state.userId}] ❌ Valor abaixo do mínimo | Stake: $${stakeAmount.toFixed(2)} | Mínimo: $0.35 | Ajustando para mínimo`,
+      );
+      stakeAmount = 0.35; // Ajustar para o mínimo
+      this.saveOrionLog(state.userId, 'R_10', 'alerta', `⚠️ Valor da aposta ajustado para o mínimo permitido: $0.35`);
+    }
+
+    // 2. Validar saldo mínimo (com margem de segurança de 10%)
+    const saldoNecessario = stakeAmount * 1.1; // 10% de margem
+    if (state.capital < saldoNecessario) {
+      this.logger.warn(
+        `[ORION][${mode}][${state.userId}] ❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)} (stake: $${stakeAmount.toFixed(2)} + margem)`,
+      );
+      state.isOperationActive = false;
+      this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
+      return; // Não tentar criar contrato se não tiver saldo suficiente
+    }
+
+    // 3. Validar token
+    if (!state.derivToken || state.derivToken.trim() === '') {
+      this.logger.error(`[ORION][${mode}][${state.userId}] ❌ Token Deriv inválido ou ausente`);
+      state.isOperationActive = false;
+      this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Token Deriv inválido ou ausente - Não é possível criar contrato`);
+      return; // Não tentar criar contrato sem token
+    }
+    
     const currentPrice = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 0;
 
     // ✅ Logs da operação
@@ -553,6 +583,7 @@ export class OrionStrategy implements IStrategy {
           amount: stakeAmount,
           currency: state.currency || 'USD',
         },
+        state.userId, // ✅ Passar userId para poder salvar logs
       );
 
       if (!contractId) {
@@ -676,6 +707,7 @@ export class OrionStrategy implements IStrategy {
       amount: number;
       currency: string;
     },
+    userId?: string, // ✅ userId opcional para salvar logs
   ): Promise<string | null> {
     return new Promise((resolve) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
@@ -692,8 +724,10 @@ export class OrionStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           this.logger.warn(`[ORION] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
-          // ✅ Log de timeout na criação do contrato
-          this.saveOrionLog('SYSTEM', 'R_10', 'erro', `⏱️ Timeout ao criar contrato após 30 segundos | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          // ✅ Log de timeout na criação do contrato (apenas se tiver userId)
+          if (userId) {
+            this.saveOrionLog(userId, 'R_10', 'erro', `⏱️ Timeout ao criar contrato após 30 segundos | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          }
           ws.close();
           resolve(null);
         }
@@ -717,8 +751,10 @@ export class OrionStrategy implements IStrategy {
                 this.logger.error(
                   `[ORION] ❌ Erro na autorização: ${JSON.stringify(msg.authorize.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
                 );
-                // ✅ Salvar resposta completa da API nos logs
-                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro na autorização da Deriv | Resposta: ${errorResponse}`);
+                // ✅ Salvar resposta completa da API nos logs (apenas se tiver userId)
+                if (userId) {
+                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro na autorização da Deriv | Resposta: ${errorResponse}`);
+                }
                 ws.close();
                 resolve(null);
               }
@@ -747,11 +783,27 @@ export class OrionStrategy implements IStrategy {
                 hasResolved = true;
                 clearTimeout(timeout);
                 const errorResponse = JSON.stringify(msg.proposal);
+                const errorCode = msg.proposal.error?.code || '';
+                const errorMessage = msg.proposal.error?.message || JSON.stringify(msg.proposal.error);
+                
                 this.logger.error(
                   `[ORION] ❌ Erro na proposta: ${JSON.stringify(msg.proposal.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
                 );
-                // ✅ Salvar resposta completa da API nos logs
-                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro na proposta da Deriv | Resposta: ${errorResponse}`);
+                
+                // ✅ Salvar resposta completa da API nos logs (apenas se tiver userId)
+                if (userId) {
+                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage} | Resposta completa: ${errorResponse}`);
+                }
+                
+                // ✅ Tentar identificar e sugerir solução para erros comuns
+                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+                  this.logger.warn(`[ORION] 💡 Saldo insuficiente detectado. Verifique o saldo da conta.`);
+                } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('amount')) {
+                  this.logger.warn(`[ORION] 💡 Valor inválido. Verifique se o valor está dentro dos limites permitidos (mínimo: $0.35).`);
+                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+                  this.logger.warn(`[ORION] 💡 Rate limit atingido. Aguarde alguns segundos antes de tentar novamente.`);
+                }
+                
                 ws.close();
                 resolve(null);
               }
@@ -760,6 +812,22 @@ export class OrionStrategy implements IStrategy {
             
             proposalId = msg.proposal.id;
             const proposalPrice = Number(msg.proposal.ask_price);
+            
+            // ✅ Validar se a proposta foi recebida corretamente
+            if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                const errorResponse = JSON.stringify(msg.proposal);
+                this.logger.error(`[ORION] ❌ Proposta inválida recebida: ${errorResponse}`);
+                if (userId) {
+                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Proposta inválida da Deriv | Resposta: ${errorResponse}`);
+                }
+                ws.close();
+                resolve(null);
+              }
+              return;
+            }
             
             this.logger.debug(`[ORION] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`);
             ws.send(JSON.stringify({
@@ -777,11 +845,42 @@ export class OrionStrategy implements IStrategy {
               
               if (msg.buy.error) {
                 const errorResponse = JSON.stringify(msg.buy);
+                const errorCode = msg.buy.error?.code || '';
+                const errorMessage = msg.buy.error?.message || JSON.stringify(msg.buy.error);
+                
                 this.logger.error(
                   `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(msg.buy.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
                 );
-                // ✅ Salvar resposta completa da API nos logs
-                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro ao comprar contrato na Deriv | Resposta: ${errorResponse}`);
+                
+                // ✅ Salvar resposta completa da API nos logs (apenas se tiver userId)
+                if (userId) {
+                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao comprar contrato na Deriv | Código: ${errorCode} | Mensagem: ${errorMessage} | Resposta completa: ${errorResponse}`);
+                  
+                  // ✅ Tentar identificar e sugerir solução para erros comuns
+                  if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+                    this.logger.warn(`[ORION] 💡 Saldo insuficiente detectado. Verifique o saldo da conta.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Saldo insuficiente na Deriv. Verifique o saldo da conta antes de tentar novamente.`);
+                  } else if (errorMessage.toLowerCase().includes('proposal') && (errorMessage.toLowerCase().includes('expired') || errorMessage.toLowerCase().includes('invalid'))) {
+                    this.logger.warn(`[ORION] 💡 Proposta expirada ou inválida. A IA tentará novamente no próximo tick.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Proposta expirada. A IA tentará novamente automaticamente.`);
+                  } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+                    this.logger.warn(`[ORION] 💡 Rate limit atingido. Aguarde alguns segundos antes de tentar novamente.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Rate limit atingido na Deriv. Aguarde alguns segundos.`);
+                  } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('token')) {
+                    this.logger.error(`[ORION] 💡 Token inválido ou expirado. É necessário reconectar a conta Deriv.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Token Deriv inválido ou expirado. Reconecte sua conta Deriv.`);
+                  }
+                }
+                
+                // ✅ Tentar identificar e sugerir solução para erros comuns
+                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+                  this.logger.warn(`[ORION] 💡 Saldo insuficiente ao comprar contrato. Verifique o saldo da conta.`);
+                } else if (errorMessage.toLowerCase().includes('proposal') && errorMessage.toLowerCase().includes('expired')) {
+                  this.logger.warn(`[ORION] 💡 Proposta expirada. A proposta pode ter expirado antes da compra ser processada.`);
+                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+                  this.logger.warn(`[ORION] 💡 Rate limit atingido. Aguarde alguns segundos antes de tentar novamente.`);
+                }
+                
                 resolve(null);
                 return;
               }

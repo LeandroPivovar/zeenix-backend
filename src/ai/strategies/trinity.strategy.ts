@@ -249,9 +249,10 @@ export class TrinityStrategy implements IStrategy {
         this.trinityConnected[symbol] = true;
         this.subscribeToTrinityTicks(symbol);
         
-        // ✅ Log de conexão para todos os usuários ativos
+        // ✅ Log de conexão para todos os usuários ativos (formato documentação)
         for (const userId of this.trinityUsers.keys()) {
           this.saveTrinityLog(userId, symbol, 'info', `Conectado ✅ | Subscrito em ticks`, {
+            ativo: symbol,
             url: endpoint,
             appId: this.appId,
             status: 'connected',
@@ -400,30 +401,19 @@ export class TrinityStrategy implements IStrategy {
       this.trinityTicks[symbol].shift();
     }
 
-    // ✅ Log de tick para todos os usuários ativos
+    // ✅ Log de progresso apenas quando necessário (sem logs de ticks individuais)
     const tickNumero = this.trinityTicks[symbol].length;
-    const tipo = tick.parity;
     for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, symbol, 'tick', 
-        `Tick #${tickNumero} | Preço: ${tick.value.toFixed(3)} → Dígito: ${tick.digit} (${tipo})`, {
-        tickNumero,
-        preco: tick.value,
-        digito: tick.digit,
-        tipo,
-        historicoAtual: tickNumero,
-        amostraMinima: 20, // Será ajustado pelo modo
-        progresso: `${Math.round((tickNumero / 20) * 100)}%`,
-      });
-      
-      // Log de progresso quando completa amostra
       const state = this.trinityUsers.get(userId);
-      if (state) {
-        const modeConfig = this.getModeConfig(state.mode);
-        if (modeConfig && tickNumero === modeConfig.amostraInicial) {
-          this.saveTrinityLog(userId, symbol, 'info', 
-            `Coleta: ${tickNumero}/${modeConfig.amostraInicial} ticks (100%) ✅ | Amostra completa`);
-        }
+      const modeConfig = state ? this.getModeConfig(state.mode) : null;
+      const amostraMinima = modeConfig?.amostraInicial || 20;
+      
+      // Log de progresso apenas quando completa amostra (formato documentação)
+      if (modeConfig && tickNumero === modeConfig.amostraInicial) {
+        this.saveTrinityLog(userId, symbol, 'info', 
+          `Coleta: ${tickNumero}/${modeConfig.amostraInicial} ticks (100%) ✅ | Amostra completa`);
       }
+      // Removido: logs de ticks individuais e progresso intermediário para reduzir poluição
     }
 
     // Processar estratégias TRINITY
@@ -525,18 +515,27 @@ export class TrinityStrategy implements IStrategy {
         continue;
       }
 
-      // ✅ Log: Análise iniciada
+      // ✅ Log: Análise iniciada (conforme documentação)
       this.saveTrinityLog(userId, symbol, 'analise', `ANÁLISE INICIADA | Modo: ${state.mode.toUpperCase()}`);
       
       // Gerar sinal
       const sinal = gerarSinalZenix(this.trinityTicks[symbol], modeConfig, state.mode.toUpperCase());
       
       if (!sinal || !sinal.sinal) {
-        // ✅ Log: Sinal rejeitado
-        this.saveTrinityLog(userId, symbol, 'alerta', `SINAL REJEITADO | Motivo: ${sinal ? 'Critérios não atendidos' : 'Sem sinal gerado'}`, {
+        // ✅ Log: Sinal rejeitado (conforme documentação)
+        const motivo = sinal ? 'Critérios não atendidos' : 'Sem sinal gerado';
+        const desequilibrio = sinal?.detalhes?.desequilibrio?.desequilibrio ? sinal.detalhes.desequilibrio.desequilibrio * 100 : 0;
+        const confianca = sinal?.confianca || 0;
+        const desequilibrioMinimo = modeConfig.desequilibrioMin * 100;
+        const confianciaMinima = modeConfig.confianciaMin * 100;
+        
+        this.saveTrinityLog(userId, symbol, 'alerta', 
+          `SINAL REJEITADO | Motivo: ${motivo}${desequilibrio > 0 ? ` | Desequilíbrio: ${desequilibrio.toFixed(1)}% (mínimo: ${desequilibrioMinimo.toFixed(0)}%)` : ''}${confianca > 0 ? ` | Confiança: ${confianca.toFixed(1)}% (mínimo: ${confianciaMinima.toFixed(0)}%)` : ''}`, {
           motivo: sinal ? 'criterios_nao_atendidos' : 'sem_sinal',
-          desequilibrio: sinal?.detalhes?.desequilibrio?.desequilibrio ? sinal.detalhes.desequilibrio.desequilibrio * 100 : 0,
-          confianca: sinal?.confianca || 0,
+          desequilibrio,
+          desequilibrioMinimo,
+          confianca,
+          confianciaMinima,
         });
         
         // ✅ Sem sinal válido: avançar para próximo ativo na rotação
@@ -544,96 +543,169 @@ export class TrinityStrategy implements IStrategy {
         continue;
       }
       
-      // ✅ Log: Análises detalhadas (4 análises)
+      // ✅ Log: Análises detalhadas (4 análises conforme documentação)
       const detalhes = sinal.detalhes || {};
       
-      // Análise 1: Desequilíbrio Estatístico
+      // Análise 1: Desequilíbrio Estatístico (formato documentação)
       if (detalhes.desequilibrio) {
         const deseq = detalhes.desequilibrio;
+        const pares = Math.round(deseq.percentualPar * modeConfig.amostraInicial);
+        const impares = Math.round(deseq.percentualImpar * modeConfig.amostraInicial);
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
         const desequilibrioPerc = (deseq.desequilibrio * 100).toFixed(1);
+        const ladoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcao = deseq.operacao || sinal.sinal;
+        
         this.saveTrinityLog(userId, symbol, 'analise', 
-          `Análise 1/4: Desequilíbrio Estatístico | Últimos ${modeConfig.amostraInicial} ticks: ${deseq.percentualPar > deseq.percentualImpar ? percPar : percImpar}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'} | Desequilíbrio: ${desequilibrioPerc}% (mínimo: ${(modeConfig.desequilibrioMin * 100).toFixed(0)}%) ✅`, {
+          `Análise 1/4: Desequilíbrio Estatístico
+  └─ Últimos ${modeConfig.amostraInicial} ticks: ${pares} PAR (${percPar}%), ${impares} ÍMPAR (${percImpar}%)
+  └─ Desequilíbrio: ${desequilibrioPerc}% (mínimo: ${(modeConfig.desequilibrioMin * 100).toFixed(0)}%) ✅
+  └─ Direção: ${direcao} (oposto do desequilíbrio)
+  └─ Confiança base: ${detalhes.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`, {
           analise: 'desequilibrio',
           janela: modeConfig.amostraInicial,
-          pares: Math.round(deseq.percentualPar * modeConfig.amostraInicial),
-          impares: Math.round(deseq.percentualImpar * modeConfig.amostraInicial),
+          pares,
+          impares,
           percPar: parseFloat(percPar),
           percImpar: parseFloat(percImpar),
           desequilibrio: parseFloat(desequilibrioPerc),
           desequilibrioMinimo: modeConfig.desequilibrioMin * 100,
           atendeCriterio: true,
-          direcao: sinal.sinal,
+          direcao,
           confiancaBase: detalhes.confiancaBase || sinal.confianca,
         });
       }
       
-      // Análise 2: Sequências Repetidas
+      // Análise 2: Sequências Repetidas (formato documentação)
       if (detalhes.sequencias) {
         const seq = detalhes.sequencias;
         const bonus = seq.bonus || 0;
+        const confiancaAntes = detalhes.confiancaBase || sinal.confianca;
+        const confiancaDepois = confiancaAntes + bonus;
+        const atendeCriterio = seq.tamanho >= 5;
+        
         this.saveTrinityLog(userId, symbol, 'analise', 
-          `Análise 2/4: Sequências Repetidas | Maior sequência: ${seq.tamanho || 0} ${seq.paridade || ''} consecutivos | Critério: ≥5 consecutivos ${seq.tamanho >= 5 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          `Análise 2/4: Sequências Repetidas
+  └─ Maior sequência: ${seq.tamanho || 0} ${seq.paridade || ''}ES consecutivos
+  └─ Critério: ≥5 consecutivos ${atendeCriterio ? '✅' : '❌'}
+  └─ Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança
+  └─ Confiança acumulada: ${confiancaAntes.toFixed(1)}% ${bonus > 0 ? `+ ${bonus}%` : ''} = ${confiancaDepois.toFixed(1)}%`, {
           analise: 'sequencias',
           maiorSequencia: seq.tamanho || 0,
           tipoSequencia: seq.paridade || '',
           criterioMinimo: 5,
-          atendeCriterio: seq.tamanho >= 5,
+          atendeCriterio,
           bonus,
-          confiancaAntes: detalhes.confiancaBase || sinal.confianca,
-          confiancaDepois: (detalhes.confiancaBase || sinal.confianca) + bonus,
+          confiancaAntes,
+          confiancaDepois,
         });
       }
       
-      // Análise 3: Micro-Tendências
+      // Análise 3: Micro-Tendências (formato documentação)
       if (detalhes.microTendencias) {
         const micro = detalhes.microTendencias;
         const bonus = micro.bonus || 0;
+        const aceleracaoPerc = (micro.aceleracao || 0) * 100;
+        const atendeCriterio = micro.aceleracao > 0.10;
+        const confiancaAntes = (detalhes.confiancaBase || sinal.confianca) + (detalhes.sequencias?.bonus || 0);
+        const confiancaDepois = confiancaAntes + bonus;
+        const confiancaLimitada = Math.min(95, confiancaDepois);
+        
         this.saveTrinityLog(userId, symbol, 'analise', 
-          `Análise 3/4: Micro-Tendências | Diferença: ${(micro.aceleracao ? (micro.aceleracao * 100).toFixed(1) : '0')}% (mínimo: 10%) ${micro.aceleracao > 0.10 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          `Análise 3/4: Micro-Tendências
+  └─ Curto prazo (10 ticks): ${((detalhes.desequilibrio?.percentualPar || 0) * 100).toFixed(1)}% PAR
+  └─ Médio prazo (20 ticks): ${((detalhes.desequilibrio?.percentualImpar || 0) * 100).toFixed(1)}% ÍMPAR
+  └─ Diferença: ${aceleracaoPerc.toFixed(1)}% (mínimo: 10%) ${atendeCriterio ? '✅' : '❌'}
+  └─ Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança
+  └─ Confiança acumulada: ${confiancaAntes.toFixed(1)}% ${bonus > 0 ? `+ ${bonus}%` : ''} = ${confiancaDepois.toFixed(1)}%${confiancaDepois > 95 ? ` → limitado a ${confiancaLimitada.toFixed(1)}%` : ''}`, {
           analise: 'microTendencias',
-          aceleracao: micro.aceleracao || 0,
+          curtoPrazo: {
+            janela: 10,
+            percPar: (detalhes.desequilibrio?.percentualPar || 0) * 100,
+          },
+          medioPrazo: {
+            janela: 20,
+            percPar: (detalhes.desequilibrio?.percentualImpar || 0) * 100,
+          },
+          diferenca: aceleracaoPerc,
           criterioMinimo: 10,
-          atendeCriterio: micro.aceleracao > 0.10,
+          atendeCriterio,
           bonus,
+          confiancaAntes,
+          confiancaDepois,
+          confiancaLimitada: confiancaDepois > 95 ? confiancaLimitada : confiancaDepois,
         });
       }
       
-      // Análise 4: Força do Desequilíbrio
+      // Análise 4: Força do Desequilíbrio (formato documentação)
       if (detalhes.forca) {
         const forca = detalhes.forca;
         const bonus = forca.bonus || 0;
+        const velocidadePerc = (forca.velocidade || 0) * 100;
+        const atendeCriterio = forca.velocidade > 0.05;
+        const confiancaAntes = Math.min(95, (detalhes.confiancaBase || sinal.confianca) + (detalhes.sequencias?.bonus || 0) + (detalhes.microTendencias?.bonus || 0));
+        const confiancaDepois = Math.min(95, confiancaAntes + bonus);
+        const jaNoLimite = confiancaAntes >= 95;
+        
         this.saveTrinityLog(userId, symbol, 'analise', 
-          `Análise 4/4: Força do Desequilíbrio | Ticks consecutivos com desequilíbrio >60%: ${forca.velocidade ? Math.round(forca.velocidade * 100) : 0} | Critério: >5 ticks ${(forca.velocidade || 0) > 0.05 ? '✅' : '❌'} | Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança`, {
+          `Análise 4/4: Força do Desequilíbrio
+  └─ Ticks consecutivos com desequilíbrio >60%: ${Math.round(velocidadePerc)} ticks
+  └─ Critério: >5 ticks ${atendeCriterio ? '✅' : '❌'}
+  └─ Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança
+  └─ Confiança final: ${confiancaAntes.toFixed(1)}%${bonus > 0 ? ` ${jaNoLimite ? '(já no limite)' : `+ ${bonus}% = ${confiancaDepois.toFixed(1)}%`}` : ''}`, {
           analise: 'forca',
-          ticksConsecutivos: forca.velocidade ? Math.round(forca.velocidade * 100) : 0,
+          ticksConsecutivos: Math.round(velocidadePerc),
           criterioMinimo: 5,
-          atendeCriterio: (forca.velocidade || 0) > 0.05,
+          atendeCriterio,
           bonus,
+          confiancaAntes,
+          confiancaDepois,
+          jaNoLimite,
         });
       }
       
-      // Log final da análise
+      // Log final da análise (formato documentação)
+      const criteriosAtendidos = [
+        detalhes.desequilibrio?.desequilibrio >= modeConfig.desequilibrioMin,
+        detalhes.sequencias?.tamanho >= 5,
+        detalhes.microTendencias?.aceleracao > 0.10,
+        detalhes.forca?.velocidade > 0.05,
+      ].filter(Boolean).length;
+      
       this.saveTrinityLog(userId, symbol, 'analise', 
-        `ANÁLISE COMPLETA ✅ | Confiança final: ${sinal.confianca.toFixed(1)}% | Direção: ${sinal.sinal}`, {
-          criteriosAtendidos: 4,
+        `ANÁLISE COMPLETA ✅
+  └─ Critérios atendidos: ${criteriosAtendidos}/4
+  └─ Desequilíbrio: ${(detalhes.desequilibrio?.desequilibrio || 0) * 100}% ✅
+  └─ Sequências: ${detalhes.sequencias?.tamanho || 0} consecutivos ${(detalhes.sequencias?.tamanho || 0) >= 5 ? '✅' : '❌'}
+  └─ Micro-tendências: ${((detalhes.microTendencias?.aceleracao || 0) * 100).toFixed(1)}% diferença ${(detalhes.microTendencias?.aceleracao || 0) > 0.10 ? '✅' : '❌'}
+  └─ Força: ${Math.round((detalhes.forca?.velocidade || 0) * 100)} ticks ${(detalhes.forca?.velocidade || 0) > 0.05 ? '✅' : '❌'}
+  └─ Confiança final: ${sinal.confianca.toFixed(1)}%
+  └─ Direção: ${sinal.sinal}`, {
+          criteriosAtendidos,
           criteriosTotais: 4,
-          desequilibrio: detalhes.desequilibrio ? (detalhes.desequilibrio.desequilibrio * 100) : 0,
+          desequilibrio: (detalhes.desequilibrio?.desequilibrio || 0) * 100,
           sequencia: detalhes.sequencias?.tamanho || 0,
-          microTendencia: detalhes.microTendencias ? (detalhes.microTendencias.aceleracao * 100) : 0,
-          forca: detalhes.forca ? (detalhes.forca.velocidade * 100) : 0,
+          microTendencia: (detalhes.microTendencias?.aceleracao || 0) * 100,
+          forca: Math.round((detalhes.forca?.velocidade || 0) * 100),
           confiancaFinal: sinal.confianca,
           direcao: sinal.sinal,
           sinalValido: true,
         });
       
-      // ✅ Log: Sinal gerado
+      // ✅ Log: Sinal gerado (formato documentação)
       this.saveTrinityLog(userId, symbol, 'sinal', 
-        `SINAL GERADO ✅ | ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}% | ${sinal.motivo}`, {
+        `SINAL GERADO ✅
+  └─ Direção: ${sinal.sinal}
+  └─ Confiança: ${sinal.confianca.toFixed(1)}%
+  └─ Desequilíbrio: ${(detalhes.desequilibrio?.desequilibrio || 0) * 100}%
+  └─ Aposta: $${asset.apostaInicial.toFixed(2)} (${asset.martingaleStep > 0 ? 'martingale' : 'normal'})
+  └─ Aguardando execução...`, {
           direcao: sinal.sinal,
           confianca: sinal.confianca,
-          desequilibrio: detalhes.desequilibrio ? (detalhes.desequilibrio.desequilibrio * 100) : 0,
+          desequilibrio: (detalhes.desequilibrio?.desequilibrio || 0) * 100,
+          aposta: asset.apostaInicial,
+          martingaleAtivo: asset.martingaleStep > 0,
           timestamp: Date.now(),
         });
       
@@ -641,8 +713,8 @@ export class TrinityStrategy implements IStrategy {
         `[TRINITY][${symbol}] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}% | ${sinal.motivo}`,
       );
 
-      // ✅ Executar operação TRINITY
-      await this.executeTrinityOperation(state, symbol, sinal.sinal);
+      // ✅ Executar operação TRINITY (passar sinal para logs)
+      await this.executeTrinityOperation(state, symbol, sinal.sinal, sinal);
     }
   }
 
@@ -825,6 +897,7 @@ export class TrinityStrategy implements IStrategy {
     state: TrinityUserState,
     symbol: 'R_10' | 'R_25' | 'R_50',
     operation: DigitParity,
+    sinal?: { confianca: number; motivo: string } | null,
   ): Promise<void> {
     const asset = state.assets[symbol];
     
@@ -911,24 +984,29 @@ export class TrinityStrategy implements IStrategy {
         mode: state.mode,
       });
       
-      // ✅ Log: Operação executada (após ter contractId e tradeId)
-      const operacaoNumero = (asset.martingaleStep > 0 ? asset.martingaleStep : 0) + 1;
+      // ✅ Log: Operação executada (formato documentação)
+      const operacaoNumero = asset.martingaleStep > 0 ? asset.martingaleStep : 1;
       this.saveTrinityLog(state.userId, symbol, 'operacao', 
-        `OPERAÇÃO #${operacaoNumero} EXECUTADA | ${operation} | $${stakeAmount.toFixed(2)} | ` +
-        `Martingale: ${asset.martingaleStep > 0 ? `Nível ${asset.martingaleStep}` : 'Não'} | ` +
-        `Contrato: ${contractId}`, {
+        `OPERAÇÃO #${operacaoNumero} EXECUTADA
+  └─ Direção: ${operation}
+  └─ Aposta: $${stakeAmount.toFixed(2)}
+  └─ Confiança: ${sinal?.confianca?.toFixed(1) || 'N/A'}%
+  └─ Martingale: ${asset.martingaleStep > 0 ? `Sim (Nível ${asset.martingaleStep})` : 'Não'}
+  └─ Capital antes: $${state.capital.toFixed(2)}
+  └─ Aguardando resultado...`, {
+          ativo: symbol,
           operacaoNumero,
           direcao: operation,
           aposta: stakeAmount,
-          confianca: 0, // Será preenchido se disponível
+          confianca: sinal?.confianca || 0,
           martingale: {
             ativo: asset.martingaleStep > 0,
             nivel: asset.martingaleStep,
           },
           capitalAntes: state.capital,
+          timestamp: Date.now(),
           contractId,
           tradeId,
-          timestamp: Date.now(),
         });
 
       // ✅ Monitorar contrato e processar resultado
@@ -1222,15 +1300,22 @@ export class TrinityStrategy implements IStrategy {
         const nivelAntes = asset.martingaleStep;
         const perdaRecuperada = asset.perdaAcumulada;
         
-        // ✅ Log: Martingale recuperado
+        // ✅ Log: Martingale recuperado (formato documentação)
+        const lucroLiquido = lucro - perdaRecuperada;
         this.saveTrinityLog(state.userId, symbol, 'info', 
-          `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 (resetado) | Perda recuperada: $${perdaRecuperada.toFixed(2)}`, {
+          `MARTINGALE RECUPERADO ✅
+  └─ Nível: ${nivelAntes} → 0 (resetado)
+  └─ Perda recuperada: $${perdaRecuperada.toFixed(2)}
+  └─ Ganho: $${lucro.toFixed(2)}
+  └─ Lucro líquido: $${lucroLiquido.toFixed(2)} (${lucroLiquido >= 0 ? 'break-even' : 'ainda negativo'})
+  └─ Próxima aposta: $${asset.apostaBase.toFixed(2)} (normal)`, {
+            ativo: symbol,
             evento: 'recuperacao',
             nivelAntes,
             nivelDepois: 0,
             perdaRecuperada,
             ganho: lucro,
-            lucroLiquido: lucro - perdaRecuperada,
+            lucroLiquido,
             proximaAposta: asset.apostaBase,
           });
         
@@ -1246,10 +1331,24 @@ export class TrinityStrategy implements IStrategy {
         );
       }
       
-      // ✅ Log: Resultado vitória
+      // ✅ Log: Resultado vitória (formato documentação)
+      // Calcular número da operação: se estava em martingale, usar o nível; senão, contar operações
+      const operacaoNumero = asset.martingaleStep > 0 ? asset.martingaleStep : 1;
+      const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      const tipoResultado = digitoResultado % 2 === 0 ? 'PAR' : 'ÍMPAR';
+      
       this.saveTrinityLog(state.userId, symbol, 'resultado', 
-        `✅ VITÓRIA! | Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${lucro.toFixed(2)} (payout 95%) | Capital: $${capitalDepois.toFixed(2)} | ROI: +${roi}%`, {
+        `✅ VITÓRIA! Operação #${operacaoNumero}
+  └─ Dígito resultado: ${digitoResultado} (${tipoResultado}) ✅
+  └─ Aposta: $${stakeAmount.toFixed(2)}
+  └─ Ganho: $${lucro.toFixed(2)} (payout 95%)
+  └─ Capital depois: $${capitalDepois.toFixed(2)}
+  └─ ROI: +${roi}%`, {
+          ativo: symbol,
+          operacaoNumero,
           resultado: 'vitoria',
+          digitoResultado,
+          tipoResultado,
           apostado: stakeAmount,
           ganho: lucro,
           capitalAntes: state.capital - lucro,
@@ -1285,9 +1384,16 @@ export class TrinityStrategy implements IStrategy {
           state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
         );
         
-        // ✅ Log: Martingale ativado
+        // ✅ Log: Martingale ativado (formato documentação)
+        const operacaoNumeroAtivacao = 1; // Primeira derrota = operação #1
         this.saveTrinityLog(state.userId, symbol, 'info', 
-          `MARTINGALE ATIVADO | Nível: 1 | Perda acumulada: $${perda.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)} (modo: ${state.modoMartingale})`, {
+          `MARTINGALE ATIVADO
+  └─ Motivo: Derrota na operação #${operacaoNumeroAtivacao}
+  └─ Nível: 1
+  └─ Perda acumulada: $${perda.toFixed(2)}
+  └─ Próxima aposta: $${proximaAposta.toFixed(2)} (modo: ${state.modoMartingale})
+  └─ Objetivo: Recuperar $${perda.toFixed(2)}`, {
+            ativo: symbol,
             evento: 'ativacao',
             nivel: 1,
             perdaAcumulada: perda,
@@ -1332,9 +1438,13 @@ export class TrinityStrategy implements IStrategy {
           asset.perdaAcumulada = 0;
           asset.apostaInicial = asset.apostaBase;
         } else {
-          // ✅ Log: Martingale incrementado
+          // ✅ Log: Martingale incrementado (formato documentação)
           this.saveTrinityLog(state.userId, symbol, 'info', 
-            `MARTINGALE INCREMENTADO | Nível: ${nivelAntes} → ${asset.martingaleStep} | Perda acumulada: $${perdaAntes.toFixed(2)} → $${asset.perdaAcumulada.toFixed(2)} | Próxima aposta: $${proximaAposta.toFixed(2)}`, {
+            `MARTINGALE INCREMENTADO
+  └─ Nível: ${nivelAntes} → ${asset.martingaleStep}
+  └─ Perda acumulada: $${perdaAntes.toFixed(2)} → $${asset.perdaAcumulada.toFixed(2)}
+  └─ Próxima aposta: $${proximaAposta.toFixed(2)}`, {
+              ativo: symbol,
               evento: 'incremento',
               nivelAntes,
               nivelDepois: asset.martingaleStep,
@@ -1350,10 +1460,26 @@ export class TrinityStrategy implements IStrategy {
         }
       }
       
-      // ✅ Log: Resultado derrota
+      // ✅ Log: Resultado derrota (formato documentação)
+      // Calcular número da operação: se estava em martingale, usar o nível; senão, será 1
+      const operacaoNumeroAntes = asset.martingaleStep > 0 ? asset.martingaleStep : 1;
+      const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      const tipoResultado = digitoResultado % 2 === 0 ? 'PAR' : 'ÍMPAR';
+      const esperado = operation;
+      
       this.saveTrinityLog(state.userId, symbol, 'resultado', 
-        `❌ DERROTA! | Aposta: $${stakeAmount.toFixed(2)} | Perda: -$${perda.toFixed(2)} | Capital: $${capitalDepois.toFixed(2)} | ROI: -${roi}%`, {
+        `❌ DERROTA! Operação #${operacaoNumeroAntes}
+  └─ Dígito resultado: ${digitoResultado} (${tipoResultado}) ❌ (esperado: ${esperado})
+  └─ Aposta: $${stakeAmount.toFixed(2)}
+  └─ Perda: -$${perda.toFixed(2)}
+  └─ Capital depois: $${capitalDepois.toFixed(2)}
+  └─ ROI: -${roi}%`, {
+          ativo: symbol,
+          operacaoNumero: operacaoNumeroAntes,
           resultado: 'derrota',
+          digitoResultado,
+          tipoResultado,
+          esperado,
           apostado: stakeAmount,
           perda: -perda,
           capitalAntes: state.capital + perda,
