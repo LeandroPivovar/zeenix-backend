@@ -25,9 +25,6 @@ export interface VelozUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
-  capitalInicial: number; // ✅ Capital inicial para cálculo de stop loss/win
-  profitTarget?: number | null; // ✅ Meta de lucro (stop win)
-  lossLimit?: number | null; // ✅ Limite de perda (stop loss)
 }
 
 export interface ModeradoUserState {
@@ -49,9 +46,6 @@ export interface ModeradoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
-  capitalInicial: number; // ✅ Capital inicial para cálculo de stop loss/win
-  profitTarget?: number | null; // ✅ Meta de lucro (stop win)
-  lossLimit?: number | null; // ✅ Limite de perda (stop loss)
 }
 
 export interface PrecisoUserState {
@@ -72,9 +66,6 @@ export interface PrecisoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
-  capitalInicial: number; // ✅ Capital inicial para cálculo de stop loss/win
-  profitTarget?: number | null; // ✅ Meta de lucro (stop win)
-  lossLimit?: number | null; // ✅ Limite de perda (stop loss)
 }
 
 // ============================================
@@ -198,32 +189,8 @@ export class OrionStrategy implements IStrategy {
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
-    const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit } = config;
+    const { mode, stakeAmount, derivToken, currency, modoMartingale } = config;
     const modeLower = (mode || 'veloz').toLowerCase();
-
-    // ✅ Recuperar profitTarget e lossLimit do banco se não foram fornecidos
-    let finalProfitTarget = profitTarget;
-    let finalLossLimit = lossLimit;
-    
-    if (finalProfitTarget === undefined || finalLossLimit === undefined) {
-      try {
-        const configResult = await this.dataSource.query(
-          `SELECT profit_target, loss_limit FROM ai_user_config WHERE user_id = ? LIMIT 1`,
-          [userId],
-        );
-        
-        if (configResult && configResult.length > 0) {
-          if (finalProfitTarget === undefined) {
-            finalProfitTarget = configResult[0].profit_target ? Number(configResult[0].profit_target) : null;
-          }
-          if (finalLossLimit === undefined) {
-            finalLossLimit = configResult[0].loss_limit ? Number(configResult[0].loss_limit) : null;
-          }
-        }
-      } catch (error) {
-        this.logger.warn(`[ORION] Erro ao recuperar profitTarget/lossLimit do banco:`, error);
-      }
-    }
 
     if (modeLower === 'veloz') {
       this.upsertVelozUserState({
@@ -232,19 +199,11 @@ export class OrionStrategy implements IStrategy {
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
-        profitTarget: finalProfitTarget,
-        lossLimit: finalLossLimit,
       });
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-      if (finalProfitTarget) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🎯 Stop Win: $${finalProfitTarget.toFixed(2)}`);
-      }
-      if (finalLossLimit) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🛑 Stop Loss: $${finalLossLimit.toFixed(2)}`);
-      }
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -252,19 +211,11 @@ export class OrionStrategy implements IStrategy {
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
-        profitTarget: finalProfitTarget,
-        lossLimit: finalLossLimit,
       });
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-      if (finalProfitTarget) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🎯 Stop Win: $${finalProfitTarget.toFixed(2)}`);
-      }
-      if (finalLossLimit) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🛑 Stop Loss: $${finalLossLimit.toFixed(2)}`);
-      }
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -272,19 +223,11 @@ export class OrionStrategy implements IStrategy {
         derivToken,
         currency,
         modoMartingale: modoMartingale || 'conservador',
-        profitTarget: finalProfitTarget,
-        lossLimit: finalLossLimit,
       });
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-      if (finalProfitTarget) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🎯 Stop Win: $${finalProfitTarget.toFixed(2)}`);
-      }
-      if (finalLossLimit) {
-        this.saveOrionLog(userId, 'SISTEMA', 'info', `🛑 Stop Loss: $${finalLossLimit.toFixed(2)}`);
-      }
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -518,38 +461,6 @@ export class OrionStrategy implements IStrategy {
       state.lastOperationTimestamp = new Date();
     }
 
-    // ✅ Verificar stop loss ANTES de executar operação
-    const capitalInicial = state.capitalInicial || state.apostaInicial || state.capital;
-    const lucroAtual = state.capital - capitalInicial;
-    
-    // Verificar stop loss: se a perda atual já atingiu ou ultrapassou o limite
-    if (state.lossLimit && lucroAtual < 0 && Math.abs(lucroAtual) >= state.lossLimit) {
-      this.logger.warn(
-        `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${Math.abs(lucroAtual).toFixed(2)} >= Limite: $${state.lossLimit.toFixed(2)} - PARANDO IMEDIATAMENTE`,
-      );
-      this.saveOrionLog(state.userId, 'R_10', 'alerta', 
-        `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${state.lossLimit.toFixed(2)} | Sistema parado`);
-      
-      // Desativar usuário
-      await this.deactivateUserWithStopLoss(state.userId, mode, lucroAtual, state.lossLimit);
-      state.isOperationActive = false;
-      return;
-    }
-    
-    // Verificar stop win: se o lucro atual já atingiu ou ultrapassou a meta
-    if (state.profitTarget && lucroAtual >= state.profitTarget) {
-      this.logger.log(
-        `[ORION][${mode}][${state.userId}] 🎯 STOP WIN ATINGIDO! Lucro atual: $${lucroAtual.toFixed(2)} >= Meta: $${state.profitTarget.toFixed(2)} - PARANDO IMEDIATAMENTE`,
-      );
-      this.saveOrionLog(state.userId, 'R_10', 'alerta', 
-        `🎯 STOP WIN ATINGIDO! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget.toFixed(2)} | Sistema parado`);
-      
-      // Desativar usuário
-      await this.deactivateUserWithStopWin(state.userId, mode, lucroAtual, state.profitTarget);
-      state.isOperationActive = false;
-      return;
-    }
-
     // ✅ ZENIX v2.0: Calcular stake baseado em Soros ou Martingale
     let stakeAmount: number;
     
@@ -647,6 +558,11 @@ export class OrionStrategy implements IStrategy {
         if ('ticksDesdeUltimaOp' in state) {
           state.ticksDesdeUltimaOp = 0;
         }
+        // ✅ Marcar trade como ERROR no banco de dados
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          ['Não foi possível criar contrato', tradeId],
+        );
         this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
         this.logger.warn(
           `[ORION][${mode}][${state.userId}] ❌ Falha ao criar contrato | Tipo: ${operation} | Valor: $${stakeAmount.toFixed(2)} | Entry: ${entry}`,
@@ -665,6 +581,15 @@ export class OrionStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
+      // ✅ Marcar trade como ERROR no banco de dados
+      if (tradeId) {
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [error.message || 'Erro ao executar operação', tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR:`, err);
+        });
+      }
       this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação: ${error.message}`);
     }
   }
@@ -903,10 +828,28 @@ export class OrionStrategy implements IStrategy {
         },
       });
 
-      const timeout = setTimeout(() => {
+      const timeout = setTimeout(async () => {
         ws.close();
         state.isOperationActive = false;
         this.logger.warn(`[ORION][${mode}] ⏱️ Timeout ao monitorar contrato ${contractId}`);
+        
+        // ✅ Marcar trade como ERROR no banco de dados
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [`Timeout ao monitorar contrato ${contractId}`, tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (timeout):`, err);
+        });
+        
+        // ✅ Log de erro
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `⏱️ Timeout ao monitorar contrato ${contractId} - Operação cancelada`);
+        
+        // ✅ NÃO incrementar perdaAcumulada quando for erro
+        // ✅ Resetar contador de ticks para permitir nova tentativa
+        if ('ticksDesdeUltimaOp' in state) {
+          state.ticksDesdeUltimaOp = 0;
+        }
+        
         resolve();
       }, 120000); // 2 minutos
 
@@ -932,6 +875,36 @@ export class OrionStrategy implements IStrategy {
           if (msg.proposal_open_contract) {
             const contract = msg.proposal_open_contract;
             this.logger.debug(`[ORION][${mode}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+            
+            // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
+            if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
+              clearTimeout(timeout);
+              ws.close();
+              state.isOperationActive = false;
+              
+              const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
+              this.logger.error(`[ORION][${mode}] ❌ Contrato ${contractId} foi ${contract.status}:`, errorMsg);
+              
+              // ✅ Marcar trade como ERROR no banco de dados
+              await this.dataSource.query(
+                `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+                [errorMsg, tradeId],
+              ).catch(err => {
+                this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (${contract.status}):`, err);
+              });
+              
+              // ✅ Log de erro
+              this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Contrato ${contractId} foi ${contract.status} - Operação cancelada`);
+              
+              // ✅ NÃO incrementar perdaAcumulada quando for erro
+              // ✅ Resetar contador de ticks para permitir nova tentativa
+              if ('ticksDesdeUltimaOp' in state) {
+                state.ticksDesdeUltimaOp = 0;
+              }
+              
+              resolve();
+              return;
+            }
             
             // Verificar se contrato foi finalizado
             // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
@@ -959,38 +932,6 @@ export class OrionStrategy implements IStrategy {
               // Atualizar estado do usuário
               state.isOperationActive = false;
               state.capital += profit;
-              
-              // ✅ Verificar stop win e stop loss APÓS cada resultado
-              const capitalInicial = state.capitalInicial || state.apostaInicial || state.capital;
-              const lucroAtual = state.capital - capitalInicial;
-              
-              // Verificar stop win
-              if (state.profitTarget && lucroAtual >= state.profitTarget) {
-                this.logger.log(
-                  `[ORION][${mode}][${state.userId}] 🎯 STOP WIN ATINGIDO! Lucro atual: $${lucroAtual.toFixed(2)} >= Meta: $${state.profitTarget.toFixed(2)} - PARANDO IMEDIATAMENTE`,
-                );
-                this.saveOrionLog(state.userId, 'R_10', 'alerta', 
-                  `🎯 STOP WIN ATINGIDO! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget.toFixed(2)} | Sistema parado`);
-                
-                // Desativar usuário
-                await this.deactivateUserWithStopWin(state.userId, mode, lucroAtual, state.profitTarget);
-                resolve();
-                return;
-              }
-              
-              // Verificar stop loss
-              if (state.lossLimit && lucroAtual < 0 && Math.abs(lucroAtual) >= state.lossLimit) {
-                this.logger.warn(
-                  `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${Math.abs(lucroAtual).toFixed(2)} >= Limite: $${state.lossLimit.toFixed(2)} - PARANDO IMEDIATAMENTE`,
-                );
-                this.saveOrionLog(state.userId, 'R_10', 'alerta', 
-                  `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${state.lossLimit.toFixed(2)} | Sistema parado`);
-                
-                // Desativar usuário
-                await this.deactivateUserWithStopLoss(state.userId, mode, lucroAtual, state.lossLimit);
-                resolve();
-                return;
-              }
               
               if (profit > 0) {
                 // ✅ VITÓRIA: Implementar estratégia Soros
@@ -1021,14 +962,26 @@ export class OrionStrategy implements IStrategy {
                   state.ultimaDirecaoMartingale = null;
                   state.apostaBase = state.apostaInicial || state.capital || 0.35;
                 } else {
+                  // ✅ CORREÇÃO: Se estava em martingale (perdaAcumulada > 0), resetar aposta para valor inicial
+                  const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
+                  
                   // Atualizar lucro e aposta base para próximo Soros
                   // ✅ IMPORTANTE: Atualizar apostaBase ANTES de calcular próxima aposta Soros
                   if ('ultimoLucro' in state) {
                     state.ultimoLucro = profit;
                   }
                   if ('apostaBase' in state) {
-                    // Atualizar apostaBase com o valor da aposta atual para próximo Soros
-                    state.apostaBase = stakeAmount;
+                    if (estavaEmMartingale) {
+                      // ✅ Se recuperou as perdas do martingale, resetar para aposta inicial
+                      state.apostaBase = state.apostaInicial || state.capital || 0.35;
+                      this.logger.log(
+                        `[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale! Resetando aposta para valor inicial: $${state.apostaBase.toFixed(2)}`,
+                      );
+                      this.saveOrionLog(state.userId, 'R_10', 'resultado', `✅ Recuperou perdas do martingale! Resetando aposta para: $${state.apostaBase.toFixed(2)}`);
+                    } else {
+                      // Se não estava em martingale, atualizar apostaBase com o valor da aposta atual para próximo Soros
+                      state.apostaBase = stakeAmount;
+                    }
                   }
                   
                   // Resetar martingale
@@ -1123,13 +1076,55 @@ export class OrionStrategy implements IStrategy {
           }
         } catch (error) {
           this.logger.error(`[ORION][${mode}] Erro ao monitorar contrato:`, error);
+          
+          // ✅ Se houver erro no processamento, marcar trade como ERROR
+          clearTimeout(timeout);
+          ws.close();
+          state.isOperationActive = false;
+          
+          // ✅ Marcar trade como ERROR no banco de dados
+          await this.dataSource.query(
+            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+            [`Erro ao processar mensagem: ${error.message || 'Erro desconhecido'}`, tradeId],
+          ).catch(err => {
+            this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (catch):`, err);
+          });
+          
+          // ✅ Log de erro
+          this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro ao processar contrato ${contractId}: ${error.message || 'Erro desconhecido'} - Operação cancelada`);
+          
+          // ✅ NÃO incrementar perdaAcumulada quando for erro
+          // ✅ Resetar contador de ticks para permitir nova tentativa
+          if ('ticksDesdeUltimaOp' in state) {
+            state.ticksDesdeUltimaOp = 0;
+          }
+          
+          resolve();
         }
       });
 
-      ws.on('error', (error) => {
+      ws.on('error', async (error) => {
         clearTimeout(timeout);
         this.logger.error(`[ORION][${mode}] ❌ Erro no WebSocket de monitoramento do contrato ${contractId}:`, error);
         state.isOperationActive = false;
+        
+        // ✅ Marcar trade como ERROR no banco de dados
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [`Erro no WebSocket: ${error.message || 'Erro desconhecido'}`, tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (websocket):`, err);
+        });
+        
+        // ✅ Log de erro
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro no WebSocket ao monitorar contrato ${contractId} - Operação cancelada`);
+        
+        // ✅ NÃO incrementar perdaAcumulada quando for erro
+        // ✅ Resetar contador de ticks para permitir nova tentativa
+        if ('ticksDesdeUltimaOp' in state) {
+          state.ticksDesdeUltimaOp = 0;
+        }
+        
         resolve();
       });
 
@@ -1145,8 +1140,6 @@ export class OrionStrategy implements IStrategy {
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
-    profitTarget?: number | null;
-    lossLimit?: number | null;
   }): void {
     const existing = this.velozUsers.get(params.userId);
     if (existing) {
@@ -1155,11 +1148,7 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        profitTarget: params.profitTarget !== undefined ? params.profitTarget : existing.profitTarget,
-        lossLimit: params.lossLimit !== undefined ? params.lossLimit : existing.lossLimit,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Não resetar capitalInicial ao atualizar (manter referência inicial)
-        capitalInicial: existing.capitalInicial || params.stakeAmount,
       });
     } else {
       this.velozUsers.set(params.userId, {
@@ -1181,9 +1170,6 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.stakeAmount,
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
-        capitalInicial: params.stakeAmount, // ✅ Capital inicial para cálculo de stop loss/win
-        profitTarget: params.profitTarget || null,
-        lossLimit: params.lossLimit || null,
       });
     }
   }
@@ -1194,8 +1180,6 @@ export class OrionStrategy implements IStrategy {
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
-    profitTarget?: number | null;
-    lossLimit?: number | null;
   }): void {
     const existing = this.moderadoUsers.get(params.userId);
     if (existing) {
@@ -1204,11 +1188,7 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        profitTarget: params.profitTarget !== undefined ? params.profitTarget : existing.profitTarget,
-        lossLimit: params.lossLimit !== undefined ? params.lossLimit : existing.lossLimit,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Não resetar capitalInicial ao atualizar (manter referência inicial)
-        capitalInicial: existing.capitalInicial || params.stakeAmount,
       });
     } else {
       this.moderadoUsers.set(params.userId, {
@@ -1230,9 +1210,6 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.stakeAmount,
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
-        capitalInicial: params.stakeAmount, // ✅ Capital inicial para cálculo de stop loss/win
-        profitTarget: params.profitTarget || null,
-        lossLimit: params.lossLimit || null,
       });
     }
   }
@@ -1243,8 +1220,6 @@ export class OrionStrategy implements IStrategy {
     derivToken: string;
     currency: string;
     modoMartingale?: ModoMartingale;
-    profitTarget?: number | null;
-    lossLimit?: number | null;
   }): void {
     const existing = this.precisoUsers.get(params.userId);
     if (existing) {
@@ -1253,11 +1228,7 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        profitTarget: params.profitTarget !== undefined ? params.profitTarget : existing.profitTarget,
-        lossLimit: params.lossLimit !== undefined ? params.lossLimit : existing.lossLimit,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Não resetar capitalInicial ao atualizar (manter referência inicial)
-        capitalInicial: existing.capitalInicial || params.stakeAmount,
       });
     } else {
       this.precisoUsers.set(params.userId, {
@@ -1278,9 +1249,6 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.stakeAmount,
         ultimoLucro: 0,
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
-        capitalInicial: params.stakeAmount, // ✅ Capital inicial para cálculo de stop loss/win
-        profitTarget: params.profitTarget || null,
-        lossLimit: params.lossLimit || null,
       });
     }
   }
@@ -1300,72 +1268,6 @@ export class OrionStrategy implements IStrategy {
 
   getPrecisoUsers(): Map<string, PrecisoUserState> {
     return this.precisoUsers;
-  }
-
-  /**
-   * ✅ ORION: Desativa usuário quando stop win é atingido
-   */
-  private async deactivateUserWithStopWin(
-    userId: string,
-    mode: string,
-    lucroAtual: number,
-    profitTarget: number,
-  ): Promise<void> {
-    try {
-      // Atualizar configuração no banco
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET is_active = FALSE, 
-             session_status = 'stopped_profit',
-             deactivation_reason = ?,
-             deactivated_at = NOW(),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
-        [`Meta de lucro diária atingida: $${lucroAtual.toFixed(2)} (Meta: $${profitTarget.toFixed(2)})`, userId],
-      );
-      
-      // Remover do mapa de usuários ativos
-      this.velozUsers.delete(userId);
-      this.moderadoUsers.delete(userId);
-      this.precisoUsers.delete(userId);
-      
-      this.logger.log(`[ORION][${mode}] ✅ Usuário ${userId} desativado por stop win`);
-    } catch (error) {
-      this.logger.error(`[ORION][${mode}] Erro ao desativar usuário por stop win:`, error);
-    }
-  }
-
-  /**
-   * ✅ ORION: Desativa usuário quando stop loss é atingido
-   */
-  private async deactivateUserWithStopLoss(
-    userId: string,
-    mode: string,
-    lucroAtual: number,
-    lossLimit: number,
-  ): Promise<void> {
-    try {
-      // Atualizar configuração no banco
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET is_active = FALSE, 
-             session_status = 'stopped_loss',
-             deactivation_reason = ?,
-             deactivated_at = NOW(),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`,
-        [`Limite de perda diária atingido: -$${Math.abs(lucroAtual).toFixed(2)} (Limite: $${lossLimit.toFixed(2)})`, userId],
-      );
-      
-      // Remover do mapa de usuários ativos
-      this.velozUsers.delete(userId);
-      this.moderadoUsers.delete(userId);
-      this.precisoUsers.delete(userId);
-      
-      this.logger.log(`[ORION][${mode}] ✅ Usuário ${userId} desativado por stop loss`);
-    } catch (error) {
-      this.logger.error(`[ORION][${mode}] Erro ao desativar usuário por stop loss:`, error);
-    }
   }
 
   /**

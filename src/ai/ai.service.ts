@@ -3375,6 +3375,7 @@ export class AiService implements OnModuleInit {
     }
     
     // ✅ Tentar buscar com symbol, se falhar, buscar sem symbol (campo pode não existir ainda)
+    // ✅ EXCLUIR operações com status ERROR do histórico
     let query = `
       SELECT 
         id,
@@ -3392,6 +3393,7 @@ export class AiService implements OnModuleInit {
         closed_at as closedAt
       FROM ai_trades
       WHERE user_id = ? 
+      AND status != 'ERROR'
       ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
       ORDER BY COALESCE(closed_at, created_at) DESC
       LIMIT ?
@@ -3423,6 +3425,7 @@ export class AiService implements OnModuleInit {
             closed_at as closedAt
           FROM ai_trades
           WHERE user_id = ? 
+          AND status != 'ERROR'
           ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
           ORDER BY COALESCE(closed_at, created_at) DESC
           LIMIT ?
