@@ -3592,6 +3592,18 @@ export class AiService implements OnModuleInit {
     
     const columnNames = columns.map((col: any) => col.COLUMN_NAME);
     
+    // ✅ Adicionar entry_value se não existir
+    if (!columnNames.includes('entry_value')) {
+      this.logger.log('🔄 Adicionando coluna entry_value...');
+      await this.dataSource.query(`
+        ALTER TABLE ai_user_config 
+        ADD COLUMN entry_value DECIMAL(10, 2) NULL DEFAULT 0.35 
+        COMMENT 'Valor de entrada por operação (separado do capital total)'
+        AFTER stake_amount
+      `);
+      this.logger.log('✅ Coluna entry_value adicionada');
+    }
+    
     // Adicionar profit_target se não existir
     if (!columnNames.includes('profit_target')) {
       await this.dataSource.query(`
@@ -3762,12 +3774,28 @@ export class AiService implements OnModuleInit {
     const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
     
     // 2. Criar nova sessão (sempre INSERT)
-    await this.dataSource.query(
-      `INSERT INTO ai_user_config 
-       (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-       VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-      [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
-    );
+    // ✅ Adicionar entry_value se a coluna existir, senão usar NULL
+    try {
+      await this.dataSource.query(
+        `INSERT INTO ai_user_config 
+         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+      );
+    } catch (error: any) {
+      // Se a coluna entry_value não existir, inserir sem ela
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('entry_value')) {
+        this.logger.warn(`[ActivateAI] Campo 'entry_value' não existe, inserindo sem ele`);
+        await this.dataSource.query(
+          `INSERT INTO ai_user_config 
+           (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+           VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+          [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+        );
+      } else {
+        throw error;
+      }
+    }
 
     this.logger.log(
       `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${currency}`,
@@ -3775,11 +3803,12 @@ export class AiService implements OnModuleInit {
 
     if ((mode || '').toLowerCase() === 'veloz') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount}`,
+        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
       );
       this.upsertVelozUserState({
         userId,
         stakeAmount,
+        entryValue: entryValue || 0.35, // ✅ Passar entryValue
         derivToken,
         currency,
       });
@@ -3787,11 +3816,12 @@ export class AiService implements OnModuleInit {
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'moderado') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount}`,
+        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
       );
       this.upsertModeradoUserState({
         userId,
         stakeAmount,
+        entryValue: entryValue || 0.35, // ✅ Passar entryValue
         derivToken,
         currency,
       });
@@ -3799,11 +3829,12 @@ export class AiService implements OnModuleInit {
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'preciso') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount}`,
+        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
       );
       this.upsertPrecisoUserState({
         userId,
         stakeAmount,
+        entryValue: entryValue || 0.35, // ✅ Passar entryValue
         derivToken,
         currency,
       });
@@ -3948,41 +3979,83 @@ export class AiService implements OnModuleInit {
    * Busca configuração da IA de um usuário (apenas sessão ativa)
    */
   async getUserAIConfig(userId: string): Promise<any> {
-    const result = await this.dataSource.query(
-      `SELECT 
-        id,
-        user_id as userId,
-        is_active as isActive,
-        session_status as sessionStatus,
-        session_balance as sessionBalance,
-        stake_amount as stakeAmount,
-        currency,
-        mode,
-        modo_martingale as modoMartingale,
-        strategy,
-        profit_target as profitTarget,
-        loss_limit as lossLimit,
-        last_trade_at as lastTradeAt,
-        next_trade_at as nextTradeAt,
-        total_trades as totalTrades,
-        total_wins as totalWins,
-        total_losses as totalLosses,
-        deactivation_reason as deactivationReason,
-        deactivated_at as deactivatedAt,
-        created_at as createdAt,
-        updated_at as updatedAt
-       FROM ai_user_config 
-       WHERE user_id = ? AND is_active = TRUE
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userId],
-    );
+    // ✅ Tentar buscar com entry_value primeiro, se não existir, buscar sem ele
+    let result: any[];
+    try {
+      result = await this.dataSource.query(
+        `SELECT 
+          id,
+          user_id as userId,
+          is_active as isActive,
+          session_status as sessionStatus,
+          session_balance as sessionBalance,
+          stake_amount as stakeAmount,
+          entry_value as entryValue,
+          currency,
+          mode,
+          modo_martingale as modoMartingale,
+          strategy,
+          profit_target as profitTarget,
+          loss_limit as lossLimit,
+          last_trade_at as lastTradeAt,
+          next_trade_at as nextTradeAt,
+          total_trades as totalTrades,
+          total_wins as totalWins,
+          total_losses as totalLosses,
+          deactivation_reason as deactivationReason,
+          deactivated_at as deactivatedAt,
+          created_at as createdAt,
+          updated_at as updatedAt
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [userId],
+      );
+    } catch (error: any) {
+      // Se a coluna entry_value não existir, buscar sem ela
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('entry_value')) {
+        this.logger.warn(`[GetUserAIConfig] Campo 'entry_value' não existe, buscando sem ele`);
+        result = await this.dataSource.query(
+          `SELECT 
+            id,
+            user_id as userId,
+            is_active as isActive,
+            session_status as sessionStatus,
+            session_balance as sessionBalance,
+            stake_amount as stakeAmount,
+            currency,
+            mode,
+            modo_martingale as modoMartingale,
+            strategy,
+            profit_target as profitTarget,
+            loss_limit as lossLimit,
+            last_trade_at as lastTradeAt,
+            next_trade_at as nextTradeAt,
+            total_trades as totalTrades,
+            total_wins as totalWins,
+            total_losses as totalLosses,
+            deactivation_reason as deactivationReason,
+            deactivated_at as deactivatedAt,
+            created_at as createdAt,
+            updated_at as updatedAt
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = TRUE
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [userId],
+        );
+      } else {
+        throw error;
+      }
+    }
 
     if (result.length === 0) {
       return {
         userId,
         isActive: false,
         stakeAmount: 10,
+        entryValue: 0.35, // ✅ Valor padrão de entrada
         currency: 'USD',
         mode: 'veloz',
         modoMartingale: 'conservador',
@@ -3998,7 +4071,12 @@ export class AiService implements OnModuleInit {
       };
     }
 
-    return result[0];
+    const config = result[0];
+    // ✅ Garantir que entryValue tenha um valor padrão se não existir
+    if (config && (config.entryValue === null || config.entryValue === undefined)) {
+      config.entryValue = 0.35;
+    }
+    return config;
   }
 
   /**

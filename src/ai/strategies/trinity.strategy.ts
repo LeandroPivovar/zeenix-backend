@@ -450,33 +450,12 @@ export class TrinityStrategy implements IStrategy {
       // ✅ ROTAÇÃO SEQUENCIAL: Obter próximo ativo na rotação
       const nextAsset = this.getNextAssetInRotation(state);
       
-      // ✅ Log: Debug de rotação
-      if (this.trinityUsers.size > 0) {
-        const firstUserId = Array.from(this.trinityUsers.keys())[0];
-        if (firstUserId === userId) { // Log apenas para o primeiro usuário para não poluir
-          this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-            `Rotação: Próximo ativo = ${nextAsset}, Tick recebido = ${symbol}`, {
-              proximoAtivo: nextAsset,
-              tickRecebido: symbol,
-              currentAssetIndex: state.currentAssetIndex,
-            });
-        }
-      }
+      // ✅ Removido: Logs de rotação (estavam poluindo o sistema)
+      // A rotação funciona internamente sem necessidade de logs constantes
       
       // ✅ Se o tick recebido não é do próximo ativo na rotação, pular
       if (nextAsset !== symbol) {
-        // Log de prioridade de martingale se aplicável
-        const assetInMartingale = ['R_10', 'R_25', 'R_50'].find(
-          s => state.assets[s as 'R_10' | 'R_25' | 'R_50'].martingaleStep > 0 && 
-               !state.assets[s as 'R_10' | 'R_25' | 'R_50'].isOperationActive
-        );
-        if (assetInMartingale && assetInMartingale === nextAsset) {
-          this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-            `Prioridade: ${nextAsset} (martingale ativo) | Pulando rotação normal`, {
-              ativoPrioritario: nextAsset,
-              motivo: 'martingale_ativo',
-            });
-        }
+        // Removido: Log de prioridade de martingale (poluía muito)
         
         // Ainda assim, incrementar contador do ativo atual
         const asset = state.assets[symbol];
@@ -1518,15 +1497,7 @@ export class TrinityStrategy implements IStrategy {
       asset.ultimoLucro = -perda;
     }
 
-    // ✅ Log: Rotação de ativo
-    const nextAsset = this.getNextAssetInRotation(state);
-    this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
-      `Rotação: ${symbol} → ${nextAsset}`, {
-        ativoAnterior: symbol,
-        ativoProximo: nextAsset,
-      });
-    
-    // ✅ Avançar para próximo ativo na rotação
+    // ✅ Avançar para próximo ativo na rotação (sem log para reduzir poluição)
     this.advanceToNextAsset(state);
 
     // ✅ Atualizar trade no banco de dados
