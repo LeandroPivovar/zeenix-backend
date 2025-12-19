@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
+import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
 
 // ✅ Função para calcular próxima aposta de martingale
 function calcularProximaAposta(
@@ -73,6 +74,8 @@ export interface TrinityUserState {
   isStopped: boolean; // ✅ Se sistema foi parado (meta/stop atingido)
   // ✅ Controle global para evitar múltiplas operações simultâneas (guia: 1 ativo por vez)
   globalOperationActive?: boolean;
+  // ✅ Cooldown para evitar novas criações de contrato logo após erro/timeouts (mitiga rate limit)
+  creationCooldownUntil?: number;
 }
 
 @Injectable()
@@ -126,6 +129,7 @@ export class TrinityStrategy implements IStrategy {
 
   constructor(
     private dataSource: DataSource,
+    private derivPool: DerivWebSocketPoolService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -724,6 +728,8 @@ export class TrinityStrategy implements IStrategy {
     if (asset.isOperationActive) return false;
     // Não pode processar se há operação global em andamento (rotação sequencial estrita)
     if (state.globalOperationActive) return false;
+    // Não pode processar se está em cooldown de criação
+    if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) return false;
 
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return false;
@@ -966,6 +972,8 @@ export class TrinityStrategy implements IStrategy {
       if (!contractId) {
         asset.isOperationActive = false;
         state.globalOperationActive = false;
+        // Aplicar cooldown para reduzir chamadas em sequência e mitigar rate limit
+        state.creationCooldownUntil = Date.now() + 5000; // 5s
         // ✅ Log: Erro ao executar operação
         this.saveTrinityLog(state.userId, symbol, 'erro', 
           `Erro ao executar operação | Não foi possível criar contrato`);
@@ -1021,6 +1029,7 @@ export class TrinityStrategy implements IStrategy {
       this.logger.error(`[TRINITY][${symbol}] Erro ao executar operação:`, error);
       asset.isOperationActive = false;
       state.globalOperationActive = false;
+      state.creationCooldownUntil = Date.now() + 5000; // 5s cooldown após erro
       this.advanceToNextAsset(state);
     }
   }
@@ -1034,142 +1043,80 @@ export class TrinityStrategy implements IStrategy {
     token: string,
     contractParams: any,
   ): Promise<string | null> {
-    return new Promise((resolve) => {
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint, {
-        headers: {
-          Origin: 'https://app.deriv.com',
-        },
+    try {
+      const proposal = await this.derivPool.sendRequest(token, {
+        proposal: 1,
+        amount: contractParams.amount,
+        basis: 'stake',
+        contract_type: contractParams.contract_type,
+        currency: contractParams.currency || 'USD',
+        duration: contractParams.duration || 1,
+        duration_unit: contractParams.duration_unit || 't',
+        symbol: contractParams.symbol,
+        subscribe: 0,
       });
 
-      let proposalId: string | null = null;
-      let proposalSubscriptionId: string | null = null;
-      
-      const timeout = setTimeout(() => {
-        if (proposalSubscriptionId) {
-          try {
-            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
-          } catch (e) {
-            // Ignore
-          }
-        }
-        ws.close();
+      if (proposal?.error) {
+        const err = proposal.error;
         this.saveTrinityLog(userId, symbol, 'erro',
-          `⏱️ Timeout ao criar contrato após 30 segundos | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`, {
-            etapa: 'timeout_criacao',
+          `Erro ao gerar proposta | ${err.code} - ${err.message}`, {
+            etapa: 'proposal',
+            error: err,
             contractType: contractParams.contract_type,
             amount: contractParams.amount,
           });
-        resolve(null);
-      }, 30000);
+        return null;
+      }
 
-      ws.on('open', () => {
-        ws.send(JSON.stringify({ authorize: token }));
-      });
+      const proposalId = proposal?.proposal?.id;
+      const proposalPrice = Number(proposal?.proposal?.ask_price);
 
-      ws.on('message', (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          
-          if (msg.authorize) {
-            if (msg.authorize.error) {
-              clearTimeout(timeout);
-              ws.close();
-              this.saveTrinityLog(userId, symbol, 'erro',
-                `Erro na autorização Deriv | ${msg.authorize.error.code} - ${msg.authorize.error.message}`, {
-                  etapa: 'authorize',
-                  error: msg.authorize.error,
-                });
-              resolve(null);
-              return;
-            }
-            
-            const proposalPayload = {
-              proposal: 1,
-              amount: contractParams.amount,
-              basis: 'stake',
-              contract_type: contractParams.contract_type,
-              currency: contractParams.currency || 'USD',
-              duration: contractParams.duration || 1,
-              duration_unit: contractParams.duration_unit || 't',
-              symbol: contractParams.symbol,
-              subscribe: 1,
-            };
-            
-            ws.send(JSON.stringify(proposalPayload));
-            return;
-          }
-
-          if (msg.proposal) {
-            if (msg.proposal.error) {
-              clearTimeout(timeout);
-              ws.close();
-              this.saveTrinityLog(userId, symbol, 'erro',
-                `Erro ao gerar proposta | ${msg.proposal.error.code} - ${msg.proposal.error.message}`, {
-                  etapa: 'proposal',
-                  error: msg.proposal.error,
-                  contractType: contractParams.contract_type,
-                  amount: contractParams.amount,
-                });
-              resolve(null);
-              return;
-            }
-            
-            proposalId = msg.proposal.id;
-            const proposalPrice = Number(msg.proposal.ask_price);
-            
-            if (msg.subscription?.id) {
-              proposalSubscriptionId = msg.subscription.id;
-            }
-            
-            ws.send(JSON.stringify({
-              buy: proposalId,
-              price: proposalPrice,
-            }));
-            return;
-          }
-
-          if (msg.buy) {
-            clearTimeout(timeout);
-            
-            if (proposalSubscriptionId) {
-              try {
-                ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
-              } catch (e) {
-                // Ignore
-              }
-            }
-            
-            ws.close();
-            
-            if (msg.buy.error) {
-              this.saveTrinityLog(userId, symbol, 'erro',
-                `Erro ao comprar contrato | ${msg.buy.error.code} - ${msg.buy.error.message}`, {
-                  etapa: 'buy',
-                  error: msg.buy.error,
-                  contractType: contractParams.contract_type,
-                  amount: contractParams.amount,
-                });
-              resolve(null);
-              return;
-            }
-            
-            resolve(msg.buy.contract_id);
-            return;
-          }
-        } catch (error) {
-          this.logger.error(`[TRINITY] Erro ao processar mensagem WebSocket:`, error);
-        }
-      });
-
-      ws.on('error', () => {
-        clearTimeout(timeout);
-        ws.close();
+      if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
         this.saveTrinityLog(userId, symbol, 'erro',
-          `Erro de conexão na criação do contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`);
-        resolve(null);
+          `Proposta inválida retornada pela Deriv (sem id ou preço)`, {
+            etapa: 'proposal',
+            proposal,
+          });
+        return null;
+      }
+
+      const buy = await this.derivPool.sendRequest(token, {
+        buy: proposalId,
+        price: proposalPrice,
       });
-    });
+
+      if (buy?.error || buy?.buy?.error) {
+        const err = buy?.error || buy?.buy?.error;
+        this.saveTrinityLog(userId, symbol, 'erro',
+          `Erro ao comprar contrato | ${err.code} - ${err.message}`, {
+            etapa: 'buy',
+            error: err,
+            contractType: contractParams.contract_type,
+            amount: contractParams.amount,
+          });
+        return null;
+      }
+
+      const contractId = buy?.buy?.contract_id;
+
+      if (!contractId) {
+        this.saveTrinityLog(userId, symbol, 'erro',
+          `Compra sem contract_id retornado pela Deriv`, {
+            etapa: 'buy',
+            response: buy,
+          });
+        return null;
+      }
+
+      return contractId;
+    } catch (err: any) {
+      this.saveTrinityLog(userId, symbol, 'erro',
+        `Erro de conexão ao criar contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`, {
+          etapa: 'connection',
+          error: err?.message || String(err),
+        });
+      return null;
+    }
   }
 
   /**
@@ -1554,6 +1501,9 @@ export class TrinityStrategy implements IStrategy {
 
     // ✅ Verificar limites (meta, stop-loss)
     await this.checkTrinityLimits(state);
+    
+    // ✅ Cooldown curto após término para espaçar requisições (mitiga rate limit)
+    state.creationCooldownUntil = Date.now() + 2000; // 2s
   }
 
   /**

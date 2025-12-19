@@ -25,6 +25,7 @@ export interface VelozUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
 }
 
 export interface ModeradoUserState {
@@ -46,6 +47,7 @@ export interface ModeradoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  creationCooldownUntil?: number;
 }
 
 export interface PrecisoUserState {
@@ -66,6 +68,7 @@ export interface PrecisoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  creationCooldownUntil?: number;
 }
 
 // ============================================
@@ -530,6 +533,13 @@ export class OrionStrategy implements IStrategy {
     }
     
     // ✅ VALIDAÇÕES PREVENTIVAS após calcular stakeAmount
+    // 0. Cooldown para mitigar rate limit (se houve erro/timeout recente)
+    if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) {
+      this.logger.warn(`[ORION][${mode}][${state.userId}] ⏸️ Cooldown ativo para criação de contrato. Aguardando antes de nova tentativa.`);
+      state.isOperationActive = false;
+      return;
+    }
+
     // 1. Validar valor mínimo da Deriv ($0.35)
     if (stakeAmount < 0.35) {
       this.logger.warn(
@@ -599,6 +609,8 @@ export class OrionStrategy implements IStrategy {
         if ('ticksDesdeUltimaOp' in state) {
           state.ticksDesdeUltimaOp = 0;
         }
+        // Cooldown para reduzir novas tentativas imediatas e mitigar rate limit
+        state.creationCooldownUntil = Date.now() + 5000; // 5s
         // ✅ Marcar trade como ERROR no banco de dados
         await this.dataSource.query(
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
@@ -623,6 +635,7 @@ export class OrionStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
+      state.creationCooldownUntil = Date.now() + 5000; // cooldown após erro
       
       const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
       
