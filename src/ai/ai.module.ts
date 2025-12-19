@@ -9,6 +9,7 @@ import { BrokerModule } from '../broker/broker.module';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { OrionStrategy } from './strategies/orion.strategy';
 import { TrinityStrategy } from './strategies/trinity.strategy';
+import { TradeEventsService } from './trade-events.service';
 
 @Module({
   imports: [
@@ -24,8 +25,9 @@ import { TrinityStrategy } from './strategies/trinity.strategy';
     StrategyManagerService,
     OrionStrategy,
     TrinityStrategy,
+    TradeEventsService,
   ],
-  exports: [AiService, StrategyManagerService],
+  exports: [AiService, StrategyManagerService, TradeEventsService],
 })
 export class AiModule {}
 

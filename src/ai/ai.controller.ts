@@ -10,16 +10,23 @@ import {
   UseGuards,
   HttpException, 
   HttpStatus,
-  Logger
+  Logger,
+  Sse,
+  MessageEvent,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AiService, DigitParity, Tick } from './ai.service';
+import { TradeEventsService } from './trade-events.service';
+import { Observable } from 'rxjs';
 
 @Controller('ai')
 export class AiController {
   private readonly logger = new Logger(AiController.name);
   
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly tradeEventsService: TradeEventsService,
+  ) {}
 
   @Post('start')
   async startMonitoring() {
@@ -253,6 +260,11 @@ export class AiController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Sse('trade-events/:userId')
+  tradeEvents(@Param('userId') userId: string): Observable<MessageEvent> {
+    return this.tradeEventsService.subscribe(userId);
   }
 
   // ========== ENDPOINTS PARA IA EM BACKGROUND ==========

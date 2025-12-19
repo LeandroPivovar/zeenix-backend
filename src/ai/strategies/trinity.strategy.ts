@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
+import { TradeEventsService } from '../trade-events.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
 import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
@@ -130,6 +131,7 @@ export class TrinityStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private derivPool: DerivWebSocketPoolService,
+    private tradeEvents: TradeEventsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -1505,7 +1507,7 @@ export class TrinityStrategy implements IStrategy {
       // ✅ Log: Debug - valores antes de atualizar
       this.logger.log(`[TRINITY][${symbol}] Atualizando trade ID=${tradeId} | status=${isWin ? 'WON' : 'LOST'} | profitLoss=${profit} | exitPrice=${exitPrice}`);
       
-      await this.updateTrinityTrade(tradeId, {
+      await this.updateTrinityTrade(tradeId, state.userId, {
         status: isWin ? 'WON' : 'LOST',
         profitLoss: profit,
         exitPrice: exitPrice || 0,
@@ -1675,6 +1677,15 @@ export class TrinityStrategy implements IStrategy {
       
       if (tradeId) {
         this.logger.log(`[TRINITY][${trade.symbol}] ✅ Trade salvo no banco: ID=${tradeId}`);
+        this.tradeEvents.emit({
+          userId: trade.userId,
+          type: 'created',
+          tradeId,
+          status: 'PENDING',
+          strategy: 'trinity',
+          symbol: trade.symbol,
+          contractType: trade.contractType,
+        });
       }
       
       return tradeId;
@@ -1689,6 +1700,7 @@ export class TrinityStrategy implements IStrategy {
    */
   private async updateTrinityTrade(
     tradeId: number,
+    userId: string,
     update: {
       status: 'WON' | 'LOST';
       profitLoss: number;
@@ -1712,6 +1724,15 @@ export class TrinityStrategy implements IStrategy {
       );
       
       this.logger.log(`[TRINITY] ✅ Trade atualizado no banco: ID=${tradeId}, Status=${update.status}, P&L=${update.profitLoss.toFixed(2)}`);
+      this.tradeEvents.emit({
+        userId,
+        type: 'updated',
+        tradeId,
+        status: update.status,
+        strategy: 'trinity',
+        profitLoss: update.profitLoss,
+        exitPrice: update.exitPrice,
+      });
     } catch (error) {
       this.logger.error(`[TRINITY] Erro ao atualizar trade no banco (ID=${tradeId}):`, error);
     }
