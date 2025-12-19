@@ -71,6 +71,8 @@ export interface TrinityUserState {
   stopLossBlindado?: boolean; // ✅ Se stop-loss blindado está ativo
   profitTarget?: number; // ✅ Meta diária (positivo, ex: 200)
   isStopped: boolean; // ✅ Se sistema foi parado (meta/stop atingido)
+  // ✅ Controle global para evitar múltiplas operações simultâneas (guia: 1 ativo por vez)
+  globalOperationActive?: boolean;
 }
 
 @Injectable()
@@ -475,11 +477,6 @@ export class TrinityStrategy implements IStrategy {
 
       // Verificar se pode processar
       if (!this.canProcessTrinityAsset(state, symbol)) {
-        // ✅ Log: Por que não pode processar
-        if (asset.isOperationActive) {
-          this.saveTrinityLog(userId, symbol, 'info', 
-            `Aguardando resultado da operação anterior...`);
-        }
         continue;
       }
 
@@ -725,6 +722,8 @@ export class TrinityStrategy implements IStrategy {
     
     // Não pode processar se já há operação ativa neste ativo
     if (asset.isOperationActive) return false;
+    // Não pode processar se há operação global em andamento (rotação sequencial estrita)
+    if (state.globalOperationActive) return false;
 
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return false;
@@ -874,6 +873,7 @@ export class TrinityStrategy implements IStrategy {
       stopLossBlindado: false,
       profitTarget: params.profitTarget || undefined,
       isStopped: false,
+      globalOperationActive: false,
     });
   }
 
@@ -902,6 +902,7 @@ export class TrinityStrategy implements IStrategy {
     
     // Marcar como operação ativa
     asset.isOperationActive = true;
+    state.globalOperationActive = true;
     
     // Resetar contador de ticks
     asset.ticksDesdeUltimaOp = 0;
@@ -962,9 +963,12 @@ export class TrinityStrategy implements IStrategy {
 
       if (!contractId) {
         asset.isOperationActive = false;
+        state.globalOperationActive = false;
         // ✅ Log: Erro ao executar operação
         this.saveTrinityLog(state.userId, symbol, 'erro', 
           `Erro ao executar operação | Não foi possível criar contrato`);
+        // Avançar rotação para não travar no mesmo ativo
+        this.advanceToNextAsset(state);
         return;
       }
 
@@ -1014,6 +1018,8 @@ export class TrinityStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[TRINITY][${symbol}] Erro ao executar operação:`, error);
       asset.isOperationActive = false;
+      state.globalOperationActive = false;
+      this.advanceToNextAsset(state);
     }
   }
 
@@ -1277,6 +1283,7 @@ export class TrinityStrategy implements IStrategy {
     
     // Marcar operação como inativa
     asset.isOperationActive = false;
+    state.globalOperationActive = false;
     asset.lastOperationTimestamp = new Date();
     // ✅ Resetar contador de ticks para permitir nova operação
     asset.ticksDesdeUltimaOp = 0;
