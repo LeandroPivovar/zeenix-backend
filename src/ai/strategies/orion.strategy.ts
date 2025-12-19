@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
+import { TradeEventsService } from '../trade-events.service';
 import { gerarSinalZenix } from './signal-generator';
 
 // Estados ORION
@@ -171,6 +172,7 @@ export class OrionStrategy implements IStrategy {
 
   constructor(
     private dataSource: DataSource,
+    private tradeEvents: TradeEventsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -714,7 +716,21 @@ export class OrionStrategy implements IStrategy {
     }
 
     const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
-    return result?.insertId || null;
+    const tradeId = result?.insertId || null;
+
+    if (tradeId) {
+      this.tradeEvents.emit({
+        userId,
+        type: 'created',
+        tradeId,
+        status: 'PENDING',
+        strategy: 'orion',
+        symbol: this.symbol as any,
+        contractType: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+      });
+    }
+
+    return tradeId;
   }
 
   /**
@@ -1079,6 +1095,17 @@ export class OrionStrategy implements IStrategy {
                  WHERE id = ?`,
                 [exitPrice, profit, status, tradeId],
               );
+
+              // Emitir evento de atualização
+              this.tradeEvents.emit({
+                userId: state.userId,
+                type: 'updated',
+                tradeId,
+                status,
+                strategy: 'orion',
+                profitLoss: profit,
+                exitPrice,
+              });
 
               // Atualizar estado do usuário
               state.isOperationActive = false;
