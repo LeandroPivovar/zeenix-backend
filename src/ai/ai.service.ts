@@ -2952,20 +2952,48 @@ export class AiService implements OnModuleInit {
   private async syncTrinityUsersFromDb(): Promise<void> {
     this.logger.debug(`[SyncTrinity] 🔍 Buscando usuários Trinity no banco...`);
     
-    const configs = await this.dataSource.query(
-      `SELECT 
-        user_id as userId,
-        stake_amount as stakeAmount,
-        deriv_token as derivToken,
-        currency,
-        modo_martingale as modoMartingale,
-        mode,
-        profit_target as profitTarget,
-        loss_limit as lossLimit
-       FROM ai_user_config
-       WHERE is_active = TRUE
-         AND LOWER(strategy) = 'trinity'`,
-    );
+    // ✅ Buscar entry_value se a coluna existir
+    let configs: any[];
+    try {
+      configs = await this.dataSource.query(
+        `SELECT 
+          user_id as userId,
+          stake_amount as stakeAmount,
+          entry_value as entryValue,
+          deriv_token as derivToken,
+          currency,
+          modo_martingale as modoMartingale,
+          mode,
+          profit_target as profitTarget,
+          loss_limit as lossLimit
+         FROM ai_user_config
+         WHERE is_active = TRUE
+           AND LOWER(strategy) = 'trinity'`,
+      );
+    } catch (error: any) {
+      // Se a coluna entry_value não existir, buscar sem ela
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('entry_value')) {
+        this.logger.warn(`[SyncTrinity] Campo 'entry_value' não existe, buscando sem ele`);
+        configs = await this.dataSource.query(
+          `SELECT 
+            user_id as userId,
+            stake_amount as stakeAmount,
+            deriv_token as derivToken,
+            currency,
+            modo_martingale as modoMartingale,
+            mode,
+            profit_target as profitTarget,
+            loss_limit as lossLimit
+           FROM ai_user_config
+           WHERE is_active = TRUE
+             AND LOWER(strategy) = 'trinity'`,
+        );
+        // Adicionar entryValue padrão
+        configs = configs.map(config => ({ ...config, entryValue: 0.35 }));
+      } else {
+        throw error;
+      }
+    }
 
     this.logger.log(
       `[SyncTrinity] 📊 Encontrados ${configs.length} usuário(s) Trinity no banco`,
@@ -2991,6 +3019,7 @@ export class AiService implements OnModuleInit {
           await this.strategyManager.activateUser(config.userId, 'trinity', {
             mode: config.mode || 'veloz',
             stakeAmount: Number(config.stakeAmount) || 0,
+            entryValue: Number(config.entryValue) || 0.35, // ✅ Passar entryValue do banco
             derivToken: config.derivToken,
             currency: config.currency || 'USD',
             modoMartingale: config.modoMartingale || 'conservador',
