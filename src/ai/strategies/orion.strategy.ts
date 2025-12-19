@@ -231,6 +231,10 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+        this.logger.debug(
+          `[ORION][Veloz][${userId}] 🔍 Verificando martingale: perdaAcumulada=$${state.perdaAcumulada.toFixed(2)}, direcao=${state.ultimaDirecaoMartingale}, martingaleStep=${state.martingaleStep || 0}`,
+        );
+        
         // Verificar intervalo entre operações (3 ticks)
         if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
           if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
@@ -242,9 +246,10 @@ export class OrionStrategy implements IStrategy {
         }
 
         // Continuar com martingale usando a mesma direção
-        const proximaEntrada = state.martingaleStep + 1;
+        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
+        const proximaEntrada = (state.martingaleStep || 0) + 1;
         this.logger.log(
-          `[ORION][Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+          `[ORION][Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | MartingaleStep: ${state.martingaleStep || 0}`,
         );
         
         await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'veloz', proximaEntrada);
@@ -303,7 +308,8 @@ export class OrionStrategy implements IStrategy {
         }
 
         // Continuar com martingale usando a mesma direção
-        const proximaEntrada = state.martingaleStep + 1;
+        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
+        const proximaEntrada = (state.martingaleStep || 0) + 1;
         this.logger.log(
           `[ORION][Moderado][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
         );
@@ -356,7 +362,8 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
         // Continuar com martingale usando a mesma direção
-        const proximaEntrada = state.martingaleStep + 1;
+        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
+        const proximaEntrada = (state.martingaleStep || 0) + 1;
         this.logger.log(
           `[ORION][Preciso][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
         );
@@ -407,7 +414,8 @@ export class OrionStrategy implements IStrategy {
     }
 
     state.isOperationActive = true;
-    state.martingaleStep = entry - 1; // entry começa em 1, martingaleStep em 0
+    // ✅ CORREÇÃO: martingaleStep é gerenciado após perda/vitória, não aqui
+    // entry é apenas para logs e cálculo do stake
 
     // Resetar contador de ticks
     if ('ticksDesdeUltimaOp' in state) {
@@ -424,6 +432,10 @@ export class OrionStrategy implements IStrategy {
     if (entry === 1) {
       // Primeira entrada: usar aposta inicial
       stakeAmount = state.apostaInicial || state.capital || 0.35;
+      // ✅ Garantir que martingaleStep está em 0 para primeira entrada
+      if ('martingaleStep' in state) {
+        state.martingaleStep = 0;
+      }
     } else {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
@@ -433,6 +445,11 @@ export class OrionStrategy implements IStrategy {
       if (stakeAmount < 0.35) {
         stakeAmount = 0.35;
       }
+      
+      // ✅ Log do cálculo do martingale
+      this.logger.log(
+        `[ORION][${mode}][${state.userId}] 🔄 MARTINGALE | Entrada ${entry} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | Stake calculado: $${stakeAmount.toFixed(2)}`,
+      );
     }
     
     const currentPrice = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 0;
@@ -753,11 +770,21 @@ export class OrionStrategy implements IStrategy {
                   state.vitoriasConsecutivas = 0;
                 }
                 if ('perdaAcumulada' in state) {
-                  state.perdaAcumulada = (state.perdaAcumulada || 0) + Math.abs(profit);
+                  // ✅ CORREÇÃO: Somar o stakeAmount (valor apostado), não o profit
+                  state.perdaAcumulada = (state.perdaAcumulada || 0) + stakeAmount;
                 }
                 if ('ultimaDirecaoMartingale' in state) {
                   state.ultimaDirecaoMartingale = operation; // ✅ CORREÇÃO: Salvar direção para continuar martingale
                 }
+                // ✅ CORREÇÃO: Incrementar martingaleStep após perda
+                if ('martingaleStep' in state) {
+                  state.martingaleStep = (state.martingaleStep || 0) + 1;
+                }
+                
+                // ✅ Log do martingale
+                this.logger.log(
+                  `[ORION][${mode}][${state.userId}] ❌ PERDA | Stake: $${stakeAmount.toFixed(2)} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | Próxima entrada: ${(state.martingaleStep || 0) + 1}`,
+                );
               }
 
               // Logs do resultado
