@@ -177,6 +177,8 @@ export class OrionStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
+    // ✅ Verificar e limpar contratos travados (ACTIVE há mais de 15 segundos)
+    await this.cleanupStuckContracts();
     this.ticks.push(tick);
     if (this.ticks.length > 2000) {
       this.ticks.shift();
@@ -566,7 +568,8 @@ export class OrionStrategy implements IStrategy {
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
           ['Não foi possível criar contrato', tradeId],
         );
-        this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
+        // ✅ Log de erro (a resposta da API já foi logada nos handlers de erro acima)
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato (verifique logs anteriores para resposta da Deriv)`);
         this.logger.warn(
           `[ORION][${mode}][${state.userId}] ❌ Falha ao criar contrato | Tipo: ${operation} | Valor: $${stakeAmount.toFixed(2)} | Entry: ${entry}`,
         );
@@ -584,6 +587,9 @@ export class OrionStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
+      
+      const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
+      
       // ✅ Marcar trade como ERROR no banco de dados
       if (tradeId) {
         await this.dataSource.query(
@@ -593,7 +599,8 @@ export class OrionStrategy implements IStrategy {
           this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR:`, err);
         });
       }
-      this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação: ${error.message}`);
+      // ✅ Log de erro com detalhes completos
+      this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação: ${error.message || 'Erro desconhecido'} | Detalhes: ${errorResponse}`);
     }
   }
 
@@ -687,6 +694,8 @@ export class OrionStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           this.logger.warn(`[ORION] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          // ✅ Log de timeout na criação do contrato
+          this.saveOrionLog('SYSTEM', 'R_10', 'erro', `⏱️ Timeout ao criar contrato após 30 segundos | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
           ws.close();
           resolve(null);
         }
@@ -706,9 +715,12 @@ export class OrionStrategy implements IStrategy {
               if (!hasResolved) {
                 hasResolved = true;
                 clearTimeout(timeout);
+                const errorResponse = JSON.stringify(msg.authorize);
                 this.logger.error(
                   `[ORION] ❌ Erro na autorização: ${JSON.stringify(msg.authorize.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
                 );
+                // ✅ Salvar resposta completa da API nos logs
+                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro na autorização da Deriv | Resposta: ${errorResponse}`);
                 ws.close();
                 resolve(null);
               }
@@ -736,9 +748,12 @@ export class OrionStrategy implements IStrategy {
               if (!hasResolved) {
                 hasResolved = true;
                 clearTimeout(timeout);
+                const errorResponse = JSON.stringify(msg.proposal);
                 this.logger.error(
                   `[ORION] ❌ Erro na proposta: ${JSON.stringify(msg.proposal.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
                 );
+                // ✅ Salvar resposta completa da API nos logs
+                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro na proposta da Deriv | Resposta: ${errorResponse}`);
                 ws.close();
                 resolve(null);
               }
@@ -763,9 +778,12 @@ export class OrionStrategy implements IStrategy {
               ws.close();
               
               if (msg.buy.error) {
+                const errorResponse = JSON.stringify(msg.buy);
                 this.logger.error(
                   `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(msg.buy.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
                 );
+                // ✅ Salvar resposta completa da API nos logs
+                this.saveOrionLog('SYSTEM', 'R_10', 'erro', `❌ Erro ao comprar contrato na Deriv | Resposta: ${errorResponse}`);
                 resolve(null);
                 return;
               }
@@ -839,13 +857,13 @@ export class OrionStrategy implements IStrategy {
         // ✅ Marcar trade como ERROR no banco de dados
         await this.dataSource.query(
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-          [`Timeout ao monitorar contrato ${contractId}`, tradeId],
+          [`Timeout ao monitorar contrato ${contractId} (15s)`, tradeId],
         ).catch(err => {
           this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (timeout):`, err);
         });
         
-        // ✅ Log de erro
-        this.saveOrionLog(state.userId, 'R_10', 'erro', `⏱️ Timeout ao monitorar contrato ${contractId} - Operação cancelada`);
+        // ✅ Log de erro com informações do timeout
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `⏱️ Timeout ao monitorar contrato ${contractId} após 15 segundos - Operação cancelada | Contrato não finalizou no tempo esperado`);
         
         // ✅ NÃO incrementar perdaAcumulada quando for erro
         // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -886,6 +904,7 @@ export class OrionStrategy implements IStrategy {
               state.isOperationActive = false;
               
               const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
+              const errorResponse = JSON.stringify(contract);
               this.logger.error(`[ORION][${mode}] ❌ Contrato ${contractId} foi ${contract.status}:`, errorMsg);
               
               // ✅ Marcar trade como ERROR no banco de dados
@@ -896,8 +915,8 @@ export class OrionStrategy implements IStrategy {
                 this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (${contract.status}):`, err);
               });
               
-              // ✅ Log de erro
-              this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Contrato ${contractId} foi ${contract.status} - Operação cancelada`);
+              // ✅ Log de erro com resposta completa da API
+              this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Contrato ${contractId} foi ${contract.status} - Operação cancelada | Resposta Deriv: ${errorResponse}`);
               
               // ✅ NÃO incrementar perdaAcumulada quando for erro
               // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -1092,6 +1111,8 @@ export class OrionStrategy implements IStrategy {
           ws.close();
           state.isOperationActive = false;
           
+          const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
+          
           // ✅ Marcar trade como ERROR no banco de dados
           await this.dataSource.query(
             `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
@@ -1100,8 +1121,8 @@ export class OrionStrategy implements IStrategy {
             this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (catch):`, err);
           });
           
-          // ✅ Log de erro
-          this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro ao processar contrato ${contractId}: ${error.message || 'Erro desconhecido'} - Operação cancelada`);
+          // ✅ Log de erro com resposta completa
+          this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro ao processar contrato ${contractId}: ${error.message || 'Erro desconhecido'} - Operação cancelada | Detalhes: ${errorResponse}`);
           
           // ✅ NÃO incrementar perdaAcumulada quando for erro
           // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -1118,6 +1139,8 @@ export class OrionStrategy implements IStrategy {
         this.logger.error(`[ORION][${mode}] ❌ Erro no WebSocket de monitoramento do contrato ${contractId}:`, error);
         state.isOperationActive = false;
         
+        const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
+        
         // ✅ Marcar trade como ERROR no banco de dados
         await this.dataSource.query(
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
@@ -1126,8 +1149,8 @@ export class OrionStrategy implements IStrategy {
           this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (websocket):`, err);
         });
         
-        // ✅ Log de erro
-        this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro no WebSocket ao monitorar contrato ${contractId} - Operação cancelada`);
+        // ✅ Log de erro com detalhes completos
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `❌ Erro no WebSocket ao monitorar contrato ${contractId} - Operação cancelada | Detalhes: ${errorResponse}`);
         
         // ✅ NÃO incrementar perdaAcumulada quando for erro
         // ✅ Resetar contador de ticks para permitir nova tentativa
