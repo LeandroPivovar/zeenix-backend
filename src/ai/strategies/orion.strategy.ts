@@ -442,7 +442,9 @@ export class OrionStrategy implements IStrategy {
     mode: 'veloz' | 'moderado' | 'preciso',
     entry: number = 1,
   ): Promise<void> {
-    let tradeId: number | null = null; // ✅ Declarar tradeId no escopo da função
+    // ✅ Declarar tradeId no escopo da função para ser acessível no catch
+    let tradeId: number | null = null;
+    
     if (state.isOperationActive) {
       this.logger.warn(`[ORION][${mode}] Usuário ${state.userId} já possui operação ativa`);
       return;
@@ -532,9 +534,6 @@ export class OrionStrategy implements IStrategy {
     } else if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
       this.saveOrionLog(state.userId, 'R_10', 'operacao', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Aposta anterior: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} | Lucro anterior: $${(state.ultimoLucro || 0).toFixed(2)}`);
     }
-
-    // ✅ Declarar tradeId no escopo da função para ser acessível no catch
-    let tradeId: number | null = null;
 
     try {
       // Criar registro de trade
