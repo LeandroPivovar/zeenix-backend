@@ -184,12 +184,13 @@ export class TrinityStrategy implements IStrategy {
     
     // ✅ Log: Usuário ativado
     this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | ` +
+      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Entrada: $${apostaInicial.toFixed(2)} | ` +
       `Martingale: ${modoMartingale || 'conservador'} | ` +
       `Meta: ${profitTarget ? `+$${profitTarget.toFixed(2)}` : 'Não definida'} | ` +
       `Stop-loss: ${lossLimit ? `-$${Math.abs(lossLimit).toFixed(2)}` : 'Não definido'}`, {
         mode: mode || 'veloz',
         capital: stakeAmount,
+        entryValue: apostaInicial,
         modoMartingale: modoMartingale || 'conservador',
         profitTarget: profitTarget || null,
         lossLimit: lossLimit || null,
@@ -778,7 +779,10 @@ export class TrinityStrategy implements IStrategy {
       // ✅ Quando reativar, atualizar capitalInicial para o capital atual (nova sessão)
       // Isso garante que o stop-loss seja calculado corretamente a partir do novo capital
       const novoCapitalInicial = params.stakeAmount;
-      const apostaInicial = params.apostaInicial || existing.assets.R_10.apostaBase || 0.35;
+      // ✅ Sempre usar apostaInicial se fornecido, senão manter o existente ou usar 0.35
+      const apostaInicial = params.apostaInicial !== undefined 
+        ? params.apostaInicial 
+        : (existing.assets.R_10.apostaBase || 0.35);
       
       Object.assign(existing, {
         capital: params.stakeAmount,
@@ -794,7 +798,8 @@ export class TrinityStrategy implements IStrategy {
       });
       
       // ✅ Atualizar aposta inicial de todos os ativos se fornecido
-      if (params.apostaInicial) {
+      // ✅ Sempre atualizar apostaInicial se fornecido (mesmo que seja 0.35)
+      if (params.apostaInicial !== undefined) {
         for (const assetKey of ['R_10', 'R_25', 'R_50'] as const) {
           existing.assets[assetKey].apostaInicial = apostaInicial;
           existing.assets[assetKey].apostaBase = apostaInicial;

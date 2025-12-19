@@ -208,7 +208,7 @@ export class OrionStrategy implements IStrategy {
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
-        `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+        `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Entrada: $${apostaInicial.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -221,7 +221,7 @@ export class OrionStrategy implements IStrategy {
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
-        `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+        `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Entrada: $${apostaInicial.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -234,7 +234,7 @@ export class OrionStrategy implements IStrategy {
       
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
-        `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+        `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Entrada: $${apostaInicial.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -498,15 +498,15 @@ export class OrionStrategy implements IStrategy {
             `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${vitoriasAtuais} | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Nova aposta: $${stakeAmount.toFixed(2)}`,
           );
         } else {
-          // Fallback: usar aposta inicial
+          // Fallback: usar aposta inicial (garantir mínimo de 0.35)
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] ⚠️ Soros retornou null, usando aposta inicial`,
           );
-          stakeAmount = state.apostaInicial || state.capital || 0.35;
+          stakeAmount = Math.max(state.apostaInicial || 0.35, 0.35);
         }
       } else {
-        // Primeira entrada normal: usar aposta inicial
-        stakeAmount = state.apostaInicial || state.capital || 0.35;
+        // Primeira entrada normal: usar aposta inicial (garantir mínimo de 0.35)
+        stakeAmount = Math.max(state.apostaInicial || 0.35, 0.35);
       }
       
       // ✅ Garantir que martingaleStep está em 0 para primeira entrada
@@ -1287,9 +1287,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        // ✅ Atualizar aposta inicial se fornecido
-        apostaInicial: params.apostaInicial || existing.apostaInicial,
-        apostaBase: params.apostaInicial || existing.apostaBase,
+        // ✅ Atualizar aposta inicial se fornecido (sempre atualizar quando fornecido)
+        apostaInicial: params.apostaInicial !== undefined ? apostaInicial : existing.apostaInicial,
+        apostaBase: params.apostaInicial !== undefined ? apostaInicial : existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -1332,9 +1332,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        // ✅ Atualizar aposta inicial se fornecido
-        apostaInicial: params.apostaInicial || existing.apostaInicial,
-        apostaBase: params.apostaInicial || existing.apostaBase,
+        // ✅ Atualizar aposta inicial se fornecido (sempre atualizar quando fornecido)
+        apostaInicial: params.apostaInicial !== undefined ? apostaInicial : existing.apostaInicial,
+        apostaBase: params.apostaInicial !== undefined ? apostaInicial : existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -1377,9 +1377,9 @@ export class OrionStrategy implements IStrategy {
         derivToken: params.derivToken,
         currency: params.currency,
         modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
-        // ✅ Atualizar aposta inicial se fornecido
-        apostaInicial: params.apostaInicial || existing.apostaInicial,
-        apostaBase: params.apostaInicial || existing.apostaBase,
+        // ✅ Atualizar aposta inicial se fornecido (sempre atualizar quando fornecido)
+        apostaInicial: params.apostaInicial !== undefined ? apostaInicial : existing.apostaInicial,
+        apostaBase: params.apostaInicial !== undefined ? apostaInicial : existing.apostaBase,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
