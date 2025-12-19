@@ -36,11 +36,13 @@ export interface IStrategy {
 }
 
 // Configurações exportadas
+// Alinhado ao guia TRINITY: amostra mínima 20, intervalo 15 ticks,
+// desequilíbrio mínimo 60% e confiança mínima 60%.
 export const VELOZ_CONFIG: ModeConfig = {
-  amostraInicial: 10,
-  intervaloTicks: 3,
-  desequilibrioMin: 0.50,
-  confianciaMin: 0.50,
+  amostraInicial: 20,
+  intervaloTicks: 15,
+  desequilibrioMin: 0.60,
+  confianciaMin: 0.60,
   taxaAcertoEsperada: 0.67,
   payout: 0.95,
   minStake: 0.35,

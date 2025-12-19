@@ -78,19 +78,30 @@ export function analisarSequencias(ticks: Tick[]): {
 export function analisarMicroTendencias(ticks: Tick[]): {
   aceleracao: number;
   bonus: number;
+  curtoPrazoPercPar?: number;
+  medioPrazoPercPar?: number;
 } {
-  if (ticks.length < 20) {
+  // Guia TRINITY: comparar curto (50) x médio prazo (100)
+  if (ticks.length < 100) {
     return { aceleracao: 0, bonus: 0 };
   }
   
-  const deseq10 = calcularDesequilibrio(ticks.slice(-10), 10).desequilibrio;
-  const deseq20 = calcularDesequilibrio(ticks.slice(-20), 20).desequilibrio;
-  
-  const aceleracao = Math.abs(deseq10 - deseq20);
+  const ultimos50 = ticks.slice(-50);
+  const ultimos100 = ticks.slice(-100);
+
+  const pares50 = ultimos50.filter(t => t.digit % 2 === 0).length;
+  const pares100 = ultimos100.filter(t => t.digit % 2 === 0).length;
+
+  const percPar50 = pares50 / 50;   // fração 0-1
+  const percPar100 = pares100 / 100; // fração 0-1
+
+  const aceleracao = Math.abs(percPar50 - percPar100);
   
   return {
     aceleracao,
-    bonus: aceleracao > 0.10 ? 8 : 0, // Bônus +8% se aceleração > 10%
+    bonus: aceleracao > 0.10 ? 8 : 0, // Bônus +8% se diferença > 10%
+    curtoPrazoPercPar: percPar50,
+    medioPrazoPercPar: percPar100,
   };
 }
 
@@ -99,22 +110,39 @@ export function analisarMicroTendencias(ticks: Tick[]): {
  * Mede velocidade de crescimento do desequilíbrio
  * Detecta desequilíbrio crescendo rapidamente → Bônus +10% se velocidade > 5%
  */
-export function analisarForcaDesequilibrio(ticks: Tick[], janela: number): {
+export function analisarForcaDesequilibrio(ticks: Tick[], _janela: number): {
   velocidade: number;
   bonus: number;
 } {
-  if (ticks.length < janela + 1) {
+  // Guia TRINITY: contar ticks consecutivos (últimos 10) com desequilíbrio >= 60%
+  if (ticks.length < 1) {
     return { velocidade: 0, bonus: 0 };
   }
-  
-  const deseqAtual = calcularDesequilibrio(ticks, janela).desequilibrio;
-  const deseqAnterior = calcularDesequilibrio(ticks.slice(0, -1), janela).desequilibrio;
-  
-  const velocidade = Math.abs(deseqAtual - deseqAnterior);
-  
+
+  const inicio = Math.max(0, ticks.length - 10);
+  let consecutivos = 0;
+  let maxConsecutivos = 0;
+
+  for (let i = inicio; i < ticks.length; i++) {
+    const amostra = ticks.slice(0, i + 1);
+    const pares = amostra.filter(t => t.digit % 2 === 0).length;
+    const percPar = pares / amostra.length;
+    const desequilibrio = Math.max(percPar, 1 - percPar);
+
+    if (desequilibrio >= 0.60) {
+      consecutivos++;
+    } else {
+      consecutivos = 0;
+    }
+
+    if (consecutivos > maxConsecutivos) {
+      maxConsecutivos = consecutivos;
+    }
+  }
+
   return {
-    velocidade,
-    bonus: velocidade > 0.05 ? 10 : 0, // Bônus +10% se velocidade > 5%
+    velocidade: maxConsecutivos, // número de ticks consecutivos com desequilíbrio >= 60%
+    bonus: maxConsecutivos > 5 ? 10 : 0, // Bônus +10% se >5 ticks consecutivos
   };
 }
 

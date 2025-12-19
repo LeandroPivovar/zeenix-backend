@@ -598,19 +598,19 @@ export class TrinityStrategy implements IStrategy {
         
         this.saveTrinityLog(userId, symbol, 'analise', 
           `Análise 3/4: Micro-Tendências
-  └─ Curto prazo (10 ticks): ${((detalhes.desequilibrio?.percentualPar || 0) * 100).toFixed(1)}% PAR
-  └─ Médio prazo (20 ticks): ${((detalhes.desequilibrio?.percentualImpar || 0) * 100).toFixed(1)}% ÍMPAR
+  └─ Curto prazo (50 ticks): ${((micro.curtoPrazoPercPar || 0) * 100).toFixed(1)}% PAR
+  └─ Médio prazo (100 ticks): ${((micro.medioPrazoPercPar || 0) * 100).toFixed(1)}% PAR
   └─ Diferença: ${aceleracaoPerc.toFixed(1)}% (mínimo: 10%) ${atendeCriterio ? '✅' : '❌'}
   └─ Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança
   └─ Confiança acumulada: ${confiancaAntes.toFixed(1)}% ${bonus > 0 ? `+ ${bonus}%` : ''} = ${confiancaDepois.toFixed(1)}%${confiancaDepois > 95 ? ` → limitado a ${confiancaLimitada.toFixed(1)}%` : ''}`, {
           analise: 'microTendencias',
           curtoPrazo: {
-            janela: 10,
-            percPar: (detalhes.desequilibrio?.percentualPar || 0) * 100,
+            janela: 50,
+            percPar: (micro.curtoPrazoPercPar || 0) * 100,
           },
           medioPrazo: {
-            janela: 20,
-            percPar: (detalhes.desequilibrio?.percentualImpar || 0) * 100,
+            janela: 100,
+            percPar: (micro.medioPrazoPercPar || 0) * 100,
           },
           diferenca: aceleracaoPerc,
           criterioMinimo: 10,
@@ -626,20 +626,20 @@ export class TrinityStrategy implements IStrategy {
       if (detalhes.forca) {
         const forca = detalhes.forca;
         const bonus = forca.bonus || 0;
-        const velocidadePerc = (forca.velocidade || 0) * 100;
-        const atendeCriterio = forca.velocidade > 0.05;
+        const ticksConsecutivos = forca.velocidade || 0;
+        const atendeCriterio = ticksConsecutivos > 5;
         const confiancaAntes = Math.min(95, (detalhes.confiancaBase || sinal.confianca) + (detalhes.sequencias?.bonus || 0) + (detalhes.microTendencias?.bonus || 0));
         const confiancaDepois = Math.min(95, confiancaAntes + bonus);
         const jaNoLimite = confiancaAntes >= 95;
         
         this.saveTrinityLog(userId, symbol, 'analise', 
           `Análise 4/4: Força do Desequilíbrio
-  └─ Ticks consecutivos com desequilíbrio >60%: ${Math.round(velocidadePerc)} ticks
+  └─ Ticks consecutivos com desequilíbrio >60%: ${ticksConsecutivos}
   └─ Critério: >5 ticks ${atendeCriterio ? '✅' : '❌'}
   └─ Bônus: ${bonus > 0 ? '+' : ''}${bonus}% confiança
   └─ Confiança final: ${confiancaAntes.toFixed(1)}%${bonus > 0 ? ` ${jaNoLimite ? '(já no limite)' : `+ ${bonus}% = ${confiancaDepois.toFixed(1)}%`}` : ''}`, {
           analise: 'forca',
-          ticksConsecutivos: Math.round(velocidadePerc),
+          ticksConsecutivos,
           criterioMinimo: 5,
           atendeCriterio,
           bonus,
@@ -654,7 +654,7 @@ export class TrinityStrategy implements IStrategy {
         detalhes.desequilibrio?.desequilibrio >= modeConfig.desequilibrioMin,
         detalhes.sequencias?.tamanho >= 5,
         detalhes.microTendencias?.aceleracao > 0.10,
-        detalhes.forca?.velocidade > 0.05,
+        detalhes.forca?.velocidade > 5,
       ].filter(Boolean).length;
       
       this.saveTrinityLog(userId, symbol, 'analise', 
@@ -663,7 +663,7 @@ export class TrinityStrategy implements IStrategy {
   └─ Desequilíbrio: ${(detalhes.desequilibrio?.desequilibrio || 0) * 100}% ✅
   └─ Sequências: ${detalhes.sequencias?.tamanho || 0} consecutivos ${(detalhes.sequencias?.tamanho || 0) >= 5 ? '✅' : '❌'}
   └─ Micro-tendências: ${((detalhes.microTendencias?.aceleracao || 0) * 100).toFixed(1)}% diferença ${(detalhes.microTendencias?.aceleracao || 0) > 0.10 ? '✅' : '❌'}
-  └─ Força: ${Math.round((detalhes.forca?.velocidade || 0) * 100)} ticks ${(detalhes.forca?.velocidade || 0) > 0.05 ? '✅' : '❌'}
+  └─ Força: ${detalhes.forca?.velocidade || 0} ticks ${(detalhes.forca?.velocidade || 0) > 5 ? '✅' : '❌'}
   └─ Confiança final: ${sinal.confianca.toFixed(1)}%
   └─ Direção: ${sinal.sinal}`, {
           criteriosAtendidos,

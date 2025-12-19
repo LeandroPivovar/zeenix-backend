@@ -4093,6 +4093,7 @@ export class AiService implements OnModuleInit {
         entryValue: 0.35, // ✅ Valor padrão de entrada
         currency: 'USD',
         mode: 'veloz',
+        strategy: 'orion', // ✅ Estratégia padrão
         modoMartingale: 'conservador',
         profitTarget: null,
         lossLimit: null,
@@ -4110,6 +4111,10 @@ export class AiService implements OnModuleInit {
     // ✅ Garantir que entryValue tenha um valor padrão se não existir
     if (config && (config.entryValue === null || config.entryValue === undefined)) {
       config.entryValue = 0.35;
+    }
+    // ✅ Garantir que strategy tenha um valor padrão se não existir
+    if (config && (!config.strategy || config.strategy === null)) {
+      config.strategy = 'orion';
     }
     return config;
   }
