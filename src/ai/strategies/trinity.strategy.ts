@@ -479,14 +479,6 @@ export class TrinityStrategy implements IStrategy {
         if (asset.isOperationActive) {
           this.saveTrinityLog(userId, symbol, 'info', 
             `Aguardando resultado da operação anterior...`);
-        } else {
-          const modeConfig = this.getModeConfig(state.mode);
-          if (modeConfig && state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks) {
-            if (asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
-              this.saveTrinityLog(userId, symbol, 'info', 
-                `Aguardando intervalo mínimo: ${asset.ticksDesdeUltimaOp}/${modeConfig.intervaloTicks} ticks`);
-            }
-          }
         }
         continue;
       }
