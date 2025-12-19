@@ -902,6 +902,10 @@ export class OrionStrategy implements IStrategy {
             hasResolved = true;
             clearTimeout(timeout);
             this.logger.error(`[ORION] ❌ Erro ao processar mensagem WebSocket:`, error);
+            if (userId) {
+              this.saveOrionLog(userId, 'R_10', 'erro',
+                `Erro ao processar mensagem WebSocket na criação do contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+            }
             ws.close();
             resolve(null);
           }
@@ -915,6 +919,10 @@ export class OrionStrategy implements IStrategy {
           this.logger.error(
             `[ORION] ❌ Erro no WebSocket: ${error.message} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
           );
+          if (userId) {
+            this.saveOrionLog(userId, 'R_10', 'erro',
+              `Erro de conexão ao criar contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+          }
           resolve(null);
         }
       });
@@ -926,6 +934,10 @@ export class OrionStrategy implements IStrategy {
           this.logger.warn(
             `[ORION] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
           );
+          if (userId) {
+            this.saveOrionLog(userId, 'R_10', 'erro',
+              `WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          }
           resolve(null);
         }
       });

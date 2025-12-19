@@ -950,6 +950,8 @@ export class TrinityStrategy implements IStrategy {
     try {
       // ✅ Executar trade via WebSocket
       const contractId = await this.executeTrinityTradeViaWebSocket(
+        state.userId,
+        symbol,
         state.derivToken,
         {
           symbol,
@@ -1027,6 +1029,8 @@ export class TrinityStrategy implements IStrategy {
    * ✅ TRINITY: Executa trade via WebSocket
    */
   private async executeTrinityTradeViaWebSocket(
+    userId: string,
+    symbol: 'R_10' | 'R_25' | 'R_50',
     token: string,
     contractParams: any,
   ): Promise<string | null> {
@@ -1050,6 +1054,12 @@ export class TrinityStrategy implements IStrategy {
           }
         }
         ws.close();
+        this.saveTrinityLog(userId, symbol, 'erro',
+          `⏱️ Timeout ao criar contrato após 30 segundos | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`, {
+            etapa: 'timeout_criacao',
+            contractType: contractParams.contract_type,
+            amount: contractParams.amount,
+          });
         resolve(null);
       }, 30000);
 
@@ -1065,6 +1075,11 @@ export class TrinityStrategy implements IStrategy {
             if (msg.authorize.error) {
               clearTimeout(timeout);
               ws.close();
+              this.saveTrinityLog(userId, symbol, 'erro',
+                `Erro na autorização Deriv | ${msg.authorize.error.code} - ${msg.authorize.error.message}`, {
+                  etapa: 'authorize',
+                  error: msg.authorize.error,
+                });
               resolve(null);
               return;
             }
@@ -1089,6 +1104,13 @@ export class TrinityStrategy implements IStrategy {
             if (msg.proposal.error) {
               clearTimeout(timeout);
               ws.close();
+              this.saveTrinityLog(userId, symbol, 'erro',
+                `Erro ao gerar proposta | ${msg.proposal.error.code} - ${msg.proposal.error.message}`, {
+                  etapa: 'proposal',
+                  error: msg.proposal.error,
+                  contractType: contractParams.contract_type,
+                  amount: contractParams.amount,
+                });
               resolve(null);
               return;
             }
@@ -1121,6 +1143,13 @@ export class TrinityStrategy implements IStrategy {
             ws.close();
             
             if (msg.buy.error) {
+              this.saveTrinityLog(userId, symbol, 'erro',
+                `Erro ao comprar contrato | ${msg.buy.error.code} - ${msg.buy.error.message}`, {
+                  etapa: 'buy',
+                  error: msg.buy.error,
+                  contractType: contractParams.contract_type,
+                  amount: contractParams.amount,
+                });
               resolve(null);
               return;
             }
@@ -1136,6 +1165,8 @@ export class TrinityStrategy implements IStrategy {
       ws.on('error', () => {
         clearTimeout(timeout);
         ws.close();
+        this.saveTrinityLog(userId, symbol, 'erro',
+          `Erro de conexão na criação do contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`);
         resolve(null);
       });
     });
