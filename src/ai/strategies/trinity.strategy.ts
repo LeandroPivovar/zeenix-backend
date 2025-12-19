@@ -163,6 +163,7 @@ export class TrinityStrategy implements IStrategy {
   async activateUser(userId: string, config: any): Promise<void> {
     this.logger.log(`[TRINITY] 🔵 Ativando usuário ${userId}...`);
     const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit, entryValue } = config;
+    const stopLossNormalized = lossLimit != null ? -Math.abs(lossLimit) : null; // garantir negativo
     
     // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
     // ✅ stakeAmount é o capital total da conta (ex: $8953.20)
@@ -177,7 +178,7 @@ export class TrinityStrategy implements IStrategy {
       mode: mode || 'veloz',
       modoMartingale: modoMartingale || 'conservador',
       profitTarget: profitTarget || null,
-      lossLimit: lossLimit || null,
+      lossLimit: stopLossNormalized,
     });
     
     this.logger.log(`[TRINITY] ✅ Usuário ${userId} ativado | Total de usuários: ${this.trinityUsers.size}`);
@@ -774,6 +775,7 @@ export class TrinityStrategy implements IStrategy {
     lossLimit?: number | null;
   }): void {
     const existing = this.trinityUsers.get(params.userId);
+    const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
     if (existing) {
       // ✅ Quando reativar, atualizar capitalInicial para o capital atual (nova sessão)
       // Isso garante que o stop-loss seja calculado corretamente a partir do novo capital
@@ -791,7 +793,7 @@ export class TrinityStrategy implements IStrategy {
         mode: params.mode,
         modoMartingale: params.modoMartingale || 'conservador',
         profitTarget: params.profitTarget || null,
-        stopLoss: params.lossLimit || null,
+        stopLoss: stopLossNormalized,
         isStopped: false,
         totalProfitLoss: 0, // Resetar P&L total para nova sessão
       });
@@ -876,7 +878,7 @@ export class TrinityStrategy implements IStrategy {
       assets,
       currentAssetIndex: 0,
       totalProfitLoss: 0,
-      stopLoss: params.lossLimit || undefined,
+      stopLoss: stopLossNormalized || undefined,
       stopLossBlindado: false,
       profitTarget: params.profitTarget || undefined,
       isStopped: false,
@@ -1542,6 +1544,7 @@ export class TrinityStrategy implements IStrategy {
    * ✅ TRINITY: Verifica limites (meta, stop-loss, stop-blindado)
    */
   private async checkTrinityLimits(state: TrinityUserState): Promise<void> {
+    const stopLossValue = state.stopLoss != null ? -Math.abs(state.stopLoss) : null; // garantir negativo para comparação
     const lucroAtual = state.capital - state.capitalInicial;
     
     // ✅ Log: Debug - valores para verificação
@@ -1570,12 +1573,12 @@ export class TrinityStrategy implements IStrategy {
     // 1. Há um stop-loss configurado (negativo, ex: -25.00)
     // 2. O lucro atual é negativo (há perda)
     // 3. A perda atual é maior ou igual ao stop-loss (mais negativo)
-    if (state.stopLoss && lucroAtual < 0 && lucroAtual <= state.stopLoss) {
+    if (stopLossValue !== null && lucroAtual < 0 && lucroAtual <= stopLossValue) {
       state.isStopped = true;
       const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
       this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
-        `STOP-LOSS ATINGIDO! ⚠️ | Stop-loss: -$${Math.abs(state.stopLoss).toFixed(2)} | Perda atual: -$${Math.abs(lucroAtual).toFixed(2)} | ROI: ${roi}% | Parando sistema...`, {
-          stopLoss: state.stopLoss,
+        `STOP-LOSS ATINGIDO! ⚠️ | Stop-loss: -$${Math.abs(stopLossValue).toFixed(2)} | Perda atual: -$${Math.abs(lucroAtual).toFixed(2)} | ROI: ${roi}% | Parando sistema...`, {
+          stopLoss: stopLossValue,
           perdaAtual: lucroAtual,
           roi: parseFloat(roi),
         });
