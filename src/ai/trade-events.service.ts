@@ -5,7 +5,7 @@ import { filter, map } from 'rxjs/operators';
 interface TradeEventPayload {
   userId: string;
   type: 'created' | 'updated';
-  tradeId: number;
+  tradeId?: number;
   status?: string;
   strategy?: string;
   symbol?: string;
