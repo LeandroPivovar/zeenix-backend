@@ -152,6 +152,114 @@ export class TradesService {
       }));
   }
 
+  /**
+   * Retorna o lucro/perda do dia atual (trades manuais + IA)
+   */
+  async getTodayProfitLoss(userId: string) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+    // Buscar trades manuais do dia
+    const manualTrades = await this.tradeRepository.find({
+      where: {
+        userId,
+        createdAt: Between(startOfDay, endOfDay),
+        status: TradeStatus.WON,
+      },
+    });
+
+    const manualTradesLost = await this.tradeRepository.find({
+      where: {
+        userId,
+        createdAt: Between(startOfDay, endOfDay),
+        status: TradeStatus.LOST,
+      },
+    });
+
+    // Calcular lucro/perda de trades manuais
+    const manualProfit = manualTrades.reduce((sum, t) => sum + (t.profit || 0), 0);
+    const manualLoss = manualTradesLost.reduce((sum, t) => sum + Math.abs(t.profit || 0), 0);
+
+    // Buscar trades da IA do dia
+    const aiTradesResult = await this.dataSource.query(
+      `SELECT 
+        SUM(CASE WHEN status = 'WON' THEN profit_loss ELSE 0 END) as ai_profit,
+        SUM(CASE WHEN status = 'LOST' THEN ABS(profit_loss) ELSE 0 END) as ai_loss,
+        COUNT(CASE WHEN status = 'WON' THEN 1 END) as ai_wins,
+        COUNT(CASE WHEN status = 'LOST' THEN 1 END) as ai_losses
+       FROM ai_trades
+       WHERE user_id = ?
+         AND DATE(created_at) = CURDATE()`,
+      [userId],
+    );
+
+    const aiProfit = parseFloat(aiTradesResult[0]?.ai_profit) || 0;
+    const aiLoss = parseFloat(aiTradesResult[0]?.ai_loss) || 0;
+    const aiWins = parseInt(aiTradesResult[0]?.ai_wins) || 0;
+    const aiLosses = parseInt(aiTradesResult[0]?.ai_losses) || 0;
+
+    // Buscar dados do agente autônomo do dia
+    const agentResult = await this.dataSource.query(
+      `SELECT 
+        COALESCE(daily_profit, 0) as agent_profit,
+        COALESCE(daily_loss, 0) as agent_loss,
+        COALESCE(total_wins, 0) as agent_wins,
+        COALESCE(total_losses, 0) as agent_losses,
+        is_active,
+        session_status
+       FROM autonomous_agent_config
+       WHERE user_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [userId],
+    );
+
+    const agentProfit = parseFloat(agentResult[0]?.agent_profit) || 0;
+    const agentLoss = parseFloat(agentResult[0]?.agent_loss) || 0;
+    const agentWins = parseInt(agentResult[0]?.agent_wins) || 0;
+    const agentLosses = parseInt(agentResult[0]?.agent_losses) || 0;
+    const agentIsActive = agentResult[0]?.is_active === 1 || agentResult[0]?.is_active === true;
+    const agentSessionStatus = agentResult[0]?.session_status || null;
+
+    // Calcular totais
+    const totalProfit = manualProfit + aiProfit + agentProfit;
+    const totalLoss = manualLoss + aiLoss + agentLoss;
+    const netResult = totalProfit - totalLoss;
+
+    return {
+      today: {
+        date: today.toISOString().split('T')[0],
+        netResult,
+        totalProfit,
+        totalLoss,
+      },
+      manual: {
+        profit: manualProfit,
+        loss: manualLoss,
+        wins: manualTrades.length,
+        losses: manualTradesLost.length,
+        net: manualProfit - manualLoss,
+      },
+      ai: {
+        profit: aiProfit,
+        loss: aiLoss,
+        wins: aiWins,
+        losses: aiLosses,
+        net: aiProfit - aiLoss,
+      },
+      agent: {
+        profit: agentProfit,
+        loss: agentLoss,
+        wins: agentWins,
+        losses: agentLosses,
+        net: agentProfit - agentLoss,
+        isActive: agentIsActive,
+        sessionStatus: agentSessionStatus,
+      },
+    };
+  }
+
   async getMarkupData(startDate?: string, endDate?: string) {
     // Taxa de markup da plataforma (3%)
     const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835

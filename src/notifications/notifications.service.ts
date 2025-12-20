@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
 export interface AgentSummary {
@@ -43,7 +44,7 @@ export interface LoginNotificationSummary {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
    * Busca resumo de notificações ao fazer login
@@ -125,10 +126,12 @@ export class NotificationsService {
 
   /**
    * Busca resumo da IA de Trading
+   * Prioriza configurações ativas sobre inativas
    */
   private async getAISummary(userId: string): Promise<AISummary | null> {
     try {
-      const result = await this.dataSource.query(
+      // Primeiro tenta buscar uma configuração ATIVA
+      let result = await this.dataSource.query(
         `SELECT 
           is_active,
           session_status,
@@ -137,13 +140,35 @@ export class NotificationsService {
           loss_limit,
           mode,
           strategy,
-          last_trade_at
+          last_trade_at,
+          created_at
          FROM ai_user_config
-         WHERE user_id = ?
-         ORDER BY updated_at DESC
+         WHERE user_id = ? AND is_active = TRUE
+         ORDER BY created_at DESC
          LIMIT 1`,
         [userId],
       );
+
+      // Se não encontrou ativa, busca a mais recente (inativa)
+      if (!result || result.length === 0) {
+        result = await this.dataSource.query(
+          `SELECT 
+            is_active,
+            session_status,
+            COALESCE(session_balance, 0) as session_balance,
+            profit_target,
+            loss_limit,
+            mode,
+            strategy,
+            last_trade_at,
+            created_at
+           FROM ai_user_config
+           WHERE user_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [userId],
+        );
+      }
 
       if (!result || result.length === 0) {
         return null;
@@ -151,10 +176,33 @@ export class NotificationsService {
 
       const config = result[0];
 
+      // Se está ativa, buscar o saldo real dos trades da sessão atual
+      let sessionBalance = parseFloat(config.session_balance) || 0;
+      
+      if (config.is_active === 1 || config.is_active === true) {
+        // Buscar o lucro/perda real da sessão atual baseado nos trades
+        const tradesResult = await this.dataSource.query(
+          `SELECT 
+            COALESCE(SUM(profit_loss), 0) as total_profit_loss
+           FROM ai_trades
+           WHERE user_id = ?
+             AND created_at >= ?`,
+          [userId, config.created_at],
+        );
+        
+        if (tradesResult && tradesResult.length > 0) {
+          const realBalance = parseFloat(tradesResult[0].total_profit_loss) || 0;
+          // Usar o saldo real dos trades se disponível
+          if (realBalance !== 0 || sessionBalance === 0) {
+            sessionBalance = realBalance;
+          }
+        }
+      }
+
       return {
         isActive: config.is_active === 1 || config.is_active === true,
         sessionStatus: config.session_status || null,
-        sessionBalance: parseFloat(config.session_balance) || 0,
+        sessionBalance,
         profitTarget: config.profit_target ? parseFloat(config.profit_target) : null,
         lossLimit: config.loss_limit ? parseFloat(config.loss_limit) : null,
         mode: config.mode || null,

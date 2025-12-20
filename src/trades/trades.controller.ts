@@ -53,6 +53,12 @@ export class TradesController {
     return await this.tradesService.getRecentTrades(userId);
   }
 
+  @Get('today-profit')
+  async getTodayProfitLoss(@Req() req: any) {
+    const userId = req.user.userId;
+    return await this.tradesService.getTodayProfitLoss(userId);
+  }
+
   @Get('markup')
   async getMarkupData(
     @Query('startDate') startDate?: string,
