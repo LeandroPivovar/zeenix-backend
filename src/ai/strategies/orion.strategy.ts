@@ -594,46 +594,59 @@ export class OrionStrategy implements IStrategy {
         mode,
       );
 
-      // Executar trade via WebSocket
-      const contractId = await this.executeOrionTradeViaWebSocket(
+      // ✅ Executar trade E monitorar no MESMO WebSocket (mais rápido para contratos de 1 tick)
+      const result = await this.executeOrionTradeViaWebSocket(
         state.derivToken,
         {
           contract_type: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
           amount: stakeAmount,
           currency: state.currency || 'USD',
         },
-        state.userId, // ✅ Passar userId para poder salvar logs
+        state.userId,
       );
 
-      if (!contractId) {
+      if (!result) {
         state.isOperationActive = false;
-        // ✅ CORREÇÃO: Se falhou na criação do contrato, resetar contador de ticks para permitir nova tentativa
         if ('ticksDesdeUltimaOp' in state) {
           state.ticksDesdeUltimaOp = 0;
         }
-        // Cooldown para reduzir novas tentativas imediatas e mitigar rate limit
-        state.creationCooldownUntil = Date.now() + 5000; // 5s
-        // ✅ Marcar trade como ERROR no banco de dados
+        state.creationCooldownUntil = Date.now() + 5000;
         await this.dataSource.query(
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-          ['Não foi possível criar contrato', tradeId],
+          ['Não foi possível criar/monitorar contrato', tradeId],
         );
-        // ✅ Log de erro (a resposta da API já foi logada nos handlers de erro acima)
-        this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato (verifique logs anteriores para resposta da Deriv)`);
-        this.logger.warn(
-          `[ORION][${mode}][${state.userId}] ❌ Falha ao criar contrato | Tipo: ${operation} | Valor: $${stakeAmount.toFixed(2)} | Entry: ${entry}`,
-        );
+        this.saveOrionLog(state.userId, 'R_10', 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
         return;
       }
 
-      // Atualizar trade com contractId
+      // ✅ Resultado já veio do mesmo WebSocket - processar diretamente
+      const { contractId, profit, exitSpot } = result;
+      const exitPrice = Number(exitSpot || 0);
+      const status = profit >= 0 ? 'WON' : 'LOST';
+
+      // Atualizar trade no banco
       await this.dataSource.query(
-        `UPDATE ai_trades SET contract_id = ?, status = 'ACTIVE', started_at = NOW() WHERE id = ?`,
-        [contractId, tradeId],
+        `UPDATE ai_trades
+         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+         WHERE id = ?`,
+        [contractId, exitPrice, profit, status, tradeId],
       );
 
-      // Monitorar contrato
-      await this.monitorOrionContract(contractId, state, stakeAmount, operation, tradeId, mode);
+      // Emitir evento de atualização
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'updated',
+        tradeId,
+        status,
+        strategy: 'orion',
+        profitLoss: profit,
+        exitPrice,
+      });
+
+      this.logger.log(`[ORION][${mode}] ${status} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+      
+      // ✅ Processar resultado (Soros/Martingale)
+      await this.processOrionResult(state, stakeAmount, operation, profit, mode);
     } catch (error) {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
@@ -734,7 +747,8 @@ export class OrionStrategy implements IStrategy {
   }
 
   /**
-   * ✅ ORION: Executa trade via WebSocket
+   * ✅ ORION: Executa trade via WebSocket E monitora resultado no MESMO WebSocket
+   * Retorna o resultado completo (contractId, profit, exitSpot) ou null se falhar
    */
   private async executeOrionTradeViaWebSocket(
     token: string,
@@ -743,8 +757,8 @@ export class OrionStrategy implements IStrategy {
       amount: number;
       currency: string;
     },
-    userId?: string, // ✅ userId opcional para salvar logs
-  ): Promise<string | null> {
+    userId?: string,
+  ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
     return new Promise((resolve) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint, {
@@ -874,12 +888,12 @@ export class OrionStrategy implements IStrategy {
           }
 
           if (msg.buy) {
-            if (!hasResolved) {
-              hasResolved = true;
-              clearTimeout(timeout);
-              ws.close();
-              
-              if (msg.buy.error) {
+            if (msg.buy.error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                ws.close();
+                
                 const errorResponse = JSON.stringify(msg.buy);
                 const errorCode = msg.buy.error?.code || '';
                 const errorMessage = msg.buy.error?.message || JSON.stringify(msg.buy.error);
@@ -888,43 +902,55 @@ export class OrionStrategy implements IStrategy {
                   `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(msg.buy.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
                 );
                 
-                // ✅ Salvar resposta completa da API nos logs (apenas se tiver userId)
                 if (userId) {
-                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao comprar contrato na Deriv | Código: ${errorCode} | Mensagem: ${errorMessage} | Resposta completa: ${errorResponse}`);
+                  this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao comprar contrato na Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
                   
-                  // ✅ Tentar identificar e sugerir solução para erros comuns
                   if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-                    this.logger.warn(`[ORION] 💡 Saldo insuficiente detectado. Verifique o saldo da conta.`);
-                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Saldo insuficiente na Deriv. Verifique o saldo da conta antes de tentar novamente.`);
-                  } else if (errorMessage.toLowerCase().includes('proposal') && (errorMessage.toLowerCase().includes('expired') || errorMessage.toLowerCase().includes('invalid'))) {
-                    this.logger.warn(`[ORION] 💡 Proposta expirada ou inválida. A IA tentará novamente no próximo tick.`);
-                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Proposta expirada. A IA tentará novamente automaticamente.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Saldo insuficiente na Deriv.`);
                   } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
-                    this.logger.warn(`[ORION] 💡 Rate limit atingido. Aguarde alguns segundos antes de tentar novamente.`);
-                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Rate limit atingido na Deriv. Aguarde alguns segundos.`);
-                  } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('token')) {
-                    this.logger.error(`[ORION] 💡 Token inválido ou expirado. É necessário reconectar a conta Deriv.`);
-                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Token Deriv inválido ou expirado. Reconecte sua conta Deriv.`);
+                    this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Rate limit atingido na Deriv.`);
                   }
                 }
                 
-                // ✅ Tentar identificar e sugerir solução para erros comuns
-                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-                  this.logger.warn(`[ORION] 💡 Saldo insuficiente ao comprar contrato. Verifique o saldo da conta.`);
-                } else if (errorMessage.toLowerCase().includes('proposal') && errorMessage.toLowerCase().includes('expired')) {
-                  this.logger.warn(`[ORION] 💡 Proposta expirada. A proposta pode ter expirado antes da compra ser processada.`);
-                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
-                  this.logger.warn(`[ORION] 💡 Rate limit atingido. Aguarde alguns segundos antes de tentar novamente.`);
-                }
-                
                 resolve(null);
-                return;
               }
-              
-              this.logger.log(`[ORION] ✅ Contrato criado com sucesso: ${msg.buy.contract_id}`);
-              resolve(msg.buy.contract_id);
               return;
             }
+            
+            // ✅ Contrato criado com sucesso - NÃO fechar WS, iniciar monitoramento no mesmo WS
+            const contractId = msg.buy.contract_id;
+            this.logger.log(`[ORION] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS...`);
+            
+            // ✅ Inscrever para atualizações do contrato no MESMO WebSocket
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            }));
+            return;
+          }
+          
+          // ✅ MONITORAMENTO NO MESMO WS: Receber atualizações do contrato
+          if (msg.proposal_open_contract) {
+            const contract = msg.proposal_open_contract;
+            
+            // Verificar se contrato finalizou
+            const isFinalized = contract.is_sold === 1 || contract.is_sold === true || 
+                               contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
+            
+            if (isFinalized && !hasResolved) {
+              hasResolved = true;
+              clearTimeout(timeout);
+              
+              const profit = Number(contract.profit || 0);
+              const contractId = contract.contract_id;
+              
+              this.logger.log(`[ORION] ✅ Contrato ${contractId} finalizado | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`);
+              
+              ws.close();
+              resolve({ contractId, profit, exitSpot: contract.exit_spot || contract.current_spot });
+            }
+            return;
           }
         } catch (error) {
           if (!hasResolved) {
@@ -974,7 +1000,86 @@ export class OrionStrategy implements IStrategy {
   }
 
   /**
-   * ✅ ORION: Monitora contrato e processa resultado
+   * ✅ ORION: Processa resultado da operação (Soros/Martingale)
+   */
+  private async processOrionResult(
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    stakeAmount: number,
+    operation: DigitParity,
+    profit: number,
+    mode: string,
+  ): Promise<void> {
+    // Atualizar estado do usuário
+    state.isOperationActive = false;
+    state.capital += profit;
+    
+    if (profit > 0) {
+      // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
+      const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
+      
+      // Resetar martingale primeiro
+      if ('perdaAcumulada' in state) state.perdaAcumulada = 0;
+      if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
+      if ('martingaleStep' in state) state.martingaleStep = 0;
+      
+      if (estavaEmMartingale) {
+        // Se estava em martingale, NÃO aplicar Soros
+        if ('vitoriasConsecutivas' in state) state.vitoriasConsecutivas = 0;
+        if ('ultimoLucro' in state) state.ultimoLucro = 0;
+        if ('apostaBase' in state) state.apostaBase = state.apostaInicial || 0.35;
+        
+        this.logger.log(`[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale!`);
+        this.saveOrionLog(state.userId, 'R_10', 'resultado', `✅ Recuperou perdas do martingale!`);
+      } else {
+        // NÃO estava em martingale: aplicar Soros
+        if ('vitoriasConsecutivas' in state) {
+          state.vitoriasConsecutivas = (state.vitoriasConsecutivas || 0) + 1;
+        }
+        
+        if (state.vitoriasConsecutivas === 3) {
+          // Ciclo Soros completo
+          this.logger.log(`[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO!`);
+          this.saveOrionLog(state.userId, 'R_10', 'resultado', `🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas`);
+          state.vitoriasConsecutivas = 0;
+          state.ultimoLucro = 0;
+          state.apostaBase = state.apostaInicial || 0.35;
+        } else {
+          if ('ultimoLucro' in state) state.ultimoLucro = profit;
+          if ('apostaBase' in state) state.apostaBase = stakeAmount;
+          
+          if (state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+            const proximaApostaSoros = calcularApostaComSoros(stakeAmount, profit, state.vitoriasConsecutivas);
+            if (proximaApostaSoros !== null) {
+              this.saveOrionLog(state.userId, 'R_10', 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima: $${proximaApostaSoros.toFixed(2)}`);
+            }
+          }
+        }
+      }
+      
+      this.saveOrionLog(state.userId, 'R_10', 'resultado', `✅ GANHOU | ${operation} | P&L: +$${profit.toFixed(2)}`);
+    } else {
+      // ❌ PERDA: Resetar Soros e ativar martingale
+      if ('vitoriasConsecutivas' in state) state.vitoriasConsecutivas = 0;
+      if ('ultimoLucro' in state) state.ultimoLucro = 0;
+      
+      // Ativar martingale
+      if ('perdaAcumulada' in state) {
+        state.perdaAcumulada = (state.perdaAcumulada || 0) + stakeAmount;
+      }
+      if ('ultimaDirecaoMartingale' in state) {
+        state.ultimaDirecaoMartingale = operation;
+      }
+      if ('martingaleStep' in state) {
+        state.martingaleStep = (state.martingaleStep || 0) + 1;
+      }
+      
+      this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
+      this.saveOrionLog(state.userId, 'R_10', 'resultado', `❌ PERDEU | ${operation} | P&L: -$${Math.abs(profit).toFixed(2)}`);
+    }
+  }
+
+  /**
+   * ✅ ORION: Monitora contrato e processa resultado (LEGADO - não mais usado)
    */
   private async monitorOrionContract(
     contractId: string,
