@@ -462,6 +462,75 @@ export class OrionStrategy implements IStrategy {
       return;
     }
 
+    // ✅ VERIFICAR STOP LOSS ANTES DE QUALQUER OPERAÇÃO
+    try {
+      const stopLossConfig = await this.dataSource.query(
+        `SELECT 
+          COALESCE(loss_limit, 0) as lossLimit,
+          COALESCE(session_balance, 0) as sessionBalance,
+          is_active
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE
+         LIMIT 1`,
+        [state.userId],
+      );
+      
+      if (stopLossConfig && stopLossConfig.length > 0) {
+        const config = stopLossConfig[0];
+        const lossLimit = parseFloat(config.lossLimit) || 0;
+        const sessionBalance = parseFloat(config.sessionBalance) || 0;
+        
+        // Se tem stop loss configurado e o saldo da sessão já ultrapassou o limite
+        if (lossLimit > 0 && sessionBalance <= -lossLimit) {
+          this.logger.warn(
+            `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo sessão: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
+          );
+          this.saveOrionLog(state.userId, 'R_10', 'alerta', `🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
+          
+          // Desativar a IA
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ? 
+             WHERE user_id = ?`,
+            [`Stop loss atingido: -$${Math.abs(sessionBalance).toFixed(2)}`, state.userId],
+          );
+          
+          // Remover usuário do monitoramento
+          this.velozUsers.delete(state.userId);
+          this.moderadoUsers.delete(state.userId);
+          this.precisoUsers.delete(state.userId);
+          
+          return; // NÃO EXECUTAR OPERAÇÃO
+        }
+        
+        // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
+        if (lossLimit > 0 && entry > 1) {
+          const payoutCliente = 92;
+          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          const perdaTotalPotencial = Math.abs(sessionBalance) + proximaAposta;
+          
+          if (perdaTotalPotencial > lossLimit) {
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${Math.abs(sessionBalance).toFixed(2)} + Próxima: $${proximaAposta.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
+            );
+            this.saveOrionLog(state.userId, 'R_10', 'alerta', `⚠️ Martingale bloqueado! Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}`);
+            
+            // Resetar martingale e voltar para aposta inicial
+            state.perdaAcumulada = 0;
+            state.ultimaDirecaoMartingale = null;
+            state.martingaleStep = 0;
+            
+            // Continuar com aposta inicial ao invés de martingale
+            entry = 1;
+            this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Resetando para aposta inicial após bloqueio de martingale`);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar stop loss:`, error);
+      // Continuar mesmo se houver erro na verificação (fail-open)
+    }
+
     // ✅ VALIDAÇÕES PREVENTIVAS serão feitas APÓS calcular o stakeAmount
     state.isOperationActive = true;
     // ✅ CORREÇÃO: martingaleStep é gerenciado após perda/vitória, não aqui
