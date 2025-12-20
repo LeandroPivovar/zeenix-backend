@@ -723,6 +723,61 @@ export class TrinityStrategy implements IStrategy {
   ): Promise<void> {
     const asset = state.assets[symbol];
     
+    // ✅ VERIFICAR STOP LOSS ANTES DE QUALQUER OPERAÇÃO
+    if (state.stopLoss && state.stopLoss < 0) {
+      const lucroAtual = state.capital - state.capitalInicial;
+      const stopLossValue = -Math.abs(state.stopLoss);
+      
+      // Se já atingiu o stop loss, bloquear operação
+      if (lucroAtual < 0 && lucroAtual <= stopLossValue) {
+        this.logger.warn(
+          `[TRINITY][${symbol}] 🛑 STOP LOSS JÁ ATINGIDO! Perda: -$${Math.abs(lucroAtual).toFixed(2)} >= Limite: $${Math.abs(stopLossValue).toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
+        );
+        this.saveTrinityLog(state.userId, symbol, 'alerta', 
+          `🛑 STOP LOSS JÁ ATINGIDO! Perda: -$${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(stopLossValue).toFixed(2)} - Operação BLOQUEADA`);
+        
+        state.isStopped = true;
+        asset.isOperationActive = false;
+        state.globalOperationActive = false;
+        return; // NÃO EXECUTAR OPERAÇÃO
+      }
+      
+      // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
+      if (asset.martingaleStep > 0) {
+        const modeConfig = this.getModeConfig(state.mode);
+        if (modeConfig) {
+          const proximaAposta = calcularProximaAposta(
+            asset.perdaAcumulada,
+            state.modoMartingale,
+            modeConfig.payout * 100,
+            state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
+          );
+          
+          const perdaTotalPotencial = Math.abs(lucroAtual) + proximaAposta;
+          const limiteStopLoss = Math.abs(stopLossValue);
+          
+          if (perdaTotalPotencial > limiteStopLoss) {
+            this.logger.warn(
+              `[TRINITY][${symbol}] ⚠️ Martingale bloqueado! Próxima: $${proximaAposta.toFixed(2)} | Perda atual: $${Math.abs(lucroAtual).toFixed(2)} | Total: $${perdaTotalPotencial.toFixed(2)} > Limite: $${limiteStopLoss.toFixed(2)}`,
+            );
+            this.saveTrinityLog(state.userId, symbol, 'alerta', 
+              `⚠️ Martingale bloqueado! Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss de $${limiteStopLoss.toFixed(2)}`);
+            
+            // Resetar martingale do ativo
+            asset.perdaAcumulada = 0;
+            asset.ultimaDirecaoMartingale = null;
+            asset.martingaleStep = 0;
+            
+            // Avançar para próximo ativo
+            this.advanceToNextAsset(state);
+            asset.isOperationActive = false;
+            state.globalOperationActive = false;
+            return;
+          }
+        }
+      }
+    }
+    
     // Marcar como operação ativa
     asset.isOperationActive = true;
     state.globalOperationActive = true;
