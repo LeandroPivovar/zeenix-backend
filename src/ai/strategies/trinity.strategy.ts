@@ -894,6 +894,11 @@ export class TrinityStrategy implements IStrategy {
 
       let proposalId: string | null = null;
       let hasResolved = false;
+      let contractCreated = false;
+      let createdContractId: string | null = null;
+      let contractMonitorTimeout: NodeJS.Timeout | null = null;
+      
+      // ✅ Timeout de 30 segundos para CRIAR o contrato
       const timeout = setTimeout(() => {
         if (!hasResolved) {
           hasResolved = true;
@@ -904,6 +909,21 @@ export class TrinityStrategy implements IStrategy {
           resolve(null);
         }
       }, 30000);
+      
+      // ✅ Função para iniciar timeout de monitoramento (60 segundos máximo após contrato criado)
+      const startContractMonitorTimeout = (contractId: string) => {
+        contractMonitorTimeout = setTimeout(() => {
+          if (!hasResolved) {
+            hasResolved = true;
+            this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao monitorar contrato (60s) | ContractId: ${contractId}`);
+            this.saveTrinityLog(userId, symbol, 'erro',
+              `⏱️ Contrato ${contractId} não finalizou em 60 segundos - forçando fechamento`);
+            ws.close();
+            // ✅ Retorna null para que a IA possa continuar operando
+            resolve(null);
+          }
+        }, 60000); // 60 segundos = 1 minuto máximo para contrato aberto
+      };
 
       ws.on('open', () => {
         // ✅ EXATAMENTE IGUAL ORION: envia authorize imediatamente
@@ -1070,7 +1090,14 @@ export class TrinityStrategy implements IStrategy {
               return;
             }
 
-            this.logger.log(`[TRINITY][${symbol}] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS...`);
+            contractCreated = true;
+            createdContractId = contractId;
+            
+            // ✅ Cancelar timeout de criação e iniciar timeout de monitoramento (60s)
+            clearTimeout(timeout);
+            startContractMonitorTimeout(contractId);
+            
+            this.logger.log(`[TRINITY][${symbol}] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS (max 60s)...`);
             
             // ✅ Inscrever para atualizações do contrato no MESMO WebSocket
             ws.send(JSON.stringify({
@@ -1092,6 +1119,7 @@ export class TrinityStrategy implements IStrategy {
             if (isFinalized && !hasResolved) {
               hasResolved = true;
               clearTimeout(timeout);
+              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
               
               const profit = Number(contract.profit || 0);
               const contractIdResult = contract.contract_id;
@@ -1107,6 +1135,7 @@ export class TrinityStrategy implements IStrategy {
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(timeout);
+            if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
             this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao processar mensagem WS: ${err instanceof Error ? err.message : String(err)}`);
             this.saveTrinityLog(userId, symbol, 'erro',
               `❌ Erro ao processar mensagem WS (criação de contrato) | ${err instanceof Error ? err.message : String(err)}`, {
@@ -1123,6 +1152,7 @@ export class TrinityStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           clearTimeout(timeout);
+          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
           this.logger.error(`[TRINITY][${symbol}] ❌ Erro no WebSocket: ${error.message}`);
           this.saveTrinityLog(userId, symbol, 'erro',
             `❌ Erro no WebSocket ao criar contrato | ${error.message}`, {
@@ -1139,6 +1169,7 @@ export class TrinityStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           clearTimeout(timeout);
+          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
           this.logger.warn(`[TRINITY][${symbol}] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`);
           this.saveTrinityLog(userId, symbol, 'erro',
             `⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`, {

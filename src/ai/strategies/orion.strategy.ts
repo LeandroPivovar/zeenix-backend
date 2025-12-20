@@ -769,7 +769,11 @@ export class OrionStrategy implements IStrategy {
 
       let proposalId: string | null = null;
       let hasResolved = false;
+      let contractCreated = false;
+      let createdContractId: string | null = null;
+      let contractMonitorTimeout: NodeJS.Timeout | null = null;
       
+      // ✅ Timeout de 30 segundos para CRIAR o contrato
       const timeout = setTimeout(() => {
         if (!hasResolved) {
           hasResolved = true;
@@ -782,6 +786,22 @@ export class OrionStrategy implements IStrategy {
           resolve(null);
         }
       }, 30000);
+      
+      // ✅ Função para iniciar timeout de monitoramento (60 segundos máximo após contrato criado)
+      const startContractMonitorTimeout = (contractId: string) => {
+        contractMonitorTimeout = setTimeout(() => {
+          if (!hasResolved) {
+            hasResolved = true;
+            this.logger.warn(`[ORION] ⏱️ Timeout ao monitorar contrato (60s) | ContractId: ${contractId} | Tipo: ${contractParams.contract_type}`);
+            if (userId) {
+              this.saveOrionLog(userId, 'R_10', 'erro', `⏱️ Contrato ${contractId} não finalizou em 60 segundos - forçando fechamento | Tipo: ${contractParams.contract_type}`);
+            }
+            ws.close();
+            // ✅ Retorna null para que a IA possa continuar operando
+            resolve(null);
+          }
+        }, 60000); // 60 segundos = 1 minuto máximo para contrato aberto
+      };
 
       ws.on('open', () => {
         this.logger.debug(`[ORION] 🔌 WebSocket aberto, autorizando...`);
@@ -919,7 +939,14 @@ export class OrionStrategy implements IStrategy {
             
             // ✅ Contrato criado com sucesso - NÃO fechar WS, iniciar monitoramento no mesmo WS
             const contractId = msg.buy.contract_id;
-            this.logger.log(`[ORION] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS...`);
+            contractCreated = true;
+            createdContractId = contractId;
+            
+            // ✅ Cancelar timeout de criação e iniciar timeout de monitoramento (60s)
+            clearTimeout(timeout);
+            startContractMonitorTimeout(contractId);
+            
+            this.logger.log(`[ORION] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS (max 60s)...`);
             
             // ✅ Inscrever para atualizações do contrato no MESMO WebSocket
             ws.send(JSON.stringify({
@@ -941,6 +968,7 @@ export class OrionStrategy implements IStrategy {
             if (isFinalized && !hasResolved) {
               hasResolved = true;
               clearTimeout(timeout);
+              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
               
               const profit = Number(contract.profit || 0);
               const contractId = contract.contract_id;
@@ -956,6 +984,7 @@ export class OrionStrategy implements IStrategy {
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(timeout);
+            if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
             this.logger.error(`[ORION] ❌ Erro ao processar mensagem WebSocket:`, error);
             if (userId) {
               this.saveOrionLog(userId, 'R_10', 'erro',
@@ -971,6 +1000,7 @@ export class OrionStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           clearTimeout(timeout);
+          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
           this.logger.error(
             `[ORION] ❌ Erro no WebSocket: ${error.message} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
           );
@@ -986,6 +1016,7 @@ export class OrionStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           clearTimeout(timeout);
+          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
           this.logger.warn(
             `[ORION] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
           );
