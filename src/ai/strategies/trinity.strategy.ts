@@ -841,8 +841,15 @@ export class TrinityStrategy implements IStrategy {
     token: string,
     contractParams: any,
   ): Promise<string | null> {
+    // ✅ Log antes de criar WebSocket para confirmar que método foi chamado
+    const tokenPreview = token ? `${token.substring(0, 10)}...${token.substring(token.length - 5)}` : 'NULL';
+    this.logger.log(`[TRINITY][${symbol}] 🔄 Iniciando criação de contrato | Token: ${tokenPreview} | Tipo: ${contractParams.contract_type}`);
+    
     return new Promise((resolve) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      
+      this.logger.log(`[TRINITY][${symbol}] 🔌 Conectando ao WebSocket: ${endpoint}`);
+      
       const ws = new WebSocket(endpoint, {
         headers: {
           Origin: 'https://app.deriv.com',
@@ -854,7 +861,7 @@ export class TrinityStrategy implements IStrategy {
       const timeout = setTimeout(() => {
         if (!hasResolved) {
           hasResolved = true;
-          this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | WS readyState: ${ws.readyState}`);
           this.saveTrinityLog(userId, symbol, 'erro',
             `⏱️ Timeout ao criar contrato após 30s | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`);
           ws.close();
@@ -863,7 +870,8 @@ export class TrinityStrategy implements IStrategy {
       }, 30000);
 
       ws.on('open', () => {
-        this.logger.debug(`[TRINITY][${symbol}] 🔌 WebSocket aberto, autorizando...`);
+        // ✅ Usar LOG ao invés de DEBUG para garantir que apareça
+        this.logger.log(`[TRINITY][${symbol}] ✅ WebSocket ABERTO, enviando autorização...`);
         ws.send(JSON.stringify({ authorize: token }));
       });
 
@@ -871,8 +879,8 @@ export class TrinityStrategy implements IStrategy {
         try {
           const msg = JSON.parse(data.toString());
           
-          // ✅ Log de debug para ver todas as mensagens recebidas
-          this.logger.debug(`[TRINITY][${symbol}] 📩 Mensagem WS recebida: ${JSON.stringify(msg).substring(0, 500)}`);
+          // ✅ LOG para garantir que apareça (não debug)
+          this.logger.log(`[TRINITY][${symbol}] 📩 Mensagem WS: msg_type=${msg.msg_type || 'unknown'} | error=${msg.error ? 'SIM' : 'não'}`);
 
           // ✅ Tratamento para erro de nível superior (quando a API retorna error sem authorize)
           if (msg.error) {
@@ -910,7 +918,7 @@ export class TrinityStrategy implements IStrategy {
               return;
             }
             
-            this.logger.debug(`[TRINITY][${symbol}] ✅ Autorizado, solicitando proposta...`);
+            this.logger.log(`[TRINITY][${symbol}] ✅ Autorizado! Solicitando proposta...`);
 
             // ✅ Payload igual ao da Orion (sem subscribe: 0)
             const proposalPayload = {
@@ -924,6 +932,7 @@ export class TrinityStrategy implements IStrategy {
               symbol: contractParams.symbol,
             };
             
+            this.logger.log(`[TRINITY][${symbol}] 📤 Enviando proposta: ${JSON.stringify(proposalPayload)}`);
             ws.send(JSON.stringify(proposalPayload));
             return;
           }
@@ -962,7 +971,8 @@ export class TrinityStrategy implements IStrategy {
             proposalId = msg.proposal.id;
             const proposalPrice = Number(msg.proposal.ask_price);
             
-            this.logger.debug(`[TRINITY][${symbol}] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}`);
+            // ✅ LOG ao invés de DEBUG
+            this.logger.log(`[TRINITY][${symbol}] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}`);
             
             if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
               if (!hasResolved) {
@@ -980,7 +990,7 @@ export class TrinityStrategy implements IStrategy {
               return;
             }
 
-            this.logger.debug(`[TRINITY][${symbol}] 💰 Executando compra...`);
+            this.logger.log(`[TRINITY][${symbol}] 💰 Executando compra | ProposalId=${proposalId} | Price=${proposalPrice}`);
             ws.send(JSON.stringify({
               buy: proposalId,
               price: proposalPrice,
