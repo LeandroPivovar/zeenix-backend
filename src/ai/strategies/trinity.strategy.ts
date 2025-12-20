@@ -1997,6 +1997,14 @@ export class TrinityStrategy implements IStrategy {
       
       // ✅ Log: Confirmar salvamento
       this.logger.log(`[TRINITY][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso | Resultado: ${JSON.stringify(result)}`);
+
+      // ✅ Emitir evento SSE para atualizar front (qualquer novo log)
+      this.tradeEvents.emit({
+        userId,
+        type: 'updated',
+        strategy: 'trinity',
+        status: 'LOG',
+      });
     } catch (error) {
       this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro ao salvar logs em batch:`, error);
       // ✅ Log detalhado do erro
