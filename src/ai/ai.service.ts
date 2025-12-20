@@ -3053,19 +3053,21 @@ export class AiService implements OnModuleInit {
           this.removeTrinityUserState(existingId);
         }
       }
-
-      // ✅ Inicializar WebSockets se houver usuários ativos e ainda não estiverem conectados
-      if (this.trinityUsers.size > 0) {
-        const needsInit = ['R_10', 'R_25', 'R_50'].some(
-          symbol => !this.trinityConnected[symbol] || this.trinityWebSockets[symbol]?.readyState !== WebSocket.OPEN
-        );
-        
-        if (needsInit) {
-          this.logger.log(`[SyncTrinity] Inicializando WebSockets para ${this.trinityUsers.size} usuário(s) ativo(s)`);
-          await this.initializeTrinityWebSockets().catch(error => {
-            this.logger.error(`[SyncTrinity] Erro ao inicializar WebSockets:`, error);
-          });
-        }
+    }
+    
+    // ✅ CORREÇÃO: Inicializar WebSockets para R_25 e R_50 SEMPRE que houver usuários Trinity ativos
+    // (anteriormente isso só acontecia no bloco else, quando StrategyManager não estava disponível)
+    if (configs.length > 0) {
+      const needsInit = ['R_10', 'R_25', 'R_50'].some(
+        symbol => !this.trinityConnected[symbol as 'R_10' | 'R_25' | 'R_50'] || 
+                  this.trinityWebSockets[symbol as 'R_10' | 'R_25' | 'R_50']?.readyState !== WebSocket.OPEN
+      );
+      
+      if (needsInit) {
+        this.logger.log(`[SyncTrinity] 🔌 Inicializando WebSockets para ${configs.length} usuário(s) Trinity ativo(s)`);
+        await this.initializeTrinityWebSockets().catch(error => {
+          this.logger.error(`[SyncTrinity] Erro ao inicializar WebSockets:`, error);
+        });
       }
     }
   }
