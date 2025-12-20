@@ -998,8 +998,8 @@ export class TrinityStrategy implements IStrategy {
     );
 
     try {
-      // ✅ Executar trade via WebSocket
-      const contractId = await this.executeTrinityTradeViaWebSocket(
+      // ✅ Executar trade via WebSocket (fluxo direto, igual Orion)
+      const contractId = await this.executeTrinityTradeDirect(
         state.userId,
         symbol,
         state.derivToken,
@@ -1079,88 +1079,182 @@ export class TrinityStrategy implements IStrategy {
   }
 
   /**
-   * ✅ TRINITY: Executa trade via WebSocket
+   * ✅ TRINITY: Executa trade via WebSocket (fluxo direto, igual Orion)
    */
-  private async executeTrinityTradeViaWebSocket(
+  private async executeTrinityTradeDirect(
     userId: string,
     symbol: 'R_10' | 'R_25' | 'R_50',
     token: string,
     contractParams: any,
   ): Promise<string | null> {
-    try {
-      const proposal = await this.derivPool.sendRequest(token, {
-        proposal: 1,
-        amount: contractParams.amount,
-        basis: 'stake',
-        contract_type: contractParams.contract_type,
-        currency: contractParams.currency || 'USD',
-        duration: contractParams.duration || 1,
-        duration_unit: contractParams.duration_unit || 't',
-        symbol: contractParams.symbol,
-        subscribe: 0,
+    return new Promise((resolve) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
       });
 
-      if (proposal?.error) {
-        const err = proposal.error;
-        this.saveTrinityLog(userId, symbol, 'erro',
-          `Erro ao gerar proposta | ${err.code} - ${err.message}`, {
-            etapa: 'proposal',
-            error: err,
-            contractType: contractParams.contract_type,
-            amount: contractParams.amount,
-          });
-        return null;
-      }
+      let proposalId: string | null = null;
+      let hasResolved = false;
+      const timeout = setTimeout(() => {
+        if (!hasResolved) {
+          hasResolved = true;
+          this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+          this.saveTrinityLog(userId, symbol, 'erro',
+            `⏱️ Timeout ao criar contrato após 30s | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`);
+          ws.close();
+          resolve(null);
+        }
+      }, 30000);
 
-      const proposalId = proposal?.proposal?.id;
-      const proposalPrice = Number(proposal?.proposal?.ask_price);
-
-      if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
-        this.saveTrinityLog(userId, symbol, 'erro',
-          `Proposta inválida retornada pela Deriv (sem id ou preço)`, {
-            etapa: 'proposal',
-            proposal,
-          });
-        return null;
-      }
-
-      const buy = await this.derivPool.sendRequest(token, {
-        buy: proposalId,
-        price: proposalPrice,
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: token }));
       });
 
-      if (buy?.error || buy?.buy?.error) {
-        const err = buy?.error || buy?.buy?.error;
-        this.saveTrinityLog(userId, symbol, 'erro',
-          `Erro ao comprar contrato | ${err.code} - ${err.message}`, {
-            etapa: 'buy',
-            error: err,
-            contractType: contractParams.contract_type,
-            amount: contractParams.amount,
-          });
-        return null;
-      }
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
 
-      const contractId = buy?.buy?.contract_id;
+          if (msg.authorize) {
+            if (msg.authorize.error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                const err = msg.authorize.error;
+                this.saveTrinityLog(userId, symbol, 'erro',
+                  `❌ Erro na autorização Deriv | ${err.code} - ${err.message}`, {
+                    etapa: 'authorize',
+                    error: err,
+                  });
+                ws.close();
+                resolve(null);
+              }
+              return;
+            }
 
-      if (!contractId) {
-        this.saveTrinityLog(userId, symbol, 'erro',
-          `Compra sem contract_id retornado pela Deriv`, {
-            etapa: 'buy',
-            response: buy,
-          });
-        return null;
-      }
+            ws.send(JSON.stringify({
+              proposal: 1,
+              amount: contractParams.amount,
+              basis: 'stake',
+              contract_type: contractParams.contract_type,
+              currency: contractParams.currency || 'USD',
+              duration: contractParams.duration || 1,
+              duration_unit: contractParams.duration_unit || 't',
+              symbol: contractParams.symbol,
+              subscribe: 0,
+            }));
+            return;
+          }
 
-      return contractId;
-    } catch (err: any) {
-      this.saveTrinityLog(userId, symbol, 'erro',
-        `Erro de conexão ao criar contrato | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`, {
-          etapa: 'connection',
-          error: err?.message || String(err),
-        });
-      return null;
-    }
+          if (msg.proposal) {
+            if (msg.proposal.error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                const err = msg.proposal.error;
+                this.saveTrinityLog(userId, symbol, 'erro',
+                  `❌ Erro na proposta Deriv | ${err.code} - ${err.message}`, {
+                    etapa: 'proposal',
+                    error: err,
+                  });
+                ws.close();
+                resolve(null);
+              }
+              return;
+            }
+
+            proposalId = msg.proposal.id;
+            const proposalPrice = Number(msg.proposal.ask_price);
+            if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(timeout);
+                this.saveTrinityLog(userId, symbol, 'erro',
+                  `❌ Proposta inválida recebida da Deriv`, {
+                    etapa: 'proposal',
+                    response: msg.proposal,
+                  });
+                ws.close();
+                resolve(null);
+              }
+              return;
+            }
+
+            ws.send(JSON.stringify({
+              buy: proposalId,
+              price: proposalPrice,
+            }));
+            return;
+          }
+
+          if (msg.buy) {
+            if (!hasResolved) {
+              hasResolved = true;
+              clearTimeout(timeout);
+
+              if (msg.buy.error) {
+                const err = msg.buy.error;
+                this.saveTrinityLog(userId, symbol, 'erro',
+                  `❌ Erro ao comprar contrato | ${err.code} - ${err.message}`, {
+                    etapa: 'buy',
+                    error: err,
+                  });
+                ws.close();
+                resolve(null);
+                return;
+              }
+
+              const contractId = msg.buy.contract_id;
+              if (!contractId) {
+                this.saveTrinityLog(userId, symbol, 'erro',
+                  `❌ Compra sem contract_id retornado pela Deriv`, {
+                    etapa: 'buy',
+                    response: msg.buy,
+                  });
+                ws.close();
+                resolve(null);
+                return;
+              }
+
+              ws.close();
+              resolve(contractId);
+              return;
+            }
+          }
+        } catch (err) {
+          if (!hasResolved) {
+            hasResolved = true;
+            clearTimeout(timeout);
+            this.saveTrinityLog(userId, symbol, 'erro',
+              `❌ Erro ao processar mensagem WS (criação de contrato) | ${err instanceof Error ? err.message : String(err)}`, {
+                etapa: 'ws_message',
+                error: err instanceof Error ? err.message : String(err),
+              });
+            ws.close();
+            resolve(null);
+          }
+        }
+      });
+
+      ws.on('error', (error) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+          this.saveTrinityLog(userId, symbol, 'erro',
+            `❌ Erro no WebSocket ao criar contrato | ${error.message}`, {
+              etapa: 'ws_error',
+              error: error.message,
+            });
+          ws.close();
+          resolve(null);
+        }
+      });
+
+      ws.on('close', () => {
+        // finalizações tratadas nos handlers acima
+      });
+    });
   }
 
   /**
