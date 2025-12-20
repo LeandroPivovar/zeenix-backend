@@ -470,7 +470,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(session_balance, 0) as sessionBalance,
           is_active
          FROM ai_user_config 
-         WHERE user_id = ? AND is_active = TRUE
+         WHERE user_id = ? AND is_active = 1
          LIMIT 1`,
         [state.userId],
       );
@@ -490,7 +490,7 @@ export class OrionStrategy implements IStrategy {
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
-             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ? 
+             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ? 
              WHERE user_id = ?`,
             [`Stop loss atingido: -$${Math.abs(sessionBalance).toFixed(2)}`, state.userId],
           );
@@ -1183,7 +1183,7 @@ export class OrionStrategy implements IStrategy {
       await this.dataSource.query(
         `UPDATE ai_user_config 
          SET session_balance = ?
-         WHERE user_id = ? AND is_active = TRUE`,
+         WHERE user_id = ? AND is_active = 1`,
         [state.capital, state.userId],
       );
       
@@ -1194,7 +1194,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(stake_amount, 0) as capitalInicial,
           is_active
          FROM ai_user_config 
-         WHERE user_id = ? AND is_active = TRUE
+         WHERE user_id = ? AND is_active = 1
          LIMIT 1`,
         [state.userId],
       );
@@ -1218,8 +1218,8 @@ export class OrionStrategy implements IStrategy {
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
-             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = TRUE`,
+             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
             [`Stop loss atingido após operação: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
           );
           

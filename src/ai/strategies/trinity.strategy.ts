@@ -1565,8 +1565,8 @@ export class TrinityStrategy implements IStrategy {
       try {
         await this.dataSource.query(
           `UPDATE ai_user_config 
-           SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-           WHERE user_id = ? AND is_active = TRUE`,
+           SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
           [`Stop loss atingido: -$${Math.abs(lucroAtual).toFixed(2)} (Limite: $${Math.abs(stopLossValue).toFixed(2)})`, state.userId],
         );
         this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss`);
@@ -1599,8 +1599,8 @@ export class TrinityStrategy implements IStrategy {
         try {
           await this.dataSource.query(
             `UPDATE ai_user_config 
-             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = TRUE`,
+             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
             [`Stop loss blindado ativado: Capital $${state.capital.toFixed(2)} <= Stop $${stopBlindado.toFixed(2)}`, state.userId],
           );
           this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss blindado`);
