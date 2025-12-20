@@ -854,10 +854,11 @@ export class AiService implements OnModuleInit {
       this.trinityTicks[symbol].shift();
     }
 
-    // Processar estratégias TRINITY se houver usuários ativos
-    if (this.trinityUsers.size > 0) {
-      this.processTrinityStrategies(symbol, tick).catch((error) => {
-        this.logger.error(`[TRINITY][${symbol}] Erro ao processar estratégias:`, error);
+    // ✅ Enviar tick para StrategyManager (que passa para TrinityStrategy)
+    // Arquitetura igual à Orion: AIService gerencia WebSockets, Strategy processa sinais
+    if (this.strategyManager) {
+      this.strategyManager.processTick(tick, symbol).catch((error) => {
+        this.logger.error(`[TRINITY][${symbol}] Erro ao processar tick via StrategyManager:`, error);
       });
     }
   }

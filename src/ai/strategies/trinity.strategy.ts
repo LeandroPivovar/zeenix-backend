@@ -5,7 +5,7 @@ import { Tick, DigitParity } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
-import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
+// ✅ REMOVIDO: DerivWebSocketPoolService - não é mais necessário (ticks vêm do AIService)
 
 // ✅ Função para calcular próxima aposta de martingale
 function calcularProximaAposta(
@@ -95,25 +95,8 @@ export class TrinityStrategy implements IStrategy {
     R_50: [],
   };
   
-  private trinityWebSockets: {
-    R_10: WebSocket | null;
-    R_25: WebSocket | null;
-    R_50: WebSocket | null;
-  } = {
-    R_10: null,
-    R_25: null,
-    R_50: null,
-  };
-  
-  private trinityConnected: {
-    R_10: boolean;
-    R_25: boolean;
-    R_50: boolean;
-  } = {
-    R_10: false,
-    R_25: false,
-    R_50: false,
-  };
+  // ✅ REMOVIDO: WebSockets próprios - agora recebe ticks do AIService (igual Orion)
+  // Os WebSockets para ticks são gerenciados pelo AIService
   
   private appId: string;
   private maxTicks = 2000;
@@ -130,7 +113,6 @@ export class TrinityStrategy implements IStrategy {
 
   constructor(
     private dataSource: DataSource,
-    private derivPool: DerivWebSocketPoolService,
     private tradeEvents: TradeEventsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
@@ -138,17 +120,9 @@ export class TrinityStrategy implements IStrategy {
 
   async initialize(): Promise<void> {
     this.logger.log('[TRINITY] 🔵 Estratégia TRINITY inicializada');
-    await this.initializeTrinityWebSockets();
-    
-    // ✅ Log: Sistema inicializado
-    if (this.trinityUsers.size > 0) {
-      for (const userId of this.trinityUsers.keys()) {
-        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-          `Sistema INICIADO | Conectando 3 ativos (R_10, R_25, R_50)...`);
-      }
-    } else {
-      this.logger.log('[TRINITY] ⚠️ Nenhum usuário ativo - WebSockets conectados, aguardando usuários...');
-    }
+    // ✅ ARQUITETURA IGUAL ORION: Não cria WebSockets próprios
+    // Os ticks são recebidos do AIService via StrategyManager.processTick()
+    this.logger.log('[TRINITY] ✅ Aguardando ticks do AIService (R_10, R_25, R_50)...');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -246,229 +220,9 @@ export class TrinityStrategy implements IStrategy {
     return this.trinityUsers.get(userId) || null;
   }
 
-  // Métodos privados
-  private async initializeTrinityWebSockets(): Promise<void> {
-    const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
-    
-    this.logger.log(`[TRINITY] 🔌 Inicializando WebSockets para ${symbols.join(', ')}...`);
-    
-    // ✅ Log: Iniciando conexões
-    if (this.trinityUsers.size > 0) {
-      for (const userId of this.trinityUsers.keys()) {
-        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-          `Conectando 3 ativos...`);
-        for (const symbol of symbols) {
-          this.saveTrinityLog(userId, symbol, 'info', `Conectando ao WebSocket...`);
-        }
-      }
-    }
-    
-    for (const symbol of symbols) {
-      if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
-        this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
-        continue;
-      }
-      this.logger.log(`[TRINITY][${symbol}] 🔌 Conectando WebSocket...`);
-      await this.initializeTrinityWebSocket(symbol);
-    }
-    
-    // ✅ Log: Todas conexões estabelecidas
-    const totalConectados = symbols.filter(s => this.trinityConnected[s]).length;
-    this.logger.log(`[TRINITY] ✅ ${totalConectados}/3 WebSockets conectados`);
-    
-    if (this.trinityUsers.size > 0) {
-      for (const userId of this.trinityUsers.keys()) {
-        this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-          `${totalConectados} ativos conectados | Iniciando coleta`);
-      }
-    }
-  }
-
-  private async initializeTrinityWebSocket(symbol: 'R_10' | 'R_25' | 'R_50'): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
-      this.trinityWebSockets[symbol] = ws;
-
-      ws.on('open', () => {
-        this.logger.log(`[TRINITY][${symbol}] ✅ Conexão WebSocket aberta`);
-        this.trinityConnected[symbol] = true;
-        this.subscribeToTrinityTicks(symbol);
-        
-        // ✅ Log de conexão para todos os usuários ativos (formato documentação)
-        for (const userId of this.trinityUsers.keys()) {
-          this.saveTrinityLog(userId, symbol, 'info', `Conectado ✅ | Subscrito em ticks`, {
-            ativo: symbol,
-            url: endpoint,
-            appId: this.appId,
-            status: 'connected',
-          });
-        }
-        
-        resolve();
-      });
-
-      ws.on('message', (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          this.handleTrinityMessage(symbol, msg);
-        } catch (error) {
-          this.logger.error(`[TRINITY][${symbol}] Erro ao processar mensagem:`, error);
-        }
-      });
-
-      ws.on('error', (error) => {
-        this.logger.error(`[TRINITY][${symbol}] Erro no WebSocket:`, error.message);
-        this.trinityConnected[symbol] = false;
-        
-        // ✅ Log de erro de conexão
-        for (const userId of this.trinityUsers.keys()) {
-          this.saveTrinityLog(userId, symbol, 'erro', 
-            `Erro na conexão ❌ | ${error.message}`, {
-              error: error.message,
-              status: 'error',
-            });
-        }
-        
-        reject(error);
-      });
-
-      ws.on('close', () => {
-        this.logger.log(`[TRINITY][${symbol}] Conexão WebSocket fechada`);
-        this.trinityConnected[symbol] = false;
-        this.trinityWebSockets[symbol] = null;
-      });
-
-      setTimeout(() => {
-        if (!this.trinityConnected[symbol]) {
-          reject(new Error(`Timeout ao conectar ${symbol}`));
-        }
-      }, 10000);
-    });
-  }
-
-  private subscribeToTrinityTicks(symbol: 'R_10' | 'R_25' | 'R_50'): void {
-    const ws = this.trinityWebSockets[symbol];
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    ws.send(JSON.stringify({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: this.maxTicks,
-      end: 'latest',
-      subscribe: 1,
-      style: 'ticks',
-    }));
-  }
-
-  private handleTrinityMessage(symbol: 'R_10' | 'R_25' | 'R_50', msg: any): void {
-    if (msg.error) {
-      this.logger.error(`[TRINITY][${symbol}] Erro da API:`, msg.error.message);
-      return;
-    }
-
-    switch (msg.msg_type) {
-      case 'history':
-        if (msg.history?.prices) {
-          this.processTrinityHistory(symbol, msg.history.prices);
-        }
-        break;
-      case 'tick':
-        if (msg.tick) {
-          this.processTrinityTick(symbol, msg.tick);
-        }
-        break;
-    }
-  }
-
-  private processTrinityHistory(symbol: 'R_10' | 'R_25' | 'R_50', prices: any[]): void {
-    const ticks: Tick[] = prices
-      .map((price: any) => {
-        const value = Number(price.quote || price);
-        if (!isFinite(value) || value <= 0) return null;
-        const digit = this.extractLastDigit(value);
-        const epoch = Number(price.epoch || price.time || Date.now() / 1000);
-        if (!isFinite(epoch) || epoch <= 0) return null;
-        return {
-          value,
-          epoch,
-          timestamp: new Date(epoch * 1000).toLocaleTimeString('pt-BR'),
-          digit,
-          parity: this.getParityFromDigit(digit),
-        };
-      })
-      .filter((t): t is Tick => t !== null);
-
-    this.trinityTicks[symbol] = ticks;
-    this.logger.log(`[TRINITY][${symbol}] ✅ Histórico carregado: ${ticks.length} ticks`);
-    
-    // ✅ Log: Histórico carregado
-    for (const userId of this.trinityUsers.keys()) {
-      this.saveTrinityLog(userId, symbol, 'info', 
-        `Histórico carregado: ${ticks.length} ticks`, {
-          totalTicks: ticks.length,
-        });
-    }
-  }
-
-  private processTrinityTick(symbol: 'R_10' | 'R_25' | 'R_50', tickData: any): void {
-    const rawQuote = tickData.quote;
-    const rawEpoch = tickData.epoch;
-
-    if (rawQuote == null || rawQuote === '' || rawEpoch == null || rawEpoch === '') {
-      return;
-    }
-
-    // ✅ Log: Tick recebido (a cada 100 ticks para não poluir)
-    if (this.trinityTicks[symbol].length % 100 === 0) {
-      this.logger.debug(`[TRINITY][${symbol}] 📊 Tick recebido: valor=${rawQuote} | total ticks=${this.trinityTicks[symbol].length} | usuários ativos=${this.trinityUsers.size}`);
-    }
-
-    const value = Number(rawQuote);
-    const epoch = Number(rawEpoch);
-
-    if (!isFinite(value) || value <= 0 || !isFinite(epoch) || epoch <= 0) {
-      return;
-    }
-
-    const digit = this.extractLastDigit(value);
-    const tick: Tick = {
-      value,
-      epoch,
-      timestamp: new Date(epoch * 1000).toLocaleTimeString('pt-BR'),
-      digit,
-      parity: this.getParityFromDigit(digit),
-    };
-
-    this.trinityTicks[symbol].push(tick);
-    if (this.trinityTicks[symbol].length > this.maxTicks) {
-      this.trinityTicks[symbol].shift();
-    }
-
-    // ✅ Log de progresso apenas quando necessário (sem logs de ticks individuais)
-    const tickNumero = this.trinityTicks[symbol].length;
-    for (const userId of this.trinityUsers.keys()) {
-      const state = this.trinityUsers.get(userId);
-      const modeConfig = state ? this.getModeConfig(state.mode) : null;
-      const amostraMinima = modeConfig?.amostraInicial || 20;
-      
-      // Log de progresso apenas quando completa amostra (formato documentação)
-      if (modeConfig && tickNumero === modeConfig.amostraInicial) {
-        this.saveTrinityLog(userId, symbol, 'info', 
-          `Coleta: ${tickNumero}/${modeConfig.amostraInicial} ticks (100%) ✅ | Amostra completa`);
-      }
-      // Removido: logs de ticks individuais e progresso intermediário para reduzir poluição
-    }
-
-    // Processar estratégias TRINITY
-    if (this.trinityUsers.size > 0) {
-      this.processTrinityStrategies(symbol, tick).catch((error) => {
-        this.logger.error(`[TRINITY][${symbol}] Erro ao processar estratégias:`, error);
-      });
-    }
-  }
+  // ✅ REMOVIDO: Métodos de gerenciamento de WebSocket próprios
+  // Agora os ticks são recebidos do AIService via processTick() (igual Orion)
+  // Isso evita duplicação de conexões e rate limiting da Deriv
 
   private async processTrinityStrategies(symbol: 'R_10' | 'R_25' | 'R_50', latestTick: Tick): Promise<void> {
     if (this.trinityUsers.size === 0) {
@@ -1109,12 +863,34 @@ export class TrinityStrategy implements IStrategy {
       }, 30000);
 
       ws.on('open', () => {
+        this.logger.debug(`[TRINITY][${symbol}] 🔌 WebSocket aberto, autorizando...`);
         ws.send(JSON.stringify({ authorize: token }));
       });
 
       ws.on('message', (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
+          
+          // ✅ Log de debug para ver todas as mensagens recebidas
+          this.logger.debug(`[TRINITY][${symbol}] 📩 Mensagem WS recebida: ${JSON.stringify(msg).substring(0, 500)}`);
+
+          // ✅ Tratamento para erro de nível superior (quando a API retorna error sem authorize)
+          if (msg.error) {
+            if (!hasResolved) {
+              hasResolved = true;
+              clearTimeout(timeout);
+              const err = msg.error;
+              this.logger.error(`[TRINITY][${symbol}] ❌ Erro da API Deriv | ${err.code} - ${err.message}`);
+              this.saveTrinityLog(userId, symbol, 'erro',
+                `❌ Erro da API Deriv | ${err.code} - ${err.message}`, {
+                  etapa: msg.msg_type || 'unknown',
+                  error: err,
+                });
+              ws.close();
+              resolve(null);
+            }
+            return;
+          }
 
           if (msg.authorize) {
             if (msg.authorize.error) {
@@ -1122,6 +898,7 @@ export class TrinityStrategy implements IStrategy {
                 hasResolved = true;
                 clearTimeout(timeout);
                 const err = msg.authorize.error;
+                this.logger.error(`[TRINITY][${symbol}] ❌ Erro na autorização Deriv | ${err.code} - ${err.message}`);
                 this.saveTrinityLog(userId, symbol, 'erro',
                   `❌ Erro na autorização Deriv | ${err.code} - ${err.message}`, {
                     etapa: 'authorize',
@@ -1132,18 +909,22 @@ export class TrinityStrategy implements IStrategy {
               }
               return;
             }
+            
+            this.logger.debug(`[TRINITY][${symbol}] ✅ Autorizado, solicitando proposta...`);
 
-            ws.send(JSON.stringify({
+            // ✅ Payload igual ao da Orion (sem subscribe: 0)
+            const proposalPayload = {
               proposal: 1,
               amount: contractParams.amount,
               basis: 'stake',
               contract_type: contractParams.contract_type,
               currency: contractParams.currency || 'USD',
-              duration: contractParams.duration || 1,
-              duration_unit: contractParams.duration_unit || 't',
+              duration: 1,
+              duration_unit: 't',
               symbol: contractParams.symbol,
-              subscribe: 0,
-            }));
+            };
+            
+            ws.send(JSON.stringify(proposalPayload));
             return;
           }
 
@@ -1153,11 +934,25 @@ export class TrinityStrategy implements IStrategy {
                 hasResolved = true;
                 clearTimeout(timeout);
                 const err = msg.proposal.error;
+                const errorCode = err.code || '';
+                const errorMessage = err.message || JSON.stringify(err);
+                
+                this.logger.error(`[TRINITY][${symbol}] ❌ Erro na proposta Deriv | ${errorCode} - ${errorMessage}`);
                 this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Erro na proposta Deriv | ${err.code} - ${err.message}`, {
+                  `❌ Erro na proposta Deriv | ${errorCode} - ${errorMessage}`, {
                     etapa: 'proposal',
                     error: err,
                   });
+                
+                // ✅ Igual Orion: identificar erros comuns
+                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+                  this.logger.warn(`[TRINITY][${symbol}] 💡 Saldo insuficiente detectado.`);
+                } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('amount')) {
+                  this.logger.warn(`[TRINITY][${symbol}] 💡 Valor inválido (mínimo: $0.35).`);
+                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+                  this.logger.warn(`[TRINITY][${symbol}] 💡 Rate limit atingido.`);
+                }
+                
                 ws.close();
                 resolve(null);
               }
@@ -1166,12 +961,16 @@ export class TrinityStrategy implements IStrategy {
 
             proposalId = msg.proposal.id;
             const proposalPrice = Number(msg.proposal.ask_price);
+            
+            this.logger.debug(`[TRINITY][${symbol}] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}`);
+            
             if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
               if (!hasResolved) {
                 hasResolved = true;
                 clearTimeout(timeout);
+                this.logger.error(`[TRINITY][${symbol}] ❌ Proposta inválida | ID=${proposalId}, Preço=${proposalPrice}`);
                 this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Proposta inválida recebida da Deriv`, {
+                  `❌ Proposta inválida recebida da Deriv | ID=${proposalId}, Preço=${proposalPrice}`, {
                     etapa: 'proposal',
                     response: msg.proposal,
                   });
@@ -1181,6 +980,7 @@ export class TrinityStrategy implements IStrategy {
               return;
             }
 
+            this.logger.debug(`[TRINITY][${symbol}] 💰 Executando compra...`);
             ws.send(JSON.stringify({
               buy: proposalId,
               price: proposalPrice,
@@ -1192,32 +992,49 @@ export class TrinityStrategy implements IStrategy {
             if (!hasResolved) {
               hasResolved = true;
               clearTimeout(timeout);
+              ws.close(); // ✅ Igual Orion: fecha WS imediatamente após receber resposta
 
               if (msg.buy.error) {
                 const err = msg.buy.error;
+                const errorCode = err.code || '';
+                const errorMessage = err.message || JSON.stringify(err);
+                
+                this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao comprar contrato | ${errorCode} - ${errorMessage}`);
                 this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Erro ao comprar contrato | ${err.code} - ${err.message}`, {
+                  `❌ Erro ao comprar contrato | ${errorCode} - ${errorMessage}`, {
                     etapa: 'buy',
                     error: err,
                   });
-                ws.close();
+                
+                // ✅ Igual Orion: identificar erros comuns
+                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+                  this.logger.warn(`[TRINITY][${symbol}] 💡 Saldo insuficiente detectado.`);
+                  this.saveTrinityLog(userId, symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
+                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+                  this.logger.warn(`[TRINITY][${symbol}] 💡 Rate limit atingido.`);
+                  this.saveTrinityLog(userId, symbol, 'alerta', `💡 Rate limit atingido na Deriv.`);
+                } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('token')) {
+                  this.logger.error(`[TRINITY][${symbol}] 💡 Token inválido ou expirado.`);
+                  this.saveTrinityLog(userId, symbol, 'alerta', `💡 Token Deriv inválido ou expirado.`);
+                }
+                
                 resolve(null);
                 return;
               }
 
               const contractId = msg.buy.contract_id;
               if (!contractId) {
+                this.logger.error(`[TRINITY][${symbol}] ❌ Compra sem contract_id`);
                 this.saveTrinityLog(userId, symbol, 'erro',
                   `❌ Compra sem contract_id retornado pela Deriv`, {
                     etapa: 'buy',
                     response: msg.buy,
                   });
-                ws.close();
                 resolve(null);
                 return;
               }
 
-              ws.close();
+              this.logger.log(`[TRINITY][${symbol}] ✅ Contrato criado: ${contractId}`);
               resolve(contractId);
               return;
             }
@@ -1226,6 +1043,7 @@ export class TrinityStrategy implements IStrategy {
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(timeout);
+            this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao processar mensagem WS: ${err instanceof Error ? err.message : String(err)}`);
             this.saveTrinityLog(userId, symbol, 'erro',
               `❌ Erro ao processar mensagem WS (criação de contrato) | ${err instanceof Error ? err.message : String(err)}`, {
                 etapa: 'ws_message',
@@ -1241,6 +1059,7 @@ export class TrinityStrategy implements IStrategy {
         if (!hasResolved) {
           hasResolved = true;
           clearTimeout(timeout);
+          this.logger.error(`[TRINITY][${symbol}] ❌ Erro no WebSocket: ${error.message}`);
           this.saveTrinityLog(userId, symbol, 'erro',
             `❌ Erro no WebSocket ao criar contrato | ${error.message}`, {
               etapa: 'ws_error',
@@ -1251,8 +1070,20 @@ export class TrinityStrategy implements IStrategy {
         }
       });
 
-      ws.on('close', () => {
-        // finalizações tratadas nos handlers acima
+      ws.on('close', (code, reason) => {
+        // ✅ Detectar fechamento prematuro do WebSocket (igual Orion)
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+          this.logger.warn(`[TRINITY][${symbol}] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`);
+          this.saveTrinityLog(userId, symbol, 'erro',
+            `⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`, {
+              etapa: 'ws_close',
+              code,
+              reason: reason?.toString(),
+            });
+          resolve(null);
+        }
       });
     });
   }
