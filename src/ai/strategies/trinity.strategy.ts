@@ -742,6 +742,35 @@ export class TrinityStrategy implements IStrategy {
 
     const contractType = operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     
+    // ✅ VALIDAÇÕES IGUAL ORION (antes de criar WebSocket)
+    
+    // 1. Validar valor mínimo ($0.35)
+    if (stakeAmount < 0.35) {
+      this.logger.warn(`[TRINITY][${symbol}] ⚠️ Stake abaixo do mínimo, ajustando para $0.35`);
+      stakeAmount = 0.35;
+    }
+    
+    // 2. Validar saldo mínimo (com margem de 10%)
+    const saldoNecessario = stakeAmount * 1.1;
+    if (state.capital < saldoNecessario) {
+      this.logger.warn(`[TRINITY][${symbol}] ❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
+      this.saveTrinityLog(state.userId, symbol, 'erro', `❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
+      asset.isOperationActive = false;
+      state.globalOperationActive = false;
+      this.advanceToNextAsset(state);
+      return;
+    }
+    
+    // 3. Validar token
+    if (!state.derivToken || state.derivToken.trim() === '') {
+      this.logger.error(`[TRINITY][${symbol}] ❌ Token Deriv inválido ou ausente`);
+      this.saveTrinityLog(state.userId, symbol, 'erro', `❌ Token Deriv inválido ou ausente - Não é possível criar contrato`);
+      asset.isOperationActive = false;
+      state.globalOperationActive = false;
+      this.advanceToNextAsset(state);
+      return;
+    }
+    
     // Salvar aposta usada para cálculo agressivo
     asset.ultimaApostaUsada = stakeAmount;
     
@@ -870,8 +899,8 @@ export class TrinityStrategy implements IStrategy {
       }, 30000);
 
       ws.on('open', () => {
-        // ✅ Usar LOG ao invés de DEBUG para garantir que apareça
-        this.logger.log(`[TRINITY][${symbol}] ✅ WebSocket ABERTO, enviando autorização...`);
+        // ✅ EXATAMENTE IGUAL ORION: envia authorize imediatamente
+        this.logger.log(`[TRINITY][${symbol}] ✅ WebSocket ABERTO, enviando authorize...`);
         ws.send(JSON.stringify({ authorize: token }));
       });
 
@@ -879,8 +908,8 @@ export class TrinityStrategy implements IStrategy {
         try {
           const msg = JSON.parse(data.toString());
           
-          // ✅ LOG para garantir que apareça (não debug)
-          this.logger.log(`[TRINITY][${symbol}] 📩 Mensagem WS: msg_type=${msg.msg_type || 'unknown'} | error=${msg.error ? 'SIM' : 'não'}`);
+          // ✅ LOG para ver mensagens recebidas
+          this.logger.log(`[TRINITY][${symbol}] 📩 Mensagem WS: msg_type=${msg.msg_type || 'unknown'}`);
 
           // ✅ Tratamento para erro de nível superior (quando a API retorna error sem authorize)
           if (msg.error) {
