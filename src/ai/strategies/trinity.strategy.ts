@@ -765,7 +765,6 @@ export class TrinityStrategy implements IStrategy {
             
             // Resetar martingale do ativo
             asset.perdaAcumulada = 0;
-            asset.ultimaDirecaoMartingale = null;
             asset.martingaleStep = 0;
             
             // Avançar para próximo ativo
