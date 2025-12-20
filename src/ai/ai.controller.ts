@@ -263,8 +263,11 @@ export class AiController {
   }
 
   @Sse('trade-events/:userId')
-  tradeEvents(@Param('userId') userId: string): Observable<MessageEvent> {
-    return this.tradeEventsService.subscribe(userId);
+  tradeEvents(
+    @Param('userId') userId: string,
+    @Query('strategy') strategy?: string,
+  ): Observable<MessageEvent> {
+    return this.tradeEventsService.subscribe(userId, strategy);
   }
 
   // ========== ENDPOINTS PARA IA EM BACKGROUND ==========

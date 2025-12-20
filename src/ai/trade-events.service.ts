@@ -23,9 +23,15 @@ export class TradeEventsService {
     this.stream$.next(event);
   }
 
-  subscribe(userId: string): Observable<MessageEvent> {
+  subscribe(userId: string, strategy?: string): Observable<MessageEvent> {
     return this.stream$.pipe(
-      filter((event) => event.userId === userId),
+      filter((event) => {
+        if (event.userId !== userId) return false;
+        if (strategy) {
+          return (event.strategy || '').toLowerCase() === strategy.toLowerCase();
+        }
+        return true;
+      }),
       map((event) => ({ data: event } as MessageEvent)),
     );
   }
