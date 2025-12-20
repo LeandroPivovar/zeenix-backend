@@ -945,23 +945,15 @@ export class AiService implements OnModuleInit {
       );
     }
 
-    // ✅ Usar StrategyManager para processar tick em todas as estratégias
-    if (this.strategyManager) {
-      this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
-        this.logger.error('[StrategyManager] Erro ao processar tick:', error);
-      });
-    } else {
-      // Fallback para código legado
-      this.processVelozStrategies(newTick).catch((error) => {
-        this.logger.error(`[ProcessVelozStrategies] Erro:`, error);
-      });
-      this.processModeradoStrategies(newTick).catch((error) => {
-        this.logger.error(`[ProcessModeradoStrategies] Erro:`, error);
-      });
-      this.processPrecisoStrategies(newTick).catch((error) => {
-        this.logger.error(`[ProcessPrecisoStrategies] Erro:`, error);
-      });
+    // ✅ Usar StrategyManager para processar tick em todas as estratégias (sem fallback legado)
+    if (!this.strategyManager) {
+      this.logger.error('[StrategyManager] Indisponível - tick ignorado');
+      return;
     }
+
+    this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
+      this.logger.error('[StrategyManager] Erro ao processar tick:', error);
+    });
   }
 
   private extractLastDigit(value: number): number {
@@ -3025,6 +3017,7 @@ export class AiService implements OnModuleInit {
             modoMartingale: config.modoMartingale || 'conservador',
             profitTarget: config.profitTarget || null,
             lossLimit: config.lossLimit || null,
+            stopLossBlindado: config.stopLossBlindado || false,
           });
         } catch (error) {
           this.logger.error(`[SyncTrinity] Erro ao ativar usuário ${config.userId}:`, error);

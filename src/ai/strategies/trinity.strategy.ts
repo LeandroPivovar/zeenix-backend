@@ -170,7 +170,17 @@ export class TrinityStrategy implements IStrategy {
 
   async activateUser(userId: string, config: any): Promise<void> {
     this.logger.log(`[TRINITY] 🔵 Ativando usuário ${userId}...`);
-    const { mode, stakeAmount, derivToken, currency, modoMartingale, profitTarget, lossLimit, entryValue } = config;
+    const {
+      mode,
+      stakeAmount,
+      derivToken,
+      currency,
+      modoMartingale,
+      profitTarget,
+      lossLimit,
+      entryValue,
+      stopLossBlindado,
+    } = config;
 
     const stakeAmountNum = Number(stakeAmount);
     const profitTargetNum = profitTarget != null ? Number(profitTarget) : null;
@@ -192,7 +202,7 @@ export class TrinityStrategy implements IStrategy {
     // ✅ stakeAmount é o capital total da conta (ex: $8953.20)
     const apostaInicial = entryValue != null ? Number(entryValue) : 0.35; // Usar entryValue se fornecido, senão 0.35 (mínimo)
     
-    this.upsertTrinityUserState({
+    const { isNew, hasConfigChanges } = this.upsertTrinityUserState({
       userId,
       stakeAmount: stakeAmountNum, // Capital total
       apostaInicial, // Valor de entrada por operação
@@ -202,22 +212,29 @@ export class TrinityStrategy implements IStrategy {
       modoMartingale: modoMartingale || 'conservador',
       profitTarget: profitTargetNum,
       lossLimit: stopLossNormalized,
+      stopLossBlindado: Boolean(stopLossBlindado),
     });
     
-    this.logger.log(`[TRINITY] ✅ Usuário ${userId} ativado | Total de usuários: ${this.trinityUsers.size}`);
-    
-    // ✅ Log: Usuário ativado
-    this.saveTrinityLog(userId, 'SISTEMA', 'info', 
-      `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${capitalDisplay} | ` +
-      `Martingale: ${modoMartingale || 'conservador'} | ` +
-      `Meta: ${profitTargetDisplay} | ` +
-      `Stop-loss: ${stopLossDisplay}`, {
-        mode: mode || 'veloz',
-        capital: stakeAmountNum,
-        modoMartingale: modoMartingale || 'conservador',
-        profitTarget: profitTargetNum,
-        lossLimit: lossLimitNum,
-      });
+    if (isNew || hasConfigChanges) {
+      const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
+      this.logger.log(`[TRINITY] ✅ ${logPrefix} ${userId} | Total de usuários: ${this.trinityUsers.size}`);
+      
+      this.saveTrinityLog(userId, 'SISTEMA', 'info', 
+        `${logPrefix} | Modo: ${mode || 'veloz'} | Capital: $${capitalDisplay} | ` +
+        `Martingale: ${modoMartingale || 'conservador'} | ` +
+        `Meta: ${profitTargetDisplay} | ` +
+        `Stop-loss: ${stopLossDisplay} | ` +
+        `Stop blindado: ${stopLossBlindado ? 'Ativo' : 'Inativo'}`, {
+          mode: mode || 'veloz',
+          capital: stakeAmountNum,
+          modoMartingale: modoMartingale || 'conservador',
+          profitTarget: profitTargetNum,
+          lossLimit: lossLimitNum,
+          stopLossBlindado: Boolean(stopLossBlindado),
+        });
+    } else {
+      this.logger.log(`[TRINITY] ℹ️ Usuário ${userId} já estava ativo - nenhuma alteração aplicada`);
+    }
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -787,9 +804,11 @@ export class TrinityStrategy implements IStrategy {
     modoMartingale?: ModoMartingale;
     profitTarget?: number | null;
     lossLimit?: number | null;
-  }): void {
+    stopLossBlindado?: boolean | null;
+  }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.trinityUsers.get(params.userId);
     const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
+    let hasConfigChanges = false;
     if (existing) {
       // ✅ Quando reativar, atualizar capitalInicial para o capital atual (nova sessão)
       // Isso garante que o stop-loss seja calculado corretamente a partir do novo capital
@@ -798,6 +817,15 @@ export class TrinityStrategy implements IStrategy {
       const apostaInicial = params.apostaInicial !== undefined 
         ? params.apostaInicial 
         : (existing.assets.R_10.apostaBase || 0.35);
+      
+      hasConfigChanges =
+        existing.capital !== params.stakeAmount ||
+        existing.mode !== params.mode ||
+        existing.modoMartingale !== (params.modoMartingale || 'conservador') ||
+        existing.profitTarget !== (params.profitTarget || null) ||
+        existing.stopLoss !== stopLossNormalized ||
+        existing.stopLossBlindado !== Boolean(params.stopLossBlindado) ||
+        existing.assets.R_10.apostaBase !== apostaInicial;
       
       Object.assign(existing, {
         capital: params.stakeAmount,
@@ -808,6 +836,7 @@ export class TrinityStrategy implements IStrategy {
         modoMartingale: params.modoMartingale || 'conservador',
         profitTarget: params.profitTarget || null,
         stopLoss: stopLossNormalized,
+        stopLossBlindado: Boolean(params.stopLossBlindado),
         isStopped: false,
         totalProfitLoss: 0, // Resetar P&L total para nova sessão
       });
@@ -824,11 +853,7 @@ export class TrinityStrategy implements IStrategy {
         );
       }
       
-      // ✅ Log: Reativação
-      this.logger.log(
-        `[TRINITY] 🔄 Usuário REATIVADO | Capital: $${params.stakeAmount.toFixed(2)} | Capital Inicial: $${novoCapitalInicial.toFixed(2)} | Stop-loss: ${params.lossLimit ? `-$${Math.abs(params.lossLimit).toFixed(2)}` : 'N/A'}`,
-      );
-      return;
+      return { isNew: false, hasConfigChanges };
     }
 
       // Criar novo estado
@@ -893,11 +918,13 @@ export class TrinityStrategy implements IStrategy {
       currentAssetIndex: 0,
       totalProfitLoss: 0,
       stopLoss: stopLossNormalized || undefined,
-      stopLossBlindado: false,
+      stopLossBlindado: Boolean(params.stopLossBlindado),
       profitTarget: params.profitTarget || undefined,
       isStopped: false,
       globalOperationActive: false,
     });
+    
+    return { isNew: true, hasConfigChanges: true };
   }
 
   private extractLastDigit(value: number): number {
