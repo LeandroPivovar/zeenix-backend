@@ -1560,6 +1560,23 @@ export class TrinityStrategy implements IStrategy {
       this.logger.log(
         `[TRINITY] 🛑 STOP-LOSS ATINGIDO! | Perda: $${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(stopLossValue).toFixed(2)}`,
       );
+      
+      // ✅ Desativar sessão no banco de dados
+      try {
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = TRUE`,
+          [`Stop loss atingido: -$${Math.abs(lucroAtual).toFixed(2)} (Limite: $${Math.abs(stopLossValue).toFixed(2)})`, state.userId],
+        );
+        this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss`);
+      } catch (error) {
+        this.logger.error(`[TRINITY] ❌ Erro ao desativar sessão:`, error);
+      }
+      
+      // Remover usuário do monitoramento
+      this.trinityUsers.delete(state.userId);
+      
       return;
     }
 
@@ -1577,6 +1594,23 @@ export class TrinityStrategy implements IStrategy {
         this.logger.log(
           `[TRINITY] 🛡️ STOP-LOSS BLINDADO ATIVADO! | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`,
         );
+        
+        // ✅ Desativar sessão no banco de dados
+        try {
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = TRUE`,
+            [`Stop loss blindado ativado: Capital $${state.capital.toFixed(2)} <= Stop $${stopBlindado.toFixed(2)}`, state.userId],
+          );
+          this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss blindado`);
+        } catch (error) {
+          this.logger.error(`[TRINITY] ❌ Erro ao desativar sessão:`, error);
+        }
+        
+        // Remover usuário do monitoramento
+        this.trinityUsers.delete(state.userId);
+        
         return;
       }
     }

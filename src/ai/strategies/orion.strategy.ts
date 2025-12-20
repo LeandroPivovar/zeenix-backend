@@ -1176,6 +1176,63 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
       this.saveOrionLog(state.userId, 'R_10', 'resultado', `❌ PERDEU | ${operation} | P&L: -$${Math.abs(profit).toFixed(2)}`);
     }
+    
+    // ✅ Verificar stop loss após processar resultado
+    // Atualizar session_balance no banco com o capital atual do estado
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET session_balance = ?
+         WHERE user_id = ? AND is_active = TRUE`,
+        [state.capital, state.userId],
+      );
+      
+      const stopLossConfig = await this.dataSource.query(
+        `SELECT 
+          COALESCE(loss_limit, 0) as lossLimit,
+          COALESCE(session_balance, 0) as sessionBalance,
+          COALESCE(stake_amount, 0) as capitalInicial,
+          is_active
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE
+         LIMIT 1`,
+        [state.userId],
+      );
+      
+      if (stopLossConfig && stopLossConfig.length > 0) {
+        const config = stopLossConfig[0];
+        const lossLimit = parseFloat(config.lossLimit) || 0;
+        const capitalInicial = parseFloat(config.capitalInicial) || 0;
+        const sessionBalance = parseFloat(config.sessionBalance) || 0;
+        
+        // Calcular perda atual (capital inicial - capital atual)
+        const perdaAtual = capitalInicial > 0 ? capitalInicial - sessionBalance : 0;
+        
+        // Se tem stop loss configurado e a perda atual ultrapassou o limite
+        if (lossLimit > 0 && perdaAtual >= lossLimit) {
+          this.logger.warn(
+            `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
+          );
+          this.saveOrionLog(state.userId, 'R_10', 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
+          
+          // Desativar a IA
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = FALSE, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = TRUE`,
+            [`Stop loss atingido após operação: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
+          );
+          
+          // Remover usuário do monitoramento
+          this.velozUsers.delete(state.userId);
+          this.moderadoUsers.delete(state.userId);
+          this.precisoUsers.delete(state.userId);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar stop loss após resultado:`, error);
+      // Continuar mesmo se houver erro na verificação (fail-open)
+    }
   }
 
   /**
