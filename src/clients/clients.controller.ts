@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Query, Body, Param, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ClientsService } from './clients.service';
 import { ClientMetricsDto } from './dto/client-metrics.dto';
@@ -25,6 +25,14 @@ export class ClientsController {
   @Get('export')
   async exportClients(): Promise<any[]> {
     return this.clientsService.exportClients();
+  }
+
+  @Patch(':userId/role')
+  async updateUserRole(
+    @Param('userId') userId: string,
+    @Body('role') role: string,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.clientsService.updateUserRole(userId, role);
   }
 }
 

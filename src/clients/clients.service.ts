@@ -127,6 +127,7 @@ export class ClientsService {
         'user.derivLoginId as derivLoginId',
         'user.derivBalance as derivBalance',
         'user.createdAt as createdAt',
+        'user.role as userRole',
       ]);
 
     // Filtro de busca por nome, email ou login ID
@@ -201,6 +202,7 @@ export class ClientsService {
           createdAt: new Date(user.createdAt).toISOString().split('T')[0],
           lastActivity,
           whatsapp: false, // Pode ser adicionado posteriormente
+          role: user.userRole || 'user',
         };
       })
     );
@@ -214,6 +216,24 @@ export class ClientsService {
   async exportClients(): Promise<any[]> {
     const { clients } = await this.getClients();
     return clients;
+  }
+
+  async updateUserRole(userId: string, role: string): Promise<{ success: boolean; message: string }> {
+    const validRoles = ['user', 'admin', 'master_trader', 'expert'];
+    
+    if (!validRoles.includes(role)) {
+      return { success: false, message: `Role inválida. Roles permitidas: ${validRoles.join(', ')}` };
+    }
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    
+    if (!user) {
+      return { success: false, message: 'Usuário não encontrado' };
+    }
+
+    await this.userRepository.update(userId, { role });
+    
+    return { success: true, message: `Role do usuário atualizada para ${role}` };
   }
 }
 

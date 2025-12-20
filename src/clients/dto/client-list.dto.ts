@@ -8,6 +8,7 @@ export class ClientDto {
   lastActivity: string;
   whatsapp: boolean;
   userId: string;
+  role: string;
 }
 
 export class ClientListResponseDto {
