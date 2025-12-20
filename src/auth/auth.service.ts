@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, Inject, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Inject, ConflictException, NotFoundException, BadRequestException, forwardRef, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
@@ -11,14 +11,19 @@ import { User } from '../domain/entities/user.entity';
 import { EmailService } from './email.service';
 import { randomBytes } from 'crypto';
 import { validateBrazilianPhone } from '../utils/phone.validator';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly jwtService: JwtService,
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly emailService: EmailService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   async register(payload: CreateUserDto, frontendUrl?: string): Promise<{ message: string }>
@@ -109,6 +114,18 @@ export class AuthService {
     }
     const userRole = userStatus[0].role || 'user';
     const token = await this.signToken(user.id, user.email, user.name, userRole);
+
+    // ✅ Buscar e exibir notificações ao fazer login
+    if (this.notificationsService) {
+      try {
+        this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
+        await this.notificationsService.getLoginSummary(user.id);
+      } catch (error) {
+        this.logger.error(`[Login] Erro ao buscar notificações: ${error.message}`);
+        // Não falhar o login se as notificações falharem
+      }
+    }
+
     return { token };
   }
 

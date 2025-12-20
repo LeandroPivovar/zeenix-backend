@@ -36,13 +36,14 @@ export interface IStrategy {
 }
 
 // Configurações exportadas
-// Alinhado ao guia TRINITY: amostra mínima 20, intervalo 15 ticks,
-// desequilíbrio mínimo 60% e confiança mínima 60%.
+// ✅ CORRIGIDO conforme documentação TRINITY:
+// - Modo VELOZ: Amostra 10 ticks, intervalo 3 ticks, desequilíbrio ≥50%, confiança ≥50%
+// - Modo NORMAL usa 60%/60% (definido em MODERADO_CONFIG)
 export const VELOZ_CONFIG: ModeConfig = {
-  amostraInicial: 20,
-  intervaloTicks: 15,
-  desequilibrioMin: 0.60,
-  confianciaMin: 0.60,
+  amostraInicial: 10, // ✅ Documentação: 10 ticks para modo VELOZ
+  intervaloTicks: 3,  // ✅ Documentação: 3 ticks entre operações
+  desequilibrioMin: 0.50, // ✅ Documentação: ≥50% para modo VELOZ
+  confianciaMin: 0.50,    // ✅ Documentação: ≥50% para modo VELOZ
   taxaAcertoEsperada: 0.67,
   payout: 0.95,
   minStake: 0.35,

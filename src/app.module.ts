@@ -19,6 +19,7 @@ import { AdminModule } from './presentation/admin.module';
 import { ExpertsModule } from './experts/experts.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { AutonomousAgentModule } from './autonomous-agent/autonomous-agent.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -39,7 +40,8 @@ import { AutonomousAgentModule } from './autonomous-agent/autonomous-agent.modul
     AdminModule,
     ExpertsModule,
     WebhookModule,
-    AutonomousAgentModule
+    AutonomousAgentModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

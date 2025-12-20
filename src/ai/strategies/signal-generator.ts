@@ -107,24 +107,39 @@ export function analisarMicroTendencias(ticks: Tick[]): {
 
 /**
  * ANÁLISE 4: Força do Desequilíbrio
- * Mede velocidade de crescimento do desequilíbrio
- * Detecta desequilíbrio crescendo rapidamente → Bônus +10% se velocidade > 5%
+ * Verifica consistência do desequilíbrio ao longo do tempo
+ * Conta quantos dos últimos N ticks mantiveram desequilíbrio >= 60%
+ * Bônus +10% se >5 ticks consecutivos com desequilíbrio
  */
-export function analisarForcaDesequilibrio(ticks: Tick[], _janela: number): {
+export function analisarForcaDesequilibrio(ticks: Tick[], janela: number): {
   velocidade: number;
   bonus: number;
 } {
   // Guia TRINITY: contar ticks consecutivos (últimos 10) com desequilíbrio >= 60%
-  if (ticks.length < 1) {
+  // Usando janela fixa de 20 ticks para calcular o desequilíbrio em cada ponto
+  const janelaAnalise = janela || 20;
+  
+  if (ticks.length < janelaAnalise) {
     return { velocidade: 0, bonus: 0 };
   }
 
-  const inicio = Math.max(0, ticks.length - 10);
+  // Analisar os últimos 10 pontos no tempo
+  const pontosAnalise = 10;
+  const inicioAnalise = Math.max(janelaAnalise, ticks.length - pontosAnalise);
+  
   let consecutivos = 0;
   let maxConsecutivos = 0;
 
-  for (let i = inicio; i < ticks.length; i++) {
-    const amostra = ticks.slice(0, i + 1);
+  for (let i = inicioAnalise; i <= ticks.length; i++) {
+    // ✅ CORRIGIDO: Usar janela fixa de 20 ticks terminando na posição i
+    const fimJanela = i;
+    const inicioJanela = Math.max(0, fimJanela - janelaAnalise);
+    const amostra = ticks.slice(inicioJanela, fimJanela);
+    
+    if (amostra.length < janelaAnalise) {
+      continue; // Pular se não tem ticks suficientes
+    }
+    
     const pares = amostra.filter(t => t.digit % 2 === 0).length;
     const percPar = pares / amostra.length;
     const desequilibrio = Math.max(percPar, 1 - percPar);
@@ -132,7 +147,7 @@ export function analisarForcaDesequilibrio(ticks: Tick[], _janela: number): {
     if (desequilibrio >= 0.60) {
       consecutivos++;
     } else {
-      consecutivos = 0;
+      consecutivos = 0; // Reseta se quebrar a sequência
     }
 
     if (consecutivos > maxConsecutivos) {
