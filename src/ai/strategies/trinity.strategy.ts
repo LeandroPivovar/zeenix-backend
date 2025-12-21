@@ -1540,6 +1540,23 @@ export class TrinityStrategy implements IStrategy {
       this.logger.log(
         `[TRINITY] 🎯 META ATINGIDA! | Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget}`,
       );
+      
+      // ✅ Desativar sessão no banco de dados
+      try {
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} (Meta: +$${state.profitTarget.toFixed(2)})`, state.userId],
+        );
+        this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido à meta de lucro atingida`);
+      } catch (error) {
+        this.logger.error(`[TRINITY] ❌ Erro ao desativar sessão:`, error);
+      }
+      
+      // Remover usuário do monitoramento
+      this.trinityUsers.delete(state.userId);
+      
       return;
     }
 

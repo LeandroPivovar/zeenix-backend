@@ -467,6 +467,7 @@ export class OrionStrategy implements IStrategy {
       const stopLossConfig = await this.dataSource.query(
         `SELECT 
           COALESCE(loss_limit, 0) as lossLimit,
+          COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
           is_active
@@ -479,11 +480,36 @@ export class OrionStrategy implements IStrategy {
       if (stopLossConfig && stopLossConfig.length > 0) {
         const config = stopLossConfig[0];
         const lossLimit = parseFloat(config.lossLimit) || 0;
+        const profitTarget = parseFloat(config.profitTarget) || 0;
         const sessionBalance = parseFloat(config.sessionBalance) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
         
-        // Calcular perda atual (capital inicial - capital atual)
-        const perdaAtual = capitalInicial > 0 ? capitalInicial - sessionBalance : 0;
+        // Calcular perda/lucro atual (capital atual - capital inicial)
+        const lucroAtual = sessionBalance - capitalInicial;
+        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+        
+        // ✅ Verificar STOP WIN (profit target) antes de executar operação
+        if (profitTarget > 0 && lucroAtual >= profitTarget) {
+          this.logger.log(
+            `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
+          );
+          this.saveOrionLog(state.userId, 'R_10', 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
+          
+          // Desativar a IA
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId],
+          );
+          
+          // Remover usuário do monitoramento
+          this.velozUsers.delete(state.userId);
+          this.moderadoUsers.delete(state.userId);
+          this.precisoUsers.delete(state.userId);
+          
+          return; // NÃO EXECUTAR OPERAÇÃO
+        }
         
         // Se tem stop loss configurado e a perda atual ultrapassou o limite
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
@@ -1183,7 +1209,7 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(state.userId, 'R_10', 'resultado', `❌ PERDEU | ${operation} | P&L: -$${Math.abs(profit).toFixed(2)}`);
     }
     
-    // ✅ Verificar stop loss após processar resultado
+    // ✅ Verificar stop loss e stop win após processar resultado
     // Atualizar session_balance no banco com o capital atual do estado
     try {
       await this.dataSource.query(
@@ -1193,9 +1219,10 @@ export class OrionStrategy implements IStrategy {
         [state.capital, state.userId],
       );
       
-      const stopLossConfig = await this.dataSource.query(
+      const configResult = await this.dataSource.query(
         `SELECT 
           COALESCE(loss_limit, 0) as lossLimit,
+          COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
           is_active
@@ -1205,16 +1232,40 @@ export class OrionStrategy implements IStrategy {
         [state.userId],
       );
       
-      if (stopLossConfig && stopLossConfig.length > 0) {
-        const config = stopLossConfig[0];
+      if (configResult && configResult.length > 0) {
+        const config = configResult[0];
         const lossLimit = parseFloat(config.lossLimit) || 0;
+        const profitTarget = parseFloat(config.profitTarget) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
         const sessionBalance = parseFloat(config.sessionBalance) || 0;
         
-        // Calcular perda atual (capital inicial - capital atual)
-        const perdaAtual = capitalInicial > 0 ? capitalInicial - sessionBalance : 0;
+        // Calcular perda/lucro atual (capital atual - capital inicial)
+        const lucroAtual = sessionBalance - capitalInicial;
+        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
         
-        // Se tem stop loss configurado e a perda atual ultrapassou o limite
+        // ✅ Verificar STOP WIN (profit target)
+        if (profitTarget > 0 && lucroAtual >= profitTarget) {
+          this.logger.log(
+            `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`,
+          );
+          this.saveOrionLog(state.userId, 'R_10', 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
+          
+          // Desativar a IA
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId],
+          );
+          
+          // Remover usuário do monitoramento
+          this.velozUsers.delete(state.userId);
+          this.moderadoUsers.delete(state.userId);
+          this.precisoUsers.delete(state.userId);
+          return;
+        }
+        
+        // ✅ Verificar STOP LOSS
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
@@ -1236,7 +1287,7 @@ export class OrionStrategy implements IStrategy {
         }
       }
     } catch (error) {
-      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar stop loss após resultado:`, error);
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar limites após resultado:`, error);
       // Continuar mesmo se houver erro na verificação (fail-open)
     }
   }
