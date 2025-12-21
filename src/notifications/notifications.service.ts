@@ -143,7 +143,7 @@ export class NotificationsService {
           last_trade_at,
           created_at
          FROM ai_user_config
-         WHERE user_id = ? AND is_active = TRUE
+         WHERE user_id = ? AND is_active = 1
          ORDER BY created_at DESC
          LIMIT 1`,
         [userId],
