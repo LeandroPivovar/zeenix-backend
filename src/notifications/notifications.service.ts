@@ -136,6 +136,7 @@ export class NotificationsService {
           is_active,
           session_status,
           COALESCE(session_balance, 0) as session_balance,
+          COALESCE(stake_amount, 0) as stake_amount,
           profit_target,
           loss_limit,
           mode,
@@ -156,6 +157,7 @@ export class NotificationsService {
             is_active,
             session_status,
             COALESCE(session_balance, 0) as session_balance,
+            COALESCE(stake_amount, 0) as stake_amount,
             profit_target,
             loss_limit,
             mode,
@@ -175,10 +177,14 @@ export class NotificationsService {
       }
 
       const config = result[0];
+      const capitalInicial = parseFloat(config.stake_amount) || 0;
 
-      // Se está ativa, buscar o saldo real dos trades da sessão atual
+      // ✅ Calcular lucro/perda da sessão: sessionBalance atual - capital inicial
+      // O session_balance no banco armazena o saldo acumulado total, não o lucro
       let sessionBalance = parseFloat(config.session_balance) || 0;
+      let lucroDaSessao = sessionBalance - capitalInicial;
       
+      // Se está ativa, tentar buscar o lucro real dos trades da sessão atual (mais preciso)
       if (config.is_active === 1 || config.is_active === true) {
         // Buscar o lucro/perda real da sessão atual baseado nos trades
         const tradesResult = await this.dataSource.query(
@@ -191,10 +197,10 @@ export class NotificationsService {
         );
         
         if (tradesResult && tradesResult.length > 0) {
-          const realBalance = parseFloat(tradesResult[0].total_profit_loss) || 0;
-          // Usar o saldo real dos trades se disponível
-          if (realBalance !== 0 || sessionBalance === 0) {
-            sessionBalance = realBalance;
+          const lucroDosTrades = parseFloat(tradesResult[0].total_profit_loss) || 0;
+          // Usar o lucro dos trades se disponível (é mais preciso que session_balance)
+          if (lucroDosTrades !== 0 || lucroDaSessao === 0) {
+            lucroDaSessao = lucroDosTrades;
           }
         }
       }
@@ -202,7 +208,7 @@ export class NotificationsService {
       return {
         isActive: config.is_active === 1 || config.is_active === true,
         sessionStatus: config.session_status || null,
-        sessionBalance,
+        sessionBalance: lucroDaSessao, // ✅ Retornar lucro/perda da sessão, não o saldo total
         profitTarget: config.profit_target ? parseFloat(config.profit_target) : null,
         lossLimit: config.loss_limit ? parseFloat(config.loss_limit) : null,
         mode: config.mode || null,
