@@ -519,11 +519,14 @@ export class OrionStrategy implements IStrategy {
         const config = stopLossConfig[0];
         const lossLimit = parseFloat(config.lossLimit) || 0;
         const profitTarget = parseFloat(config.profitTarget) || 0;
-        const sessionBalance = parseFloat(config.sessionBalance) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
         
+        // ✅ Usar capital do estado em memória (state.capital) ao invés do banco
+        // O estado em memória sempre reflete o capital atual da sessão
+        const capitalAtual = state.capital || capitalInicial;
+        
         // Calcular perda/lucro atual (capital atual - capital inicial)
-        const lucroAtual = sessionBalance - capitalInicial;
+        const lucroAtual = capitalAtual - capitalInicial;
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
         
         // ✅ Verificar STOP WIN (profit target) antes de executar operação
@@ -1275,10 +1278,13 @@ export class OrionStrategy implements IStrategy {
         const lossLimit = parseFloat(config.lossLimit) || 0;
         const profitTarget = parseFloat(config.profitTarget) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
-        const sessionBalance = parseFloat(config.sessionBalance) || 0;
+        
+        // ✅ Usar capital do estado em memória (state.capital) ao invés do banco
+        // O estado em memória sempre reflete o capital atual da sessão após o resultado
+        const capitalAtual = state.capital || capitalInicial;
         
         // Calcular perda/lucro atual (capital atual - capital inicial)
-        const lucroAtual = sessionBalance - capitalInicial;
+        const lucroAtual = capitalAtual - capitalInicial;
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
         
         // ✅ Verificar STOP WIN (profit target)
