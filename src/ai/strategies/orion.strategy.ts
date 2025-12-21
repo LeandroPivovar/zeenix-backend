@@ -468,6 +468,7 @@ export class OrionStrategy implements IStrategy {
         `SELECT 
           COALESCE(loss_limit, 0) as lossLimit,
           COALESCE(session_balance, 0) as sessionBalance,
+          COALESCE(stake_amount, 0) as capitalInicial,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -479,20 +480,24 @@ export class OrionStrategy implements IStrategy {
         const config = stopLossConfig[0];
         const lossLimit = parseFloat(config.lossLimit) || 0;
         const sessionBalance = parseFloat(config.sessionBalance) || 0;
+        const capitalInicial = parseFloat(config.capitalInicial) || 0;
         
-        // Se tem stop loss configurado e o saldo da sessão já ultrapassou o limite
-        if (lossLimit > 0 && sessionBalance <= -lossLimit) {
+        // Calcular perda atual (capital inicial - capital atual)
+        const perdaAtual = capitalInicial > 0 ? capitalInicial - sessionBalance : 0;
+        
+        // Se tem stop loss configurado e a perda atual ultrapassou o limite
+        if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
-            `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo sessão: -$${Math.abs(sessionBalance).toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
+            `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
           );
-          this.saveOrionLog(state.userId, 'R_10', 'alerta', `🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(sessionBalance).toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
+          this.saveOrionLog(state.userId, 'R_10', 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
           
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
              SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ? 
              WHERE user_id = ?`,
-            [`Stop loss atingido: -$${Math.abs(sessionBalance).toFixed(2)}`, state.userId],
+            [`Stop loss atingido: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
           );
           
           // Remover usuário do monitoramento
@@ -504,14 +509,15 @@ export class OrionStrategy implements IStrategy {
         }
         
         // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
-        if (lossLimit > 0 && entry > 1) {
+        if (lossLimit > 0 && entry > 1 && state.perdaAcumulada > 0) {
           const payoutCliente = 92;
           const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
-          const perdaTotalPotencial = Math.abs(sessionBalance) + proximaAposta;
+          // Perda total potencial = perda atual + próxima aposta de martingale
+          const perdaTotalPotencial = perdaAtual + proximaAposta;
           
           if (perdaTotalPotencial > lossLimit) {
             this.logger.warn(
-              `[ORION][${mode}][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${Math.abs(sessionBalance).toFixed(2)} + Próxima: $${proximaAposta.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
+              `[ORION][${mode}][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${perdaAtual.toFixed(2)} + Próxima: $${proximaAposta.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
             );
             this.saveOrionLog(state.userId, 'R_10', 'alerta', `⚠️ Martingale bloqueado! Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}`);
             
