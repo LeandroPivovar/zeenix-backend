@@ -875,6 +875,7 @@ export class AiService implements OnModuleInit {
         break;
 
       case 'tick':
+        this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)}`);
         this.processTick(msg.tick);
         break;
     }
@@ -917,6 +918,12 @@ export class AiService implements OnModuleInit {
       this.logger.debug('⚠️ Tick recebido sem quote');
       return;
     }
+    
+    // Log a cada 50 ticks para diagnóstico
+    const currentTickCount = this.ticks.length;
+    if (currentTickCount % 50 === 0 || currentTickCount === 0) {
+      this.logger.log(`[AiService] 📊 Processando tick #${currentTickCount + 1} | Quote: ${tick.quote} | WebSocket conectado: ${this.isConnected}`);
+    }
 
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
@@ -950,6 +957,11 @@ export class AiService implements OnModuleInit {
     if (!this.strategyManager) {
       this.logger.error('[StrategyManager] Indisponível - tick ignorado');
       return;
+    }
+
+    // Log de diagnóstico a cada 50 ticks
+    if (this.ticks.length % 50 === 0) {
+      this.logger.debug(`[AiService] 🔄 Enviando tick para StrategyManager | Total ticks: ${this.ticks.length} | Symbol: ${this.symbol}`);
     }
 
     this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
