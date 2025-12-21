@@ -187,6 +187,13 @@ export class OrionStrategy implements IStrategy {
       this.ticks.shift();
     }
 
+    // Log de diagnóstico a cada 50 ticks
+    if (this.ticks.length % 50 === 0) {
+      this.logger.debug(
+        `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size}`,
+      );
+    }
+
     // Processar cada modo
     await this.processVelozStrategies(tick);
     await this.processModeradoStrategies(tick);
@@ -261,8 +268,15 @@ export class OrionStrategy implements IStrategy {
 
   // Métodos privados para processamento
   private async processVelozStrategies(latestTick: Tick): Promise<void> {
-    if (this.velozUsers.size === 0) return;
-    if (this.ticks.length < VELOZ_CONFIG.amostraInicial) return;
+    if (this.velozUsers.size === 0) {
+      this.logger.debug(`[ORION][Veloz] Nenhum usuário ativo (total: ${this.velozUsers.size})`);
+      return;
+    }
+    
+    if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
+      this.logger.debug(`[ORION][Veloz] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`);
+      return;
+    }
 
     // Incrementar contador de ticks
     for (const [userId, state] of this.velozUsers.entries()) {
@@ -271,9 +285,17 @@ export class OrionStrategy implements IStrategy {
       }
     }
 
+    // Log de diagnóstico a cada 10 ticks
+    if (this.ticks.length % 10 === 0) {
+      this.logger.debug(`[ORION][Veloz] 🔄 Processando ${this.velozUsers.size} usuário(s) | Ticks: ${this.ticks.length}`);
+    }
+
     // Processar cada usuário
     for (const [userId, state] of this.velozUsers.entries()) {
-      if (state.isOperationActive) continue;
+      if (state.isOperationActive) {
+        this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] Operação ativa, pulando`);
+        continue;
+      }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
@@ -303,10 +325,26 @@ export class OrionStrategy implements IStrategy {
       }
 
       // Verificar intervalo entre operações (3 ticks)
-      if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) continue;
+      if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+        // Log a cada 20 ticks para diagnóstico
+        if (this.ticks.length % 20 === 0) {
+          this.logger.debug(
+            `[ORION][Veloz][${userId.substring(0, 8)}] ⏱️ Aguardando intervalo: ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
+          );
+        }
+        continue;
+      }
 
       const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
-      if (!sinal || !sinal.sinal) continue;
+      if (!sinal || !sinal.sinal) {
+        // Log quando não gera sinal (a cada 50 ticks para não poluir)
+        if (this.ticks.length % 50 === 0) {
+          this.logger.debug(
+            `[ORION][Veloz][${userId.substring(0, 8)}] ⚠️ Nenhum sinal gerado (confiança insuficiente ou desequilíbrio baixo)`,
+          );
+        }
+        continue;
+      }
 
       this.logger.log(
         `[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
