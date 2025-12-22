@@ -4482,7 +4482,9 @@ export class AiService implements OnModuleInit {
           created_at as createdAt,
           updated_at as updatedAt
          FROM ai_user_config 
-         WHERE user_id = ? AND is_active = TRUE
+         WHERE user_id = ? 
+           AND (is_active = TRUE 
+                OR session_status IN ('stopped_loss', 'stopped_profit'))
          ORDER BY created_at DESC
          LIMIT 1`,
         [userId],
@@ -4515,7 +4517,9 @@ export class AiService implements OnModuleInit {
             created_at as createdAt,
             updated_at as updatedAt
            FROM ai_user_config 
-           WHERE user_id = ? AND is_active = TRUE
+           WHERE user_id = ? 
+             AND (is_active = TRUE 
+                  OR session_status IN ('stopped_loss', 'stopped_profit'))
            ORDER BY created_at DESC
            LIMIT 1`,
           [userId],
