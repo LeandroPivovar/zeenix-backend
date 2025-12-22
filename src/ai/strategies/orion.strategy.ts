@@ -1483,11 +1483,13 @@ export class OrionStrategy implements IStrategy {
     }
 
     // Calcular profit previsto (aproximado)
+    // Na Deriv, quando você ganha em par/ímpar, recebe aproximadamente 95% do valor apostado como lucro
+    // Exemplo: aposta $1.00, ganha → recebe $1.95 (lucro de $0.95)
     const stakeAmount = state.pendingTradeStakeAmount || 0;
-    const payout = 0.95; // Payout aproximado (95%)
+    const payout = 0.95; // Payout aproximado (95% de lucro sobre o valor apostado)
     const predictedProfit = predictedWon 
-      ? (stakeAmount * payout) - stakeAmount 
-      : -stakeAmount;
+      ? stakeAmount * payout  // Lucro: 95% do valor apostado
+      : -stakeAmount;         // Perda: 100% do valor apostado
 
     const predictedStatus: 'WON' | 'LOST' = predictedWon ? 'WON' : 'LOST';
 
