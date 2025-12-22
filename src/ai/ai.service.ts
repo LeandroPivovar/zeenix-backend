@@ -3328,16 +3328,56 @@ export class AiService implements OnModuleInit {
 
     this.logger.debug(`[ensureTickStreamReady] Aguardando ${minTicks} ticks (atual: ${this.ticks.length})...`);
     let attempts = 0;
-    while (this.ticks.length < minTicks && attempts < 60) {
+    const maxAttempts = 3; // ✅ Reduzido de 60 para 3 tentativas
+    
+    while (this.ticks.length < minTicks && attempts < maxAttempts) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       attempts++;
-      if (attempts % 10 === 0) {
-        this.logger.debug(`[ensureTickStreamReady] Tentativa ${attempts}/60 - Ticks: ${this.ticks.length}/${minTicks}`);
+      
+      // ✅ Log a cada tentativa
+      this.logger.debug(`[ensureTickStreamReady] Tentativa ${attempts}/${maxAttempts} - Ticks: ${this.ticks.length}/${minTicks}`);
+      
+      // ✅ Na terceira tentativa, fazer verificação completa do WebSocket e imprimir logs detalhados
+      if (attempts === maxAttempts) {
+        this.logger.warn(`[ensureTickStreamReady] ⚠️ Terceira tentativa - Verificando WebSocket...`);
+        
+        // Verificação detalhada do WebSocket
+        const wsState = this.ws ? {
+          exists: true,
+          readyState: this.ws.readyState,
+          readyStateText: this.ws.readyState === WebSocket.OPEN ? 'OPEN' : 
+                          this.ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' : 
+                          this.ws.readyState === WebSocket.CLOSING ? 'CLOSING' : 
+                          this.ws.readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN',
+          url: this.ws.url || 'N/A',
+        } : { exists: false };
+        
+        this.logger.warn(`[ensureTickStreamReady] 📊 Estado do WebSocket:`, JSON.stringify(wsState, null, 2));
+        this.logger.warn(`[ensureTickStreamReady] 📊 Estado da conexão (isConnected): ${this.isConnected}`);
+        this.logger.warn(`[ensureTickStreamReady] 📊 Subscription ID: ${this.subscriptionId || 'N/A'}`);
+        this.logger.warn(`[ensureTickStreamReady] 📊 Símbolo: ${this.symbol || 'N/A'}`);
+        this.logger.warn(`[ensureTickStreamReady] 📊 Total de ticks recebidos: ${this.ticks.length}`);
+        this.logger.warn(`[ensureTickStreamReady] 📊 Último tick: ${this.ticks.length > 0 ? JSON.stringify(this.ticks[this.ticks.length - 1]) : 'Nenhum'}`);
+        
+        // Verificar se há mensagens sendo recebidas
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.logger.warn(`[ensureTickStreamReady] ✅ WebSocket está OPEN, mas não está recebendo ticks`);
+          this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription não ativa, símbolo incorreto, ou servidor não está enviando ticks`);
+        } else {
+          this.logger.warn(`[ensureTickStreamReady] ❌ WebSocket não está OPEN (estado: ${wsState.readyStateText})`);
+          this.logger.warn(`[ensureTickStreamReady] 💡 Tentando reconectar...`);
+          try {
+            await this.initialize();
+            this.logger.warn(`[ensureTickStreamReady] ✅ Reconexão iniciada`);
+          } catch (error) {
+            this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reconectar:`, error);
+          }
+        }
       }
     }
 
     if (this.ticks.length < minTicks) {
-      this.logger.error(`[ensureTickStreamReady] ❌ Timeout: Não foi possível obter ${minTicks} ticks (obtidos: ${this.ticks.length})`);
+      this.logger.error(`[ensureTickStreamReady] ❌ Timeout após ${maxAttempts} tentativas: Não foi possível obter ${minTicks} ticks (obtidos: ${this.ticks.length})`);
       throw new Error(
         `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
       );
