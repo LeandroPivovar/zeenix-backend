@@ -543,6 +543,7 @@ export class AiService implements OnModuleInit {
   private isConnected = false;
   private subscriptionId: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null; // ✅ Keep-alive para evitar expiração (2 min inatividade)
+  private hasReceivedAlreadySubscribed = false; // ✅ Flag para indicar que já recebemos erro "already subscribed"
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
@@ -957,13 +958,14 @@ export class AiService implements OnModuleInit {
       this.logger.debug(`[AiService] 📥 Mensagem recebida: msg_type=${msg.msg_type} | subscription=${msg.subscription?.id || 'N/A'}`);
     }
     
-    // ✅ Tentar capturar subscription ID mesmo em mensagens de erro
-    if (msg.subscription?.id) {
-      if (this.subscriptionId !== msg.subscription.id) {
-        this.subscriptionId = msg.subscription.id;
-        this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem: ${this.subscriptionId}`);
-      }
-    }
+        // ✅ Tentar capturar subscription ID mesmo em mensagens de erro
+        if (msg.subscription?.id) {
+          if (this.subscriptionId !== msg.subscription.id) {
+            this.subscriptionId = msg.subscription.id;
+            this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
+            this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem: ${this.subscriptionId}`);
+          }
+        }
     
     if (msg.error) {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
@@ -984,12 +986,16 @@ export class AiService implements OnModuleInit {
         
         if (possibleSubId) {
           this.subscriptionId = possibleSubId;
+          this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
           this.logger.log(`[AiService] 📋 Subscription ID capturado do erro: ${this.subscriptionId}`);
         } else {
           // Se não conseguimos capturar o ID, mas sabemos que há uma subscription ativa,
-          // vamos aguardar que os ticks comecem a chegar ou que uma mensagem com o ID chegue
-          this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro. Aguardando próxima mensagem...`);
-          this.logger.warn(`[AiService] 💡 Se a subscription está ativa, os ticks devem começar a chegar em breve.`);
+          // vamos aguardar que os ticks comecem a chegar (eles devem trazer o subscriptionId)
+          this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro.`);
+          this.logger.warn(`[AiService] 💡 A subscription está ativa - aguardando que os ticks cheguem (eles devem trazer o subscriptionId)...`);
+          this.logger.warn(`[AiService] 💡 Não tentaremos criar uma nova subscription para evitar erro repetido.`);
+          // Marcar que já recebemos "already subscribed" para não tentar criar nova subscription
+          this.hasReceivedAlreadySubscribed = true;
         }
       }
       return;
@@ -1011,6 +1017,7 @@ export class AiService implements OnModuleInit {
         const subId = msg.subscription?.id || msg.subscription_id || msg.id || msg.echo_req?.req_id;
         if (subId) {
           this.subscriptionId = subId;
+          this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
           this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
         } else {
           this.logger.warn(`[AiService] ⚠️ Subscription ID não encontrado na mensagem ticks_history`);
@@ -1034,6 +1041,7 @@ export class AiService implements OnModuleInit {
         // ✅ Tentar capturar subscription ID das mensagens de tick
         if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
           this.subscriptionId = msg.subscription.id;
+          this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
           this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
         }
         this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)} | subscription=${msg.subscription?.id || 'N/A'}`);
@@ -3436,23 +3444,29 @@ export class AiService implements OnModuleInit {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.logger.warn(`[ensureTickStreamReady] ✅ WebSocket está OPEN, mas não está recebendo ticks`);
           
-          // ✅ Se não há subscription ID, tentar reenviar a subscription
-          // Mas verificar se já tentamos recentemente para evitar spam
+          // ✅ Se não há subscription ID, verificar se já recebemos erro "already subscribed"
+          // Se sim, não tentar criar uma nova subscription - aguardar que os ticks cheguem
           if (!this.subscriptionId || this.subscriptionId === 'N/A') {
-            this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado - Reenviando subscription...`);
-            try {
-              this.subscribeToTicks();
-              this.logger.warn(`[ensureTickStreamReady] ✅ Subscription reenviada. Aguardando resposta...`);
-            } catch (error) {
-              this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
+            if (this.hasReceivedAlreadySubscribed) {
+              // Já recebemos "already subscribed" - não tentar criar nova subscription
+              this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado, mas já recebemos "already subscribed"`);
+              this.logger.warn(`[ensureTickStreamReady] 💡 A subscription está ativa - aguardando que os ticks cheguem (eles devem trazer o subscriptionId)...`);
+              // Não tentar criar uma nova subscription para evitar erro "You are already subscribed"
+            } else {
+              // Ainda não recebemos "already subscribed" - tentar criar subscription
+              this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado - Reenviando subscription...`);
+              try {
+                this.subscribeToTicks();
+                this.logger.warn(`[ensureTickStreamReady] ✅ Subscription reenviada. Aguardando resposta...`);
+              } catch (error) {
+                this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
+              }
             }
           } else {
             // ✅ Se temos subscriptionId mas não estamos recebendo ticks, pode ser que a subscription esteja inativa
-            // Mas não vamos tentar criar uma nova para evitar o erro "already subscribed"
             this.logger.warn(`[ensureTickStreamReady] 💡 Subscription ID existe (${this.subscriptionId}), mas não está recebendo ticks`);
             this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription expirada, símbolo incorreto, ou servidor não está enviando ticks`);
-            this.logger.warn(`[ensureTickStreamReady] 💡 Aguardando mais alguns segundos antes de tentar reenviar...`);
-            // Não reenviar imediatamente para evitar erro "You are already subscribed"
+            this.logger.warn(`[ensureTickStreamReady] 💡 Aguardando mais alguns segundos...`);
           }
         } else {
           this.logger.warn(`[ensureTickStreamReady] ❌ WebSocket não está OPEN (estado: ${wsState.readyStateText})`);
