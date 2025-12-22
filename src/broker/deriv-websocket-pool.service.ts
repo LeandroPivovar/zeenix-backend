@@ -213,26 +213,8 @@ export class DerivWebSocketPoolService {
           return;
         }
 
-        // ✅ Verificar erros primeiro
-        if (msg.error) {
-          this.logger.error(`[POOL] ❌ Erro recebido: ${JSON.stringify(msg.error)}`);
-          // Tentar encontrar subscription afetada
-          const subscriptionId = msg.subscription?.id;
-          if (subscriptionId && conn.subs.has(subscriptionId)) {
-            const sub = conn.subs.get(subscriptionId)!;
-            sub.callback(msg);
-            return;
-          }
-          // Se não encontrou, pode ser erro em request pendente
-          const pending = conn.queue.shift();
-          if (pending) {
-            clearTimeout(pending.timeout);
-            pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-            return;
-          }
-        }
-
-        // ✅ Mensagens de subscribe: encaminhar pelo subscription.id retornado pela Deriv
+        // ✅ PRIORIDADE 1: Mensagens de subscribe (proposal_open_contract, ticks, etc.)
+        // Verificar pelo subscription.id retornado pela Deriv
         const subscriptionId = msg.subscription?.id;
         if (subscriptionId && conn.subs.has(subscriptionId)) {
           const sub = conn.subs.get(subscriptionId)!;
@@ -251,28 +233,64 @@ export class DerivWebSocketPoolService {
           }
         }
 
-        // ✅ Resposta a requests da fila (non-subscribe)
-        // Verificar se é erro primeiro
-        if (msg.error) {
+        // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
+        // Verificar se é resposta de requisição (tem proposal, buy, etc. ou é erro)
+        const isRequestResponse = 
+          msg.proposal !== undefined || 
+          msg.buy !== undefined || 
+          msg.error !== undefined ||
+          (msg.msg_type === 'proposal' && !subscriptionId) ||
+          (msg.msg_type === 'buy' && !subscriptionId);
+
+        if (isRequestResponse) {
+          // ✅ Verificar erros em respostas de requisições
+          if (msg.error) {
+            const pending = conn.queue.shift();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.error.message || JSON.stringify(msg.error);
+              this.logger.error(`[POOL] ❌ Erro em request pendente: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
+          }
+
+          // ✅ Verificar erros específicos em proposal ou buy
+          if (msg.proposal?.error) {
+            const pending = conn.queue.shift();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.proposal.error.message || JSON.stringify(msg.proposal.error);
+              this.logger.error(`[POOL] ❌ Erro na proposta: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
+          }
+
+          if (msg.buy?.error) {
+            const pending = conn.queue.shift();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.buy.error.message || JSON.stringify(msg.buy.error);
+              this.logger.error(`[POOL] ❌ Erro na compra: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
+          }
+
+          // ✅ Processar resposta de sucesso
           const pending = conn.queue.shift();
           if (pending) {
             clearTimeout(pending.timeout);
-            const errorMsg = msg.error.message || JSON.stringify(msg.error);
-            this.logger.error(`[POOL] ❌ Erro em request pendente: ${errorMsg}`);
-            pending.reject(new Error(errorMsg));
+            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}`);
+            pending.resolve(msg);
             return;
           }
         }
 
-        const pending = conn.queue.shift();
-        if (pending) {
-          clearTimeout(pending.timeout);
-          pending.resolve(msg);
-        } else {
-          // ✅ Log de mensagem não processada (pode ser útil para debug)
-          if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
-            this.logger.debug(`[POOL] ⚠️ Mensagem não processada: msg_type=${msg.msg_type}, subscription=${msg.subscription?.id || 'N/A'}`);
-          }
+        // ✅ Se chegou aqui, mensagem não foi processada
+        if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
+          this.logger.debug(`[POOL] ⚠️ Mensagem não processada: msg_type=${msg.msg_type}, subscription=${subscriptionId || 'N/A'}, hasProposal=${!!msg.proposal}, hasBuy=${!!msg.buy}`);
         }
       } catch (err) {
         this.logger.error('[POOL] Erro ao processar mensagem', err as any);

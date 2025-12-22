@@ -917,26 +917,45 @@ export class OrionStrategy implements IStrategy {
       const proposalStartTime = Date.now();
       this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta via WebSocket persistente | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
       
-      const proposalResponse = await this.wsPool.sendRequest(
-        token,
-        {
-          proposal: 1,
-          amount: contractParams.amount,
-          basis: 'stake',
-          contract_type: contractParams.contract_type,
-          currency: contractParams.currency || 'USD',
-          duration: 1,
-          duration_unit: 't',
-          symbol: this.symbol,
-        },
-        60000, // ✅ Timeout aumentado para 60s (era 30s)
-      );
-
-      if (proposalResponse.error) {
-        const errorCode = proposalResponse.error?.code || '';
-        const errorMessage = proposalResponse.error?.message || JSON.stringify(proposalResponse.error);
+      let proposalResponse: any;
+      try {
+        proposalResponse = await this.wsPool.sendRequest(
+          token,
+          {
+            proposal: 1,
+            amount: contractParams.amount,
+            basis: 'stake',
+            contract_type: contractParams.contract_type,
+            currency: contractParams.currency || 'USD',
+            duration: 1,
+            duration_unit: 't',
+            symbol: this.symbol,
+          },
+          60000, // ✅ Timeout aumentado para 60s (era 30s)
+        );
+      } catch (error: any) {
+        // ✅ Capturar erros lançados pelo WebSocket Pool (timeout, erros de conexão, etc.)
+        const errorMessage = error?.message || JSON.stringify(error);
         this.logger.error(
-          `[ORION] ❌ Erro na proposta: ${JSON.stringify(proposalResponse.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+          `[ORION] ❌ Erro ao solicitar proposta: ${errorMessage} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
+        );
+        
+        if (userId) {
+          this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao solicitar proposta: ${errorMessage}`);
+          if (errorMessage.includes('Timeout')) {
+            this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Timeout ao solicitar proposta. Tente novamente.`);
+          }
+        }
+        return null;
+      }
+
+      // ✅ Verificar erros na resposta (pode estar em error ou proposal.error)
+      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+        this.logger.error(
+          `[ORION] ❌ Erro na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
         );
         
         if (userId) {
@@ -975,20 +994,40 @@ export class OrionStrategy implements IStrategy {
       // ✅ PASSO 2: Comprar contrato usando WebSocket persistente
       const buyStartTime = Date.now();
       this.logger.debug(`[ORION] 💰 [${userId || 'SYSTEM'}] Comprando contrato via WebSocket persistente | ProposalId: ${proposalId}`);
-      const buyResponse = await this.wsPool.sendRequest(
-        token,
-        {
-          buy: proposalId,
-          price: proposalPrice,
-        },
-        60000, // ✅ Timeout aumentado para 60s
-      );
-
-      if (buyResponse.error) {
-        const errorCode = buyResponse.error?.code || '';
-        const errorMessage = buyResponse.error?.message || JSON.stringify(buyResponse.error);
+      
+      let buyResponse: any;
+      try {
+        buyResponse = await this.wsPool.sendRequest(
+          token,
+          {
+            buy: proposalId,
+            price: proposalPrice,
+          },
+          60000, // ✅ Timeout aumentado para 60s
+        );
+      } catch (error: any) {
+        // ✅ Capturar erros lançados pelo WebSocket Pool (timeout, erros de conexão, etc.)
+        const errorMessage = error?.message || JSON.stringify(error);
         this.logger.error(
-          `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(buyResponse.error)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
+          `[ORION] ❌ Erro ao comprar contrato: ${errorMessage} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
+        );
+        
+        if (userId) {
+          this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
+          if (errorMessage.includes('Timeout')) {
+            this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Timeout ao comprar contrato. Tente novamente.`);
+          }
+        }
+        return null;
+      }
+
+      // ✅ Verificar erros na resposta (pode estar em error ou buy.error)
+      const errorObj = buyResponse.error || buyResponse.buy?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+        this.logger.error(
+          `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(errorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
         );
         
         if (userId) {
