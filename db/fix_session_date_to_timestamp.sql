@@ -10,3 +10,4 @@ COMMENT 'Data e hora da sessão atual (para cálculo do tempo ativo)';
 
 
 
+

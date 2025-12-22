@@ -51,6 +51,13 @@ export interface TrinityAssetState {
   apostaBase: number;
   ultimoLucro: number;
   lastOperationTimestamp: Date | null;
+  // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
+  pendingTradeId?: number | null;
+  pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
+  pendingTradeEntryPrice?: number | null;
+  pendingTradeStakeAmount?: number | null;
+  predictedStatus?: 'WON' | 'LOST' | null;
+  ticksReceivedAfterBuy?: number;
 }
 
 export interface TrinityUserState {
@@ -265,6 +272,19 @@ export class TrinityStrategy implements IStrategy {
       // Incrementar contador de ticks
       if (asset.ticksDesdeUltimaOp !== undefined && asset.ticksDesdeUltimaOp >= 0) {
         asset.ticksDesdeUltimaOp += 1;
+      }
+
+      // ✅ PREVISÃO: Verificar se há trade pendente e fazer previsão no próximo tick
+      if (asset.pendingTradeId && asset.pendingTradeOperation && !asset.predictedStatus) {
+        if (asset.ticksReceivedAfterBuy === undefined) {
+          asset.ticksReceivedAfterBuy = 0;
+        }
+        asset.ticksReceivedAfterBuy++;
+        
+        // Se já recebemos pelo menos 1 tick após a compra, fazer previsão
+        if (asset.ticksReceivedAfterBuy >= 1) {
+          await this.predictTrinityTradeResult(asset, state.userId, symbol, latestTick);
+        }
       }
 
       // Verificar se pode processar
@@ -854,6 +874,31 @@ export class TrinityStrategy implements IStrategy {
     );
 
     try {
+      // ✅ PREVISÃO: Armazenar informações do trade para previsão no próximo tick
+      const entryPrice = this.trinityTicks[symbol].length > 0 
+        ? this.trinityTicks[symbol][this.trinityTicks[symbol].length - 1].value 
+        : 0;
+      
+      // Criar registro de trade ANTES de executar (para ter o ID)
+      const tradeId = await this.saveTrinityTrade({
+        userId: state.userId,
+        contractId: null, // Será preenchido depois
+        symbol,
+        contractType,
+        entryPrice,
+        stakeAmount,
+        operation,
+        mode: state.mode,
+      });
+
+      // ✅ PREVISÃO: Armazenar informações do trade para previsão no próximo tick
+      asset.pendingTradeId = tradeId;
+      asset.pendingTradeOperation = operation;
+      asset.pendingTradeEntryPrice = entryPrice;
+      asset.pendingTradeStakeAmount = stakeAmount;
+      asset.ticksReceivedAfterBuy = 0;
+      asset.predictedStatus = null;
+
       // ✅ Executar trade E monitorar no MESMO WebSocket (mais rápido para contratos de 1 tick)
       const result = await this.executeTrinityTradeDirect(
         state.userId,
@@ -873,6 +918,13 @@ export class TrinityStrategy implements IStrategy {
         asset.isOperationActive = false;
         state.globalOperationActive = false;
         state.creationCooldownUntil = Date.now() + 5000;
+        // ✅ Limpar campos de previsão em caso de erro
+        asset.pendingTradeId = null;
+        asset.pendingTradeOperation = null;
+        asset.pendingTradeEntryPrice = null;
+        asset.pendingTradeStakeAmount = null;
+        asset.predictedStatus = null;
+        asset.ticksReceivedAfterBuy = 0;
         this.saveTrinityLog(state.userId, symbol, 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
         this.advanceToNextAsset(state);
         return;
@@ -881,42 +933,72 @@ export class TrinityStrategy implements IStrategy {
       // ✅ Resultado já veio do mesmo WebSocket - processar diretamente
       const { contractId, profit, exitSpot } = result;
       const exitPrice = Number(exitSpot || 0);
-      const isWin = profit > 0;
+      const confirmedStatus = profit > 0 ? 'WON' : 'LOST';
 
-      // Salvar trade no banco de dados
-      const entryPrice = this.trinityTicks[symbol].length > 0 
-        ? this.trinityTicks[symbol][this.trinityTicks[symbol].length - 1].value 
-        : 0;
-      const tradeId = await this.saveTrinityTrade({
-        userId: state.userId,
+      // ✅ Atualizar trade com contractId
+      await this.updateTrinityTrade(tradeId, state.userId, {
         contractId,
-        symbol,
-        contractType,
-        entryPrice,
-        stakeAmount,
-        operation,
-        mode: state.mode,
       });
-      
-      // Atualizar trade com resultado
-      if (tradeId) {
+
+      // ✅ VERIFICAÇÃO: Se já tínhamos uma previsão, verificar se bateu
+      if (asset.predictedStatus && asset.predictedStatus !== confirmedStatus) {
+        this.logger.warn(
+          `[TRINITY][${symbol}] ⚠️ Previsão não bateu! Revertendo... | ` +
+          `Previsto: ${asset.predictedStatus} | Confirmado: ${confirmedStatus} | TradeId: ${tradeId}`
+        );
+        // Reverter previsão e aplicar resultado correto
+        await this.revertTrinityPredictionAndApplyCorrect(
+          asset,
+          state.userId,
+          symbol,
+          tradeId,
+          confirmedStatus,
+          profit,
+          exitPrice,
+          contractId
+        );
+      } else {
+        // Se previsão bateu ou não havia previsão, aplicar resultado normalmente
+        if (asset.predictedStatus) {
+          this.logger.log(
+            `[TRINITY][${symbol}] ✅ Previsão confirmada! | ` +
+            `Status: ${confirmedStatus} | Profit: $${profit.toFixed(2)} | TradeId: ${tradeId}`
+          );
+        }
+
+        // Atualizar trade com resultado
         await this.updateTrinityTrade(tradeId, state.userId, {
-          status: isWin ? 'WON' : 'LOST',
+          status: confirmedStatus,
           profitLoss: profit,
           exitPrice,
         });
       }
 
-      this.logger.log(`[TRINITY][${symbol}] ${isWin ? 'WON' : 'LOST'} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+      // ✅ Limpar campos de previsão
+      asset.pendingTradeId = null;
+      asset.pendingTradeOperation = null;
+      asset.pendingTradeEntryPrice = null;
+      asset.pendingTradeStakeAmount = null;
+      asset.predictedStatus = null;
+      asset.ticksReceivedAfterBuy = 0;
+
+      this.logger.log(`[TRINITY][${symbol}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
       
       // ✅ Processar resultado (Martingale)
-      await this.processTrinityResult(state, symbol, isWin, stakeAmount, operation, profit, exitPrice, tradeId);
+      await this.processTrinityResult(state, symbol, confirmedStatus === 'WON', stakeAmount, operation, profit, exitPrice, tradeId);
       
     } catch (error) {
       this.logger.error(`[TRINITY][${symbol}] Erro ao executar operação:`, error);
       asset.isOperationActive = false;
       state.globalOperationActive = false;
       state.creationCooldownUntil = Date.now() + 5000; // 5s cooldown após erro
+      // ✅ Limpar campos de previsão em caso de erro
+      asset.pendingTradeId = null;
+      asset.pendingTradeOperation = null;
+      asset.pendingTradeEntryPrice = null;
+      asset.pendingTradeStakeAmount = null;
+      asset.predictedStatus = null;
+      asset.ticksReceivedAfterBuy = 0;
       this.advanceToNextAsset(state);
     }
   }
@@ -1634,11 +1716,146 @@ export class TrinityStrategy implements IStrategy {
   }
 
   /**
+   * ✅ PREVISÃO: Calcula o resultado previsto baseado no próximo tick
+   */
+  private async predictTrinityTradeResult(
+    asset: TrinityAssetState,
+    userId: string,
+    symbol: 'R_10' | 'R_25' | 'R_50',
+    tick: Tick,
+  ): Promise<void> {
+    if (!asset.pendingTradeId || !asset.pendingTradeOperation) {
+      return;
+    }
+
+    // Extrair último dígito do tick
+    const tickValue = tick.value || 0;
+    const lastDigit = this.extractLastDigit(tickValue);
+    const isEven = lastDigit % 2 === 0;
+
+    // Verificar se corresponde à aposta
+    const betType = asset.pendingTradeOperation;
+    let predictedWon = false;
+
+    if (betType === 'PAR') {
+      predictedWon = isEven;
+    } else if (betType === 'IMPAR') {
+      predictedWon = !isEven;
+    }
+
+    // Calcular profit previsto (aproximado)
+    const stakeAmount = asset.pendingTradeStakeAmount || 0;
+    const payout = 0.95; // Payout aproximado (95%)
+    const predictedProfit = predictedWon 
+      ? (stakeAmount * payout) - stakeAmount 
+      : -stakeAmount;
+
+    const predictedStatus: 'WON' | 'LOST' = predictedWon ? 'WON' : 'LOST';
+
+    // Atualizar status previsto no estado
+    asset.predictedStatus = predictedStatus;
+
+    this.logger.log(
+      `[TRINITY][${symbol}] 🔮 PREVISÃO | TradeId: ${asset.pendingTradeId} | ` +
+      `Tick: ${tickValue} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | ` +
+      `Aposta: ${betType} | Previsto: ${predictedStatus} | Profit: $${predictedProfit.toFixed(2)}`
+    );
+
+    // Atualizar banco de dados com previsão
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades
+         SET exit_price = ?, profit_loss = ?, status = ?
+         WHERE id = ? AND status = 'PENDING'`,
+        [tickValue, predictedProfit, predictedStatus, asset.pendingTradeId],
+      );
+
+      // Emitir evento de atualização (previsão)
+      this.tradeEvents.emit({
+        userId,
+        type: 'updated',
+        tradeId: asset.pendingTradeId,
+        status: predictedStatus,
+        strategy: 'trinity',
+        profitLoss: predictedProfit,
+        exitPrice: tickValue,
+        isPredicted: true, // Marcar como previsão
+        symbol,
+      });
+
+      this.saveTrinityLog(
+        userId,
+        symbol,
+        'resultado',
+        `🔮 PREVISÃO: ${predictedStatus} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | Profit: $${predictedProfit.toFixed(2)}`
+      );
+    } catch (error) {
+      this.logger.error(`[TRINITY][${symbol}] Erro ao atualizar previsão no banco:`, error);
+    }
+  }
+
+  /**
+   * ✅ REVERSÃO: Reverte previsão incorreta e aplica resultado correto
+   */
+  private async revertTrinityPredictionAndApplyCorrect(
+    asset: TrinityAssetState,
+    userId: string,
+    symbol: 'R_10' | 'R_25' | 'R_50',
+    tradeId: number,
+    confirmedStatus: 'WON' | 'LOST',
+    confirmedProfit: number,
+    exitPrice: number,
+    contractId: string,
+  ): Promise<void> {
+    const previousPrediction = asset.predictedStatus;
+
+    this.logger.warn(
+      `[TRINITY][${symbol}] 🔄 REVERTENDO PREVISÃO | TradeId: ${tradeId} | ` +
+      `Previsão anterior: ${previousPrediction} | Resultado correto: ${confirmedStatus} | ` +
+      `Profit anterior: $${(asset.pendingTradeStakeAmount || 0) * 0.95 - (asset.pendingTradeStakeAmount || 0)} | ` +
+      `Profit correto: $${confirmedProfit.toFixed(2)}`
+    );
+
+    // Atualizar banco com resultado correto
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades
+         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+         WHERE id = ?`,
+        [contractId, exitPrice, confirmedProfit, confirmedStatus, tradeId],
+      );
+
+      // Emitir evento de correção
+      this.tradeEvents.emit({
+        userId,
+        type: 'corrected',
+        tradeId,
+        previousPrediction,
+        confirmedStatus,
+        previousProfit: (asset.pendingTradeStakeAmount || 0) * 0.95 - (asset.pendingTradeStakeAmount || 0),
+        confirmedProfit,
+        strategy: 'trinity',
+        exitPrice,
+        symbol,
+      });
+
+      this.saveTrinityLog(
+        userId,
+        symbol,
+        'resultado',
+        `🔄 PREVISÃO CORRIGIDA | Anterior: ${previousPrediction} | Correto: ${confirmedStatus} | Profit: $${confirmedProfit.toFixed(2)}`
+      );
+    } catch (error) {
+      this.logger.error(`[TRINITY][${symbol}] Erro ao reverter previsão no banco:`, error);
+    }
+  }
+
+  /**
    * ✅ TRINITY: Salva trade no banco de dados (status PENDING)
    */
   private async saveTrinityTrade(trade: {
     userId: string;
-    contractId: string;
+    contractId: string | null;
     symbol: 'R_10' | 'R_25' | 'R_50';
     contractType: string;
     entryPrice: number;

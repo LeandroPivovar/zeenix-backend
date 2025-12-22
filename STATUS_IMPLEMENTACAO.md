@@ -174,3 +174,4 @@ source backend/db/add_trading_mode_and_soros.sql;
 
 
 
+

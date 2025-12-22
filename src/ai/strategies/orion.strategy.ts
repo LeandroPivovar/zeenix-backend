@@ -27,6 +27,13 @@ export interface VelozUserState {
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
+  // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
+  pendingTradeId?: number | null;
+  pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
+  pendingTradeEntryPrice?: number | null;
+  pendingTradeStakeAmount?: number | null;
+  predictedStatus?: 'WON' | 'LOST' | null;
+  ticksReceivedAfterBuy?: number;
 }
 
 export interface ModeradoUserState {
@@ -49,6 +56,13 @@ export interface ModeradoUserState {
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
+  // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
+  pendingTradeId?: number | null;
+  pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
+  pendingTradeEntryPrice?: number | null;
+  pendingTradeStakeAmount?: number | null;
+  predictedStatus?: 'WON' | 'LOST' | null;
+  ticksReceivedAfterBuy?: number;
 }
 
 export interface PrecisoUserState {
@@ -70,6 +84,13 @@ export interface PrecisoUserState {
   ultimoLucro: number;
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
+  // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
+  pendingTradeId?: number | null;
+  pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
+  pendingTradeEntryPrice?: number | null;
+  pendingTradeStakeAmount?: number | null;
+  predictedStatus?: 'WON' | 'LOST' | null;
+  ticksReceivedAfterBuy?: number;
 }
 
 // ============================================
@@ -283,6 +304,19 @@ export class OrionStrategy implements IStrategy {
       if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
         state.ticksDesdeUltimaOp += 1;
       }
+      
+      // ✅ PREVISÃO: Verificar se há trade pendente e fazer previsão no próximo tick
+      if (state.pendingTradeId && state.pendingTradeOperation && !state.predictedStatus) {
+        if (state.ticksReceivedAfterBuy === undefined) {
+          state.ticksReceivedAfterBuy = 0;
+        }
+        state.ticksReceivedAfterBuy++;
+        
+        // Se já recebemos pelo menos 1 tick após a compra, fazer previsão
+        if (state.ticksReceivedAfterBuy >= 1) {
+          await this.predictOrionTradeResult(state, latestTick);
+        }
+      }
     }
 
     // Log de diagnóstico a cada 10 ticks
@@ -374,6 +408,21 @@ export class OrionStrategy implements IStrategy {
     if (this.moderadoUsers.size === 0) return;
     if (this.ticks.length < MODERADO_CONFIG.amostraInicial) return;
 
+    // ✅ PREVISÃO: Verificar trades pendentes e fazer previsão
+    for (const [userId, state] of this.moderadoUsers.entries()) {
+      if (state.pendingTradeId && state.pendingTradeOperation && !state.predictedStatus) {
+        if (state.ticksReceivedAfterBuy === undefined) {
+          state.ticksReceivedAfterBuy = 0;
+        }
+        state.ticksReceivedAfterBuy++;
+        
+        // Se já recebemos pelo menos 1 tick após a compra, fazer previsão
+        if (state.ticksReceivedAfterBuy >= 1) {
+          await this.predictOrionTradeResult(state, latestTick);
+        }
+      }
+    }
+
     // Processar cada usuário
     for (const [userId, state] of this.moderadoUsers.entries()) {
       if (state.isOperationActive) continue;
@@ -438,6 +487,21 @@ export class OrionStrategy implements IStrategy {
   private async processPrecisoStrategies(latestTick: Tick): Promise<void> {
     if (this.precisoUsers.size === 0) return;
     if (this.ticks.length < PRECISO_CONFIG.amostraInicial) return;
+
+    // ✅ PREVISÃO: Verificar trades pendentes e fazer previsão
+    for (const [userId, state] of this.precisoUsers.entries()) {
+      if (state.pendingTradeId && state.pendingTradeOperation && !state.predictedStatus) {
+        if (state.ticksReceivedAfterBuy === undefined) {
+          state.ticksReceivedAfterBuy = 0;
+        }
+        state.ticksReceivedAfterBuy++;
+        
+        // Se já recebemos pelo menos 1 tick após a compra, fazer previsão
+        if (state.ticksReceivedAfterBuy >= 1) {
+          await this.predictOrionTradeResult(state, latestTick);
+        }
+      }
+    }
 
     // Processar cada usuário
     for (const [userId, state] of this.precisoUsers.entries()) {
@@ -736,6 +800,14 @@ export class OrionStrategy implements IStrategy {
         mode,
       );
 
+      // ✅ PREVISÃO: Armazenar informações do trade para previsão no próximo tick
+      state.pendingTradeId = tradeId;
+      state.pendingTradeOperation = operation;
+      state.pendingTradeEntryPrice = currentPrice;
+      state.pendingTradeStakeAmount = stakeAmount;
+      state.ticksReceivedAfterBuy = 0;
+      state.predictedStatus = null;
+
       // ✅ Executar trade E monitorar no MESMO WebSocket (mais rápido para contratos de 1 tick)
       const result = await this.executeOrionTradeViaWebSocket(
         state.derivToken,
@@ -753,6 +825,13 @@ export class OrionStrategy implements IStrategy {
           state.ticksDesdeUltimaOp = 0;
         }
         state.creationCooldownUntil = Date.now() + 5000;
+        // ✅ Limpar campos de previsão em caso de erro
+        state.pendingTradeId = null;
+        state.pendingTradeOperation = null;
+        state.pendingTradeEntryPrice = null;
+        state.pendingTradeStakeAmount = null;
+        state.predictedStatus = null;
+        state.ticksReceivedAfterBuy = 0;
         await this.dataSource.query(
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
           ['Não foi possível criar/monitorar contrato', tradeId],
@@ -764,28 +843,61 @@ export class OrionStrategy implements IStrategy {
       // ✅ Resultado já veio do mesmo WebSocket - processar diretamente
       const { contractId, profit, exitSpot } = result;
       const exitPrice = Number(exitSpot || 0);
-      const status = profit >= 0 ? 'WON' : 'LOST';
+      const confirmedStatus = profit >= 0 ? 'WON' : 'LOST';
 
-      // Atualizar trade no banco
-      await this.dataSource.query(
-        `UPDATE ai_trades
-         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-         WHERE id = ?`,
-        [contractId, exitPrice, profit, status, tradeId],
-      );
+      // ✅ VERIFICAÇÃO: Se já tínhamos uma previsão, verificar se bateu
+      if (state.predictedStatus && state.predictedStatus !== confirmedStatus) {
+        this.logger.warn(
+          `[ORION][${mode}] ⚠️ Previsão não bateu! Revertendo... | ` +
+          `Previsto: ${state.predictedStatus} | Confirmado: ${confirmedStatus} | TradeId: ${tradeId}`
+        );
+        // Reverter previsão e aplicar resultado correto
+        await this.revertOrionPredictionAndApplyCorrect(
+          state,
+          tradeId,
+          confirmedStatus,
+          profit,
+          exitPrice,
+          contractId
+        );
+      } else {
+        // Se previsão bateu ou não havia previsão, aplicar resultado normalmente
+        if (state.predictedStatus) {
+          this.logger.log(
+            `[ORION][${mode}] ✅ Previsão confirmada! | ` +
+            `Status: ${confirmedStatus} | Profit: $${profit.toFixed(2)} | TradeId: ${tradeId}`
+          );
+        }
 
-      // Emitir evento de atualização
-      this.tradeEvents.emit({
-        userId: state.userId,
-        type: 'updated',
-        tradeId,
-        status,
-        strategy: 'orion',
-        profitLoss: profit,
-        exitPrice,
-      });
+        // Atualizar trade no banco
+        await this.dataSource.query(
+          `UPDATE ai_trades
+           SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+           WHERE id = ?`,
+          [contractId, exitPrice, profit, confirmedStatus, tradeId],
+        );
 
-      this.logger.log(`[ORION][${mode}] ${status} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+        // Emitir evento de atualização
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: 'updated',
+          tradeId,
+          status: confirmedStatus,
+          strategy: 'orion',
+          profitLoss: profit,
+          exitPrice,
+        });
+
+        this.logger.log(`[ORION][${mode}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+      }
+
+      // ✅ Limpar campos de previsão
+      state.pendingTradeId = null;
+      state.pendingTradeOperation = null;
+      state.pendingTradeEntryPrice = null;
+      state.pendingTradeStakeAmount = null;
+      state.predictedStatus = null;
+      state.ticksReceivedAfterBuy = 0;
       
       // ✅ Processar resultado (Soros/Martingale)
       await this.processOrionResult(state, stakeAmount, operation, profit, mode);
@@ -793,6 +905,14 @@ export class OrionStrategy implements IStrategy {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
       state.creationCooldownUntil = Date.now() + 5000; // cooldown após erro
+      
+      // ✅ Limpar campos de previsão em caso de erro
+      state.pendingTradeId = null;
+      state.pendingTradeOperation = null;
+      state.pendingTradeEntryPrice = null;
+      state.pendingTradeStakeAmount = null;
+      state.predictedStatus = null;
+      state.ticksReceivedAfterBuy = 0;
       
       const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
       
@@ -1334,6 +1454,145 @@ export class OrionStrategy implements IStrategy {
       this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar limites após resultado:`, error);
       // Continuar mesmo se houver erro na verificação (fail-open)
     }
+  }
+
+  /**
+   * ✅ PREVISÃO: Calcula o resultado previsto baseado no próximo tick
+   */
+  private async predictOrionTradeResult(
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    tick: Tick,
+  ): Promise<void> {
+    if (!state.pendingTradeId || !state.pendingTradeOperation) {
+      return;
+    }
+
+    // Extrair último dígito do tick (mesma lógica do ai.service.ts)
+    const tickValue = tick.value || 0;
+    const lastDigit = this.extractLastDigit(tickValue);
+    const isEven = lastDigit % 2 === 0;
+
+    // Verificar se corresponde à aposta
+    const betType = state.pendingTradeOperation;
+    let predictedWon = false;
+
+    if (betType === 'PAR') {
+      predictedWon = isEven;
+    } else if (betType === 'IMPAR') {
+      predictedWon = !isEven;
+    }
+
+    // Calcular profit previsto (aproximado)
+    const stakeAmount = state.pendingTradeStakeAmount || 0;
+    const payout = 0.95; // Payout aproximado (95%)
+    const predictedProfit = predictedWon 
+      ? (stakeAmount * payout) - stakeAmount 
+      : -stakeAmount;
+
+    const predictedStatus: 'WON' | 'LOST' = predictedWon ? 'WON' : 'LOST';
+
+    // Atualizar status previsto no estado
+    state.predictedStatus = predictedStatus;
+
+    this.logger.log(
+      `[ORION] 🔮 PREVISÃO | TradeId: ${state.pendingTradeId} | ` +
+      `Tick: ${tickValue} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | ` +
+      `Aposta: ${betType} | Previsto: ${predictedStatus} | Profit: $${predictedProfit.toFixed(2)}`
+    );
+
+    // Atualizar banco de dados com previsão
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades
+         SET exit_price = ?, profit_loss = ?, status = ?
+         WHERE id = ? AND status = 'PENDING'`,
+        [tickValue, predictedProfit, predictedStatus, state.pendingTradeId],
+      );
+
+      // Emitir evento de atualização (previsão)
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'updated',
+        tradeId: state.pendingTradeId,
+        status: predictedStatus,
+        strategy: 'orion',
+        profitLoss: predictedProfit,
+        exitPrice: tickValue,
+        isPredicted: true, // Marcar como previsão
+      });
+
+      this.saveOrionLog(
+        state.userId,
+        'R_10',
+        'resultado',
+        `🔮 PREVISÃO: ${predictedStatus} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | Profit: $${predictedProfit.toFixed(2)}`
+      );
+    } catch (error) {
+      this.logger.error(`[ORION] Erro ao atualizar previsão no banco:`, error);
+    }
+  }
+
+  /**
+   * ✅ REVERSÃO: Reverte previsão incorreta e aplica resultado correto
+   */
+  private async revertOrionPredictionAndApplyCorrect(
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    tradeId: number,
+    confirmedStatus: 'WON' | 'LOST',
+    confirmedProfit: number,
+    exitPrice: number,
+    contractId: string,
+  ): Promise<void> {
+    const previousPrediction = state.predictedStatus;
+
+    this.logger.warn(
+      `[ORION] 🔄 REVERTENDO PREVISÃO | TradeId: ${tradeId} | ` +
+      `Previsão anterior: ${previousPrediction} | Resultado correto: ${confirmedStatus} | ` +
+      `Profit anterior: $${(state.pendingTradeStakeAmount || 0) * 0.95 - (state.pendingTradeStakeAmount || 0)} | ` +
+      `Profit correto: $${confirmedProfit.toFixed(2)}`
+    );
+
+    // Atualizar banco com resultado correto
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades
+         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+         WHERE id = ?`,
+        [contractId, exitPrice, confirmedProfit, confirmedStatus, tradeId],
+      );
+
+      // Emitir evento de correção
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'corrected',
+        tradeId,
+        previousPrediction,
+        confirmedStatus,
+        previousProfit: (state.pendingTradeStakeAmount || 0) * 0.95 - (state.pendingTradeStakeAmount || 0),
+        confirmedProfit,
+        strategy: 'orion',
+        exitPrice,
+      });
+
+      this.saveOrionLog(
+        state.userId,
+        'resultado',
+        `🔄 PREVISÃO CORRIGIDA | Anterior: ${previousPrediction} | Correto: ${confirmedStatus} | Profit: $${confirmedProfit.toFixed(2)}`
+      );
+    } catch (error) {
+      this.logger.error(`[ORION] Erro ao reverter previsão no banco:`, error);
+    }
+  }
+
+  /**
+   * ✅ Extrai o último dígito de um valor (mesma lógica do ai.service.ts)
+   */
+  private extractLastDigit(value: number): number {
+    const numeric = Math.abs(value);
+    const normalized = numeric.toString().replace('.', '').replace('-', '');
+    const lastChar = normalized.charAt(normalized.length - 1);
+    const digit = parseInt(lastChar, 10);
+    return Number.isNaN(digit) ? 0 : digit;
   }
 
   /**

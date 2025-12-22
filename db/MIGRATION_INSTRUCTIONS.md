@@ -114,3 +114,4 @@ Após executar a migração com sucesso, o sistema de Copy Trading deve funciona
 
 
 
+
