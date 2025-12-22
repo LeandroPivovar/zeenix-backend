@@ -5,7 +5,7 @@ import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 import { gerarSinalZenix } from './signal-generator';
-import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
+// ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
 
 // Estados ORION
 export interface VelozUserState {
@@ -181,7 +181,6 @@ export class OrionStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
-    private wsPool: DerivWebSocketPoolService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -899,9 +898,9 @@ export class OrionStrategy implements IStrategy {
   }
 
   /**
-   * ✅ ORION: Executa trade via WebSocket PERSISTENTE (pool) E monitora resultado no MESMO WebSocket
+   * ✅ ORION: Executa trade via WebSocket DIRETO (sem pool) E monitora resultado no MESMO WebSocket
    * Retorna o resultado completo (contractId, profit, exitSpot) ou null se falhar
-   * Usa DerivWebSocketPoolService para manter conexão aberta durante toda duração do contrato
+   * Cria conexão WebSocket direta conforme documentação Deriv, com keep-alive para evitar expiração
    */
   private async executeOrionTradeViaWebSocket(
     token: string,
@@ -912,42 +911,123 @@ export class OrionStrategy implements IStrategy {
     },
     userId?: string,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
-    try {
-      // ✅ PASSO 1: Solicitar proposta usando WebSocket persistente
-      const proposalStartTime = Date.now();
-      this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta via WebSocket persistente | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
-      
-      let proposalResponse: any;
-      try {
-        proposalResponse = await this.wsPool.sendRequest(
-          token,
-          {
-            proposal: 1,
-            amount: contractParams.amount,
-            basis: 'stake',
-            contract_type: contractParams.contract_type,
-            currency: contractParams.currency || 'USD',
-            duration: 1,
-            duration_unit: 't',
-            symbol: this.symbol,
-          },
-          60000, // ✅ Timeout aumentado para 60s (era 30s)
-        );
-      } catch (error: any) {
-        // ✅ Capturar erros lançados pelo WebSocket Pool (timeout, erros de conexão, etc.)
-        const errorMessage = error?.message || JSON.stringify(error);
-        this.logger.error(
-          `[ORION] ❌ Erro ao solicitar proposta: ${errorMessage} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
-        );
-        
-        if (userId) {
-          this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro ao solicitar proposta: ${errorMessage}`);
-          if (errorMessage.includes('Timeout')) {
-            this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Timeout ao solicitar proposta. Tente novamente.`);
-          }
-        }
-        return null;
+    let ws: WebSocket | null = null;
+    let keepAliveInterval: NodeJS.Timeout | null = null;
+    
+    const cleanup = () => {
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
       }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.close();
+        } catch (error) {
+          // Ignorar erros ao fechar
+        }
+      }
+    };
+
+    try {
+      // ✅ PASSO 1: Criar conexão WebSocket direta
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      this.logger.debug(`[ORION] 🔌 [${userId || 'SYSTEM'}] Criando conexão WebSocket direta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+      
+      ws = await new Promise<WebSocket>((resolve, reject) => {
+        const socket = new WebSocket(endpoint, {
+          headers: { Origin: 'https://app.deriv.com' },
+        });
+
+        const timeout = setTimeout(() => {
+          socket.close();
+          reject(new Error('Timeout ao conectar WebSocket'));
+        }, 10000);
+
+        socket.on('open', () => {
+          clearTimeout(timeout);
+          this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado`);
+          
+          // ✅ Iniciar keep-alive (ping a cada 90s)
+          keepAliveInterval = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+              try {
+                socket.send(JSON.stringify({ ping: 1 }));
+                this.logger.debug(`[ORION][KeepAlive] Ping enviado`);
+              } catch (error) {
+                // Ignorar erros de ping
+              }
+            }
+          }, 90000);
+          
+          resolve(socket);
+        });
+
+        socket.on('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+
+      // ✅ PASSO 2: Autorizar
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timeout na autorização')), 10000);
+        
+        const messageHandler = (data: WebSocket.RawData) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.authorize) {
+              clearTimeout(timeout);
+              ws?.removeListener('message', messageHandler);
+              
+              if (msg.authorize.error) {
+                reject(new Error(`Erro na autorização: ${msg.authorize.error.message}`));
+                return;
+              }
+              
+              this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+              resolve();
+            }
+          } catch (error) {
+            // Continuar aguardando
+          }
+        };
+        
+        ws?.on('message', messageHandler);
+        ws?.send(JSON.stringify({ authorize: token }));
+      });
+
+      // ✅ PASSO 3: Solicitar proposta
+      const proposalStartTime = Date.now();
+      this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+      
+      const proposalResponse: any = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timeout ao solicitar proposta')), 60000);
+        
+        const messageHandler = (data: WebSocket.RawData) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.proposal || msg.error) {
+              clearTimeout(timeout);
+              ws?.removeListener('message', messageHandler);
+              resolve(msg);
+            }
+          } catch (error) {
+            // Continuar aguardando
+          }
+        };
+        
+        ws?.on('message', messageHandler);
+        ws?.send(JSON.stringify({
+          proposal: 1,
+          amount: contractParams.amount,
+          basis: 'stake',
+          contract_type: contractParams.contract_type,
+          currency: contractParams.currency || 'USD',
+          duration: 1,
+          duration_unit: 't',
+          symbol: this.symbol,
+        }));
+      });
 
       // ✅ Verificar erros na resposta (pode estar em error ou proposal.error)
       const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
@@ -974,6 +1054,7 @@ export class OrionStrategy implements IStrategy {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Erro temporário da Deriv. Tente novamente em alguns segundos.`);
           }
         }
+        cleanup();
         return null;
       }
 
@@ -985,28 +1066,42 @@ export class OrionStrategy implements IStrategy {
         if (userId) {
           this.saveOrionLog(userId, 'R_10', 'erro', `❌ Proposta inválida da Deriv | Resposta: ${JSON.stringify(proposalResponse)}`);
         }
+        cleanup();
         return null;
       }
 
       const proposalDuration = Date.now() - proposalStartTime;
       this.logger.debug(`[ORION] 📊 [${userId || 'SYSTEM'}] Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`);
 
-      // ✅ PASSO 2: Comprar contrato usando WebSocket persistente
+      // ✅ PASSO 4: Comprar contrato
       const buyStartTime = Date.now();
-      this.logger.debug(`[ORION] 💰 [${userId || 'SYSTEM'}] Comprando contrato via WebSocket persistente | ProposalId: ${proposalId}`);
+      this.logger.debug(`[ORION] 💰 [${userId || 'SYSTEM'}] Comprando contrato | ProposalId: ${proposalId}`);
       
       let buyResponse: any;
       try {
-        buyResponse = await this.wsPool.sendRequest(
-          token,
-          {
+        buyResponse = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Timeout ao comprar contrato')), 60000);
+          
+          const messageHandler = (data: WebSocket.RawData) => {
+            try {
+              const msg = JSON.parse(data.toString());
+              if (msg.buy || msg.error) {
+                clearTimeout(timeout);
+                ws?.removeListener('message', messageHandler);
+                resolve(msg);
+              }
+            } catch (error) {
+              // Continuar aguardando
+            }
+          };
+          
+          ws?.on('message', messageHandler);
+          ws?.send(JSON.stringify({
             buy: proposalId,
             price: proposalPrice,
-          },
-          60000, // ✅ Timeout aumentado para 60s
-        );
+          }));
+        });
       } catch (error: any) {
-        // ✅ Capturar erros lançados pelo WebSocket Pool (timeout, erros de conexão, etc.)
         const errorMessage = error?.message || JSON.stringify(error);
         this.logger.error(
           `[ORION] ❌ Erro ao comprar contrato: ${errorMessage} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
@@ -1018,6 +1113,7 @@ export class OrionStrategy implements IStrategy {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Timeout ao comprar contrato. Tente novamente.`);
           }
         }
+        cleanup();
         return null;
       }
 
@@ -1039,6 +1135,7 @@ export class OrionStrategy implements IStrategy {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Rate limit atingido na Deriv.`);
           }
         }
+        cleanup();
         return null;
       }
 
@@ -1048,142 +1145,124 @@ export class OrionStrategy implements IStrategy {
         if (userId) {
           this.saveOrionLog(userId, 'R_10', 'erro', `❌ Contrato criado mas sem contract_id | Resposta: ${JSON.stringify(buyResponse)}`);
         }
+        cleanup();
         return null;
       }
 
       const buyDuration = Date.now() - buyStartTime;
-      this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Contrato criado em ${buyDuration}ms | ContractId: ${contractId} | Monitorando via WebSocket persistente...`);
+      this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Contrato criado em ${buyDuration}ms | ContractId: ${contractId} | Monitorando...`);
       if (userId) {
         this.saveOrionLog(userId, 'R_10', 'operacao', `✅ Contrato criado: ${contractId} | Proposta: ${proposalDuration}ms | Compra: ${buyDuration}ms`);
       }
 
-      // ✅ PASSO 3: Monitorar contrato usando subscribe no MESMO WebSocket persistente
+      // ✅ PASSO 5: Monitorar contrato usando subscribe no MESMO WebSocket
       const monitorStartTime = Date.now();
-      this.logger.debug(`[ORION] 👁️ [${userId || 'SYSTEM'}] Iniciando monitoramento do contrato ${contractId} via WebSocket persistente...`);
+      this.logger.debug(`[ORION] 👁️ [${userId || 'SYSTEM'}] Iniciando monitoramento do contrato ${contractId}...`);
+      
+      // ✅ Inscrever para atualizações do contrato
+      ws?.send(JSON.stringify({
+        proposal_open_contract: 1,
+        contract_id: contractId,
+        subscribe: 1,
+      }));
+
       return new Promise((resolve) => {
         let hasResolved = false;
         let contractMonitorTimeout: NodeJS.Timeout | null = null;
 
-        // ✅ Timeout de 90 segundos para monitoramento (contratos de 1 tick devem finalizar em ~1-2s)
+        // ✅ Timeout de 90 segundos para monitoramento
         contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
-            this.logger.warn(`[ORION] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId} | Tipo: ${contractParams.contract_type}`);
+            this.logger.warn(`[ORION] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`);
             if (userId) {
-              this.saveOrionLog(userId, 'R_10', 'erro', `⏱️ Contrato ${contractId} não finalizou em 90 segundos - forçando fechamento | Tipo: ${contractParams.contract_type}`);
+              this.saveOrionLog(userId, 'R_10', 'erro', `⏱️ Contrato ${contractId} não finalizou em 90 segundos`);
             }
-            // ✅ Remover subscription do pool
-            this.wsPool.removeSubscription(token, contractId);
+            cleanup();
             resolve(null);
           }
-        }, 90000); // 90 segundos máximo
+        }, 90000);
 
-        // ✅ Subscribe para atualizações do contrato no WebSocket persistente
-        this.wsPool
-          .subscribe(
-            token,
-            {
-              proposal_open_contract: 1,
-              contract_id: contractId,
-              subscribe: 1,
-            },
-            (msg: any) => {
-              try {
-                // ✅ Verificar erros primeiro
-                if (msg.error) {
-                  this.logger.error(`[ORION] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
-                  if (!hasResolved) {
-                    hasResolved = true;
-                    if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-                    this.wsPool.removeSubscription(token, contractId);
-                    resolve(null);
-                  }
-                  return;
-                }
+        const messageHandler = (data: WebSocket.RawData) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            
+            // ✅ Ignorar ping/pong
+            if (msg.msg_type === 'ping' || msg.msg_type === 'pong') {
+              return;
+            }
 
-                const contract = msg.proposal_open_contract;
-                if (!contract) {
-                  // ✅ Log de mensagens sem contract (pode ser ping/pong ou outras)
-                  if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
-                    this.logger.debug(`[ORION] 📨 Mensagem recebida sem contract: msg_type=${msg.msg_type}`);
-                  }
-                  return;
-                }
-
-                // ✅ Log de atualizações para debug
-                this.logger.debug(
-                  `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit}`,
-                );
-
-                // ✅ Verificar se contrato finalizou
-                const isFinalized =
-                  contract.is_sold === 1 ||
-                  contract.is_sold === true ||
-                  contract.status === 'won' ||
-                  contract.status === 'lost' ||
-                  contract.status === 'sold';
-
-                if (isFinalized && !hasResolved) {
-                  hasResolved = true;
-                  if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-
-                  const profit = Number(contract.profit || 0);
-                  const exitSpot = contract.exit_spot || contract.current_spot;
-
-                  const monitorDuration = Date.now() - monitorStartTime;
-                  this.logger.log(
-                    `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`,
-                  );
-                  if (userId) {
-                    this.saveOrionLog(userId, 'R_10', 'resultado', `✅ Contrato finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)}`);
-                  }
-
-                  // ✅ Remover subscription do pool
-                  this.wsPool.removeSubscription(token, contractId);
-
-                  resolve({ contractId, profit, exitSpot });
-                }
-              } catch (error) {
-                if (!hasResolved) {
-                  hasResolved = true;
-                  if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-                  this.logger.error(`[ORION] ❌ Erro ao processar atualização do contrato:`, error);
-                  if (userId) {
-                    this.saveOrionLog(
-                      userId,
-                      'R_10',
-                      'erro',
-                      `Erro ao processar atualização do contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-                    );
-                  }
-                  // ✅ Remover subscription do pool
-                  this.wsPool.removeSubscription(token, contractId);
-                  resolve(null);
-                }
+            // ✅ Verificar erros
+            if (msg.error) {
+              this.logger.error(`[ORION] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
+              if (!hasResolved) {
+                hasResolved = true;
+                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                cleanup();
+                resolve(null);
               }
-            },
-            contractId, // ✅ Usar contractId como subscription ID
-            90000, // ✅ Timeout de 90s para subscribe
-          )
-          .catch((error) => {
+              return;
+            }
+
+            const contract = msg.proposal_open_contract;
+            if (!contract) {
+              return;
+            }
+
+            // ✅ Log de atualizações para debug
+            this.logger.debug(
+              `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit}`,
+            );
+
+            // ✅ Verificar se contrato finalizou
+            const isFinalized =
+              contract.is_sold === 1 ||
+              contract.is_sold === true ||
+              contract.status === 'won' ||
+              contract.status === 'lost' ||
+              contract.status === 'sold';
+
+            if (isFinalized && !hasResolved) {
+              hasResolved = true;
+              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+
+              const profit = Number(contract.profit || 0);
+              const exitSpot = contract.exit_spot || contract.current_spot;
+
+              const monitorDuration = Date.now() - monitorStartTime;
+              this.logger.log(
+                `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`,
+              );
+              if (userId) {
+                this.saveOrionLog(userId, 'R_10', 'resultado', `✅ Contrato finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)}`);
+              }
+
+              cleanup();
+              resolve({ contractId, profit, exitSpot });
+            }
+          } catch (error) {
             if (!hasResolved) {
               hasResolved = true;
               if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-              this.logger.error(`[ORION] ❌ Erro ao inscrever no contrato ${contractId}:`, error);
+              this.logger.error(`[ORION] ❌ Erro ao processar atualização do contrato:`, error);
               if (userId) {
                 this.saveOrionLog(
                   userId,
                   'R_10',
                   'erro',
-                  `Erro ao inscrever no contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+                  `Erro ao processar atualização do contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
                 );
               }
+              cleanup();
               resolve(null);
             }
-          });
+          }
+        };
+
+        ws?.on('message', messageHandler);
       });
     } catch (error) {
-      this.logger.error(`[ORION] ❌ Erro ao executar trade via WebSocket persistente:`, error);
+      this.logger.error(`[ORION] ❌ Erro ao executar trade via WebSocket:`, error);
       if (userId) {
         this.saveOrionLog(
           userId,
@@ -1192,6 +1271,7 @@ export class OrionStrategy implements IStrategy {
           `Erro ao executar trade | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
         );
       }
+      cleanup();
       return null;
     }
   }

@@ -542,6 +542,7 @@ export class AiService implements OnModuleInit {
   private symbol = 'R_10';
   private isConnected = false;
   private subscriptionId: string | null = null;
+  private keepAliveInterval: NodeJS.Timeout | null = null; // ✅ Keep-alive para evitar expiração (2 min inatividade)
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
@@ -553,6 +554,16 @@ export class AiService implements OnModuleInit {
     R_10: WebSocket.WebSocket | null;
     R_25: WebSocket.WebSocket | null;
     R_50: WebSocket.WebSocket | null;
+  } = {
+    R_10: null,
+    R_25: null,
+    R_50: null,
+  };
+  // ✅ TRINITY: Keep-alive intervals por ativo
+  private trinityKeepAliveIntervals: {
+    R_10: NodeJS.Timeout | null;
+    R_25: NodeJS.Timeout | null;
+    R_50: NodeJS.Timeout | null;
   } = {
     R_10: null,
     R_25: null,
@@ -635,6 +646,8 @@ export class AiService implements OnModuleInit {
         this.logger.log('✅ Conexão WebSocket aberta com sucesso');
         this.isConnected = true;
         this.subscribeToTicks();
+        // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
+        this.startKeepAlive();
         resolve();
       });
 
@@ -655,6 +668,7 @@ export class AiService implements OnModuleInit {
       this.ws.on('close', () => {
         this.logger.log('Conexão WebSocket fechada');
         this.isConnected = false;
+        this.stopKeepAlive();
         this.ws = null;
       });
 
@@ -678,6 +692,40 @@ export class AiService implements OnModuleInit {
       style: 'ticks',
     });
     this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
+  }
+
+  /**
+   * ✅ Keep-alive: Envia ping a cada 90 segundos para evitar expiração (sessão expira após 2 min de inatividade)
+   */
+  private startKeepAlive(): void {
+    this.stopKeepAlive(); // Garantir que não há intervalo duplicado
+    
+    this.keepAliveInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug('[KeepAlive] Ping enviado para manter conexão ativa');
+        } catch (error) {
+          this.logger.error('[KeepAlive] Erro ao enviar ping:', error);
+        }
+      } else {
+        this.logger.warn('[KeepAlive] WebSocket não está aberto, parando keep-alive');
+        this.stopKeepAlive();
+      }
+    }, 90000); // 90 segundos (menos de 2 minutos)
+    
+    this.logger.log('✅ Keep-alive iniciado (ping a cada 90s)');
+  }
+
+  /**
+   * ✅ Para o keep-alive
+   */
+  private stopKeepAlive(): void {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+      this.logger.debug('[KeepAlive] Keep-alive parado');
+    }
   }
 
   // ======================== TRINITY: Inicialização de WebSockets ========================
@@ -713,6 +761,8 @@ export class AiService implements OnModuleInit {
         this.logger.log(`[TRINITY][${symbol}] ✅ Conexão WebSocket aberta`);
         this.trinityConnected[symbol] = true;
         this.subscribeToTrinityTicks(symbol);
+        // ✅ Iniciar keep-alive para este ativo
+        this.startTrinityKeepAlive(symbol);
         resolve();
       });
 
@@ -734,6 +784,7 @@ export class AiService implements OnModuleInit {
       ws.on('close', () => {
         this.logger.log(`[TRINITY][${symbol}] Conexão WebSocket fechada`);
         this.trinityConnected[symbol] = false;
+        this.stopTrinityKeepAlive(symbol);
         this.trinityWebSockets[symbol] = null;
       });
 
@@ -764,6 +815,41 @@ export class AiService implements OnModuleInit {
       subscribe: 1,
       style: 'ticks',
     }));
+  }
+
+  /**
+   * ✅ TRINITY: Inicia keep-alive para um ativo específico
+   */
+  private startTrinityKeepAlive(symbol: 'R_10' | 'R_25' | 'R_50'): void {
+    this.stopTrinityKeepAlive(symbol); // Garantir que não há intervalo duplicado
+    
+    this.trinityKeepAliveIntervals[symbol] = setInterval(() => {
+      const ws = this.trinityWebSockets[symbol];
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug(`[TRINITY][${symbol}][KeepAlive] Ping enviado`);
+        } catch (error) {
+          this.logger.error(`[TRINITY][${symbol}][KeepAlive] Erro ao enviar ping:`, error);
+        }
+      } else {
+        this.logger.warn(`[TRINITY][${symbol}][KeepAlive] WebSocket não está aberto, parando keep-alive`);
+        this.stopTrinityKeepAlive(symbol);
+      }
+    }, 90000); // 90 segundos (menos de 2 minutos)
+    
+    this.logger.log(`[TRINITY][${symbol}] ✅ Keep-alive iniciado (ping a cada 90s)`);
+  }
+
+  /**
+   * ✅ TRINITY: Para o keep-alive de um ativo específico
+   */
+  private stopTrinityKeepAlive(symbol: 'R_10' | 'R_25' | 'R_50'): void {
+    if (this.trinityKeepAliveIntervals[symbol]) {
+      clearInterval(this.trinityKeepAliveIntervals[symbol]!);
+      this.trinityKeepAliveIntervals[symbol] = null;
+      this.logger.debug(`[TRINITY][${symbol}][KeepAlive] Keep-alive parado`);
+    }
   }
 
   /**
