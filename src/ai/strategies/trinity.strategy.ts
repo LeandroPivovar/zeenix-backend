@@ -1785,12 +1785,7 @@ export class TrinityStrategy implements IStrategy {
         symbol,
       });
 
-      this.saveTrinityLog(
-        userId,
-        symbol,
-        'resultado',
-        `🔮 PREVISÃO: ${predictedStatus} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | Profit: $${predictedProfit.toFixed(2)}`
-      );
+      // ✅ Log de previsão removido - apenas atualização visual no frontend
     } catch (error) {
       this.logger.error(`[TRINITY][${symbol}] Erro ao atualizar previsão no banco:`, error);
     }

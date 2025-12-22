@@ -1521,12 +1521,7 @@ export class OrionStrategy implements IStrategy {
         isPredicted: true, // Marcar como previsão
       });
 
-      this.saveOrionLog(
-        state.userId,
-        'R_10',
-        'resultado',
-        `🔮 PREVISÃO: ${predictedStatus} | Dígito: ${lastDigit} (${isEven ? 'PAR' : 'ÍMPAR'}) | Profit: $${predictedProfit.toFixed(2)}`
-      );
+      // ✅ Log de previsão removido - apenas atualização visual no frontend
     } catch (error) {
       this.logger.error(`[ORION] Erro ao atualizar previsão no banco:`, error);
     }
