@@ -537,7 +537,7 @@ export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
   private ws: WebSocket.WebSocket | null = null;
   private ticks: Tick[] = [];
-  private maxTicks = 2000; // Armazena os últimos 2000 preços para gráficos maiores
+  private maxTicks = 100; // Armazena os últimos 100 preços (suficiente para análise)
   private appId: string;
   private symbol = 'R_10';
   private isConnected = false;
@@ -4814,7 +4814,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     const { userId, stakeAmount, derivToken, currency } = user;
 
     try {
-      await this.ensureTickStreamReady(this.maxTicks);
+      // ✅ Usar apenas o mínimo necessário (VELOZ_CONFIG.window) para validação inicial
+      // A análise precisa apenas de VELOZ_CONFIG.window ticks (~10 ticks)
+      await this.ensureTickStreamReady(VELOZ_CONFIG.window);
     } catch (error) {
       this.logger.warn(
         `[Veloz] Não foi possível garantir histórico completo para usuário ${userId}: ${error.message}`,

@@ -190,7 +190,8 @@ export class OrionStrategy implements IStrategy {
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     this.ticks.push(tick);
-    if (this.ticks.length > 2000) {
+    // ✅ Limitar a 100 ticks para evitar consumo excessivo de memória
+    if (this.ticks.length > 100) {
       this.ticks.shift();
     }
 

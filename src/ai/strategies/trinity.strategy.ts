@@ -99,7 +99,7 @@ export class TrinityStrategy implements IStrategy {
   // Os WebSockets para ticks são gerenciados pelo AIService
   
   private appId: string;
-  private maxTicks = 2000;
+  private maxTicks = 100; // ✅ Reduzido de 2000 para 100 ticks
   
   // ✅ Sistema de logs (similar à Orion)
   private logQueue: Array<{
