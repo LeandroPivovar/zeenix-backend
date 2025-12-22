@@ -13,7 +13,7 @@ interface TradeEventPayload {
   profitLoss?: number;
   exitPrice?: number;
   isPredicted?: boolean; // ✅ Indica se é uma previsão (não confirmada ainda)
-  previousPrediction?: 'WON' | 'LOST'; // ✅ Para eventos 'corrected'
+  previousPrediction?: 'WON' | 'LOST' | null; // ✅ Para eventos 'corrected'
   confirmedStatus?: 'WON' | 'LOST'; // ✅ Para eventos 'corrected'
   previousProfit?: number; // ✅ Para eventos 'corrected'
   confirmedProfit?: number; // ✅ Para eventos 'corrected'

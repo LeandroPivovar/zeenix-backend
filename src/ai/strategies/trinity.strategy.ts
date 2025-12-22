@@ -946,17 +946,19 @@ export class TrinityStrategy implements IStrategy {
           `[TRINITY][${symbol}] ⚠️ Previsão não bateu! Revertendo... | ` +
           `Previsto: ${asset.predictedStatus} | Confirmado: ${confirmedStatus} | TradeId: ${tradeId}`
         );
-        // Reverter previsão e aplicar resultado correto
-        await this.revertTrinityPredictionAndApplyCorrect(
-          asset,
-          state.userId,
-          symbol,
-          tradeId,
-          confirmedStatus,
-          profit,
-          exitPrice,
-          contractId
-        );
+        // Reverter previsão e aplicar resultado correto (só se tradeId não for null)
+        if (tradeId) {
+          await this.revertTrinityPredictionAndApplyCorrect(
+            asset,
+            state.userId,
+            symbol,
+            tradeId,
+            confirmedStatus,
+            profit,
+            exitPrice,
+            contractId
+          );
+        }
       } else {
         // Se previsão bateu ou não havia previsão, aplicar resultado normalmente
         if (asset.predictedStatus) {
