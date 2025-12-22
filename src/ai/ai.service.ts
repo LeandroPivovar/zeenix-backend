@@ -683,14 +683,16 @@ export class AiService implements OnModuleInit {
 
   private subscribeToTicks() {
     this.logger.log(`📡 Inscrevendo-se nos ticks de ${this.symbol}...`);
-    this.send({
+    const subscriptionPayload = {
       ticks_history: this.symbol,
       adjust_start_time: 1,
       count: this.maxTicks,
       end: 'latest',
       subscribe: 1,
       style: 'ticks',
-    });
+    };
+    this.logger.debug(`[subscribeToTicks] 📤 Payload da subscription: ${JSON.stringify(subscriptionPayload)}`);
+    this.send(subscriptionPayload);
     this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
   }
 
@@ -3304,7 +3306,11 @@ export class AiService implements OnModuleInit {
 
   private send(payload: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
+      const payloadStr = JSON.stringify(payload);
+      this.ws.send(payloadStr);
+      this.logger.debug(`[send] 📤 Mensagem enviada: ${payloadStr.substring(0, 200)}...`);
+    } else {
+      this.logger.warn(`[send] ⚠️ WebSocket não está aberto. Estado: ${this.ws?.readyState || 'null'}`);
     }
   }
 
@@ -3362,7 +3368,26 @@ export class AiService implements OnModuleInit {
         // Verificar se há mensagens sendo recebidas
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.logger.warn(`[ensureTickStreamReady] ✅ WebSocket está OPEN, mas não está recebendo ticks`);
-          this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription não ativa, símbolo incorreto, ou servidor não está enviando ticks`);
+          
+          // ✅ Se não há subscription ID, tentar reenviar a subscription
+          if (!this.subscriptionId) {
+            this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado - Reenviando subscription...`);
+            try {
+              this.subscribeToTicks();
+              this.logger.warn(`[ensureTickStreamReady] ✅ Subscription reenviada. Aguardando resposta...`);
+            } catch (error) {
+              this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
+            }
+          } else {
+            this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription não ativa, símbolo incorreto, ou servidor não está enviando ticks`);
+            this.logger.warn(`[ensureTickStreamReady] 💡 Tentando reenviar subscription mesmo com ID existente...`);
+            try {
+              this.subscribeToTicks();
+              this.logger.warn(`[ensureTickStreamReady] ✅ Subscription reenviada. Aguardando resposta...`);
+            } catch (error) {
+              this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
+            }
+          }
         } else {
           this.logger.warn(`[ensureTickStreamReady] ❌ WebSocket não está OPEN (estado: ${wsState.readyStateText})`);
           this.logger.warn(`[ensureTickStreamReady] 💡 Tentando reconectar...`);
