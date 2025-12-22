@@ -112,6 +112,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly priceHistory = new Map<string, PriceTick[]>();
   private readonly maxHistorySize = 100;
   private wsConnections = new Map<string, WebSocket>();
+  // ✅ Controle de execução simultânea do updateTradesWithMissingPrices
+  private updateInProgress = new Set<string>();
   private readonly appId = process.env.DERIV_APP_ID || '1089';
 
   constructor(
@@ -1460,11 +1462,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
           if (msg.msg_type === 'authorize') {
             // Após autorização, consultar o contrato
+            // ✅ CORREÇÃO: subscribe deve ser 1 ou omitido, não 0
             ws.send(
               JSON.stringify({
                 proposal_open_contract: 1,
                 contract_id: contractId,
-                subscribe: 0, // Não inscrever, apenas consultar
+                // subscribe omitido = consulta única (não inscrever)
               }),
             );
             return;
@@ -3340,19 +3343,51 @@ export class AutonomousAgentService implements OnModuleInit {
    * Útil para corrigir trades antigos que não tiveram os valores capturados corretamente
    */
   async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<{ updated: number; errors: number }> {
-    // Buscar trades com entry_price ou exit_price zerados e que tenham contract_id
-    const tradesToUpdate = await this.dataSource.query(
-      `SELECT id, contract_id, entry_price, exit_price, status
-       FROM autonomous_agent_trades
-       WHERE user_id = ? 
-         AND contract_id IS NOT NULL 
-         AND contract_id != ''
-         AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
-         AND status IN ('WON', 'LOST', 'ACTIVE')
-       ORDER BY created_at DESC
-       LIMIT ?`,
-      [userId, limit],
-    );
+    // ✅ CORREÇÃO: Evitar execuções simultâneas para o mesmo userId
+    if (this.updateInProgress.has(userId)) {
+      this.logger.warn(`[UpdateTradesWithMissingPrices] Já existe uma atualização em progresso para userId=${userId}, ignorando...`);
+      return { updated: 0, errors: 0 };
+    }
+
+    // Marcar como em progresso
+    this.updateInProgress.add(userId);
+    
+    try {
+      // ✅ CORREÇÃO: Adicionar controle de retry para evitar loop infinito
+      // Buscar trades com entry_price ou exit_price zerados e que tenham contract_id
+      // Excluir trades que falharam recentemente para evitar loop infinito
+      let tradesToUpdate: any[];
+      try {
+      // Tentar usar coluna last_update_attempt se existir
+      tradesToUpdate = await this.dataSource.query(
+        `SELECT id, contract_id, entry_price, exit_price, status
+         FROM autonomous_agent_trades
+         WHERE user_id = ? 
+           AND contract_id IS NOT NULL 
+           AND contract_id != ''
+           AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
+           AND status IN ('WON', 'LOST', 'ACTIVE')
+           AND (last_update_attempt IS NULL OR last_update_attempt < DATE_SUB(NOW(), INTERVAL 1 HOUR))
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [userId, limit],
+      );
+    } catch (error) {
+      // Se a coluna não existir, buscar sem filtro de last_update_attempt
+      this.logger.warn(`[UpdateTradesWithMissingPrices] Coluna last_update_attempt não encontrada, usando query sem filtro`);
+      tradesToUpdate = await this.dataSource.query(
+        `SELECT id, contract_id, entry_price, exit_price, status
+         FROM autonomous_agent_trades
+         WHERE user_id = ? 
+           AND contract_id IS NOT NULL 
+           AND contract_id != ''
+           AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
+           AND status IN ('WON', 'LOST', 'ACTIVE')
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [userId, limit],
+      );
+    }
 
     if (tradesToUpdate.length === 0) {
       this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
@@ -3371,8 +3406,28 @@ export class AutonomousAgentService implements OnModuleInit {
     let updated = 0;
     let errors = 0;
 
+    // ✅ Controle de retry: rastrear trades que falharam nesta execução
+    const failedTrades = new Set<number>();
+
     for (const trade of tradesToUpdate) {
+      // ✅ Pular trades que já falharam nesta execução
+      if (failedTrades.has(trade.id)) {
+        continue;
+      }
+
       try {
+        // ✅ Tentar marcar tentativa de atualização (se coluna existir)
+        try {
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_trades 
+             SET last_update_attempt = NOW() 
+             WHERE id = ?`,
+            [trade.id],
+          );
+        } catch (e) {
+          // Ignorar se coluna não existir
+        }
+
         this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
         const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
         
@@ -3394,27 +3449,77 @@ export class AutonomousAgentService implements OnModuleInit {
           
           if (updates.length > 0) {
             values.push(trade.id);
-            await this.dataSource.query(
-              `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
-              values,
-            );
-            updated++;
+            try {
+              await this.dataSource.query(
+                `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
+                values,
+              );
+              // Limpar flag de tentativa se coluna existir
+              try {
+                await this.dataSource.query(
+                  `UPDATE autonomous_agent_trades SET last_update_attempt = NULL WHERE id = ?`,
+                  [trade.id],
+                );
+              } catch (e) {
+                // Ignorar se coluna não existir
+              }
+              updated++;
+            } catch (updateError) {
+              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar banco para trade ${trade.id}:`, updateError);
+              errors++;
+            }
+          } else {
+            // Se não houve atualização, limpar a flag de tentativa
+            try {
+              await this.dataSource.query(
+                `UPDATE autonomous_agent_trades SET last_update_attempt = NULL WHERE id = ?`,
+                [trade.id],
+              );
+            } catch (e) {
+              // Ignorar se coluna não existir
+            }
           }
         } else {
           this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}`);
+          failedTrades.add(trade.id);
           errors++;
         }
       } catch (error) {
-        this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, errorMessage);
+        
+        // ✅ Marcar trade como falhado para não tentar novamente nesta execução
+        failedTrades.add(trade.id);
+        
+        // ✅ Se for erro de validação ou timeout, não tentar novamente por um tempo maior
+        if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout')) {
+          this.logger.warn(`[UpdateTradesWithMissingPrices] Trade ${trade.id} marcado para não tentar novamente (erro: ${errorMessage})`);
+          // Tentar marcar para não tentar novamente (se coluna existir)
+          try {
+            await this.dataSource.query(
+              `UPDATE autonomous_agent_trades 
+               SET last_update_attempt = DATE_SUB(NOW(), INTERVAL 23 HOUR)
+               WHERE id = ?`,
+              [trade.id],
+            );
+          } catch (e) {
+            // Ignorar se coluna não existir
+          }
+        }
+        
         errors++;
       }
       
-      // Pequeno delay entre requisições para não sobrecarregar a API
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // ✅ Aumentar delay entre requisições para não sobrecarregar a API
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${errors} erros`);
     return { updated, errors };
+    } finally {
+      // ✅ Sempre remover do conjunto de execuções em progresso
+      this.updateInProgress.delete(userId);
+    }
   }
 
   async getSessionStats(userId: string): Promise<any> {
