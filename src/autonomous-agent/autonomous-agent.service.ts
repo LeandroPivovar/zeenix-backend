@@ -549,26 +549,47 @@ export class AutonomousAgentService implements OnModuleInit {
 
   async deactivateAgent(userId: string): Promise<void> {
     try {
+      // ✅ 1. Atualizar banco de dados primeiro (is_active = FALSE e session_status)
       await this.dataSource.query(
-        `UPDATE autonomous_agent_config SET is_active = FALSE, updated_at = NOW() WHERE user_id = ?`,
+        `UPDATE autonomous_agent_config 
+         SET is_active = FALSE, 
+             session_status = 'stopped_manual', 
+             updated_at = NOW() 
+         WHERE user_id = ?`,
         [userId],
       );
 
-      this.agentStates.delete(userId);
+      // ✅ 2. Remover estado da memória (para parar processamento imediato)
+      const state = this.agentStates.get(userId);
+      if (state) {
+        // Marcar como não ativo para parar qualquer processamento em andamento
+        state.isOperationActive = false;
+        this.agentStates.delete(userId);
+        this.logger.debug(`[DeactivateAgent] Estado removido da memória para ${userId}`);
+      }
+
+      // ✅ 3. Limpar histórico de preços
       this.priceHistory.delete(userId);
 
-      // Fechar conexão WebSocket se existir
+      // ✅ 4. Fechar conexão WebSocket se existir (IMPORTANTE: para parar processamento em tempo real)
       const ws = this.wsConnections.get(userId);
       if (ws) {
-        ws.close();
+        try {
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+            this.logger.debug(`[DeactivateAgent] WebSocket fechado para ${userId}`);
+          }
+        } catch (wsError) {
+          this.logger.warn(`[DeactivateAgent] Erro ao fechar WebSocket:`, wsError);
+        }
         this.wsConnections.delete(userId);
         await this.saveLog(userId, 'INFO', 'API', 'WebSocket desconectado.');
       }
 
-      // Log detalhado
-      await this.saveLog(userId, 'INFO', 'CORE', 'Agente parado.');
+      // ✅ 5. Log detalhado
+      await this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
 
-      this.logger.log(`[DeactivateAgent] ✅ Agente desativado para usuário ${userId}`);
+      this.logger.log(`[DeactivateAgent] ✅ Agente desativado completamente para usuário ${userId}`);
     } catch (error) {
       await this.saveLog(userId, 'ERROR', 'CORE', `Falha ao desativar agente. erro=${error.message}`);
       this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, error);
