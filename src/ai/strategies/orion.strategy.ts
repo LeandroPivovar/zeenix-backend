@@ -1225,7 +1225,7 @@ export class OrionStrategy implements IStrategy {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Erro temporário da Deriv. Tente novamente em alguns segundos.`);
           }
         }
-        cleanup();
+        // ✅ Não fechar conexão - ela é reutilizada para próximos trades
         return null;
       }
 
@@ -1237,7 +1237,7 @@ export class OrionStrategy implements IStrategy {
         if (userId) {
           this.saveOrionLog(userId, 'R_10', 'erro', `❌ Proposta inválida da Deriv | Resposta: ${JSON.stringify(proposalResponse)}`);
         }
-        cleanup();
+        // ✅ Não fechar conexão - ela é reutilizada para próximos trades
         return null;
       }
 
