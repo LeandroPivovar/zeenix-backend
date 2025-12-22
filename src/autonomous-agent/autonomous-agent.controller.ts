@@ -258,7 +258,7 @@ export class AutonomousAgentController {
 
       return {
         success: true,
-        message: `Atualização concluída: ${result.updated} trades atualizados, ${result.errors} erros`,
+        message: `Atualização concluída: ${result.updated} trades atualizados, ${result.deleted} deletados, ${result.errors} erros`,
         data: result,
       };
     } catch (error) {

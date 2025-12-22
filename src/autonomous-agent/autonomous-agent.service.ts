@@ -3342,11 +3342,11 @@ export class AutonomousAgentService implements OnModuleInit {
    * Atualiza trades com valores zerados consultando a API da Deriv
    * Útil para corrigir trades antigos que não tiveram os valores capturados corretamente
    */
-  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<{ updated: number; errors: number }> {
+  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<{ updated: number; errors: number; deleted: number }> {
     // ✅ CORREÇÃO: Evitar execuções simultâneas para o mesmo userId
     if (this.updateInProgress.has(userId)) {
       this.logger.warn(`[UpdateTradesWithMissingPrices] Já existe uma atualização em progresso para userId=${userId}, ignorando...`);
-      return { updated: 0, errors: 0 };
+      return { updated: 0, errors: 0, deleted: 0 };
     }
 
     // Marcar como em progresso
@@ -3391,14 +3391,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
     if (tradesToUpdate.length === 0) {
       this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
-      return { updated: 0, errors: 0 };
+      return { updated: 0, errors: 0, deleted: 0 };
     }
 
     // Obter o token do usuário
     const state = this.agentStates.get(userId);
     if (!state || !state.derivToken) {
       this.logger.warn(`[UpdateTradesWithMissingPrices] Token não encontrado para userId=${userId}`);
-      return { updated: 0, errors: tradesToUpdate.length };
+      return { updated: 0, errors: tradesToUpdate.length, deleted: 0 };
     }
 
     // Type assertion explícita para garantir que TypeScript reconhece que não é null
@@ -3408,6 +3408,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Controle de retry: rastrear trades que falharam nesta execução
     const failedTrades = new Set<number>();
+    let deleted = 0;
 
     for (const trade of tradesToUpdate) {
       // ✅ Pular trades que já falharam nesta execução
@@ -3416,18 +3417,6 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       try {
-        // ✅ Tentar marcar tentativa de atualização (se coluna existir)
-        try {
-          await this.dataSource.query(
-            `UPDATE autonomous_agent_trades 
-             SET last_update_attempt = NOW() 
-             WHERE id = ?`,
-            [trade.id],
-          );
-        } catch (e) {
-          // Ignorar se coluna não existir
-        }
-
         this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
         const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
         
@@ -3454,68 +3443,58 @@ export class AutonomousAgentService implements OnModuleInit {
                 `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
                 values,
               );
-              // Limpar flag de tentativa se coluna existir
-              try {
-                await this.dataSource.query(
-                  `UPDATE autonomous_agent_trades SET last_update_attempt = NULL WHERE id = ?`,
-                  [trade.id],
-                );
-              } catch (e) {
-                // Ignorar se coluna não existir
-              }
               updated++;
             } catch (updateError) {
               this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar banco para trade ${trade.id}:`, updateError);
               errors++;
             }
-          } else {
-            // Se não houve atualização, limpar a flag de tentativa
-            try {
-              await this.dataSource.query(
-                `UPDATE autonomous_agent_trades SET last_update_attempt = NULL WHERE id = ?`,
-                [trade.id],
-              );
-            } catch (e) {
-              // Ignorar se coluna não existir
-            }
           }
         } else {
-          this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}`);
-          failedTrades.add(trade.id);
-          errors++;
+          // ✅ Não foi possível obter detalhes do contrato - deletar trade
+          this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}, deletando trade ${trade.id}`);
+          try {
+            await this.dataSource.query(
+              `DELETE FROM autonomous_agent_trades WHERE id = ?`,
+              [trade.id],
+            );
+            deleted++;
+            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco`);
+          } catch (deleteError) {
+            this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
+            errors++;
+          }
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, errorMessage);
         
-        // ✅ Marcar trade como falhado para não tentar novamente nesta execução
-        failedTrades.add(trade.id);
-        
-        // ✅ Se for erro de validação ou timeout, não tentar novamente por um tempo maior
-        if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout')) {
-          this.logger.warn(`[UpdateTradesWithMissingPrices] Trade ${trade.id} marcado para não tentar novamente (erro: ${errorMessage})`);
-          // Tentar marcar para não tentar novamente (se coluna existir)
+        // ✅ Se for erro de validação ou timeout, deletar o trade
+        if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout') || errorMessage.includes('WrongResponse')) {
+          this.logger.warn(`[UpdateTradesWithMissingPrices] Erro ao consultar contrato ${trade.contract_id} (${errorMessage}), deletando trade ${trade.id}`);
           try {
             await this.dataSource.query(
-              `UPDATE autonomous_agent_trades 
-               SET last_update_attempt = DATE_SUB(NOW(), INTERVAL 23 HOUR)
-               WHERE id = ?`,
+              `DELETE FROM autonomous_agent_trades WHERE id = ?`,
               [trade.id],
             );
-          } catch (e) {
-            // Ignorar se coluna não existir
+            deleted++;
+            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco devido a erro: ${errorMessage}`);
+          } catch (deleteError) {
+            this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
+            errors++;
           }
+        } else {
+          // Para outros erros, apenas marcar como erro
+          failedTrades.add(trade.id);
+          errors++;
         }
-        
-        errors++;
       }
       
       // ✅ Aumentar delay entre requisições para não sobrecarregar a API
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${errors} erros`);
-    return { updated, errors };
+    this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${deleted} deletados, ${errors} erros`);
+    return { updated, errors, deleted };
     } finally {
       // ✅ Sempre remover do conjunto de execuções em progresso
       this.updateInProgress.delete(userId);
