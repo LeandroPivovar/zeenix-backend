@@ -929,7 +929,7 @@ export class OrionStrategy implements IStrategy {
     };
 
     try {
-      // ✅ PASSO 1: Criar conexão WebSocket direta
+      // ✅ PASSO 1: Criar conexão WebSocket direta e autorizar
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       this.logger.debug(`[ORION] 🔌 [${userId || 'SYSTEM'}] Criando conexão WebSocket direta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
       
@@ -938,62 +938,72 @@ export class OrionStrategy implements IStrategy {
           headers: { Origin: 'https://app.deriv.com' },
         });
 
-        const timeout = setTimeout(() => {
-          socket.close();
-          reject(new Error('Timeout ao conectar WebSocket'));
-        }, 10000);
+        let authResolved = false;
+        const connectionTimeout = setTimeout(() => {
+          if (!authResolved) {
+            socket.close();
+            reject(new Error('Timeout ao conectar e autorizar WebSocket (15s)'));
+          }
+        }, 15000); // 15 segundos para conectar + autorizar
 
-        socket.on('open', () => {
-          clearTimeout(timeout);
-          this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado`);
-          
-          // ✅ Iniciar keep-alive (ping a cada 90s)
-          keepAliveInterval = setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-              try {
-                socket.send(JSON.stringify({ ping: 1 }));
-                this.logger.debug(`[ORION][KeepAlive] Ping enviado`);
-              } catch (error) {
-                // Ignorar erros de ping
-              }
-            }
-          }, 90000);
-          
-          resolve(socket);
-        });
-
-        socket.on('error', (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        });
-      });
-
-      // ✅ PASSO 2: Autorizar
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timeout na autorização')), 10000);
-        
-        const messageHandler = (data: WebSocket.RawData) => {
+        // ✅ Listener de mensagens DEVE estar ativo ANTES de enviar autorização
+        socket.on('message', (data: WebSocket.RawData) => {
           try {
             const msg = JSON.parse(data.toString());
-            if (msg.authorize) {
-              clearTimeout(timeout);
-              ws?.removeListener('message', messageHandler);
+            
+            // ✅ Verificar resposta de autorização
+            if (msg.authorize && !authResolved) {
+              authResolved = true;
+              clearTimeout(connectionTimeout);
               
               if (msg.authorize.error) {
+                socket.close();
                 reject(new Error(`Erro na autorização: ${msg.authorize.error.message}`));
                 return;
               }
               
               this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado | LoginID: ${msg.authorize.loginid || 'N/A'}`);
-              resolve();
+              
+              // ✅ Iniciar keep-alive (ping a cada 90s) após autorização
+              keepAliveInterval = setInterval(() => {
+                if (socket.readyState === WebSocket.OPEN) {
+                  try {
+                    socket.send(JSON.stringify({ ping: 1 }));
+                    this.logger.debug(`[ORION][KeepAlive] Ping enviado`);
+                  } catch (error) {
+                    // Ignorar erros de ping
+                  }
+                }
+              }, 90000);
+              
+              resolve(socket);
             }
           } catch (error) {
-            // Continuar aguardando
+            // Continuar aguardando outras mensagens
           }
-        };
-        
-        ws?.on('message', messageHandler);
-        ws?.send(JSON.stringify({ authorize: token }));
+        });
+
+        socket.on('open', () => {
+          this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
+          // ✅ Enviar autorização imediatamente após abrir
+          socket.send(JSON.stringify({ authorize: token }));
+        });
+
+        socket.on('error', (error) => {
+          if (!authResolved) {
+            clearTimeout(connectionTimeout);
+            authResolved = true;
+            reject(error);
+          }
+        });
+
+        socket.on('close', () => {
+          if (!authResolved) {
+            clearTimeout(connectionTimeout);
+            authResolved = true;
+            reject(new Error('WebSocket fechado antes da autorização'));
+          }
+        });
       });
 
       // ✅ PASSO 3: Solicitar proposta
