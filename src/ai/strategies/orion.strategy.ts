@@ -1345,6 +1345,10 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ PASSO 4: Monitorar contrato usando subscribe no MESMO WebSocket reutilizável
       const monitorStartTime = Date.now();
+      let firstUpdateTime: number | null = null;
+      let lastUpdateTime: number | null = null;
+      let updateCount = 0;
+      
       this.logger.debug(`[ORION] 👁️ [${userId || 'SYSTEM'}] Iniciando monitoramento do contrato ${contractId}...`);
       
       return new Promise((resolve) => {
@@ -1390,9 +1394,30 @@ export class OrionStrategy implements IStrategy {
                 return;
               }
 
+              // ✅ Métricas de performance
+              const now = Date.now();
+              updateCount++;
+              
+              if (!firstUpdateTime) {
+                firstUpdateTime = now;
+                const timeToFirstUpdate = firstUpdateTime - monitorStartTime;
+                this.logger.log(
+                  `[ORION] ⚡ [${userId || 'SYSTEM'}] Primeira atualização recebida em ${timeToFirstUpdate}ms | Contrato: ${contractId}`,
+                );
+              }
+              
+              if (lastUpdateTime) {
+                const timeSinceLastUpdate = now - lastUpdateTime;
+                this.logger.debug(
+                  `[ORION] ⏱️ [${userId || 'SYSTEM'}] Atualização #${updateCount} | Tempo desde última: ${timeSinceLastUpdate}ms | Total desde criação: ${now - monitorStartTime}ms`,
+                );
+              }
+              
+              lastUpdateTime = now;
+
               // ✅ Log de atualizações para debug
               this.logger.debug(
-                `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit}`,
+                `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit} | Update #${updateCount}`,
               );
 
               // ✅ Verificar se contrato finalizou
@@ -1411,11 +1436,26 @@ export class OrionStrategy implements IStrategy {
                 const exitSpot = contract.exit_spot || contract.current_spot;
 
                 const monitorDuration = Date.now() - monitorStartTime;
+                const timeToFirstUpdate = firstUpdateTime ? firstUpdateTime - monitorStartTime : 0;
+                const avgUpdateInterval = lastUpdateTime && updateCount > 1 
+                  ? (lastUpdateTime - (firstUpdateTime || monitorStartTime)) / (updateCount - 1) 
+                  : 0;
+                
+                // ✅ Log detalhado de performance
                 this.logger.log(
                   `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`,
                 );
+                this.logger.log(
+                  `[ORION] 📈 [${userId || 'SYSTEM'}] Performance: Primeira atualização: ${timeToFirstUpdate}ms | Total atualizações: ${updateCount} | Intervalo médio: ${avgUpdateInterval.toFixed(0)}ms`,
+                );
+                
                 if (userId) {
-                  this.saveOrionLog(userId, 'R_10', 'resultado', `✅ Contrato finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)}`);
+                  this.saveOrionLog(
+                    userId, 
+                    'R_10', 
+                    'resultado', 
+                    `✅ Contrato finalizado em ${monitorDuration}ms | Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`,
+                  );
                 }
 
                 connection.removeSubscription(contractId);
