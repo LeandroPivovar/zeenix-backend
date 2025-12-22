@@ -954,6 +954,7 @@ export class OrionStrategy implements IStrategy {
 
       ws.on('open', () => {
         this.logger.debug(`[ORION] 🔌 WebSocket aberto, autorizando...`);
+        this.logger.debug(`[ORION] 🔑 Token sendo usado: ${token ? token.substring(0, 20) + '...' : 'NULL'}`);
         ws.send(JSON.stringify({ authorize: token }));
       });
 
@@ -992,6 +993,7 @@ export class OrionStrategy implements IStrategy {
               symbol: this.symbol,
             };
             
+            this.logger.debug(`[ORION] 📤 Enviando proposta: ${JSON.stringify(proposalPayload)}`);
             ws.send(JSON.stringify(proposalPayload));
             return;
           }
@@ -1049,10 +1051,12 @@ export class OrionStrategy implements IStrategy {
             }
             
             this.logger.debug(`[ORION] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`);
-            ws.send(JSON.stringify({
+            const buyPayload = {
               buy: proposalId,
               price: proposalPrice,
-            }));
+            };
+            this.logger.debug(`[ORION] 📤 Enviando compra: ${JSON.stringify(buyPayload)}`);
+            ws.send(JSON.stringify(buyPayload));
             return;
           }
 
