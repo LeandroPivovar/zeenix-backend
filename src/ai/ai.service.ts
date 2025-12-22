@@ -973,11 +973,23 @@ export class AiService implements OnModuleInit {
       // Tentar extrair o subscription ID da mensagem de erro ou da mensagem completa
       if (errorMsg.includes('already subscribed')) {
         this.logger.warn(`[AiService] ⚠️ Subscription já existe, mas subscriptionId não foi capturado. Tentando extrair...`);
-        // Se não temos subscriptionId, mas sabemos que há uma subscription ativa,
-        // podemos tentar usar o ID da mensagem ou aguardar a próxima mensagem com o ID
-        if (msg.subscription?.id) {
-          this.subscriptionId = msg.subscription.id;
+        this.logger.debug(`[AiService] 📊 Estrutura completa da mensagem de erro: ${JSON.stringify(msg, null, 2)}`);
+        
+        // Tentar extrair subscription ID de vários lugares possíveis
+        const possibleSubId = msg.subscription?.id || 
+                             msg.subscription_id || 
+                             msg.id || 
+                             msg.echo_req?.req_id ||
+                             msg.req_id;
+        
+        if (possibleSubId) {
+          this.subscriptionId = possibleSubId;
           this.logger.log(`[AiService] 📋 Subscription ID capturado do erro: ${this.subscriptionId}`);
+        } else {
+          // Se não conseguimos capturar o ID, mas sabemos que há uma subscription ativa,
+          // vamos aguardar que os ticks comecem a chegar ou que uma mensagem com o ID chegue
+          this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro. Aguardando próxima mensagem...`);
+          this.logger.warn(`[AiService] 💡 Se a subscription está ativa, os ticks devem começar a chegar em breve.`);
         }
       }
       return;
@@ -993,14 +1005,16 @@ export class AiService implements OnModuleInit {
         // ✅ Processar resposta da subscription de ticks
         this.logger.log(`[AiService] 📊 Resposta de ticks_history recebida`);
         this.logger.debug(`[AiService] 📊 Estrutura completa da mensagem: ${JSON.stringify(Object.keys(msg))}`);
+        this.logger.debug(`[AiService] 📊 Conteúdo completo da mensagem: ${JSON.stringify(msg, null, 2)}`);
         
         // Capturar subscription ID (pode estar em diferentes lugares)
-        const subId = msg.subscription?.id || msg.subscription_id || msg.id;
+        const subId = msg.subscription?.id || msg.subscription_id || msg.id || msg.echo_req?.req_id;
         if (subId) {
           this.subscriptionId = subId;
           this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
         } else {
           this.logger.warn(`[AiService] ⚠️ Subscription ID não encontrado na mensagem ticks_history`);
+          this.logger.warn(`[AiService] ⚠️ Tentando extrair de outros campos: subscription=${JSON.stringify(msg.subscription)}, subscription_id=${msg.subscription_id}, id=${msg.id}, echo_req=${JSON.stringify(msg.echo_req)}`);
         }
         
         // Processar histórico se presente
@@ -1017,7 +1031,12 @@ export class AiService implements OnModuleInit {
         break;
 
       case 'tick':
-        this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)}`);
+        // ✅ Tentar capturar subscription ID das mensagens de tick
+        if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
+          this.subscriptionId = msg.subscription.id;
+          this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
+        }
+        this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)} | subscription=${msg.subscription?.id || 'N/A'}`);
         this.processTick(msg.tick);
         break;
         
