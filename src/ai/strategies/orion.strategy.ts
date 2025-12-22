@@ -955,14 +955,21 @@ export class OrionStrategy implements IStrategy {
       ws.on('open', () => {
         this.logger.debug(`[ORION] 🔌 WebSocket aberto, autorizando...`);
         this.logger.debug(`[ORION] 🔑 Token sendo usado: ${token ? token.substring(0, 20) + '...' : 'NULL'}`);
-        ws.send(JSON.stringify({ authorize: token }));
+        const authPayload = { authorize: token };
+        this.logger.debug(`[ORION] 📤 Enviando autorização: ${JSON.stringify(authPayload).replace(token, 'TOKEN_HIDDEN')}`);
+        ws.send(JSON.stringify(authPayload));
       });
 
       ws.on('message', (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
           
+          // ✅ Log de todas as mensagens recebidas para debug
+          this.logger.debug(`[ORION] 📥 Mensagem recebida: ${JSON.stringify(msg).substring(0, 200)}...`);
+          
           if (msg.authorize) {
+            this.logger.debug(`[ORION] 📥 Resposta de autorização recebida: ${JSON.stringify(msg.authorize).substring(0, 300)}`);
+            
             if (msg.authorize.error) {
               if (!hasResolved) {
                 hasResolved = true;
@@ -979,6 +986,11 @@ export class OrionStrategy implements IStrategy {
                 resolve(null);
               }
               return;
+            }
+            
+            // ✅ Verificar se a autorização foi bem-sucedida
+            if (!msg.authorize.authorized) {
+              this.logger.warn(`[ORION] ⚠️ Autorização não confirmada: ${JSON.stringify(msg.authorize)}`);
             }
             
             this.logger.debug(`[ORION] ✅ Autorizado, solicitando proposta...`);
