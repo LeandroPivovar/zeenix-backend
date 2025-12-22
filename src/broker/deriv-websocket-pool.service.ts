@@ -13,6 +13,8 @@ interface PendingRequest {
 interface ActiveSubscription {
   request: any;
   callback: (response: any) => void;
+  subscriptionId?: string; // ID retornado pela Deriv
+  customSubId: string; // ID customizado que passamos (ex.: contractId)
 }
 
 /**
@@ -74,9 +76,43 @@ export class DerivWebSocketPoolService {
   ): Promise<void> {
     const conn = await this.getConnection(token);
 
-    // Enfileirar subscribe
+    // ✅ Registrar subscription ANTES de enviar para capturar subscription.id da resposta
+    const subscription: ActiveSubscription = {
+      request: subscribePayload,
+      callback,
+      customSubId: subId,
+    };
+    conn.subs.set(subId, subscription);
+
+    // Enfileirar subscribe e aguardar primeira resposta
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs);
+      
+      // ✅ Interceptar primeira mensagem para capturar subscription.id
+      const originalCallback = subscription.callback;
+      subscription.callback = (msg: any) => {
+        // ✅ Capturar subscription.id da primeira mensagem
+        if (msg.subscription?.id && !subscription.subscriptionId) {
+          subscription.subscriptionId = msg.subscription.id;
+          this.logger.debug(`[POOL] 📋 Subscription ID capturado: ${msg.subscription.id} -> ${subId}`);
+          
+          // ✅ Também mapear pelo subscription.id para facilitar lookup
+          if (msg.subscription.id !== subId) {
+            conn.subs.set(msg.subscription.id, subscription);
+          }
+        }
+        
+        // ✅ Verificar erros na mensagem
+        if (msg.error) {
+          this.logger.error(`[POOL] ❌ Erro na subscription ${subId}: ${JSON.stringify(msg.error)}`);
+          reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+          return;
+        }
+        
+        // Chamar callback original
+        originalCallback(msg);
+      };
+
       conn.queue.push({
         payload: subscribePayload,
         resolve: () => {
@@ -91,8 +127,6 @@ export class DerivWebSocketPoolService {
       });
       this.flushQueue(conn);
     });
-
-    conn.subs.set(subId, { request: subscribePayload, callback });
   }
 
   /**
@@ -107,10 +141,22 @@ export class DerivWebSocketPoolService {
 
   /**
    * Remove callback localmente (sem enviar forget).
+   * Remove tanto pelo customSubId quanto pelo subscriptionId se existir.
    */
   removeSubscription(token: string, subId: string): void {
     const conn = this.connections.get(token);
-    if (conn) conn.subs.delete(subId);
+    if (!conn) return;
+
+    // ✅ Remover pelo customSubId
+    const sub = conn.subs.get(subId);
+    if (sub) {
+      // ✅ Se tiver subscriptionId mapeado, remover também
+      if (sub.subscriptionId && sub.subscriptionId !== subId) {
+        conn.subs.delete(sub.subscriptionId);
+      }
+      conn.subs.delete(subId);
+      this.logger.debug(`[POOL] 🗑️ Subscription removida: ${subId}${sub.subscriptionId ? ` (subscriptionId: ${sub.subscriptionId})` : ''}`);
+    }
   }
 
   private async getConnection(token: string) {
@@ -155,14 +201,38 @@ export class DerivWebSocketPoolService {
           return;
         }
 
-        // Autorizado
-        if (msg.authorize) {
+        // Autorizado (já verificamos erro acima)
+        if (msg.authorize && !msg.authorize.error) {
           conn.ready = true;
-          this.flushQueue(conn);
+          this.logger.debug(`[POOL] ✅ Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+          
+          // ✅ Pequeno delay para garantir estabilidade da conexão
+          setTimeout(() => {
+            this.flushQueue(conn);
+          }, 100);
           return;
         }
 
-        // Mensagens de subscribe: encaminhar pelo subscription id ou subId customizado
+        // ✅ Verificar erros primeiro
+        if (msg.error) {
+          this.logger.error(`[POOL] ❌ Erro recebido: ${JSON.stringify(msg.error)}`);
+          // Tentar encontrar subscription afetada
+          const subscriptionId = msg.subscription?.id;
+          if (subscriptionId && conn.subs.has(subscriptionId)) {
+            const sub = conn.subs.get(subscriptionId)!;
+            sub.callback(msg);
+            return;
+          }
+          // Se não encontrou, pode ser erro em request pendente
+          const pending = conn.queue.shift();
+          if (pending) {
+            clearTimeout(pending.timeout);
+            pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            return;
+          }
+        }
+
+        // ✅ Mensagens de subscribe: encaminhar pelo subscription.id retornado pela Deriv
         const subscriptionId = msg.subscription?.id;
         if (subscriptionId && conn.subs.has(subscriptionId)) {
           const sub = conn.subs.get(subscriptionId)!;
@@ -181,11 +251,28 @@ export class DerivWebSocketPoolService {
           }
         }
 
-        // Resposta a requests da fila (non-subscribe)
+        // ✅ Resposta a requests da fila (non-subscribe)
+        // Verificar se é erro primeiro
+        if (msg.error) {
+          const pending = conn.queue.shift();
+          if (pending) {
+            clearTimeout(pending.timeout);
+            const errorMsg = msg.error.message || JSON.stringify(msg.error);
+            this.logger.error(`[POOL] ❌ Erro em request pendente: ${errorMsg}`);
+            pending.reject(new Error(errorMsg));
+            return;
+          }
+        }
+
         const pending = conn.queue.shift();
         if (pending) {
           clearTimeout(pending.timeout);
           pending.resolve(msg);
+        } else {
+          // ✅ Log de mensagem não processada (pode ser útil para debug)
+          if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
+            this.logger.debug(`[POOL] ⚠️ Mensagem não processada: msg_type=${msg.msg_type}, subscription=${msg.subscription?.id || 'N/A'}`);
+          }
         }
       } catch (err) {
         this.logger.error('[POOL] Erro ao processar mensagem', err as any);
@@ -225,16 +312,25 @@ export class DerivWebSocketPoolService {
   }
 
   private flushQueue(conn: { ws: WebSocket; ready: boolean; queue: PendingRequest[] }) {
-    if (!conn.ready) return;
-    if (conn.ws.readyState !== WebSocket.OPEN) return;
+    if (!conn.ready) {
+      this.logger.debug(`[POOL] ⏳ Aguardando autorização... (${conn.queue.length} requisições na fila)`);
+      return;
+    }
+    if (conn.ws.readyState !== WebSocket.OPEN) {
+      this.logger.warn(`[POOL] ⚠️ WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
+      return;
+    }
 
     while (conn.queue.length) {
       const req = conn.queue.shift();
       if (!req) continue;
       try {
-        conn.ws.send(JSON.stringify(req.payload));
+        const payloadStr = JSON.stringify(req.payload);
+        this.logger.debug(`[POOL] 📤 Enviando requisição: ${req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other'}`);
+        conn.ws.send(payloadStr);
       } catch (err) {
         clearTimeout(req.timeout);
+        this.logger.error(`[POOL] ❌ Erro ao enviar requisição:`, err);
         req.reject(err);
       }
     }

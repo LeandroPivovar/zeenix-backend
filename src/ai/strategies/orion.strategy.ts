@@ -940,12 +940,19 @@ export class OrionStrategy implements IStrategy {
         );
         
         if (userId) {
-          this.saveOrionLog(userId, 'R_10', 'erro', `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
+          // ✅ Mensagem mais clara para WrongResponse
+          let userMessage = `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`;
+          if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
+            userMessage = `❌ Erro na proposta da Deriv | Código: WrongResponse | Mensagem: Sorry, an error occurred while processing your request`;
+          }
+          this.saveOrionLog(userId, 'R_10', 'erro', userMessage);
           
           if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Saldo insuficiente na Deriv.`);
           } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
             this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Rate limit atingido na Deriv.`);
+          } else if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
+            this.saveOrionLog(userId, 'R_10', 'alerta', `💡 Erro temporário da Deriv. Tente novamente em alguns segundos.`);
           }
         }
         return null;
@@ -1043,8 +1050,26 @@ export class OrionStrategy implements IStrategy {
             },
             (msg: any) => {
               try {
+                // ✅ Verificar erros primeiro
+                if (msg.error) {
+                  this.logger.error(`[ORION] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
+                  if (!hasResolved) {
+                    hasResolved = true;
+                    if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                    this.wsPool.removeSubscription(token, contractId);
+                    resolve(null);
+                  }
+                  return;
+                }
+
                 const contract = msg.proposal_open_contract;
-                if (!contract) return;
+                if (!contract) {
+                  // ✅ Log de mensagens sem contract (pode ser ping/pong ou outras)
+                  if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
+                    this.logger.debug(`[ORION] 📨 Mensagem recebida sem contract: msg_type=${msg.msg_type}`);
+                  }
+                  return;
+                }
 
                 // ✅ Log de atualizações para debug
                 this.logger.debug(
