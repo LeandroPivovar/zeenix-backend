@@ -922,16 +922,40 @@ export class OrionStrategy implements IStrategy {
   }> {
     // ✅ Verificar se já existe conexão ativa para este token
     const existing = this.wsConnections.get(token);
-    if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-      this.logger.debug(`[ORION] ♻️ [${userId || 'SYSTEM'}] Reutilizando conexão WebSocket existente`);
+    
+    // ✅ Logs de diagnóstico
+    this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`);
+    this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Total de conexões no pool: ${this.wsConnections.size}`);
+    
+    if (existing) {
+      const readyState = existing.ws.readyState;
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' : 
+                            readyState === WebSocket.CONNECTING ? 'CONNECTING' : 
+                            readyState === WebSocket.CLOSING ? 'CLOSING' : 
+                            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
       
-      return {
-        ws: existing.ws,
-        sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) => 
-          this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-        removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
-      };
+      this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+      
+      if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+        this.logger.debug(`[ORION] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+        
+        return {
+          ws: existing.ws,
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) => 
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        };
+      } else {
+        this.logger.warn(`[ORION] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
+        if (existing.keepAliveInterval) {
+          clearInterval(existing.keepAliveInterval);
+        }
+        existing.ws.close();
+        this.wsConnections.delete(token);
+      }
+    } else {
+      this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
     }
 
     // ✅ Criar nova conexão
@@ -946,15 +970,22 @@ export class OrionStrategy implements IStrategy {
       let authResolved = false;
       const connectionTimeout = setTimeout(() => {
         if (!authResolved) {
+          this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
           socket.close();
-          reject(new Error('Timeout ao conectar e autorizar WebSocket (15s)'));
+          this.wsConnections.delete(token);
+          reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
         }
-      }, 15000);
+      }, 20000); // ✅ Aumentado de 15s para 20s
 
       // ✅ Listener de mensagens para capturar autorização e outras respostas
       socket.on('message', (data: WebSocket.RawData) => {
         try {
           const msg = JSON.parse(data.toString());
+          
+          // ✅ Log de todas as mensagens recebidas durante autorização
+          if (!authResolved) {
+            this.logger.debug(`[ORION] 📥 [${userId || 'SYSTEM'}] Mensagem recebida durante autorização: ${JSON.stringify(Object.keys(msg))}`);
+          }
           
           // ✅ Ignorar ping/pong
           if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
@@ -962,14 +993,19 @@ export class OrionStrategy implements IStrategy {
           }
 
           const conn = this.wsConnections.get(token);
-          if (!conn) return;
+          if (!conn) {
+            this.logger.warn(`[ORION] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
+            return;
+          }
 
           // ✅ Processar autorização (apenas durante inicialização)
           if (msg.authorize && !authResolved) {
+            this.logger.debug(`[ORION] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
             authResolved = true;
             clearTimeout(connectionTimeout);
             
             if (msg.authorize.error) {
+              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${JSON.stringify(msg.authorize.error)}`);
               socket.close();
               this.wsConnections.delete(token);
               reject(new Error(`Erro na autorização: ${msg.authorize.error.message}`));
@@ -977,7 +1013,7 @@ export class OrionStrategy implements IStrategy {
             }
             
             conn.authorized = true;
-            this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
             
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
@@ -1028,7 +1064,7 @@ export class OrionStrategy implements IStrategy {
       });
 
       socket.on('open', () => {
-        this.logger.debug(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
+        this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
         
         // ✅ Criar entrada no pool
         const conn = {
@@ -1042,7 +1078,9 @@ export class OrionStrategy implements IStrategy {
         this.wsConnections.set(token, conn);
         
         // ✅ Enviar autorização
-        socket.send(JSON.stringify({ authorize: token }));
+        const authPayload = { authorize: token };
+        this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
+        socket.send(JSON.stringify(authPayload));
       });
 
       socket.on('error', (error) => {
