@@ -170,6 +170,17 @@ export class DerivWebSocketPoolService {
           return;
         }
 
+        // ✅ FALLBACK: Para proposal_open_contract, também verificar contract_id
+        // Isso permite usar contractId como subId mesmo que subscription.id seja diferente
+        if (msg.proposal_open_contract) {
+          const contractId = msg.proposal_open_contract.contract_id;
+          if (contractId && conn.subs.has(contractId)) {
+            const sub = conn.subs.get(contractId)!;
+            sub.callback(msg);
+            return;
+          }
+        }
+
         // Resposta a requests da fila (non-subscribe)
         const pending = conn.queue.shift();
         if (pending) {

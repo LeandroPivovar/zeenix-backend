@@ -864,19 +864,32 @@ export class AiService implements OnModuleInit {
   }
 
   private handleMessage(msg: any) {
+    // ✅ Log de todas as mensagens recebidas para diagnóstico
+    if (msg.msg_type) {
+      this.logger.debug(`[AiService] 📥 Mensagem recebida: msg_type=${msg.msg_type} | subscription=${msg.subscription?.id || 'N/A'}`);
+    }
+    
     if (msg.error) {
-      this.logger.error('Erro da API:', msg.error.message);
+      this.logger.error('❌ Erro da API:', msg.error.message || JSON.stringify(msg.error));
       return;
     }
 
     switch (msg.msg_type) {
       case 'history':
+        this.logger.log(`[AiService] 📊 Histórico recebido: ${msg.history?.prices?.length || 0} preços`);
         this.processHistory(msg.history, msg.subscription?.id);
         break;
 
       case 'tick':
         this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)}`);
         this.processTick(msg.tick);
+        break;
+        
+      default:
+        // ✅ Log de mensagens desconhecidas para diagnóstico
+        if (msg.msg_type) {
+          this.logger.debug(`[AiService] ⚠️ Mensagem desconhecida: msg_type=${msg.msg_type}`);
+        }
         break;
     }
   }
