@@ -302,9 +302,11 @@ export class OrionStrategy implements IStrategy {
 
     // Incrementar contador de ticks
     for (const [userId, state] of this.velozUsers.entries()) {
-      if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
-        state.ticksDesdeUltimaOp += 1;
+      // ✅ Garantir que ticksDesdeUltimaOp está inicializado
+      if (state.ticksDesdeUltimaOp === undefined) {
+        state.ticksDesdeUltimaOp = 0;
       }
+      state.ticksDesdeUltimaOp += 1;
     }
 
     // Log de diagnóstico a cada 10 ticks
@@ -346,6 +348,11 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
+      // ✅ Garantir que ticksDesdeUltimaOp está inicializado
+      if (state.ticksDesdeUltimaOp === undefined) {
+        state.ticksDesdeUltimaOp = 0;
+      }
+      
       // Verificar intervalo entre operações (3 ticks)
       if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
         // Log a cada 20 ticks para diagnóstico
@@ -2057,6 +2064,8 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        // ✅ Garantir que ticksDesdeUltimaOp está inicializado
+        ticksDesdeUltimaOp: existing.ticksDesdeUltimaOp !== undefined ? existing.ticksDesdeUltimaOp : 0,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {

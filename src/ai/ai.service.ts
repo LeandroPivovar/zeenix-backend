@@ -4246,7 +4246,12 @@ export class AiService implements OnModuleInit {
       `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
     
-    const nextTradeAt = new Date(Date.now() + 60000); // 1 minuto a partir de agora (primeira operação)
+    // ✅ Para modo veloz com Orion, definir next_trade_at como NULL para permitir processamento imediato
+    // O Orion processa em tempo real via ticks, não depende de next_trade_at
+    // Para outros modos, usar 1 minuto no futuro
+    const nextTradeAt = (mode || '').toLowerCase() === 'veloz' && (strategy || 'orion').toLowerCase() === 'orion'
+      ? null // Orion processa em tempo real, não precisa de agendamento
+      : new Date(Date.now() + 60000); // Outros modos: 1 minuto a partir de agora
     
     // 2. Criar nova sessão (sempre INSERT)
     // ✅ Adicionar entry_value se a coluna existir, senão usar NULL
