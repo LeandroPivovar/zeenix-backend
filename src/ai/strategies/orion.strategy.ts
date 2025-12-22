@@ -1022,12 +1022,12 @@ export class OrionStrategy implements IStrategy {
       }
 
       // ✅ Verificar erros na resposta (pode estar em error ou buy.error)
-      const errorObj = buyResponse.error || buyResponse.buy?.error;
-      if (errorObj) {
-        const errorCode = errorObj?.code || '';
-        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+      const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
+      if (buyErrorObj) {
+        const errorCode = buyErrorObj?.code || '';
+        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
         this.logger.error(
-          `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(errorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
+          `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
         );
         
         if (userId) {
