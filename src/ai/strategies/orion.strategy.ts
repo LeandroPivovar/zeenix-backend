@@ -1006,21 +1006,23 @@ export class OrionStrategy implements IStrategy {
           }
 
           // ✅ Processar autorização (apenas durante inicialização)
-          if (msg.authorize && !authResolved) {
+          // A API Deriv retorna msg.msg_type === 'authorize' com dados em msg.authorize
+          if (msg.msg_type === 'authorize' && !authResolved) {
             this.logger.debug(`[ORION] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
             authResolved = true;
             clearTimeout(connectionTimeout);
             
-            if (msg.authorize.error) {
-              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${JSON.stringify(msg.authorize.error)}`);
+            if (msg.error || (msg.authorize && msg.authorize.error)) {
+              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
               socket.close();
               this.wsConnections.delete(token);
-              reject(new Error(`Erro na autorização: ${msg.authorize.error.message}`));
+              reject(new Error(`Erro na autorização: ${errorMsg}`));
               return;
             }
             
             conn.authorized = true;
-            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
             
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
