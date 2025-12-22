@@ -4,7 +4,7 @@ import { filter, map } from 'rxjs/operators';
 
 interface TradeEventPayload {
   userId: string;
-  type: 'created' | 'updated';
+  type: 'created' | 'updated' | 'corrected';
   tradeId?: number;
   status?: string;
   strategy?: string;
@@ -12,6 +12,11 @@ interface TradeEventPayload {
   contractType?: string;
   profitLoss?: number;
   exitPrice?: number;
+  isPredicted?: boolean; // ✅ Indica se é uma previsão (não confirmada ainda)
+  previousPrediction?: 'WON' | 'LOST'; // ✅ Para eventos 'corrected'
+  confirmedStatus?: 'WON' | 'LOST'; // ✅ Para eventos 'corrected'
+  previousProfit?: number; // ✅ Para eventos 'corrected'
+  confirmedProfit?: number; // ✅ Para eventos 'corrected'
 }
 
 @Injectable()

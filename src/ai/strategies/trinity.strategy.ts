@@ -1945,40 +1945,79 @@ export class TrinityStrategy implements IStrategy {
    * ✅ TRINITY: Atualiza trade no banco de dados (status WON/LOST)
    */
   private async updateTrinityTrade(
-    tradeId: number,
+    tradeId: number | null,
     userId: string,
     update: {
-      status: 'WON' | 'LOST';
-      profitLoss: number;
-      exitPrice: number;
+      contractId?: string | null;
+      status?: 'WON' | 'LOST' | 'PENDING';
+      profitLoss?: number;
+      exitPrice?: number;
     }
   ): Promise<void> {
+    if (!tradeId) {
+      this.logger.warn(`[TRINITY] ⚠️ Tentativa de atualizar trade com ID null`);
+      return;
+    }
     try {
+      // Construir query dinamicamente baseado nos campos fornecidos
+      const updates: string[] = [];
+      const values: any[] = [];
+
+      if (update.contractId !== undefined) {
+        updates.push('contract_id = ?');
+        values.push(update.contractId);
+      }
+      if (update.status !== undefined) {
+        updates.push('status = ?');
+        values.push(update.status);
+      }
+      if (update.profitLoss !== undefined) {
+        updates.push('profit_loss = ?');
+        values.push(update.profitLoss);
+      }
+      if (update.exitPrice !== undefined) {
+        updates.push('exit_price = ?');
+        values.push(update.exitPrice);
+      }
+      
+      // Se status foi atualizado para WON ou LOST, adicionar closed_at
+      if (update.status === 'WON' || update.status === 'LOST') {
+        updates.push('closed_at = NOW()');
+      }
+
+      if (updates.length === 0) {
+        this.logger.warn(`[TRINITY] ⚠️ Nenhum campo para atualizar no trade ID=${tradeId}`);
+        return;
+      }
+
+      values.push(tradeId);
+
       await this.dataSource.query(
         `UPDATE ai_trades 
-         SET status = ?,
-             profit_loss = ?,
-             exit_price = ?,
-             closed_at = NOW()
+         SET ${updates.join(', ')}
          WHERE id = ?`,
-        [
-          update.status,
-          update.profitLoss,
-          update.exitPrice,
-          tradeId,
-        ]
+        values
       );
       
-      this.logger.log(`[TRINITY] ✅ Trade atualizado no banco: ID=${tradeId}, Status=${update.status}, P&L=${update.profitLoss.toFixed(2)}`);
-      this.tradeEvents.emit({
-        userId,
-        type: 'updated',
-        tradeId,
-        status: update.status,
-        strategy: 'trinity',
-        profitLoss: update.profitLoss,
-        exitPrice: update.exitPrice,
-      });
+      const logMsg = `[TRINITY] ✅ Trade atualizado no banco: ID=${tradeId}`;
+      if (update.status) {
+        this.logger.log(`${logMsg}, Status=${update.status}`);
+      } else {
+        this.logger.log(logMsg);
+      }
+
+      // Emitir evento apenas se houver status ou profitLoss
+      if (update.status || update.profitLoss !== undefined) {
+        this.tradeEvents.emit({
+          userId,
+          type: 'updated',
+          tradeId,
+          status: update.status,
+          strategy: 'trinity',
+          profitLoss: update.profitLoss,
+          exitPrice: update.exitPrice,
+        });
+      }
     } catch (error) {
       this.logger.error(`[TRINITY] Erro ao atualizar trade no banco (ID=${tradeId}):`, error);
     }

@@ -1576,6 +1576,7 @@ export class OrionStrategy implements IStrategy {
 
       this.saveOrionLog(
         state.userId,
+        'R_10',
         'resultado',
         `🔄 PREVISÃO CORRIGIDA | Anterior: ${previousPrediction} | Correto: ${confirmedStatus} | Profit: $${confirmedProfit.toFixed(2)}`
       );
