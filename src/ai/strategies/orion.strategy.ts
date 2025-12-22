@@ -26,6 +26,7 @@ export interface VelozUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
 }
@@ -48,6 +49,7 @@ export interface ModeradoUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
   // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
@@ -76,6 +78,7 @@ export interface PrecisoUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
 }
@@ -116,42 +119,43 @@ function calcularApostaComSoros(
 
 /**
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
+ * Conforme documentação completa da estratégia ZENIX v2.0
  * 
- * Fórmula geral: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
- * 
- * CONSERVADOR: meta = perdas_totais (break-even)
- * MODERADO:    meta = perdas_totais × 1,25 (100% das perdas + 25% de lucro)
- * AGRESSIVO:   meta = perdas_totais × 1,50 (100% das perdas + 50% de lucro)
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.95 (break-even)
+ * MODERADO:    Próxima Aposta = Perda Acumulada / 0.95 (break-even - recuperar TODO o capital perdido)
+ * AGRESSIVO:   Próxima Aposta = (Perda Acumulada + Última Aposta) / 0.95 (recuperar perdas + gerar lucro do tamanho da última aposta)
  * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
- * @param payoutCliente - Payout do cliente (payout_original - 3)
+ * @param payoutCliente - Payout do cliente (0.95 = 95% ou 92 = 92%)
+ * @param ultimaAposta - Última aposta feita (obrigatório para modo agressivo)
  * @returns Valor da próxima aposta calculada
  */
 function calcularProximaAposta(
   perdasTotais: number,
   modo: ModoMartingale,
   payoutCliente: number,
+  ultimaAposta: number = 0,
 ): number {
-  let metaRecuperacao = 0;
+  const PAYOUT = typeof payoutCliente === 'number' && payoutCliente > 1 
+    ? payoutCliente / 100  // Se for 92, converter para 0.92
+    : payoutCliente;       // Se já for 0.95, usar direto
+  
+  let aposta = 0;
   
   switch (modo) {
     case 'conservador':
-      // Meta: recuperar 100% das perdas (break-even)
-      metaRecuperacao = perdasTotais;
-      break;
     case 'moderado':
-      // Meta: recuperar 100% das perdas + 25% de lucro
-      metaRecuperacao = perdasTotais * 1.25;
+      // Meta: recuperar 100% das perdas (break-even)
+      // Fórmula: entrada_próxima = perdas_totais / payout
+      aposta = perdasTotais / PAYOUT;
       break;
     case 'agressivo':
-      // Meta: recuperar 100% das perdas + 50% de lucro
-      metaRecuperacao = perdasTotais * 1.50;
+      // Meta: recuperar perdas + gerar lucro do tamanho da última aposta
+      // Fórmula: entrada_próxima = (perdas_totais + última_aposta) / payout
+      aposta = (perdasTotais + ultimaAposta) / PAYOUT;
       break;
   }
-  
-  // Fórmula: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
-  const aposta = (metaRecuperacao * 100) / payoutCliente;
   
   return Math.round(aposta * 100) / 100; // 2 casas decimais
 }
@@ -537,6 +541,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -581,7 +586,55 @@ export class OrionStrategy implements IStrategy {
           return; // NÃO EXECUTAR OPERAÇÃO
         }
         
-        // Se tem stop loss configurado e a perda atual ultrapassou o limite
+        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0)
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × 0.5)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante 50% do lucro)
+        if (lucroAtual > 0) {
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          
+          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
+          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+          
+          // Se capital atual caiu abaixo do stop blindado → PARAR
+          if (capitalAtual <= stopBlindado) {
+            const lucroProtegido = capitalAtual - capitalInicial;
+            
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)}) - BLOQUEANDO OPERAÇÃO`,
+            );
+            
+            this.saveOrionLog(
+              state.userId,
+              'R_10',
+              'alerta',
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+            );
+            
+            const deactivationReason = 
+              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+            
+            // Desativar a IA
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [deactivationReason, state.userId],
+            );
+            
+            // Remover usuário do monitoramento
+            this.velozUsers.delete(state.userId);
+            this.moderadoUsers.delete(state.userId);
+            this.precisoUsers.delete(state.userId);
+            
+            return; // NÃO EXECUTAR OPERAÇÃO
+          }
+        }
+        
+        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
@@ -607,7 +660,16 @@ export class OrionStrategy implements IStrategy {
         // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
         if (lossLimit > 0 && entry > 1 && state.perdaAcumulada > 0) {
           const payoutCliente = 92;
-          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          // Para modo agressivo, precisamos da última aposta
+          let ultimaAposta = 0;
+          if (state.modoMartingale === 'agressivo') {
+            if ('ultimaApostaUsada' in state && state.ultimaApostaUsada > 0) {
+              ultimaAposta = state.ultimaApostaUsada;
+            } else {
+              ultimaAposta = state.apostaInicial || 0.35; // Fallback
+            }
+          }
+          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, ultimaAposta);
           // Perda total potencial = perda atual + próxima aposta de martingale
           const perdaTotalPotencial = perdaAtual + proximaAposta;
           
@@ -621,6 +683,7 @@ export class OrionStrategy implements IStrategy {
             state.perdaAcumulada = 0;
             state.ultimaDirecaoMartingale = null;
             state.martingaleStep = 0;
+            if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
             
             // Continuar com aposta inicial ao invés de martingale
             entry = 1;
@@ -692,7 +755,18 @@ export class OrionStrategy implements IStrategy {
     } else {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
-      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+      // ✅ Para modo agressivo, precisamos da última aposta
+      // Usar o campo ultimaApostaUsada se disponível, senão usar aposta inicial como fallback
+      let ultimaAposta = 0;
+      if (state.modoMartingale === 'agressivo') {
+        if ('ultimaApostaUsada' in state && state.ultimaApostaUsada > 0) {
+          ultimaAposta = state.ultimaApostaUsada;
+        } else {
+          // Fallback: usar aposta inicial (caso seja primeira entrada do martingale)
+          ultimaAposta = state.apostaInicial || 0.35;
+        }
+      }
+      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, ultimaAposta);
       
       // Garantir valor mínimo
       if (stakeAmount < 0.35) {
@@ -1535,6 +1609,11 @@ export class OrionStrategy implements IStrategy {
     state.isOperationActive = false;
     state.capital += profit;
     
+    // ✅ Sempre armazenar a última aposta usada (necessário para cálculo do martingale agressivo)
+    if ('ultimaApostaUsada' in state) {
+      state.ultimaApostaUsada = stakeAmount;
+    }
+    
     if (profit > 0) {
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
       const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
@@ -1543,6 +1622,7 @@ export class OrionStrategy implements IStrategy {
       if ('perdaAcumulada' in state) state.perdaAcumulada = 0;
       if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
       if ('martingaleStep' in state) state.martingaleStep = 0;
+      if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
       
       if (estavaEmMartingale) {
         // Se estava em martingale, NÃO aplicar Soros
@@ -1608,6 +1688,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -1659,7 +1740,54 @@ export class OrionStrategy implements IStrategy {
           return;
         }
         
-        // ✅ Verificar STOP LOSS
+        // ✅ Verificar STOP-LOSS BLINDADO (ZENIX v2.0 - protege lucros conquistados)
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × 0.5)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante 50% do lucro)
+        if (lucroAtual > 0) {
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          
+          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
+          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+          
+          // Se capital atual caiu abaixo do stop blindado → PARAR
+          if (capitalAtual <= stopBlindado) {
+            const lucroProtegido = capitalAtual - capitalInicial;
+            
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)})`,
+            );
+            
+            this.saveOrionLog(
+              state.userId,
+              'R_10',
+              'alerta',
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+            );
+            
+            const deactivationReason = 
+              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+            
+            // Desativar a IA
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [deactivationReason, state.userId],
+            );
+            
+            // Remover usuário do monitoramento
+            this.velozUsers.delete(state.userId);
+            this.moderadoUsers.delete(state.userId);
+            this.precisoUsers.delete(state.userId);
+            return;
+          }
+        }
+        
+        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
@@ -1848,6 +1976,9 @@ export class OrionStrategy implements IStrategy {
                 }
                 if ('martingaleStep' in state) {
                   state.martingaleStep = 0;
+                }
+                if ('ultimaApostaUsada' in state) {
+                  state.ultimaApostaUsada = 0;
                 }
                 
                 if (estavaEmMartingale) {
@@ -2066,6 +2197,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Garantir que ticksDesdeUltimaOp está inicializado
         ticksDesdeUltimaOp: existing.ticksDesdeUltimaOp !== undefined ? existing.ticksDesdeUltimaOp : 0,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
@@ -2089,6 +2221,7 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
@@ -2113,6 +2246,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -2134,6 +2268,7 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
@@ -2158,6 +2293,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
       });
     } else {
@@ -2178,6 +2314,7 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
     }
