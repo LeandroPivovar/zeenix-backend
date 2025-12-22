@@ -705,6 +705,24 @@ export class AiService implements OnModuleInit {
   }
 
   /**
+   * ✅ Cancela uma subscription usando o comando forget
+   */
+  private cancelSubscription(subscriptionId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.warn(`[cancelSubscription] ⚠️ WebSocket não está aberto, não é possível cancelar subscription ${subscriptionId}`);
+      return;
+    }
+
+    try {
+      const forgetPayload = { forget: subscriptionId };
+      this.ws.send(JSON.stringify(forgetPayload));
+      this.logger.log(`[cancelSubscription] ✅ Comando forget enviado para subscription ${subscriptionId}`);
+    } catch (error) {
+      this.logger.error(`[cancelSubscription] ❌ Erro ao cancelar subscription ${subscriptionId}:`, error);
+    }
+  }
+
+  /**
    * ✅ Keep-alive: Envia ping a cada 90 segundos para evitar expiração (sessão expira após 2 min de inatividade)
    */
   private startKeepAlive(): void {
@@ -983,16 +1001,17 @@ export class AiService implements OnModuleInit {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
       this.logger.error('❌ Erro da API:', errorMsg);
       
-      // ✅ Se o erro é genérico e não estamos recebendo ticks há muito tempo, recriar WebSocket
+      // ✅ Se o erro é genérico, recriar WebSocket imediatamente (provavelmente após restart do servidor)
       if (errorMsg.includes('Sorry, an error occurred') || errorMsg.includes('error occurred while processing')) {
-        const timeSinceLastTick = this.lastTickReceivedTime > 0 ? Date.now() - this.lastTickReceivedTime : Infinity;
-        if (timeSinceLastTick > 30000 && this.lastTickReceivedTime > 0) {
-          // Não recebendo ticks há mais de 30 segundos - recriar WebSocket
-          this.logger.warn(`[AiService] ⚠️ Erro genérico da API e não recebendo ticks há ${Math.floor(timeSinceLastTick / 1000)}s - Recriando WebSocket...`);
-          this.recreateWebSocket().catch((error) => {
-            this.logger.error(`[AiService] ❌ Erro ao recriar WebSocket:`, error);
-          });
+        this.logger.warn(`[AiService] ⚠️ Erro genérico da API detectado - Recriando WebSocket imediatamente...`);
+        // Cancelar subscription antiga se existir
+        if (this.subscriptionId) {
+          this.logger.log(`[AiService] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
+          this.cancelSubscription(this.subscriptionId);
         }
+        this.recreateWebSocket().catch((error) => {
+          this.logger.error(`[AiService] ❌ Erro ao recriar WebSocket:`, error);
+        });
         return;
       }
       
@@ -1015,24 +1034,14 @@ export class AiService implements OnModuleInit {
           this.logger.log(`[AiService] 📋 Subscription ID capturado do erro: ${this.subscriptionId}`);
         } else {
           // Se não conseguimos capturar o ID, mas sabemos que há uma subscription ativa,
-          // vamos aguardar que os ticks comecem a chegar (eles devem trazer o subscriptionId)
-          this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro.`);
+          // recriar WebSocket imediatamente (provavelmente após restart do servidor)
+          this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro "already subscribed".`);
+          this.logger.warn(`[AiService] ⚠️ Recriando WebSocket para limpar subscription antiga...`);
           
-          // ✅ Verificar se não estamos recebendo ticks há muito tempo
-          const timeSinceLastTick = this.lastTickReceivedTime > 0 ? Date.now() - this.lastTickReceivedTime : Infinity;
-          if (timeSinceLastTick > 60000 && this.lastTickReceivedTime > 0) {
-            // Não recebendo ticks há mais de 60 segundos - recriar WebSocket
-            this.logger.warn(`[AiService] ⚠️ Não recebendo ticks há ${Math.floor(timeSinceLastTick / 1000)}s e não conseguimos capturar subscriptionId - Recriando WebSocket...`);
-            this.recreateWebSocket().catch((error) => {
-              this.logger.error(`[AiService] ❌ Erro ao recriar WebSocket:`, error);
-            });
-          } else {
-            this.logger.warn(`[AiService] 💡 A subscription está ativa - aguardando que os ticks cheguem (eles devem trazer o subscriptionId)...`);
-            this.logger.warn(`[AiService] 💡 Não tentaremos criar uma nova subscription para evitar erro repetido.`);
-            // Marcar que já recebemos "already subscribed" para não tentar criar nova subscription
-            this.hasReceivedAlreadySubscribed = true;
-            this.lastAlreadySubscribedTime = Date.now();
-          }
+          // Recriar WebSocket imediatamente para limpar estado
+          this.recreateWebSocket().catch((error) => {
+            this.logger.error(`[AiService] ❌ Erro ao recriar WebSocket:`, error);
+          });
         }
       }
       return;
@@ -3653,6 +3662,14 @@ export class AiService implements OnModuleInit {
     this.websocketReconnectAttempts++;
     this.logger.warn(`[recreateWebSocket] 🔄 Tentativa ${this.websocketReconnectAttempts}: Recriando WebSocket...`);
     
+    // ✅ Cancelar subscription antiga se existir antes de fechar
+    if (this.subscriptionId && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.logger.log(`[recreateWebSocket] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
+      this.cancelSubscription(this.subscriptionId);
+      // Aguardar um pouco para o comando forget ser processado
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
     // ✅ Salvar estado atual antes de fechar
     await this.saveWebSocketState();
     
@@ -3671,6 +3688,8 @@ export class AiService implements OnModuleInit {
     
     this.isConnected = false;
     this.subscriptionId = null;
+    this.hasReceivedAlreadySubscribed = false; // Resetar flag
+    this.lastAlreadySubscribedTime = 0; // Resetar timestamp
     this.stopKeepAlive();
     
     // ✅ Aguardar um pouco antes de reconectar
