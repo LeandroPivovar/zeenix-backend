@@ -1258,15 +1258,8 @@ export class OrionStrategy implements IStrategy {
     }
     
     // ✅ Verificar stop loss e stop win após processar resultado
-    // Atualizar session_balance no banco com o capital atual do estado
+    // Atualizar session_balance no banco com o lucro/perda da sessão (capital atual - capital inicial)
     try {
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET session_balance = ?
-         WHERE user_id = ? AND is_active = 1`,
-        [state.capital, state.userId],
-      );
-      
       const configResult = await this.dataSource.query(
         `SELECT 
           COALESCE(loss_limit, 0) as lossLimit,
@@ -1293,6 +1286,14 @@ export class OrionStrategy implements IStrategy {
         // Calcular perda/lucro atual (capital atual - capital inicial)
         const lucroAtual = capitalAtual - capitalInicial;
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+        
+        // ✅ Atualizar session_balance com o lucro/perda da sessão (não o capital atual)
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET session_balance = ?
+           WHERE user_id = ? AND is_active = 1`,
+          [lucroAtual, state.userId],
+        );
         
         // ✅ Verificar STOP WIN (profit target)
         if (profitTarget > 0 && lucroAtual >= profitTarget) {
