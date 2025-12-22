@@ -544,6 +544,9 @@ export class AiService implements OnModuleInit {
   private subscriptionId: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null; // ✅ Keep-alive para evitar expiração (2 min inatividade)
   private hasReceivedAlreadySubscribed = false; // ✅ Flag para indicar que já recebemos erro "already subscribed"
+  private lastAlreadySubscribedTime: number = 0; // ✅ Timestamp da última vez que recebemos "already subscribed"
+  private lastTickReceivedTime: number = 0; // ✅ Timestamp do último tick recebido
+  private websocketReconnectAttempts: number = 0; // ✅ Contador de tentativas de reconexão
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
@@ -643,9 +646,13 @@ export class AiService implements OnModuleInit {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       this.ws = new WebSocket.WebSocket(endpoint);
 
-      this.ws.on('open', () => {
+      this.ws.on('open', async () => {
         this.logger.log('✅ Conexão WebSocket aberta com sucesso');
         this.isConnected = true;
+        
+        // ✅ Salvar estado da nova conexão
+        await this.saveWebSocketState();
+        
         this.subscribeToTicks();
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
@@ -996,6 +1003,7 @@ export class AiService implements OnModuleInit {
           this.logger.warn(`[AiService] 💡 Não tentaremos criar uma nova subscription para evitar erro repetido.`);
           // Marcar que já recebemos "already subscribed" para não tentar criar nova subscription
           this.hasReceivedAlreadySubscribed = true;
+          this.lastAlreadySubscribedTime = Date.now();
         }
       }
       return;
@@ -1116,6 +1124,7 @@ export class AiService implements OnModuleInit {
     };
 
     this.ticks.push(newTick);
+    this.lastTickReceivedTime = Date.now(); // ✅ Atualizar timestamp do último tick
 
     // Manter apenas os últimos maxTicks
     if (this.ticks.length > this.maxTicks) {
@@ -3447,13 +3456,20 @@ export class AiService implements OnModuleInit {
           // ✅ Se não há subscription ID, verificar se já recebemos erro "already subscribed"
           // Se sim, não tentar criar uma nova subscription - aguardar que os ticks cheguem
           if (!this.subscriptionId || this.subscriptionId === 'N/A') {
-            if (this.hasReceivedAlreadySubscribed) {
-              // Já recebemos "already subscribed" - não tentar criar nova subscription
-              this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado, mas já recebemos "already subscribed"`);
+            const timeSinceLastError = Date.now() - this.lastAlreadySubscribedTime;
+            const shouldWaitForTicks = this.hasReceivedAlreadySubscribed && timeSinceLastError < 30000; // Aguardar 30 segundos após receber "already subscribed"
+            
+            if (shouldWaitForTicks) {
+              // Já recebemos "already subscribed" recentemente - não tentar criar nova subscription
+              this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado, mas já recebemos "already subscribed" há ${Math.floor(timeSinceLastError / 1000)}s`);
               this.logger.warn(`[ensureTickStreamReady] 💡 A subscription está ativa - aguardando que os ticks cheguem (eles devem trazer o subscriptionId)...`);
               // Não tentar criar uma nova subscription para evitar erro "You are already subscribed"
             } else {
-              // Ainda não recebemos "already subscribed" - tentar criar subscription
+              // Ainda não recebemos "already subscribed" ou já passou tempo suficiente - tentar criar subscription
+              if (this.hasReceivedAlreadySubscribed) {
+                this.logger.warn(`[ensureTickStreamReady] ⏰ Já passou tempo suficiente desde "already subscribed" (${Math.floor(timeSinceLastError / 1000)}s) - tentando criar nova subscription...`);
+                this.hasReceivedAlreadySubscribed = false; // Resetar flag para tentar novamente
+              }
               this.logger.warn(`[ensureTickStreamReady] 🔄 Subscription ID não encontrado - Reenviando subscription...`);
               try {
                 this.subscribeToTicks();
@@ -3463,10 +3479,22 @@ export class AiService implements OnModuleInit {
               }
             }
           } else {
-            // ✅ Se temos subscriptionId mas não estamos recebendo ticks, pode ser que a subscription esteja inativa
-            this.logger.warn(`[ensureTickStreamReady] 💡 Subscription ID existe (${this.subscriptionId}), mas não está recebendo ticks`);
-            this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription expirada, símbolo incorreto, ou servidor não está enviando ticks`);
-            this.logger.warn(`[ensureTickStreamReady] 💡 Aguardando mais alguns segundos...`);
+            // ✅ Se temos subscriptionId mas não estamos recebendo ticks, verificar se não recebemos há muito tempo
+            const timeSinceLastTick = Date.now() - this.lastTickReceivedTime;
+            if (timeSinceLastTick > 60000 && this.lastTickReceivedTime > 0) {
+              // Não recebendo ticks há mais de 60 segundos - recriar WebSocket
+              this.logger.warn(`[ensureTickStreamReady] ⚠️ Subscription ID existe (${this.subscriptionId}), mas não recebendo ticks há ${Math.floor(timeSinceLastTick / 1000)}s`);
+              this.logger.warn(`[ensureTickStreamReady] 🔄 Recriando WebSocket...`);
+              try {
+                await this.recreateWebSocket();
+              } catch (error) {
+                this.logger.error(`[ensureTickStreamReady] ❌ Erro ao recriar WebSocket:`, error);
+              }
+            } else {
+              this.logger.warn(`[ensureTickStreamReady] 💡 Subscription ID existe (${this.subscriptionId}), mas não está recebendo ticks`);
+              this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription expirada, símbolo incorreto, ou servidor não está enviando ticks`);
+              this.logger.warn(`[ensureTickStreamReady] 💡 Aguardando mais alguns segundos...`);
+            }
           }
         } else {
           this.logger.warn(`[ensureTickStreamReady] ❌ WebSocket não está OPEN (estado: ${wsState.readyStateText})`);
@@ -3482,6 +3510,17 @@ export class AiService implements OnModuleInit {
     }
 
     if (this.ticks.length < minTicks) {
+      // ✅ Verificar se não está recebendo ticks há muito tempo (mais de 60 segundos)
+      const timeSinceLastTick = Date.now() - this.lastTickReceivedTime;
+      if (timeSinceLastTick > 60000 && this.lastTickReceivedTime > 0) {
+        this.logger.warn(`[ensureTickStreamReady] ⚠️ Não recebendo ticks há ${Math.floor(timeSinceLastTick / 1000)}s - Recriando WebSocket...`);
+        try {
+          await this.recreateWebSocket();
+        } catch (error) {
+          this.logger.error(`[ensureTickStreamReady] ❌ Erro ao recriar WebSocket:`, error);
+        }
+      }
+      
       this.logger.error(`[ensureTickStreamReady] ❌ Timeout após ${maxAttempts} tentativas: Não foi possível obter ${minTicks} ticks (obtidos: ${this.ticks.length})`);
       throw new Error(
         `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
@@ -3489,6 +3528,134 @@ export class AiService implements OnModuleInit {
     }
     
     this.logger.debug(`[ensureTickStreamReady] ✅ Ticks suficientes: ${this.ticks.length}/${minTicks}`);
+  }
+
+  /**
+   * ✅ Salva o estado atual do WebSocket no banco de dados
+   */
+  private async saveWebSocketState(): Promise<void> {
+    try {
+      const ticksData = this.ticks.slice(-50); // Salvar apenas os últimos 50 ticks
+      const ticksJson = JSON.stringify(ticksData);
+      
+      await this.dataSource.query(`
+        INSERT INTO ai_websocket_state 
+        (symbol, subscription_id, ticks_data, total_ticks, last_tick_received_at, websocket_url, is_connected, connection_created_at)
+        VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+          subscription_id = VALUES(subscription_id),
+          ticks_data = VALUES(ticks_data),
+          total_ticks = VALUES(total_ticks),
+          last_tick_received_at = VALUES(last_tick_received_at),
+          websocket_url = VALUES(websocket_url),
+          is_connected = VALUES(is_connected),
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        this.symbol,
+        this.subscriptionId || null,
+        ticksJson,
+        this.ticks.length,
+        this.lastTickReceivedTime > 0 ? Math.floor(this.lastTickReceivedTime / 1000) : null,
+        this.ws ? this.ws.url : null,
+        this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN
+      ]);
+      
+      this.logger.debug(`[saveWebSocketState] ✅ Estado salvo: ${this.ticks.length} ticks, subscriptionId=${this.subscriptionId || 'N/A'}`);
+    } catch (error) {
+      this.logger.error(`[saveWebSocketState] ❌ Erro ao salvar estado:`, error);
+    }
+  }
+
+  /**
+   * ✅ Recupera o estado do WebSocket do banco de dados
+   */
+  private async loadWebSocketState(): Promise<{ ticks: Tick[], subscriptionId: string | null } | null> {
+    try {
+      const result = await this.dataSource.query(`
+        SELECT ticks_data, subscription_id, total_ticks
+        FROM ai_websocket_state
+        WHERE symbol = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `, [this.symbol]);
+      
+      if (result.length === 0) {
+        this.logger.debug(`[loadWebSocketState] Nenhum estado salvo encontrado para ${this.symbol}`);
+        return null;
+      }
+      
+      const state = result[0];
+      let ticks: Tick[] = [];
+      
+      if (state.ticks_data) {
+        try {
+          ticks = JSON.parse(state.ticks_data);
+          this.logger.debug(`[loadWebSocketState] ✅ Estado recuperado: ${ticks.length} ticks, subscriptionId=${state.subscription_id || 'N/A'}`);
+        } catch (error) {
+          this.logger.warn(`[loadWebSocketState] ⚠️ Erro ao parsear ticks_data:`, error);
+        }
+      }
+      
+      return {
+        ticks,
+        subscriptionId: state.subscription_id || null
+      };
+    } catch (error) {
+      this.logger.error(`[loadWebSocketState] ❌ Erro ao recuperar estado:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ Recria o WebSocket quando a subscription não está funcionando
+   */
+  private async recreateWebSocket(): Promise<void> {
+    this.websocketReconnectAttempts++;
+    this.logger.warn(`[recreateWebSocket] 🔄 Tentativa ${this.websocketReconnectAttempts}: Recriando WebSocket...`);
+    
+    // ✅ Salvar estado atual antes de fechar
+    await this.saveWebSocketState();
+    
+    // ✅ Fechar conexão atual
+    if (this.ws) {
+      try {
+        this.ws.removeAllListeners();
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
+      } catch (error) {
+        this.logger.warn(`[recreateWebSocket] ⚠️ Erro ao fechar WebSocket antigo:`, error);
+      }
+      this.ws = null;
+    }
+    
+    this.isConnected = false;
+    this.subscriptionId = null;
+    this.stopKeepAlive();
+    
+    // ✅ Aguardar um pouco antes de reconectar
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // ✅ Tentar recuperar estado salvo
+    const savedState = await this.loadWebSocketState();
+    if (savedState && savedState.ticks.length > 0) {
+      this.ticks = savedState.ticks;
+      this.logger.log(`[recreateWebSocket] ✅ Recuperados ${savedState.ticks.length} ticks do estado salvo`);
+      if (savedState.subscriptionId) {
+        this.subscriptionId = savedState.subscriptionId;
+        this.logger.log(`[recreateWebSocket] ✅ Subscription ID recuperado: ${savedState.subscriptionId}`);
+      }
+    }
+    
+    // ✅ Criar nova conexão
+    try {
+      await this.initialize();
+      this.logger.log(`[recreateWebSocket] ✅ Nova conexão WebSocket criada com sucesso`);
+      this.websocketReconnectAttempts = 0; // Resetar contador após sucesso
+    } catch (error) {
+      this.logger.error(`[recreateWebSocket] ❌ Erro ao criar nova conexão:`, error);
+      throw error;
+    }
   }
 
   async getVelozDiagnostics(userId?: string) {
@@ -3948,6 +4115,27 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna strategy adicionada');
     }
+    
+    // ✅ Criar tabela para salvar estado do WebSocket
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS ai_websocket_state (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL DEFAULT 'R_10',
+        subscription_id VARCHAR(255) NULL,
+        ticks_data JSON NULL COMMENT 'Últimos ticks recebidos (serializados)',
+        total_ticks INT UNSIGNED DEFAULT 0,
+        last_tick_received_at TIMESTAMP NULL COMMENT 'Timestamp do último tick recebido',
+        websocket_url VARCHAR(500) NULL COMMENT 'URL do WebSocket',
+        is_connected BOOLEAN DEFAULT FALSE,
+        connection_created_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_symbol (symbol),
+        INDEX idx_last_tick (last_tick_received_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      COMMENT='Estado do WebSocket para recuperação após reconexão'
+    `);
+    this.logger.log('✅ Tabela ai_websocket_state criada/verificada');
     
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
     const indexesResult = await this.dataSource.query(`
