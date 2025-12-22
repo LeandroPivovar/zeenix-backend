@@ -968,6 +968,33 @@ export class AiService implements OnModuleInit {
         this.processHistory(msg.history, msg.subscription?.id);
         break;
 
+      case 'ticks_history':
+        // ✅ Processar resposta da subscription de ticks
+        this.logger.log(`[AiService] 📊 Resposta de ticks_history recebida`);
+        this.logger.debug(`[AiService] 📊 Estrutura completa da mensagem: ${JSON.stringify(Object.keys(msg))}`);
+        
+        // Capturar subscription ID (pode estar em diferentes lugares)
+        const subId = msg.subscription?.id || msg.subscription_id || msg.id;
+        if (subId) {
+          this.subscriptionId = subId;
+          this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
+        } else {
+          this.logger.warn(`[AiService] ⚠️ Subscription ID não encontrado na mensagem ticks_history`);
+        }
+        
+        // Processar histórico se presente
+        if (msg.history?.prices) {
+          this.logger.log(`[AiService] 📊 Processando histórico da subscription: ${msg.history.prices.length} preços`);
+          this.processHistory(msg.history, subId);
+        } else if (msg.ticks_history) {
+          // Se vier em formato diferente, processar também
+          this.logger.log(`[AiService] 📊 Processando ticks_history em formato alternativo`);
+          this.processHistory(msg.ticks_history, subId);
+        } else {
+          this.logger.warn(`[AiService] ⚠️ Mensagem ticks_history sem dados de histórico`);
+        }
+        break;
+
       case 'tick':
         this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)}`);
         this.processTick(msg.tick);
@@ -3379,14 +3406,10 @@ export class AiService implements OnModuleInit {
               this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
             }
           } else {
-            this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription não ativa, símbolo incorreto, ou servidor não está enviando ticks`);
-            this.logger.warn(`[ensureTickStreamReady] 💡 Tentando reenviar subscription mesmo com ID existente...`);
-            try {
-              this.subscribeToTicks();
-              this.logger.warn(`[ensureTickStreamReady] ✅ Subscription reenviada. Aguardando resposta...`);
-            } catch (error) {
-              this.logger.error(`[ensureTickStreamReady] ❌ Erro ao reenviar subscription:`, error);
-            }
+            this.logger.warn(`[ensureTickStreamReady] 💡 Subscription ID existe (${this.subscriptionId}), mas não está recebendo ticks`);
+            this.logger.warn(`[ensureTickStreamReady] 💡 Possíveis causas: subscription expirada, símbolo incorreto, ou servidor não está enviando ticks`);
+            this.logger.warn(`[ensureTickStreamReady] 💡 Aguardando mais alguns segundos antes de tentar reenviar...`);
+            // Não reenviar imediatamente para evitar erro "You are already subscribed"
           }
         } else {
           this.logger.warn(`[ensureTickStreamReady] ❌ WebSocket não está OPEN (estado: ${wsState.readyStateText})`);
