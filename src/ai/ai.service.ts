@@ -539,7 +539,7 @@ export class AiService implements OnModuleInit {
   private ticks: Tick[] = [];
   private maxTicks = 100; // Armazena os últimos 100 preços (suficiente para análise)
   private appId: string;
-  private symbol = 'R_10';
+  private symbol = 'R_100';
   private isConnected = false;
   private subscriptionId: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null; // ✅ Keep-alive para evitar expiração (2 min inatividade)

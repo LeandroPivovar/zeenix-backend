@@ -187,7 +187,7 @@ export class OrionStrategy implements IStrategy {
   }> = [];
   private logProcessing = false;
   private appId: string;
-  private symbol = 'R_10';
+  private symbol = 'R_100';
 
   // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
   private wsConnections: Map<
@@ -3103,8 +3103,11 @@ export class OrionStrategy implements IStrategy {
       return;
     }
 
+    // Normalizar símbolo: usar o padrão da Orion, exceto logs de sistema
+    const symbolToUse = symbol === 'SISTEMA' ? 'SISTEMA' : this.symbol;
+
     // Adicionar à fila
-    this.logQueue.push({ userId, symbol, type, message, details });
+    this.logQueue.push({ userId, symbol: symbolToUse, type, message, details });
     this.logger.debug(`[ORION][SaveLog] 📝 Log adicionado à fila | userId=${userId} | type=${type} | message=${message.substring(0, 50)}... | Fila: ${this.logQueue.length}`);
 
     // Processar fila em background (não bloqueia)

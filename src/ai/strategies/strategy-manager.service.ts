@@ -33,9 +33,9 @@ export class StrategyManagerService implements OnModuleInit {
    * Processa um tick para todas as estratégias ativas
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    // ORION processa apenas R_10 (symbol padrão)
-    if (!symbol || symbol === 'R_10') {
-      await this.orionStrategy.processTick(tick, 'R_10');
+    // ORION agora usa R_100 como símbolo padrão
+    if (!symbol || symbol === 'R_100') {
+      await this.orionStrategy.processTick(tick, 'R_100');
     }
 
     // TRINITY processa R_10, R_25, R_50
