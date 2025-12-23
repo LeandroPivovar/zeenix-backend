@@ -2,7 +2,7 @@ import { DigitParity, Tick } from '../ai.service';
 
 // Tipos comuns para estratégias
 export type ModoMartingale = 'conservador' | 'moderado' | 'agressivo';
-export type TradingMode = 'veloz' | 'moderado' | 'preciso';
+export type TradingMode = 'veloz' | 'moderado' | 'preciso' | 'lenta';
 
 // Configurações de modo
 export interface ModeConfig {
@@ -66,6 +66,16 @@ export const PRECISO_CONFIG: ModeConfig = {
   desequilibrioMin: 0.70,
   confianciaMin: 0.70,
   taxaAcertoEsperada: 0.82,
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.01,
+};
+
+export const LENTA_CONFIG: ModeConfig = {
+  amostraInicial: 50,
+  desequilibrioMin: 0.70,
+  confianciaMin: 0.80, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
+  taxaAcertoEsperada: 0.85,
   payout: 0.95,
   minStake: 0.35,
   betPercent: 0.01,

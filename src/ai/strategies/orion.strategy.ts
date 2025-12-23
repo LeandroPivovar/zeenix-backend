@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
-import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
+import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
@@ -169,9 +169,13 @@ export class OrionStrategy implements IStrategy {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
+  private lentaUsers = new Map<string, PrecisoUserState>(); // ✅ Modo lenta usa a mesma estrutura de preciso
   
   // ✅ Rastreamento de logs de coleta de dados (para evitar logs duplicados)
   private coletaLogsEnviados = new Map<string, Set<number>>(); // userId -> Set de marcos já logados
+  
+  // ✅ Rastreamento de logs de intervalo entre operações (para evitar logs duplicados)
+  private intervaloLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que está aguardando intervalo
 
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
@@ -219,7 +223,7 @@ export class OrionStrategy implements IStrategy {
     // Log de diagnóstico a cada 50 ticks
     if (this.ticks.length % 50 === 0) {
       this.logger.debug(
-        `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size}`,
+        `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size} | Lenta: ${this.lentaUsers.size}`,
       );
     }
 
@@ -227,6 +231,7 @@ export class OrionStrategy implements IStrategy {
     await this.processVelozStrategies(tick);
     await this.processModeradoStrategies(tick);
     await this.processPrecisoStrategies(tick);
+    await this.processLentaStrategies(tick);
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
@@ -276,6 +281,19 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+    } else if (modeLower === 'lenta') {
+      this.upsertLentaUserState({
+        userId,
+        stakeAmount, // Capital total
+        apostaInicial, // Valor de entrada por operação
+        derivToken,
+        currency,
+        modoMartingale: modoMartingale || 'conservador',
+      });
+      
+      // ✅ Log: Usuário ativado
+      this.saveOrionLog(userId, 'SISTEMA', 'info', 
+        `Usuário ATIVADO | Modo: ${mode || 'lenta'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -285,6 +303,7 @@ export class OrionStrategy implements IStrategy {
     this.velozUsers.delete(userId);
     this.moderadoUsers.delete(userId);
     this.precisoUsers.delete(userId);
+    this.lentaUsers.delete(userId);
     this.logger.log(`[ORION] Usuário ${userId} desativado`);
   }
 
@@ -292,6 +311,7 @@ export class OrionStrategy implements IStrategy {
     return this.velozUsers.get(userId) || 
            this.moderadoUsers.get(userId) || 
            this.precisoUsers.get(userId) || 
+           this.lentaUsers.get(userId) || 
            null;
   }
 
@@ -370,10 +390,20 @@ export class OrionStrategy implements IStrategy {
         // Verificar intervalo entre operações (3 ticks)
         if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
           if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+            const key = `veloz_intervalo_${userId}`;
+            if (!this.intervaloLogsEnviados.has(key)) {
+              this.intervaloLogsEnviados.set(key, true);
+              const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
+              this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
+            }
             this.logger.debug(
               `[ORION][Veloz][${userId}] ⏱️ Aguardando intervalo (martingale): ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
             );
             continue;
+          } else {
+            // Limpar flag quando intervalo for completado
+            const key = `veloz_intervalo_${userId}`;
+            this.intervaloLogsEnviados.delete(key);
           }
         }
 
@@ -395,6 +425,12 @@ export class OrionStrategy implements IStrategy {
       
       // Verificar intervalo entre operações (3 ticks)
       if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+        const key = `veloz_intervalo_${userId}`;
+        if (!this.intervaloLogsEnviados.has(key)) {
+          this.intervaloLogsEnviados.set(key, true);
+          const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
+          this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
+        }
         // Log a cada 20 ticks para diagnóstico
         if (this.ticks.length % 20 === 0) {
           this.logger.debug(
@@ -402,6 +438,10 @@ export class OrionStrategy implements IStrategy {
           );
         }
         continue;
+      } else {
+        // Limpar flag quando intervalo for completado
+        const key = `veloz_intervalo_${userId}`;
+        this.intervaloLogsEnviados.delete(key);
       }
 
       const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
@@ -574,10 +614,20 @@ export class OrionStrategy implements IStrategy {
         if (state.lastOperationTimestamp) {
           const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
           if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
+            const key = `moderado_intervalo_${userId}`;
+            if (!this.intervaloLogsEnviados.has(key)) {
+              this.intervaloLogsEnviados.set(key, true);
+              const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
+              this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
+            }
             this.logger.debug(
               `[ORION][Moderado][${userId}] ⏱️ Aguardando intervalo (martingale): ${secondsSinceLastOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos} segundos`,
             );
             continue;
+          } else {
+            // Limpar flag quando intervalo for completado
+            const key = `moderado_intervalo_${userId}`;
+            this.intervaloLogsEnviados.delete(key);
           }
         }
 
@@ -595,7 +645,19 @@ export class OrionStrategy implements IStrategy {
       const now = new Date();
       if (state.lastOperationTimestamp) {
         const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
-        if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) continue;
+        if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
+          const key = `moderado_intervalo_${userId}`;
+          if (!this.intervaloLogsEnviados.has(key)) {
+            this.intervaloLogsEnviados.set(key, true);
+            const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
+            this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
+          }
+          continue;
+        } else {
+          // Limpar flag quando intervalo for completado
+          const key = `moderado_intervalo_${userId}`;
+          this.intervaloLogsEnviados.delete(key);
+        }
       }
 
       const sinal = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
@@ -880,13 +942,182 @@ export class OrionStrategy implements IStrategy {
     }
   }
 
+  private async processLentaStrategies(latestTick: Tick): Promise<void> {
+    if (this.lentaUsers.size === 0) return;
+    
+    if (this.ticks.length < LENTA_CONFIG.amostraInicial) {
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = LENTA_CONFIG.amostraInicial;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.lentaUsers.entries()) {
+        const key = `lenta_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta`);
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === LENTA_CONFIG.amostraInicial) {
+      for (const [userId] of this.lentaUsers.entries()) {
+        const key = `lenta_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Lenta | Amostra completa: ${LENTA_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
+    }
+
+    // Processar cada usuário
+    for (const [userId, state] of this.lentaUsers.entries()) {
+      if (state.isOperationActive) continue;
+
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+        // Continuar com martingale usando a mesma direção
+        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
+        const proximaEntrada = (state.martingaleStep || 0) + 1;
+        this.logger.log(
+          `[ORION][Lenta][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        
+        await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'lenta', proximaEntrada);
+        continue;
+      }
+
+      const sinal = gerarSinalZenix(this.ticks, LENTA_CONFIG, 'LENTA');
+      if (!sinal || !sinal.sinal) continue;
+
+      this.logger.log(
+        `[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
+      );
+
+      // ✅ Salvar logs do sinal
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      
+      // ✅ Logs detalhados das 4 análises (conforme documentação)
+      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
+      
+      const detalhes = sinal.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        const pares = Math.round(deseq.percentualPar * LENTA_CONFIG.amostraInicial);
+        const impares = LENTA_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${LENTA_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${LENTA_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= LENTA_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(LENTA_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
+      }
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinal.confianca.toFixed(1)}% (limitado a 95%)`);
+      const confiancaOK = sinal.confianca >= (LENTA_CONFIG.confianciaMin * 100);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinal.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(LENTA_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
+
+      // ✅ Executar operação (entrada 1)
+      await this.executeOrionOperation(state, sinal.sinal, 'lenta', 1);
+    }
+  }
+
   /**
    * ✅ ORION: Executa operação completa
    */
   private async executeOrionOperation(
     state: VelozUserState | ModeradoUserState | PrecisoUserState,
     operation: DigitParity,
-    mode: 'veloz' | 'moderado' | 'preciso',
+    mode: 'veloz' | 'moderado' | 'preciso' | 'lenta',
     entry: number = 1,
   ): Promise<void> {
     // ✅ Declarar tradeId no escopo da função para ser acessível no catch
@@ -946,6 +1177,7 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
+          this.lentaUsers.delete(state.userId);
           
           return; // NÃO EXECUTAR OPERAÇÃO
         }
@@ -1017,6 +1249,7 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
+          this.lentaUsers.delete(state.userId);
           
           return; // NÃO EXECUTAR OPERAÇÃO
         }
@@ -1068,11 +1301,17 @@ export class OrionStrategy implements IStrategy {
     // Resetar contador de ticks
     if ('ticksDesdeUltimaOp' in state) {
       state.ticksDesdeUltimaOp = 0;
+      // Limpar flag de intervalo quando operação for executada
+      const key = `veloz_intervalo_${state.userId}`;
+      this.intervaloLogsEnviados.delete(key);
     }
 
     // Atualizar timestamp da última operação (Moderado)
     if ('lastOperationTimestamp' in state) {
       state.lastOperationTimestamp = new Date();
+      // Limpar flag de intervalo quando operação for executada
+      const key = `moderado_intervalo_${state.userId}`;
+      this.intervaloLogsEnviados.delete(key);
     }
 
     // ✅ ZENIX v2.0: Calcular stake baseado em Soros ou Martingale
@@ -2662,6 +2901,52 @@ export class OrionStrategy implements IStrategy {
       });
     } else {
       this.precisoUsers.set(params.userId, {
+        userId: params.userId,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        capital: params.stakeAmount,
+        virtualCapital: params.stakeAmount,
+        lossVirtualActive: false,
+        lossVirtualCount: 0,
+        lossVirtualOperation: null,
+        isOperationActive: false,
+        martingaleStep: 0,
+        modoMartingale: params.modoMartingale || 'conservador',
+        perdaAcumulada: 0,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
+        vitoriasConsecutivas: 0,
+        apostaBase: apostaInicial, // ✅ Base para cálculos
+        ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
+        ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+      });
+    }
+  }
+
+  private upsertLentaUserState(params: {
+    userId: string;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional)
+    derivToken: string;
+    currency: string;
+    modoMartingale?: ModoMartingale;
+  }): void {
+    const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
+    const existing = this.lentaUsers.get(params.userId);
+    if (existing) {
+      Object.assign(existing, {
+        capital: params.stakeAmount,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
+        // ✅ Atualizar aposta inicial se fornecido
+        apostaInicial: params.apostaInicial || existing.apostaInicial,
+        apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
+        // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
+      });
+    } else {
+      this.lentaUsers.set(params.userId, {
         userId: params.userId,
         derivToken: params.derivToken,
         currency: params.currency,
