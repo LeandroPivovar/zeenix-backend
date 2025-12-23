@@ -1007,14 +1007,32 @@ export class OrionStrategy implements IStrategy {
     const ticksAtuais = this.ticks.length;
     const amostraNecessaria = LENTA_CONFIG.amostraInicial;
     
+    // ✅ Log de debug para confirmar que o método está sendo chamado
+    if (this.lentaUsers.size > 0 && ticksAtuais % 10 === 0) {
+      this.logger.debug(`[ORION][Lenta] 🔄 Método chamado | Usuários: ${this.lentaUsers.size} | Ticks: ${ticksAtuais}/${amostraNecessaria}`);
+    }
+    
     if (ticksAtuais < amostraNecessaria) {
-      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      // ✅ Logar progresso periodicamente (a cada 5 ticks ou quando chegar em marcos importantes)
       for (const [userId] of this.lentaUsers.entries()) {
         const key = `lenta_${userId}`;
+        const ticksFaltando = amostraNecessaria - ticksAtuais;
+        
+        // Log inicial quando começar
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
-          // Log inicial apenas uma vez
-          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${amostraNecessaria - ticksAtuais}`);
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+        } else {
+          // Logar progresso a cada 5 ticks ou em marcos (40, 45, 48, 49)
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          const marcos = [40, 45, 48, 49];
+          const deveLogar = marcos.includes(ticksAtuais) && !marcosLogados.has(ticksAtuais);
+          
+          if (deveLogar) {
+            marcosLogados.add(ticksAtuais);
+            this.saveOrionLog(userId, 'R_10', 'info', `📊 Coletando dados... | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+            this.logger.debug(`[ORION][Lenta][${userId}] 📊 Progresso: ${ticksAtuais}/${amostraNecessaria} ticks coletados`);
+          }
         }
       }
       
@@ -1045,8 +1063,13 @@ export class OrionStrategy implements IStrategy {
     }
 
     // Processar cada usuário
+    this.logger.debug(`[ORION][Lenta] 🔄 Processando ${this.lentaUsers.size} usuário(s) | Ticks: ${ticksAtuais}`);
+    
     for (const [userId, state] of this.lentaUsers.entries()) {
-      if (state.isOperationActive) continue;
+      if (state.isOperationActive) {
+        this.logger.debug(`[ORION][Lenta][${userId.substring(0, 8)}] Operação ativa, pulando`);
+        continue;
+      }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
