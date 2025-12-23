@@ -3855,17 +3855,32 @@ export class AiService implements OnModuleInit {
     const winrate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
     // Buscar saldo da sessão ativa
-    const sessionQuery = `
+    // Buscar a sessão mais recente do dia; se não houver, pegar a última sessão registrada
+    const sessionQueryToday = `
       SELECT 
         COALESCE(session_balance, 0) as sessionBalance,
         created_at as sessionCreatedAt
       FROM ai_user_config
-      WHERE user_id = ? AND is_active = TRUE
+      WHERE user_id = ? 
+        AND created_at >= ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    const sessionQueryAny = `
+      SELECT 
+        COALESCE(session_balance, 0) as sessionBalance,
+        created_at as sessionCreatedAt
+      FROM ai_user_config
+      WHERE user_id = ?
       ORDER BY created_at DESC
       LIMIT 1
     `;
 
-    const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
+    let sessionResult = await this.dataSource.query(sessionQueryToday, [userId, startOfDay]);
+    if (sessionResult.length === 0) {
+      sessionResult = await this.dataSource.query(sessionQueryAny, [userId]);
+    }
+
     const sessionBalance = sessionResult.length > 0 ? parseFloat(sessionResult[0].sessionBalance) || 0 : 0;
     const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
 
@@ -3894,6 +3909,15 @@ export class AiService implements OnModuleInit {
       sessionLosses = parseInt(sessionTradesResult[0]?.sessionLosses) || 0;
       sessionProfitLoss = parseFloat(sessionTradesResult[0]?.sessionProfitLoss) || 0;
       sessionWinrate = sessionTrades > 0 ? (sessionWins / sessionTrades) * 100 : 0;
+    }
+
+    // Fallback: se não houver sessão aberta/registrada hoje, usar o resultado do dia
+    if (!sessionCreatedAt) {
+      sessionProfitLoss = profitLoss;
+      sessionTrades = totalTrades;
+      sessionWins = wins;
+      sessionLosses = losses;
+      sessionWinrate = winrate;
     }
 
     this.logger.log(`[GetSessionStats] ✅ Stats: trades=${totalTrades}, wins=${wins}, losses=${losses}, P&L=${profitLoss}, volume=${totalVolume}, winrate=${winrate.toFixed(2)}%, sessionBalance=${sessionBalance}, sessionProfit=${sessionProfitLoss}, sessionTrades=${sessionTrades}, sessionWinrate=${sessionWinrate.toFixed(2)}%`);
