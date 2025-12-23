@@ -281,7 +281,9 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-    } else if (modeLower === 'lenta') {
+    } else if (modeLower === 'lenta' || modeLower === 'lento') {
+      // ✅ Suporta tanto "lenta" quanto "lento" (ambos usam a mesma configuração)
+      this.logger.log(`[ORION] 🔵 Adicionando usuário ${userId} ao modo lenta/lento`);
       this.upsertLentaUserState({
         userId,
         stakeAmount, // Capital total
@@ -291,9 +293,15 @@ export class OrionStrategy implements IStrategy {
         modoMartingale: modoMartingale || 'conservador',
       });
       
+      // ✅ Verificar se foi adicionado corretamente
+      const userAdded = this.lentaUsers.has(userId);
+      this.logger.log(`[ORION] ✅ Usuário ${userId} ${userAdded ? 'adicionado' : 'NÃO FOI ADICIONADO'} ao lentaUsers | Total: ${this.lentaUsers.size}`);
+      
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'lenta'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+    } else {
+      this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -943,7 +951,10 @@ export class OrionStrategy implements IStrategy {
   }
 
   private async processLentaStrategies(latestTick: Tick): Promise<void> {
-    if (this.lentaUsers.size === 0) return;
+    if (this.lentaUsers.size === 0) {
+      this.logger.debug(`[ORION][Lenta] Nenhum usuário ativo (total: ${this.lentaUsers.size})`);
+      return;
+    }
     
     if (this.ticks.length < LENTA_CONFIG.amostraInicial) {
       const ticksAtuais = this.ticks.length;
@@ -2999,11 +3010,13 @@ export class OrionStrategy implements IStrategy {
   ): void {
     // Validar parâmetros
     if (!userId || !type || !message || message.trim() === '') {
+      this.logger.warn(`[ORION][SaveLog] ⚠️ Parâmetros inválidos: userId=${userId}, type=${type}, message=${message}`);
       return;
     }
 
     // Adicionar à fila
     this.logQueue.push({ userId, symbol, type, message, details });
+    this.logger.debug(`[ORION][SaveLog] 📝 Log adicionado à fila | userId=${userId} | type=${type} | message=${message.substring(0, 50)}... | Fila: ${this.logQueue.length}`);
 
     // Processar fila em background (não bloqueia)
     this.processOrionLogQueue().catch(error => {
