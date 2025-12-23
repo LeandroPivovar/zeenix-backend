@@ -1004,38 +1004,42 @@ export class OrionStrategy implements IStrategy {
       return;
     }
     
-    if (this.ticks.length < LENTA_CONFIG.amostraInicial) {
-      const ticksAtuais = this.ticks.length;
-      const amostraNecessaria = LENTA_CONFIG.amostraInicial;
-      
+    const ticksAtuais = this.ticks.length;
+    const amostraNecessaria = LENTA_CONFIG.amostraInicial;
+    
+    if (ticksAtuais < amostraNecessaria) {
       // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
       for (const [userId] of this.lentaUsers.entries()) {
         const key = `lenta_${userId}`;
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
           // Log inicial apenas uma vez
-          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta`);
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${amostraNecessaria - ticksAtuais}`);
         }
       }
       
       return;
     }
     
-    // ✅ Logar quando completar a coleta (apenas uma vez)
-    if (this.ticks.length === LENTA_CONFIG.amostraInicial) {
+    // ✅ Logar quando completar a coleta (apenas uma vez) - usar >= para garantir que funciona mesmo se já passou
+    if (ticksAtuais >= amostraNecessaria) {
       for (const [userId] of this.lentaUsers.entries()) {
         const key = `lenta_${userId}`;
-        if (this.coletaLogsEnviados.has(key)) {
-          const marcosLogados = this.coletaLogsEnviados.get(key)!;
-          // Se ainda não logou que completou, logar agora
-          if (!marcosLogados.has(100)) {
-            marcosLogados.add(100);
-            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Lenta | Amostra completa: ${LENTA_CONFIG.amostraInicial} ticks | Iniciando operações...`);
-            // Limpar após um tempo para permitir novo ciclo se necessário
-            setTimeout(() => {
-              this.coletaLogsEnviados.delete(key);
-            }, 60000); // Limpar após 60 segundos
-          }
+        // ✅ Garantir que a chave existe (mesmo se usuário foi ativado depois)
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+        }
+        
+        const marcosLogados = this.coletaLogsEnviados.get(key)!;
+        // Se ainda não logou que completou, logar agora
+        if (!marcosLogados.has(100)) {
+          marcosLogados.add(100);
+          this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Lenta | Amostra completa: ${amostraNecessaria} ticks | Ticks disponíveis: ${ticksAtuais} | Iniciando operações...`);
+          this.logger.log(`[ORION][Lenta][${userId}] ✅ Dados coletados! Ticks: ${ticksAtuais}/${amostraNecessaria} | Iniciando processamento...`);
+          // Limpar após um tempo para permitir novo ciclo se necessário
+          setTimeout(() => {
+            this.coletaLogsEnviados.delete(key);
+          }, 60000); // Limpar após 60 segundos
         }
       }
     }
@@ -1058,7 +1062,10 @@ export class OrionStrategy implements IStrategy {
       }
 
       const sinal = gerarSinalZenix(this.ticks, LENTA_CONFIG, 'LENTA');
-      if (!sinal || !sinal.sinal) continue;
+      if (!sinal || !sinal.sinal) {
+        this.logger.debug(`[ORION][Lenta][${userId}] ⚠️ Nenhum sinal gerado (confiança insuficiente ou desequilíbrio baixo) | Ticks: ${this.ticks.length}`);
+        continue;
+      }
 
       this.logger.log(
         `[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
