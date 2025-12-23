@@ -169,6 +169,9 @@ export class OrionStrategy implements IStrategy {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
+  
+  // ✅ Rastreamento de logs de coleta de dados (para evitar logs duplicados)
+  private coletaLogsEnviados = new Map<string, Set<number>>(); // userId -> Set de marcos já logados
 
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
@@ -300,8 +303,41 @@ export class OrionStrategy implements IStrategy {
     }
     
     if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
-      this.logger.debug(`[ORION][Veloz] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`);
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
+      const ticksFaltando = amostraNecessaria - ticksAtuais;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.velozUsers.entries()) {
+        const key = `veloz_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz`);
+        }
+      }
+      
+      this.logger.debug(`[ORION][Veloz] Coletando amostra inicial (${ticksAtuais}/${amostraNecessaria})`);
       return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === VELOZ_CONFIG.amostraInicial) {
+      for (const [userId] of this.velozUsers.entries()) {
+        const key = `veloz_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Veloz | Amostra completa: ${VELOZ_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
     }
 
     // Incrementar contador de ticks
@@ -387,16 +423,102 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
-      // ✅ Salvar logs da análise
+      // ✅ Logs detalhados das 4 análises (conforme documentação)
       this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      
+      const detalhes = sinal.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * VELOZ_CONFIG.amostraInicial);
+        const impares = VELOZ_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${VELOZ_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${VELOZ_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= VELOZ_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinal.confianca.toFixed(1)}% (limitado a 95%)`);
+      const confiancaOK = sinal.confianca >= (VELOZ_CONFIG.confianciaMin * 100);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinal.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(VELOZ_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
 
       // ✅ Executar operação (entrada 1)
       await this.executeOrionOperation(state, sinal.sinal, 'veloz', 1);
@@ -405,7 +527,42 @@ export class OrionStrategy implements IStrategy {
 
   private async processModeradoStrategies(latestTick: Tick): Promise<void> {
     if (this.moderadoUsers.size === 0) return;
-    if (this.ticks.length < MODERADO_CONFIG.amostraInicial) return;
+    
+    if (this.ticks.length < MODERADO_CONFIG.amostraInicial) {
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.moderadoUsers.entries()) {
+        const key = `moderado_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado`);
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === MODERADO_CONFIG.amostraInicial) {
+      for (const [userId] of this.moderadoUsers.entries()) {
+        const key = `moderado_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Moderado | Amostra completa: ${MODERADO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
+    }
 
     // Processar cada usuário
     for (const [userId, state] of this.moderadoUsers.entries()) {
@@ -452,16 +609,102 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
-      // ✅ Salvar logs da análise
+      // ✅ Logs detalhados das 4 análises (conforme documentação)
       this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      
+      const detalhes = sinal.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * MODERADO_CONFIG.amostraInicial);
+        const impares = MODERADO_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${MODERADO_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${MODERADO_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= MODERADO_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(MODERADO_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinal.confianca.toFixed(1)}% (limitado a 95%)`);
+      const confiancaOK = sinal.confianca >= (MODERADO_CONFIG.confianciaMin * 100);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinal.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(MODERADO_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
 
       // ✅ Executar operação (entrada 1)
       await this.executeOrionOperation(state, sinal.sinal, 'moderado', 1);
@@ -470,7 +713,42 @@ export class OrionStrategy implements IStrategy {
 
   private async processPrecisoStrategies(latestTick: Tick): Promise<void> {
     if (this.precisoUsers.size === 0) return;
-    if (this.ticks.length < PRECISO_CONFIG.amostraInicial) return;
+    
+    if (this.ticks.length < PRECISO_CONFIG.amostraInicial) {
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.precisoUsers.entries()) {
+        const key = `preciso_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso`);
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === PRECISO_CONFIG.amostraInicial) {
+      for (const [userId] of this.precisoUsers.entries()) {
+        const key = `preciso_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Preciso | Amostra completa: ${PRECISO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
+    }
 
     // Processar cada usuário
     for (const [userId, state] of this.precisoUsers.entries()) {
@@ -500,16 +778,102 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
-      // ✅ Salvar logs da análise
+      // ✅ Logs detalhados das 4 análises (conforme documentação)
       this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      
+      const detalhes = sinal.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * PRECISO_CONFIG.amostraInicial);
+        const impares = PRECISO_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${PRECISO_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${PRECISO_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= PRECISO_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(PRECISO_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinal.confianca.toFixed(1)}% (limitado a 95%)`);
+      const confiancaOK = sinal.confianca >= (PRECISO_CONFIG.confianciaMin * 100);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinal.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(PRECISO_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
 
       // ✅ Executar operação (entrada 1)
       await this.executeOrionOperation(state, sinal.sinal, 'preciso', 1);
