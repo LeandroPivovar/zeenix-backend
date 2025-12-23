@@ -255,6 +255,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Veloz | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -268,6 +280,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Moderado | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -281,6 +305,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Preciso | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else if (modeLower === 'lenta' || modeLower === 'lento') {
       // ✅ Suporta tanto "lenta" quanto "lento" (ambos usam a mesma configuração)
       this.logger.log(`[ORION] 🔵 Adicionando usuário ${userId} ao modo lenta/lento`);
@@ -300,6 +336,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'lenta'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = LENTA_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Lenta | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else {
       this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
