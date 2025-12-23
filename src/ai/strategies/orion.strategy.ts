@@ -1234,7 +1234,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
+          stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -1281,9 +1281,10 @@ export class OrionStrategy implements IStrategy {
         }
         
         // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0)
-        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × 0.5)
-        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante 50% do lucro)
-        if (lucroAtual > 0) {
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
+        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
+        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
           
           // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
@@ -2389,7 +2390,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
+          stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -2442,9 +2443,10 @@ export class OrionStrategy implements IStrategy {
         }
         
         // ✅ Verificar STOP-LOSS BLINDADO (ZENIX v2.0 - protege lucros conquistados)
-        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × 0.5)
-        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante 50% do lucro)
-        if (lucroAtual > 0) {
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
+        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
+        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
           
           // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)

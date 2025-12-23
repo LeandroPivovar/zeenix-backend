@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
-import { Tick, DigitParity } from '../ai.service';
+import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
@@ -793,14 +793,34 @@ export class TrinityStrategy implements IStrategy {
 
     let stakeAmount = asset.apostaInicial;
     
-    // ✅ Se está em martingale, usar aposta de recuperação
+    // ✅ Se está em martingale, verificar limite ANTES de calcular próxima aposta
     if (asset.martingaleStep > 0) {
-      stakeAmount = calcularProximaAposta(
-        asset.perdaAcumulada,
-        state.modoMartingale,
-        modeConfig.payout * 100, // Converter para percentual
-        state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
-      );
+      const config = CONFIGS_MARTINGALE[state.modoMartingale];
+      
+      // ✅ ZENIX v2.0: Verificar limite de entradas ANTES de tentar próxima entrada
+      // Conservador: máximo 5 entradas (martingaleStep 1-5, reseta quando tentar 6ª)
+      // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+      if (config.maxEntradas !== Infinity && asset.martingaleStep >= config.maxEntradas) {
+        // Limite atingido: resetar martingale e usar aposta inicial
+        this.logger.warn(
+          `[TRINITY][${symbol}] ⚠️ ${state.modoMartingale.toUpperCase()}: Limite de ${config.maxEntradas} entradas atingido. Resetando martingale.`,
+        );
+        this.saveTrinityLog(state.userId, symbol, 'alerta', 
+          `🛑 LIMITE MARTINGALE ATINGIDO (${state.modoMartingale.toUpperCase()}) | ${config.maxEntradas} entradas | Resetando para aposta inicial`);
+        
+        asset.martingaleStep = 0;
+        asset.perdaAcumulada = 0;
+        asset.apostaInicial = asset.apostaBase;
+        stakeAmount = asset.apostaBase; // Usar aposta inicial
+      } else {
+        // Ainda dentro do limite: calcular próxima aposta de recuperação
+        stakeAmount = calcularProximaAposta(
+          asset.perdaAcumulada,
+          state.modoMartingale,
+          modeConfig.payout * 100, // Converter para percentual
+          state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
+        );
+      }
       
       // ✅ Verificar stop-loss antes de apostar
       const stopLossDisponivel = this.calculateAvailableStopLoss(state);
@@ -1396,9 +1416,35 @@ export class TrinityStrategy implements IStrategy {
           `[TRINITY][${symbol}] ❌ DERROTA - Martingale ATIVADO | Perda: $${perda.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`,
         );
       } else {
-        // Já estava em martingale: incrementar nível
+        // Já estava em martingale: verificar limite ANTES de incrementar
         const nivelAntes = asset.martingaleStep;
         const perdaAntes = asset.perdaAcumulada;
+        const config = CONFIGS_MARTINGALE[state.modoMartingale];
+        
+        // ✅ ZENIX v2.0: Verificar limite de entradas ANTES de incrementar
+        // Conservador: máximo 5 entradas (martingaleStep 0-4, reseta quando chegar em 5)
+        // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+        if (config.maxEntradas !== Infinity && nivelAntes >= config.maxEntradas) {
+          // Limite atingido: resetar martingale
+          this.saveTrinityLog(state.userId, symbol, 'info', 
+            `MARTINGALE RESETADO (${state.modoMartingale.toUpperCase()}) | Limite de ${config.maxEntradas} entradas atingido`, {
+              evento: 'reset',
+              motivo: 'limite_entradas',
+              nivelAntes,
+              nivelDepois: 0,
+              perdaAceita: asset.perdaAcumulada + perda,
+            });
+          
+          this.logger.warn(
+            `[TRINITY][${symbol}] ⚠️ ${state.modoMartingale.toUpperCase()}: Resetando após ${config.maxEntradas} entradas (limite atingido)`,
+          );
+          asset.martingaleStep = 0;
+          asset.perdaAcumulada = 0;
+          asset.apostaInicial = asset.apostaBase;
+          return; // Não incrementar, já resetou
+        }
+        
+        // Incrementar nível (ainda dentro do limite)
         asset.martingaleStep += 1;
         asset.perdaAcumulada += perda;
         
@@ -1410,44 +1456,25 @@ export class TrinityStrategy implements IStrategy {
           state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
         );
         
-        // ✅ Conservador: Resetar após 5 perdas
-        if (state.modoMartingale === 'conservador' && asset.martingaleStep >= 5) {
-          // ✅ Log: Martingale resetado (conservador)
-          this.saveTrinityLog(state.userId, symbol, 'info', 
-            `MARTINGALE RESETADO (Conservador) | Após 5 perdas consecutivas`, {
-              evento: 'reset',
-              motivo: 'conservador_limite',
-              nivelAntes,
-              nivelDepois: 0,
-            });
-          
-          this.logger.warn(
-            `[TRINITY][${symbol}] ⚠️ Conservador: Resetando após 5 perdas consecutivas`,
-          );
-          asset.martingaleStep = 0;
-          asset.perdaAcumulada = 0;
-          asset.apostaInicial = asset.apostaBase;
-        } else {
-          // ✅ Log: Martingale incrementado (formato documentação)
-          this.saveTrinityLog(state.userId, symbol, 'info', 
-            `MARTINGALE INCREMENTADO
+        // ✅ Log: Martingale incrementado (formato documentação)
+        this.saveTrinityLog(state.userId, symbol, 'info', 
+          `MARTINGALE INCREMENTADO
   └─ Nível: ${nivelAntes} → ${asset.martingaleStep}
   └─ Perda acumulada: $${perdaAntes.toFixed(2)} → $${asset.perdaAcumulada.toFixed(2)}
   └─ Próxima aposta: $${proximaAposta.toFixed(2)}`, {
-              ativo: symbol,
-              evento: 'incremento',
-              nivelAntes,
-              nivelDepois: asset.martingaleStep,
-              perdaAntes,
-              perdaDepois: asset.perdaAcumulada,
-              proximaAposta,
-            });
-          
-          this.logger.log(
-            `[TRINITY][${symbol}] ❌ DERROTA - Martingale Nível ${asset.martingaleStep} | ` +
-            `Perda acumulada: $${asset.perdaAcumulada.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`,
-          );
-        }
+            ativo: symbol,
+            evento: 'incremento',
+            nivelAntes,
+            nivelDepois: asset.martingaleStep,
+            perdaAntes,
+            perdaDepois: asset.perdaAcumulada,
+            proximaAposta,
+          });
+        
+        this.logger.log(
+          `[TRINITY][${symbol}] ❌ DERROTA - Martingale Nível ${asset.martingaleStep} | ` +
+          `Perda acumulada: $${asset.perdaAcumulada.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`,
+        );
       }
       
       // ✅ Log: Resultado derrota (formato documentação)
@@ -1602,38 +1629,60 @@ export class TrinityStrategy implements IStrategy {
       return;
     }
 
-    // ✅ Verificar STOP-LOSS BLINDADO (protege 50% do lucro)
+    // ✅ Verificar STOP-LOSS BLINDADO (protege X% do lucro conforme configurado)
     if (state.stopLossBlindado && lucroAtual > 0) {
-      const stopBlindado = state.capitalInicial + (lucroAtual * 0.5);
-      
-      if (state.capital <= stopBlindado) {
-        state.isStopped = true;
-        this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
-          `STOP-LOSS BLINDADO ATIVADO! 🛡️ | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Parando sistema...`, {
-            capital: state.capital,
-            stopBlindado,
-          });
-        this.logger.log(
-          `[TRINITY] 🛡️ STOP-LOSS BLINDADO ATIVADO! | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`,
+      // ✅ ZENIX v2.0: Buscar percentual do banco (padrão 50% se não configurado)
+      try {
+        const configResult = await this.dataSource.query(
+          `SELECT COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = 1
+           LIMIT 1`,
+          [state.userId],
         );
         
-        // ✅ Desativar sessão no banco de dados
-        try {
-          await this.dataSource.query(
-            `UPDATE ai_user_config 
-             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = 1`,
-            [`Stop loss blindado ativado: Capital $${state.capital.toFixed(2)} <= Stop $${stopBlindado.toFixed(2)}`, state.userId],
+        const stopBlindadoPercent = configResult && configResult.length > 0 
+          ? parseFloat(configResult[0].stopBlindadoPercent) || 50.0 
+          : 50.0; // Padrão 50% se não encontrar
+        
+        const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+        const stopBlindado = state.capitalInicial + (lucroAtual * fatorProtecao);
+        
+        if (state.capital <= stopBlindado) {
+          const lucroProtegido = state.capital - state.capitalInicial;
+          state.isStopped = true;
+          this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
+            `STOP-LOSS BLINDADO ATIVADO! 🛡️ | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | Lucro protegido: $${lucroProtegido.toFixed(2)} | Parando sistema...`, {
+              capital: state.capital,
+              stopBlindado,
+              stopBlindadoPercent,
+              lucroProtegido,
+            });
+          this.logger.log(
+            `[TRINITY] 🛡️ STOP-LOSS BLINDADO ATIVADO! | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%)`,
           );
-          this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss blindado`);
-        } catch (error) {
-          this.logger.error(`[TRINITY] ❌ Erro ao desativar sessão:`, error);
+          
+          // ✅ Desativar sessão no banco de dados
+          try {
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [`Stop loss blindado ativado: Capital $${state.capital.toFixed(2)} <= Stop $${stopBlindado.toFixed(2)} (protegendo ${stopBlindadoPercent}% do lucro)`, state.userId],
+            );
+            this.logger.log(`[TRINITY] ✅ Sessão desativada para usuário ${state.userId} devido ao stop loss blindado`);
+          } catch (error) {
+            this.logger.error(`[TRINITY] ❌ Erro ao desativar sessão:`, error);
+          }
+          
+          // Remover usuário do monitoramento
+          this.trinityUsers.delete(state.userId);
+          
+          return;
         }
-        
-        // Remover usuário do monitoramento
-        this.trinityUsers.delete(state.userId);
-        
-        return;
+      } catch (error) {
+        this.logger.error(`[TRINITY] ❌ Erro ao verificar stop-loss blindado:`, error);
+        // Continuar operação se houver erro ao buscar configuração
       }
     }
   }

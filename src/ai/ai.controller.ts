@@ -305,10 +305,11 @@ export class AiController {
       lossLimit?: number;
       modoMartingale?: 'conservador' | 'moderado' | 'agressivo';
       strategy?: string;
+      stopLossBlindado?: boolean; // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false = desativado)
     },
   ) {
     try {
-      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}`);
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}`);
       
       await this.aiService.activateUserAI(
         body.userId,
@@ -321,6 +322,7 @@ export class AiController {
         body.modoMartingale || 'conservador',
         body.strategy || 'orion',
         body.entryValue, // ✅ Valor de entrada por operação (opcional)
+        body.stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
       );
       return {
         success: true,

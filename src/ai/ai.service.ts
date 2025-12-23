@@ -200,7 +200,7 @@ interface ConfigMartingale {
   maxEntradas: number;
 }
 
-const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
+export const CONFIGS_MARTINGALE: Record<ModoMartingale, ConfigMartingale> = {
   conservador: {
     maxEntradas: 5, // ✅ ZENIX v2.0: Até 5ª entrada, depois reseta
   },
@@ -2397,9 +2397,11 @@ export class AiService implements OnModuleInit {
     await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
     await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
-    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
-    // Alterado de < para <= para permitir exatamente maxEntradas entradas
-    if (entry <= config.maxEntradas) {
+    // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
+    // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
+    // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+    // ✅ Verificar se a PRÓXIMA entrada (entry + 1) ainda está dentro do limite
+    if (config.maxEntradas === Infinity || (entry + 1) <= config.maxEntradas) {
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
@@ -2728,30 +2730,42 @@ export class AiService implements OnModuleInit {
       }
       
       const initialBalance = parseFloat(config.initialBalance) || 0;
-      const sessionBalance = parseFloat(config.sessionBalance) || 0;
-      const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+      const sessionBalance = parseFloat(config.sessionBalance) || 0; // ✅ session_balance já é o lucro/perda acumulada
+      const stopBlindadoPercentRaw = config.stopBlindadoPercent;
       
-      // Calcular lucro líquido (pode ser negativo)
-      const lucroLiquido = sessionBalance - initialBalance;
+      // ✅ ZENIX v2.0: Stop Blindado só funciona se estiver ativado (não NULL)
+      if (stopBlindadoPercentRaw === null || stopBlindadoPercentRaw === undefined) {
+        return; // Stop Blindado desativado
+      }
+      
+      const stopBlindadoPercent = parseFloat(stopBlindadoPercentRaw) || 50.0;
+      
+      // ✅ session_balance já é o lucro líquido acumulada (pode ser negativo)
+      const lucroLiquido = sessionBalance;
       
       // Stop Blindado só ativa se estiver em LUCRO
       if (lucroLiquido <= 0) {
         return; // Ainda não há lucro para proteger
       }
       
-      // Calcular stop blindado (protege X% do lucro)
+      // ✅ Calcular capital atual e stop blindado conforme documentação ZENIX v2.0
+      // Capital Atual = Capital Inicial + Lucro Líquido
+      const capitalAtual = initialBalance + lucroLiquido;
+      
+      // Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
       const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
       const stopBlindado = initialBalance + (lucroLiquido * fatorProtecao);
       
       this.logger.debug(
-        `[StopBlindado][${userId}] Lucro: $${lucroLiquido.toFixed(2)} | ` +
-        `Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-        `Atual: $${sessionBalance.toFixed(2)}`,
+        `[StopBlindado][${userId}] Capital Inicial: $${initialBalance.toFixed(2)} | ` +
+        `Lucro Líquido: $${lucroLiquido.toFixed(2)} | ` +
+        `Capital Atual: $${capitalAtual.toFixed(2)} | ` +
+        `Stop Blindado: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%)`,
       );
       
-      // Se capital atual caiu abaixo do stop blindado → PARAR
-      if (sessionBalance <= stopBlindado) {
-        const lucroProtegido = sessionBalance - initialBalance;
+      // ✅ Se capital atual caiu abaixo do stop blindado → PARAR
+      if (capitalAtual <= stopBlindado) {
+        const lucroProtegido = capitalAtual - initialBalance; // Lucro que será protegido
         const percentualProtegido = (lucroProtegido / lucroLiquido) * 100;
         
         this.logger.warn(
@@ -2810,7 +2824,7 @@ export class AiService implements OnModuleInit {
         this.logger.log(
           `[StopBlindado][${userId}] 🛡️ IA DESATIVADA | ` +
           `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-          `Saldo final: $${sessionBalance.toFixed(2)}`,
+          `Capital final: $${capitalAtual.toFixed(2)}`,
         );
       }
     } catch (error) {
@@ -4307,6 +4321,7 @@ export class AiService implements OnModuleInit {
     modoMartingale: ModoMartingale = 'conservador',
     strategy: string = 'orion',
     entryValue?: number, // ✅ Valor de entrada por operação (opcional)
+    stopLossBlindado?: boolean, // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false/null = desativado)
   ): Promise<void> {
     this.logger.log(
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
@@ -4350,24 +4365,70 @@ export class AiService implements OnModuleInit {
       : new Date(Date.now() + 60000); // Outros modos: 1 minuto a partir de agora
     
     // 2. Criar nova sessão (sempre INSERT)
-    // ✅ Adicionar entry_value se a coluna existir, senão usar NULL
+    // ✅ ZENIX v2.0: Stop-Loss Blindado - se ativado, usar 50% (padrão da documentação)
+    const stopBlindadoPercent = stopLossBlindado === true ? 50.00 : null; // null = desativado, 50.00 = ativado
+    
+    // ✅ Adicionar entry_value e stop_blindado_percent se as colunas existirem
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
+         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
       );
     } catch (error: any) {
-      // Se a coluna entry_value não existir, inserir sem ela
-      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('entry_value')) {
-        this.logger.warn(`[ActivateAI] Campo 'entry_value' não existe, inserindo sem ele`);
-        await this.dataSource.query(
-          `INSERT INTO ai_user_config 
-           (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-           VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-          [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
-        );
+      // Se alguma coluna não existir, tentar inserir sem ela
+      if (error.code === 'ER_BAD_FIELD_ERROR') {
+        const missingField = error.sqlMessage?.match(/Unknown column '([^']+)'/)?.[1];
+        this.logger.warn(`[ActivateAI] Campo '${missingField}' não existe, tentando inserir sem ele`);
+        
+        // Tentar inserir sem stop_blindado_percent
+        if (missingField === 'stop_blindado_percent') {
+          try {
+            await this.dataSource.query(
+              `INSERT INTO ai_user_config 
+               (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+               VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+              [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+            );
+          } catch (error2: any) {
+            // Se entry_value também não existir
+            if (error2.code === 'ER_BAD_FIELD_ERROR' && error2.sqlMessage?.includes('entry_value')) {
+              await this.dataSource.query(
+                `INSERT INTO ai_user_config 
+                 (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+                 VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              );
+            } else {
+              throw error2;
+            }
+          }
+        } else if (missingField === 'entry_value') {
+          // Tentar inserir sem entry_value mas com stop_blindado_percent
+          try {
+            await this.dataSource.query(
+              `INSERT INTO ai_user_config 
+               (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
+               VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+              [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+            );
+          } catch (error2: any) {
+            // Se stop_blindado_percent também não existir
+            if (error2.code === 'ER_BAD_FIELD_ERROR' && error2.sqlMessage?.includes('stop_blindado_percent')) {
+              await this.dataSource.query(
+                `INSERT INTO ai_user_config 
+                 (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+                 VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              );
+            } else {
+              throw error2;
+            }
+          }
+        } else {
+          throw error;
+        }
       } else {
         throw error;
       }
@@ -6469,9 +6530,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
     await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
-    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
-    // Alterado de < para <= para permitir exatamente maxEntradas entradas
-    if (entry <= config.maxEntradas) {
+    // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
+    // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
+    // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+    // ✅ Verificar se a PRÓXIMA entrada (entry + 1) ainda está dentro do limite
+    if (config.maxEntradas === Infinity || (entry + 1) <= config.maxEntradas) {
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
@@ -7275,9 +7338,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
     );
 
-    // ✅ CORREÇÃO: Verificar se pode continuar (respeitar o maxEntradas do modo)
-    // Alterado de < para <= para permitir exatamente maxEntradas entradas
-    if (entry <= config.maxEntradas) {
+    // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
+    // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
+    // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+    // ✅ Verificar se a PRÓXIMA entrada (entry + 1) ainda está dentro do limite
+    if (config.maxEntradas === Infinity || (entry + 1) <= config.maxEntradas) {
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
