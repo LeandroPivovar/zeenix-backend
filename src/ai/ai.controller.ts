@@ -361,7 +361,7 @@ export class AiController {
   @Get('logs/:userId')
   async getUserLogs(@Param('userId') userId: string) {
     try {
-      const logs = await this.aiService.getUserLogs(userId, 2000);
+      const logs = await this.aiService.getUserLogs(userId);
       return {
         success: true,
         data: logs,

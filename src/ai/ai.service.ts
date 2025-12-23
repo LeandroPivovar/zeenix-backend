@@ -3029,25 +3029,60 @@ export class AiService implements OnModuleInit {
   /**
    * Busca logs recentes do usuário para exibição no frontend
    */
-  async getUserLogs(userId: string, limit: number = 2000): Promise<any[]> {
+  async getUserLogs(userId: string, limit?: number): Promise<any[]> {
     try {
+      // ✅ Buscar data de criação da sessão atual para filtrar apenas logs da sessão
+      const sessionQuery = `
+        SELECT created_at as sessionCreatedAt
+        FROM ai_user_config
+        WHERE user_id = ? AND is_active = TRUE
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      
+      const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
+      const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
+      
+      if (sessionCreatedAt) {
+        this.logger.debug(`[GetUserLogs] 📅 Filtrando logs da sessão atual (desde ${sessionCreatedAt})`);
+      } else {
+        this.logger.warn(`[GetUserLogs] ⚠️ Nenhuma sessão ativa encontrada, retornando todos os logs`);
+      }
+      
       // 🕐 BUSCAR TIMESTAMPS E CONVERTER PARA HORÁRIO DE BRASÍLIA (UTC-3)
       // ✅ INCLUIR created_at PARA COMPARAÇÃO CORRETA NO FRONTEND
-      const logs = await this.dataSource.query(
-        `SELECT 
-          id,
-          timestamp,
-          created_at,
-          type,
-          icon,
-          message,
-          details
-         FROM ai_logs
-         WHERE user_id = ?
-         ORDER BY created_at DESC
-         LIMIT ?`,
-        [userId, limit],
-      );
+      // ✅ Filtrar apenas logs da sessão atual
+      const query = limit 
+        ? `SELECT 
+            id,
+            timestamp,
+            created_at,
+            type,
+            icon,
+            message,
+            details
+           FROM ai_logs
+           WHERE user_id = ?
+           ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
+           ORDER BY created_at DESC
+           LIMIT ?`
+        : `SELECT 
+            id,
+            timestamp,
+            created_at,
+            type,
+            icon,
+            message,
+            details
+           FROM ai_logs
+           WHERE user_id = ?
+           ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
+           ORDER BY created_at DESC`;
+      
+      const params = limit 
+        ? (sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit])
+        : (sessionCreatedAt ? [userId, sessionCreatedAt] : [userId]);
+      const logs = await this.dataSource.query(query, params);
 
       // ✅ DEBUG: Logar quantos logs foram encontrados
       this.logger.debug(`[GetUserLogs][${userId}] Encontrados ${logs.length} logs no banco`);
@@ -3865,9 +3900,9 @@ export class AiService implements OnModuleInit {
     };
   }
 
-  async getTradeHistory(userId: string, limit: number = 20) {
-    // Buscar histórico de trades do usuário (últimas 20 por padrão)
-    this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}, limit=${limit}`);
+  async getTradeHistory(userId: string, limit?: number) {
+    // Buscar histórico de trades do usuário (sem limite, apenas da sessão atual)
+    this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}${limit ? `, limit=${limit}` : ' (sem limite)'}`);
     
     // ✅ CORREÇÃO: Buscar data de criação da sessão atual para filtrar apenas operações da sessão
     const sessionQuery = `
@@ -3909,11 +3944,13 @@ export class AiService implements OnModuleInit {
       AND status != 'ERROR'
       ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
       ORDER BY COALESCE(closed_at, created_at) DESC
-      LIMIT ?
+      ${limit ? 'LIMIT ?' : ''}
     `;
     
     let result;
-    const queryParams = sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit];
+    const queryParams = limit 
+      ? (sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit])
+      : (sessionCreatedAt ? [userId, sessionCreatedAt] : [userId]);
     
     try {
       result = await this.dataSource.query(query, queryParams);
@@ -3941,7 +3978,7 @@ export class AiService implements OnModuleInit {
           AND status != 'ERROR'
           ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
           ORDER BY COALESCE(closed_at, created_at) DESC
-          LIMIT ?
+          ${limit ? 'LIMIT ?' : ''}
         `;
         result = await this.dataSource.query(query, queryParams);
         this.logger.debug(`[GetTradeHistory] 📝 Query executada sem symbol${sessionCreatedAt ? ' e filtro de sessão' : ''}`);

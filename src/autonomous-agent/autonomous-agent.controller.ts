@@ -229,7 +229,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
     try {
-      const limitNum = limit ? parseInt(limit, 10) : 2000;
+      const limitNum = limit ? parseInt(limit, 10) : undefined;
       const logs = await this.agentService.getLogs(userId, limitNum);
 
       return {
