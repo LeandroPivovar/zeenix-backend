@@ -1009,9 +1009,12 @@ export class OrionStrategy implements IStrategy {
     
     // ✅ Log de debug para confirmar que o método está sendo chamado
     if (this.lentaUsers.size > 0 && ticksAtuais % 10 === 0) {
-      this.logger.debug(`[ORION][Lenta] 🔄 Método chamado | Usuários: ${this.lentaUsers.size} | Ticks: ${ticksAtuais}/${amostraNecessaria}`);
+      this.logger.debug(`[ORION][Lenta] 🔄 Método chamado | Usuários: ${this.lentaUsers.size} | Ticks: ${ticksAtuais} (necessário: ${amostraNecessaria})`);
     }
     
+    // ✅ CORREÇÃO: Como o sistema mantém 100 ticks, sempre teremos pelo menos 50 se houver 100 ticks
+    // Se já temos 100 ticks, podemos processar imediatamente (já temos mais que os 50 necessários)
+    // Se temos menos que 50 ticks, precisamos aguardar
     if (ticksAtuais < amostraNecessaria) {
       // ✅ Logar progresso periodicamente (a cada 5 ticks ou quando chegar em marcos importantes)
       for (const [userId] of this.lentaUsers.entries()) {
@@ -1039,7 +1042,9 @@ export class OrionStrategy implements IStrategy {
       return;
     }
     
-    // ✅ Logar quando completar a coleta (apenas uma vez) - usar >= para garantir que funciona mesmo se já passou
+    // ✅ Se temos 50+ ticks, podemos processar (o sistema mantém 100 ticks, então sempre teremos pelo menos 50)
+    // Logar quando completar a coleta (apenas uma vez) - usar >= para garantir que funciona mesmo se já passou
+    // ✅ IMPORTANTE: Como o sistema mantém 100 ticks, se ticksAtuais >= 50, já podemos processar
     if (ticksAtuais >= amostraNecessaria) {
       for (const [userId] of this.lentaUsers.entries()) {
         const key = `lenta_${userId}`;
@@ -1060,10 +1065,14 @@ export class OrionStrategy implements IStrategy {
           }, 60000); // Limpar após 60 segundos
         }
       }
+    } else {
+      // ✅ Se ainda não temos 50 ticks, aguardar
+      this.logger.debug(`[ORION][Lenta] ⏳ Aguardando mais ticks | Atual: ${ticksAtuais} | Necessário: ${amostraNecessaria}`);
+      return;
     }
 
     // Processar cada usuário
-    this.logger.debug(`[ORION][Lenta] 🔄 Processando ${this.lentaUsers.size} usuário(s) | Ticks: ${ticksAtuais}`);
+    this.logger.log(`[ORION][Lenta] 🔄 Processando ${this.lentaUsers.size} usuário(s) | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria})`);
     
     for (const [userId, state] of this.lentaUsers.entries()) {
       if (state.isOperationActive) {
