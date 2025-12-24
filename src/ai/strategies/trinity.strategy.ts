@@ -945,11 +945,12 @@ export class TrinityStrategy implements IStrategy {
       // Fórmulas da documentação (Conservador: reset após 5 perdas; Moderado: perda/0.95; Agressivo: (perda+última)/0.95)
       const payoutCliente = modeConfig.payout; // ex: 0.95
 
-      // Limite conservador: resetar após 5 perdas
+      // Limite conservador: resetar após 5 perdas consecutivas
+      // Se martingaleStep >= 5, já teve 5 perdas, reseta antes de tentar a 6ª
       if (state.modoMartingale === 'conservador' && asset.martingaleStep >= 5) {
         this.saveTrinityLog(state.userId, symbol, 'alerta',
           `🛑 MARTINGALE RESETADO (CONSERVADOR) | 5 perdas consecutivas alcançadas | Perdendo: $${asset.perdaAcumulada.toFixed(2)} | Voltando para aposta inicial`);
-        this.logger.warn(`[TRINITY][${symbol}] ⚠️ Conservador: resetando martingale após 5 perdas`);
+        this.logger.warn(`[TRINITY][${symbol}] ⚠️ Conservador: resetando martingale após 5 perdas consecutivas`);
         asset.martingaleStep = 0;
         asset.perdaAcumulada = 0;
         asset.apostaInicial = asset.apostaBase;
@@ -1477,12 +1478,14 @@ export class TrinityStrategy implements IStrategy {
         const config = CONFIGS_MARTINGALE[state.modoMartingale];
         
         // ✅ ZENIX v2.0: Verificar limite de entradas ANTES de incrementar
-        // Conservador: máximo 5 entradas (martingaleStep 0-4, reseta quando chegar em 5)
+        // Conservador: máximo 5 perdas consecutivas (permite até nível 5, reseta quando nivelAntes >= 5 para evitar a 6ª)
         // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+        // Documentação: "Reseta após 5 perdas consecutivas" = permite até 5 perdas (nível 5),
+        // quando nivelAntes >= 5 (já teve 5 perdas), reseta antes de tentar a 6ª
         if (state.modoMartingale === 'conservador' && nivelAntes >= 5) {
-          // Limite conservador (doc): resetar após 5 perdas
+          // Limite conservador (doc): resetar após 5 perdas consecutivas
           this.saveTrinityLog(state.userId, symbol, 'info', 
-            `MARTINGALE RESETADO (CONSERVADOR) | Limite de 5 entradas atingido`, {
+            `MARTINGALE RESETADO (CONSERVADOR) | 5 perdas consecutivas alcançadas (limite atingido) | Perdendo: $${(asset.perdaAcumulada + perda).toFixed(2)} | Voltando para aposta inicial`, {
               evento: 'reset',
               motivo: 'limite_conservador_5',
               nivelAntes,
@@ -1490,7 +1493,7 @@ export class TrinityStrategy implements IStrategy {
               perdaAceita: asset.perdaAcumulada + perda,
             });
           
-          this.logger.warn(`[TRINITY][${symbol}] ⚠️ CONSERVADOR: Resetando martingale após 5 perdas`);
+          this.logger.warn(`[TRINITY][${symbol}] ⚠️ CONSERVADOR: Resetando martingale após 5 perdas consecutivas`);
           asset.martingaleStep = 0;
           asset.perdaAcumulada = 0;
           asset.apostaInicial = asset.apostaBase;
