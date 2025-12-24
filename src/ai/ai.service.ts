@@ -626,6 +626,13 @@ export class AiService implements OnModuleInit {
       try {
         await this.initialize();
         this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
+        // ✅ TRINITY: inicializar streams de ticks para R_10, R_25, R_50
+        try {
+          await this.initializeTrinityWebSockets();
+          this.logger.log('✅ WebSockets da TRINITY inicializados (R_10, R_25, R_50)');
+        } catch (err) {
+          this.logger.error('❌ Erro ao inicializar WebSockets da TRINITY:', err instanceof Error ? err.message : err);
+        }
       } catch (error) {
         this.logger.error('❌ Erro ao inicializar WebSocket:', error.message);
       }
