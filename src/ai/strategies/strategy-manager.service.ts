@@ -6,6 +6,7 @@ import { IStrategy } from './common.types';
 import { OrionStrategy } from './orion.strategy';
 import { TrinityStrategy } from './trinity.strategy';
 import { AtlasStrategy } from './atlas.strategy';
+import { ApolloStrategy } from './apollo.strategy';
 
 @Injectable()
 export class StrategyManagerService implements OnModuleInit {
@@ -17,6 +18,7 @@ export class StrategyManagerService implements OnModuleInit {
     private orionStrategy: OrionStrategy,
     private trinityStrategy: TrinityStrategy,
     private atlasStrategy: AtlasStrategy,
+    private apolloStrategy: ApolloStrategy,
   ) {}
 
   async onModuleInit() {
@@ -24,11 +26,13 @@ export class StrategyManagerService implements OnModuleInit {
     this.strategies.set('orion', this.orionStrategy);
     this.strategies.set('trinity', this.trinityStrategy);
     this.strategies.set('atlas', this.atlasStrategy);
+    this.strategies.set('apollo', this.apolloStrategy);
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
     await this.trinityStrategy.initialize();
     await this.atlasStrategy.initialize();
+    await this.apolloStrategy.initialize();
 
     this.logger.log(`[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')}`);
   }
@@ -40,6 +44,7 @@ export class StrategyManagerService implements OnModuleInit {
     // ORION agora usa R_100 como símbolo padrão
     if (!symbol || symbol === 'R_100') {
       await this.orionStrategy.processTick(tick, 'R_100');
+      await this.apolloStrategy.processTick(tick, 'R_100'); // APOLLO também usa R_100
     }
 
     // TRINITY processa R_10, R_25, R_50
@@ -119,6 +124,10 @@ export class StrategyManagerService implements OnModuleInit {
 
   getAtlasStrategy(): AtlasStrategy {
     return this.atlasStrategy;
+  }
+
+  getApolloStrategy(): ApolloStrategy {
+    return this.apolloStrategy;
   }
 }
 

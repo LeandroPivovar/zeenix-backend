@@ -10,6 +10,7 @@ import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { OrionStrategy } from './strategies/orion.strategy';
 import { TrinityStrategy } from './strategies/trinity.strategy';
 import { AtlasStrategy } from './strategies/atlas.strategy';
+import { ApolloStrategy } from './strategies/apollo.strategy';
 import { TradeEventsService } from './trade-events.service';
 
 @Module({
@@ -27,6 +28,7 @@ import { TradeEventsService } from './trade-events.service';
     OrionStrategy,
     TrinityStrategy,
     AtlasStrategy,
+    ApolloStrategy,
     TradeEventsService,
   ],
   exports: [AiService, StrategyManagerService, TradeEventsService],
