@@ -187,7 +187,18 @@ export class ApolloStrategy implements IStrategy {
 
   async activateUser(userId: string, config: any): Promise<void> {
     const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, stopLoss, profitTarget } = config;
-    const modeLower = (mode || 'balanceado').toLowerCase() as ApolloMode;
+    let modeLower = (mode || 'balanceado').toLowerCase();
+    
+    // Mapear modos do frontend para modos da Apollo
+    const modeMap: Record<string, ApolloMode> = {
+      'veloz': 'veloz',
+      'moderado': 'balanceado', // Frontend usa 'moderado', Apollo usa 'balanceado'
+      'lento': 'preciso', // Frontend usa 'lento', Apollo usa 'preciso'
+      'balanceado': 'balanceado',
+      'preciso': 'preciso',
+    };
+    
+    const apolloMode = modeMap[modeLower] || 'balanceado';
     
     const apostaInicial = entryValue || 0.35;
     const capitalInicial = stakeAmount || 0;
@@ -199,13 +210,13 @@ export class ApolloStrategy implements IStrategy {
       derivToken,
       currency,
       modoMartingale: modoMartingale || 'conservador',
-      mode: modeLower,
+      mode: apolloMode,
       stopLoss: stopLoss ? -Math.abs(stopLoss) : undefined,
       profitTarget,
     });
     
     this.saveApolloLog(userId, 'info', 
-      `☀️ Usuário ATIVADO | Modo: ${modeLower} | Capital: $${capitalInicial.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      `☀️ Usuário ATIVADO | Modo: ${apolloMode} | Capital: $${capitalInicial.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {

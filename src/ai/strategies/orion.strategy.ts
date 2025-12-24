@@ -121,14 +121,14 @@ function calcularApostaComSoros(
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * Conforme documentação completa da estratégia ZENIX v2.0
  * 
- * CONSERVADOR: Próxima Aposta = Perda Acumulada / 0.95 (break-even)
- * MODERADO:    Próxima Aposta = Perda Acumulada / 0.95 (break-even - recuperar TODO o capital perdido)
- * AGRESSIVO:   Próxima Aposta = (Perda Acumulada + Última Aposta) / 0.95 (recuperar perdas + gerar lucro do tamanho da última aposta)
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / payout (break-even)
+ * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.25) / payout (recuperar 100% das perdas + 25% de lucro)
+ * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.50) / payout (recuperar 100% das perdas + 50% de lucro)
  * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
  * @param payoutCliente - Payout do cliente (0.95 = 95% ou 92 = 92%)
- * @param ultimaAposta - Última aposta feita (obrigatório para modo agressivo)
+ * @param ultimaAposta - Última aposta feita (não usado mais, mantido para compatibilidade)
  * @returns Valor da próxima aposta calculada
  */
 function calcularProximaAposta(
@@ -145,15 +145,19 @@ function calcularProximaAposta(
   
   switch (modo) {
     case 'conservador':
-    case 'moderado':
       // Meta: recuperar 100% das perdas (break-even)
       // Fórmula: entrada_próxima = perdas_totais / payout
       aposta = perdasTotais / PAYOUT;
       break;
+    case 'moderado':
+      // Meta: recuperar 100% das perdas + 25% de lucro
+      // Fórmula: entrada_próxima = (perdas_totais × 1.25) / payout
+      aposta = (perdasTotais * 1.25) / PAYOUT;
+      break;
     case 'agressivo':
-      // Meta: recuperar perdas + gerar lucro do tamanho da última aposta
-      // Fórmula: entrada_próxima = (perdas_totais + última_aposta) / payout
-      aposta = (perdasTotais + ultimaAposta) / PAYOUT;
+      // Meta: recuperar 100% das perdas + 50% de lucro
+      // Fórmula: entrada_próxima = (perdas_totais × 1.50) / payout
+      aposta = (perdasTotais * 1.50) / PAYOUT;
       break;
   }
   
@@ -1356,16 +1360,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
         if (lossLimit > 0 && entry > 1 && state.perdaAcumulada > 0) {
           const payoutCliente = 92;
-          // Para modo agressivo, precisamos da última aposta
-          let ultimaAposta = 0;
-          if (state.modoMartingale === 'agressivo') {
-            if ('ultimaApostaUsada' in state && state.ultimaApostaUsada > 0) {
-              ultimaAposta = state.ultimaApostaUsada;
-            } else {
-              ultimaAposta = state.apostaInicial || 0.35; // Fallback
-            }
-          }
-          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, ultimaAposta);
+          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
           // Perda total potencial = perda atual + próxima aposta de martingale
           const perdaTotalPotencial = perdaAtual + proximaAposta;
           
@@ -1457,18 +1452,7 @@ export class OrionStrategy implements IStrategy {
     } else {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
-      // ✅ Para modo agressivo, precisamos da última aposta
-      // Usar o campo ultimaApostaUsada se disponível, senão usar aposta inicial como fallback
-      let ultimaAposta = 0;
-      if (state.modoMartingale === 'agressivo') {
-        if ('ultimaApostaUsada' in state && state.ultimaApostaUsada > 0) {
-          ultimaAposta = state.ultimaApostaUsada;
-        } else {
-          // Fallback: usar aposta inicial (caso seja primeira entrada do martingale)
-          ultimaAposta = state.apostaInicial || 0.35;
-        }
-      }
-      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, ultimaAposta);
+      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
       
       // Garantir valor mínimo
       if (stakeAmount < 0.35) {
