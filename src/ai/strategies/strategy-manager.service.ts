@@ -5,6 +5,7 @@ import { Tick } from '../ai.service';
 import { IStrategy } from './common.types';
 import { OrionStrategy } from './orion.strategy';
 import { TrinityStrategy } from './trinity.strategy';
+import { AtlasStrategy } from './atlas.strategy';
 
 @Injectable()
 export class StrategyManagerService implements OnModuleInit {
@@ -15,16 +16,19 @@ export class StrategyManagerService implements OnModuleInit {
     @InjectDataSource() private dataSource: DataSource,
     private orionStrategy: OrionStrategy,
     private trinityStrategy: TrinityStrategy,
+    private atlasStrategy: AtlasStrategy,
   ) {}
 
   async onModuleInit() {
     // Registrar estratégias
     this.strategies.set('orion', this.orionStrategy);
     this.strategies.set('trinity', this.trinityStrategy);
+    this.strategies.set('atlas', this.atlasStrategy);
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
     await this.trinityStrategy.initialize();
+    await this.atlasStrategy.initialize();
 
     this.logger.log(`[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')}`);
   }
@@ -41,6 +45,11 @@ export class StrategyManagerService implements OnModuleInit {
     // TRINITY processa R_10, R_25, R_50
     if (symbol && ['R_10', 'R_25', 'R_50'].includes(symbol)) {
       await this.trinityStrategy.processTick(tick, symbol);
+    }
+
+    // ATLAS processa R_10, R_25
+    if (symbol && ['R_10', 'R_25'].includes(symbol)) {
+      await this.atlasStrategy.processTick(tick, symbol);
     }
   }
 
@@ -106,6 +115,10 @@ export class StrategyManagerService implements OnModuleInit {
 
   getTrinityStrategy(): TrinityStrategy {
     return this.trinityStrategy;
+  }
+
+  getAtlasStrategy(): AtlasStrategy {
+    return this.atlasStrategy;
   }
 }
 

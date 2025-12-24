@@ -4535,6 +4535,12 @@ export class AiService implements OnModuleInit {
           this.logger.log(`[ActivateAI] 🔄 Sincronizando Trinity imediatamente após ativação...`);
           await this.syncTrinityUsersFromDb();
         }
+        
+        if (strategy && strategy.toLowerCase() === 'atlas') {
+          this.logger.log(`[ActivateAI] 🔄 Sincronizando Atlas imediatamente após ativação...`);
+          // ✅ ATLAS: Usa R_10 ou R_25, que já são processados pelo sistema de ticks
+          // Não precisa de WebSockets específicos (usa os mesmos do sistema)
+        }
       } catch (error) {
         this.logger.error(`[ActivateAI] Erro ao ativar usuário na estratégia ${strategy}:`, error);
       }
