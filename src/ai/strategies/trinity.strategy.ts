@@ -979,6 +979,9 @@ export class TrinityStrategy implements IStrategy {
       }
     }
 
+    // ✅ Ajuste final: limitar a 2 casas decimais e mínimo 0.35 (erro da Deriv se >2 casas)
+    stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
+
     const contractType = operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     
     // ✅ VALIDAÇÕES IGUAL ORION (antes de criar WebSocket)
@@ -2122,6 +2125,17 @@ export class TrinityStrategy implements IStrategy {
     let authResolved = false;
     let connectionTimeout: NodeJS.Timeout | null = null;
 
+    // Registrar conexão imediatamente para evitar accesso undefined antes do 'open'
+    const connInit = {
+      ws: socket,
+      authorized: false,
+      keepAliveInterval: null as NodeJS.Timeout | null,
+      requestIdCounter: 0,
+      pendingRequests: new Map(),
+      subscriptions: new Map(),
+    };
+    this.wsConnections.set(token, connInit);
+
     connectionTimeout = setTimeout(() => {
       if (!authResolved) {
         authResolved = true;
@@ -2199,15 +2213,7 @@ export class TrinityStrategy implements IStrategy {
 
     socket.on('open', () => {
       this.logger.log(`[TRINITY][${symbol || 'POOL'}] ✅ WebSocket conectado, enviando autorização...`);
-      const conn = {
-        ws: socket,
-        authorized: false,
-        keepAliveInterval: null,
-        requestIdCounter: 0,
-        pendingRequests: new Map(),
-        subscriptions: new Map(),
-      };
-      this.wsConnections.set(token, conn);
+      const conn = this.wsConnections.get(token)!;
       socket.send(JSON.stringify({ authorize: token }));
     });
 
