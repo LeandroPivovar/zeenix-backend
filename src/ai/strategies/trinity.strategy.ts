@@ -59,6 +59,9 @@ export interface TrinityUserState {
   currency: string;
   capital: number;
   virtualCapital: number;
+  lossVirtualActive: boolean;
+  lossVirtualCount: number;
+  lossVirtualOperation: DigitParity | null;
   capitalInicial: number; // ✅ Capital inicial para cálculo de stop-loss
   modoMartingale: ModoMartingale;
   mode: string;
@@ -110,6 +113,21 @@ export class TrinityStrategy implements IStrategy {
     details?: any;
   }> = [];
   private logProcessing = false;
+  // ✅ Rastreamento de logs de coleta de dados e intervalos (para evitar duplicações)
+  private coletaLogsEnviados = new Map<string, Set<string>>(); // userId -> set de símbolos já logados
+  private intervaloLogsEnviados = new Map<string, boolean>(); // chave `${symbol}_${userId}`
+  // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
+  private wsConnections: Map<
+    string,
+    {
+      ws: WebSocket;
+      authorized: boolean;
+      keepAliveInterval: NodeJS.Timeout | null;
+      requestIdCounter: number;
+      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      subscriptions: Map<string, (msg: any) => void>;
+    }
+  > = new Map();
 
   constructor(
     private dataSource: DataSource,
@@ -297,6 +315,15 @@ export class TrinityStrategy implements IStrategy {
 
       // Verificar amostra mínima
       if (this.trinityTicks[symbol].length < modeConfig.amostraInicial) {
+        // Log de coleta (apenas uma vez por usuário/ativo)
+        const keyUser = userId;
+        const set = this.coletaLogsEnviados.get(keyUser) || new Set<string>();
+        if (!set.has(symbol)) {
+          this.saveTrinityLog(userId, symbol, 'info', 
+            `📊 Aguardando ${modeConfig.amostraInicial} ticks para análise | Ticks coletados: ${this.trinityTicks[symbol].length}/${modeConfig.amostraInicial}`);
+          set.add(symbol);
+          this.coletaLogsEnviados.set(keyUser, set);
+        }
         continue;
       }
 
@@ -544,6 +571,12 @@ export class TrinityStrategy implements IStrategy {
     // Verificar intervalo de ticks (modo veloz)
     if (state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks) {
       if (asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
+        const key = `${symbol}_${state.userId}_intervalo_ticks`;
+        if (!this.intervaloLogsEnviados.has(key)) {
+          this.saveTrinityLog(state.userId, symbol, 'info', 
+            `⏱️ Aguardando intervalo entre operações | Ticks: ${asset.ticksDesdeUltimaOp}/${modeConfig.intervaloTicks} (mínimo)`);
+          this.intervaloLogsEnviados.set(key, true);
+        }
         return false;
       }
     }
@@ -552,6 +585,12 @@ export class TrinityStrategy implements IStrategy {
     if (state.mode === 'moderado' && asset.lastOperationTimestamp) {
       const secondsSinceLastOp = (Date.now() - asset.lastOperationTimestamp.getTime()) / 1000;
       if ('intervaloSegundos' in modeConfig && modeConfig.intervaloSegundos && secondsSinceLastOp < modeConfig.intervaloSegundos) {
+        const key = `${symbol}_${state.userId}_intervalo_segundos`;
+        if (!this.intervaloLogsEnviados.has(key)) {
+          this.saveTrinityLog(state.userId, symbol, 'info', 
+            `⏱️ Aguardando intervalo de tempo | ${secondsSinceLastOp.toFixed(0)}s / ${modeConfig.intervaloSegundos}s (mínimo)`);
+          this.intervaloLogsEnviados.set(key, true);
+        }
         return false;
       }
     }
@@ -564,6 +603,7 @@ export class TrinityStrategy implements IStrategy {
     if (modeLower === 'veloz') return VELOZ_CONFIG;
     if (modeLower === 'moderado') return MODERADO_CONFIG;
     if (modeLower === 'preciso') return PRECISO_CONFIG;
+    if (modeLower === 'lenta' || modeLower === 'lento') return LENTA_CONFIG;
     return null;
   }
 
@@ -612,6 +652,9 @@ export class TrinityStrategy implements IStrategy {
         stopLossBlindado: Boolean(params.stopLossBlindado),
         isStopped: false,
         totalProfitLoss: 0, // Resetar P&L total para nova sessão
+        lossVirtualActive: existing.lossVirtualActive ?? false,
+        lossVirtualCount: existing.lossVirtualCount ?? 0,
+        lossVirtualOperation: existing.lossVirtualOperation ?? null,
       });
       
       // ✅ Sempre atualizar aposta inicial de todos os ativos quando fornecido
@@ -684,6 +727,9 @@ export class TrinityStrategy implements IStrategy {
       currency: params.currency,
       capital: params.stakeAmount,
       virtualCapital: params.stakeAmount,
+        lossVirtualActive: false,
+        lossVirtualCount: 0,
+        lossVirtualOperation: null,
       capitalInicial: params.stakeAmount,
       modoMartingale: params.modoMartingale || 'conservador',
       mode: params.mode,
@@ -723,9 +769,107 @@ export class TrinityStrategy implements IStrategy {
   ): Promise<void> {
     const asset = state.assets[symbol];
     
+    // ✅ CHECAGENS PRÉ-ENTRADA: meta, stop-loss e stop-blindado (antes de marcar operação ativa)
+    const lucroAtual = state.capital - state.capitalInicial;
+
+    // Meta de lucro (profitTarget) antes da entrada
+    if (state.profitTarget && lucroAtual >= state.profitTarget) {
+      const roi = ((lucroAtual / state.capitalInicial) * 100).toFixed(2);
+      this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
+        `META DIÁRIA ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | ROI: +${roi}% | Parando sistema...`, {
+          meta: state.profitTarget,
+          lucroAtual,
+          roi: parseFloat(roi),
+        });
+      this.logger.log(`[TRINITY] 🎯 META ATINGIDA (pré-entrada) | Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget}`);
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+         WHERE user_id = ? AND is_active = 1`,
+        [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} (Meta: +$${state.profitTarget.toFixed(2)})`, state.userId],
+      );
+      this.trinityUsers.delete(state.userId);
+      asset.isOperationActive = false;
+      state.globalOperationActive = false;
+      state.isStopped = true;
+      return;
+    }
+
+    // Stop-loss global antes da entrada
+    if (state.stopLoss && state.stopLoss < 0) {
+      const stopLossValue = -Math.abs(state.stopLoss);
+      if (lucroAtual < 0 && lucroAtual <= stopLossValue) {
+        this.logger.warn(
+          `[TRINITY][${symbol}] 🛑 STOP LOSS JÁ ATINGIDO (pré-entrada)! Perda: -$${Math.abs(lucroAtual).toFixed(2)} >= Limite: $${Math.abs(stopLossValue).toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
+        );
+        this.saveTrinityLog(state.userId, symbol, 'alerta', 
+          `🛑 STOP LOSS JÁ ATINGIDO (pré-entrada)! Perda: -$${Math.abs(lucroAtual).toFixed(2)} | Limite: $${Math.abs(stopLossValue).toFixed(2)} - Operação BLOQUEADA`);
+        
+        state.isStopped = true;
+        asset.isOperationActive = false;
+        state.globalOperationActive = false;
+
+        await this.dataSource.query(
+          `UPDATE ai_user_config 
+           SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [`Stop loss atingido: -$${Math.abs(lucroAtual).toFixed(2)} (Limite: $${Math.abs(stopLossValue).toFixed(2)})`, state.userId],
+        );
+        this.trinityUsers.delete(state.userId);
+        return;
+      }
+    }
+
+    // Stop-loss blindado antes da entrada (se ativado e em lucro)
+    if (state.stopLossBlindado && lucroAtual > 0) {
+      try {
+        const configResult = await this.dataSource.query(
+          `SELECT COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent
+           FROM ai_user_config 
+           WHERE user_id = ? AND is_active = 1
+           LIMIT 1`,
+          [state.userId],
+        );
+
+        const stopBlindadoPercent = configResult && configResult.length > 0 
+          ? parseFloat(configResult[0].stopBlindadoPercent) || 50.0 
+          : 50.0;
+
+        const fatorProtecao = stopBlindadoPercent / 100;
+        const stopBlindado = state.capitalInicial + (lucroAtual * fatorProtecao);
+
+        if (state.capital <= stopBlindado) {
+          const lucroProtegido = state.capital - state.capitalInicial;
+          this.saveTrinityLog(state.userId, 'SISTEMA', 'info', 
+            `STOP-LOSS BLINDADO ATIVADO (pré-entrada)! 🛡️ | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | Lucro protegido: $${lucroProtegido.toFixed(2)} | Parando sistema...`, {
+              capital: state.capital,
+              stopBlindado,
+              stopBlindadoPercent,
+              lucroProtegido,
+            });
+          this.logger.log(`[TRINITY][${symbol}] 🛡️ STOP BLINDADO (pré-entrada) | Capital: $${state.capital.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%)`);
+
+          await this.dataSource.query(
+            `UPDATE ai_user_config 
+             SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [`Stop loss blindado ativado: Capital $${state.capital.toFixed(2)} <= Stop $${stopBlindado.toFixed(2)} (protegendo ${stopBlindadoPercent}% do lucro)`, state.userId],
+          );
+
+          state.isStopped = true;
+          asset.isOperationActive = false;
+          state.globalOperationActive = false;
+          this.trinityUsers.delete(state.userId);
+          return;
+        }
+      } catch (error) {
+        this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao verificar stop-loss blindado (pré-entrada):`, error);
+        // Em caso de erro, continuar para não travar operação
+      }
+    }
+
     // ✅ VERIFICAR STOP LOSS ANTES DE QUALQUER OPERAÇÃO
     if (state.stopLoss && state.stopLoss < 0) {
-      const lucroAtual = state.capital - state.capitalInicial;
       const stopLossValue = -Math.abs(state.stopLoss);
       
       // Se já atingiu o stop loss, bloquear operação
@@ -783,6 +927,9 @@ export class TrinityStrategy implements IStrategy {
     
     // Resetar contador de ticks
     asset.ticksDesdeUltimaOp = 0;
+    // Limpar logs de intervalo para permitir novo aviso se necessário
+    this.intervaloLogsEnviados.delete(`${symbol}_${state.userId}_intervalo_ticks`);
+    this.intervaloLogsEnviados.delete(`${symbol}_${state.userId}_intervalo_segundos`);
     
     // Calcular stake (considerar martingale isolado do ativo)
     const modeConfig = this.getModeConfig(state.mode);
@@ -795,41 +942,40 @@ export class TrinityStrategy implements IStrategy {
     
     // ✅ Se está em martingale, verificar limite ANTES de calcular próxima aposta
     if (asset.martingaleStep > 0) {
-      const config = CONFIGS_MARTINGALE[state.modoMartingale];
-      
-      // ✅ ZENIX v2.0: Verificar limite de entradas ANTES de tentar próxima entrada
-      // Conservador: máximo 5 entradas (martingaleStep 1-5, reseta quando tentar 6ª)
-      // Moderado/Agressivo: infinito (maxEntradas = Infinity)
-      if (config.maxEntradas !== Infinity && asset.martingaleStep >= config.maxEntradas) {
-        // Limite atingido: resetar martingale e usar aposta inicial
-        this.logger.warn(
-          `[TRINITY][${symbol}] ⚠️ ${state.modoMartingale.toUpperCase()}: Limite de ${config.maxEntradas} entradas atingido. Resetando martingale.`,
-        );
-        this.saveTrinityLog(state.userId, symbol, 'alerta', 
-          `🛑 LIMITE MARTINGALE ATINGIDO (${state.modoMartingale.toUpperCase()}) | ${config.maxEntradas} entradas | Resetando para aposta inicial`);
-        
+      // Fórmulas da documentação (Conservador: reset após 5 perdas; Moderado: perda/0.95; Agressivo: (perda+última)/0.95)
+      const payoutCliente = modeConfig.payout; // ex: 0.95
+
+      // Limite conservador: resetar após 5 perdas
+      if (state.modoMartingale === 'conservador' && asset.martingaleStep >= 5) {
+        this.saveTrinityLog(state.userId, symbol, 'alerta',
+          `🛑 MARTINGALE RESETADO (CONSERVADOR) | 5 perdas consecutivas alcançadas | Perdendo: $${asset.perdaAcumulada.toFixed(2)} | Voltando para aposta inicial`);
+        this.logger.warn(`[TRINITY][${symbol}] ⚠️ Conservador: resetando martingale após 5 perdas`);
         asset.martingaleStep = 0;
         asset.perdaAcumulada = 0;
         asset.apostaInicial = asset.apostaBase;
-        stakeAmount = asset.apostaBase; // Usar aposta inicial
+        stakeAmount = asset.apostaBase;
       } else {
-        // Ainda dentro do limite: calcular próxima aposta de recuperação
-        stakeAmount = calcularProximaAposta(
-          asset.perdaAcumulada,
-          state.modoMartingale,
-          modeConfig.payout * 100, // Converter para percentual
-          state.modoMartingale === 'agressivo' ? asset.ultimaApostaUsada : 0,
-        );
+        // Calcular próxima aposta conforme modo
+        const perdas = asset.perdaAcumulada;
+        if (state.modoMartingale === 'conservador') {
+          stakeAmount = perdas / payoutCliente;
+        } else if (state.modoMartingale === 'moderado') {
+          stakeAmount = perdas / payoutCliente; // break-even
+        } else {
+          // agressivo
+          const ultima = asset.ultimaApostaUsada || asset.apostaInicial || 0.35;
+          stakeAmount = (perdas + ultima) / payoutCliente;
+        }
       }
-      
-      // ✅ Verificar stop-loss antes de apostar
+
+      // Stop-loss global: se ultrapassar, reduzir para não estourar (mantém aposta base)
       const stopLossDisponivel = this.calculateAvailableStopLoss(state);
-      if (stakeAmount > stopLossDisponivel && stopLossDisponivel > 0) {
-        // Reduzir aposta para não ultrapassar stop-loss
-        stakeAmount = Math.max(asset.apostaInicial, stopLossDisponivel);
-        this.logger.warn(
-          `[TRINITY][${symbol}] ⚠️ Aposta reduzida para respeitar stop-loss: $${stakeAmount.toFixed(2)}`,
-        );
+      if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
+        const ajustada = Math.max(0.35, Math.min(asset.apostaBase, stopLossDisponivel));
+        this.logger.warn(`[TRINITY][${symbol}] ⚠️ Aposta ajustada para respeitar stop-loss global: $${ajustada.toFixed(2)} (antes: $${stakeAmount.toFixed(2)})`);
+        this.saveTrinityLog(state.userId, symbol, 'alerta',
+          `⚠️ Aposta reduzida para respeitar stop-loss global | De: $${stakeAmount.toFixed(2)} Para: $${ajustada.toFixed(2)} | Stop disponível: $${stopLossDisponivel.toFixed(2)}`);
+        stakeAmount = ajustada;
       }
     }
 
@@ -956,310 +1102,200 @@ export class TrinityStrategy implements IStrategy {
     token: string,
     contractParams: any,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
-    // ✅ Log antes de criar WebSocket para confirmar que método foi chamado
     const tokenPreview = token ? `${token.substring(0, 10)}...${token.substring(token.length - 5)}` : 'NULL';
-    this.logger.log(`[TRINITY][${symbol}] 🔄 Iniciando criação de contrato | Token: ${tokenPreview} | Tipo: ${contractParams.contract_type}`);
-    
-    return new Promise((resolve) => {
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      
-      this.logger.log(`[TRINITY][${symbol}] 🔌 Conectando ao WebSocket: ${endpoint}`);
-      
-      const ws = new WebSocket(endpoint, {
-        headers: {
-          Origin: 'https://app.deriv.com',
-        },
-      });
+    this.logger.log(`[TRINITY][${symbol}] 🔄 Iniciando criação de contrato (pool) | Token: ${tokenPreview} | Tipo: ${contractParams.contract_type}`);
 
-      let proposalId: string | null = null;
-      let hasResolved = false;
-      let contractCreated = false;
-      let createdContractId: string | null = null;
-      let contractMonitorTimeout: NodeJS.Timeout | null = null;
-      
-      // ✅ Timeout de 30 segundos para CRIAR o contrato
-      const timeout = setTimeout(() => {
-        if (!hasResolved) {
-          hasResolved = true;
-          this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao criar contrato (30s) | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | WS readyState: ${ws.readyState}`);
-          this.saveTrinityLog(userId, symbol, 'erro',
-            `⏱️ Timeout ao criar contrato após 30s | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount.toFixed(2)}`);
-          ws.close();
-          resolve(null);
+    try {
+      const connection = await this.getOrCreateWebSocketConnection(token, userId, symbol);
+
+      const proposalStartTime = Date.now();
+      this.logger.debug(`[TRINITY][${symbol}] 📤 [${userId}] Solicitando proposta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+
+      const proposalResponse: any = await connection.sendRequest({
+        proposal: 1,
+        amount: contractParams.amount,
+        basis: 'stake',
+        contract_type: contractParams.contract_type,
+        currency: contractParams.currency || 'USD',
+        duration: 1,
+        duration_unit: 't',
+        symbol: contractParams.symbol,
+      }, 60000);
+
+      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+        this.logger.error(`[TRINITY][${symbol}] ❌ Erro na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
+        this.saveTrinityLog(userId, symbol, 'erro', `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
+        if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          this.saveTrinityLog(userId, symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
+        } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+          this.saveTrinityLog(userId, symbol, 'alerta', `💡 Rate limit atingido na Deriv.`);
         }
-      }, 30000);
-      
-      // ✅ Função para iniciar timeout de monitoramento (60 segundos máximo após contrato criado)
-      const startContractMonitorTimeout = (contractId: string) => {
+        return null;
+      }
+
+      const proposalId = proposalResponse.proposal?.id;
+      const proposalPrice = Number(proposalResponse.proposal?.ask_price);
+      if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+        this.logger.error(`[TRINITY][${symbol}] ❌ Proposta inválida recebida: ${JSON.stringify(proposalResponse)}`);
+        this.saveTrinityLog(userId, symbol, 'erro', `❌ Proposta inválida da Deriv | Resposta: ${JSON.stringify(proposalResponse)}`);
+        return null;
+      }
+
+      const proposalDuration = Date.now() - proposalStartTime;
+      this.logger.debug(`[TRINITY][${symbol}] 📊 [${userId}] Proposta em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice} | Comprando...`);
+
+      const buyStartTime = Date.now();
+      let buyResponse: any;
+      try {
+        buyResponse = await connection.sendRequest({
+          buy: proposalId,
+          price: proposalPrice,
+        }, 60000);
+      } catch (error: any) {
+        const errorMessage = error?.message || JSON.stringify(error);
+        this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | ProposalId: ${proposalId}`);
+        this.saveTrinityLog(userId, symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
+        return null;
+      }
+
+      const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
+      if (buyErrorObj) {
+        const errorCode = buyErrorObj?.code || '';
+        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
+        this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao comprar contrato: ${JSON.stringify(buyErrorObj)} | ProposalId: ${proposalId}`);
+        this.saveTrinityLog(userId, symbol, 'erro', `❌ Erro ao comprar contrato | Código: ${errorCode} | Mensagem: ${errorMessage}`);
+        if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          this.saveTrinityLog(userId, symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
+        } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+          this.saveTrinityLog(userId, symbol, 'alerta', `💡 Rate limit atingido na Deriv.`);
+        }
+        return null;
+      }
+
+      const contractId = buyResponse.buy?.contract_id;
+      if (!contractId) {
+        this.logger.error(`[TRINITY][${symbol}] ❌ Contrato criado mas sem contract_id: ${JSON.stringify(buyResponse)}`);
+        this.saveTrinityLog(userId, symbol, 'erro', `❌ Contrato criado mas sem contract_id | Resposta: ${JSON.stringify(buyResponse)}`);
+        return null;
+      }
+
+      const buyDuration = Date.now() - buyStartTime;
+      this.logger.log(`[TRINITY][${symbol}] ✅ Contrato criado | Proposal: ${proposalDuration}ms | Compra: ${buyDuration}ms | ContractId: ${contractId}`);
+      this.saveTrinityLog(userId, symbol, 'operacao', `✅ Contrato criado: ${contractId} | Proposta: ${proposalDuration}ms | Compra: ${buyDuration}ms`);
+
+      const monitorStartTime = Date.now();
+      let firstUpdateTime: number | null = null;
+      let lastUpdateTime: number | null = null;
+      let updateCount = 0;
+
+      return await new Promise((resolve) => {
+        let hasResolved = false;
+        let contractMonitorTimeout: NodeJS.Timeout | null = null;
+
         contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
-            this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao monitorar contrato (60s) | ContractId: ${contractId}`);
-            this.saveTrinityLog(userId, symbol, 'erro',
-              `⏱️ Contrato ${contractId} não finalizou em 60 segundos - forçando fechamento`);
-            ws.close();
-            // ✅ Retorna null para que a IA possa continuar operando
+            this.logger.warn(`[TRINITY][${symbol}] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`);
+            this.saveTrinityLog(userId, symbol, 'erro', `⏱️ Contrato ${contractId} não finalizou em 90 segundos`);
+            connection.removeSubscription(contractId);
             resolve(null);
           }
-        }, 60000); // 60 segundos = 1 minuto máximo para contrato aberto
-      };
+        }, 90000);
 
-      ws.on('open', () => {
-        // ✅ EXATAMENTE IGUAL ORION: envia authorize imediatamente
-        this.logger.log(`[TRINITY][${symbol}] ✅ WebSocket ABERTO, enviando authorize...`);
-        ws.send(JSON.stringify({ authorize: token }));
-      });
-
-      ws.on('message', (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          
-          // ✅ LOG para ver mensagens recebidas
-          this.logger.log(`[TRINITY][${symbol}] 📩 Mensagem WS: msg_type=${msg.msg_type || 'unknown'}`);
-
-          // ✅ Tratamento para erro de nível superior (quando a API retorna error sem authorize)
-          if (msg.error) {
-            if (!hasResolved) {
-              hasResolved = true;
-              clearTimeout(timeout);
-              const err = msg.error;
-              this.logger.error(`[TRINITY][${symbol}] ❌ Erro da API Deriv | ${err.code} - ${err.message}`);
-              this.saveTrinityLog(userId, symbol, 'erro',
-                `❌ Erro da API Deriv | ${err.code} - ${err.message}`, {
-                  etapa: msg.msg_type || 'unknown',
-                  error: err,
-                });
-              ws.close();
-              resolve(null);
-            }
-            return;
-          }
-
-          if (msg.authorize) {
-            if (msg.authorize.error) {
-              if (!hasResolved) {
-                hasResolved = true;
-                clearTimeout(timeout);
-                const err = msg.authorize.error;
-                this.logger.error(`[TRINITY][${symbol}] ❌ Erro na autorização Deriv | ${err.code} - ${err.message}`);
-                this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Erro na autorização Deriv | ${err.code} - ${err.message}`, {
-                    etapa: 'authorize',
-                    error: err,
-                  });
-                ws.close();
-                resolve(null);
-              }
-              return;
-            }
-            
-            this.logger.log(`[TRINITY][${symbol}] ✅ Autorizado! Solicitando proposta...`);
-
-            // ✅ Payload igual ao da Orion (sem subscribe: 0)
-            const proposalPayload = {
-              proposal: 1,
-              amount: contractParams.amount,
-              basis: 'stake',
-              contract_type: contractParams.contract_type,
-              currency: contractParams.currency || 'USD',
-              duration: 1,
-              duration_unit: 't',
-              symbol: contractParams.symbol,
-            };
-            
-            this.logger.log(`[TRINITY][${symbol}] 📤 Enviando proposta: ${JSON.stringify(proposalPayload)}`);
-            ws.send(JSON.stringify(proposalPayload));
-            return;
-          }
-
-          if (msg.proposal) {
-            if (msg.proposal.error) {
-              if (!hasResolved) {
-                hasResolved = true;
-                clearTimeout(timeout);
-                const err = msg.proposal.error;
-                const errorCode = err.code || '';
-                const errorMessage = err.message || JSON.stringify(err);
-                
-                this.logger.error(`[TRINITY][${symbol}] ❌ Erro na proposta Deriv | ${errorCode} - ${errorMessage}`);
-                this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Erro na proposta Deriv | ${errorCode} - ${errorMessage}`, {
-                    etapa: 'proposal',
-                    error: err,
-                  });
-                
-                // ✅ Igual Orion: identificar erros comuns
-                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-                  this.logger.warn(`[TRINITY][${symbol}] 💡 Saldo insuficiente detectado.`);
-                } else if (errorMessage.toLowerCase().includes('invalid') && errorMessage.toLowerCase().includes('amount')) {
-                  this.logger.warn(`[TRINITY][${symbol}] 💡 Valor inválido (mínimo: $0.35).`);
-                } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
-                  this.logger.warn(`[TRINITY][${symbol}] 💡 Rate limit atingido.`);
+        connection.subscribe(
+          {
+            proposal_open_contract: 1,
+            contract_id: contractId,
+            subscribe: 1,
+          },
+          (msg: any) => {
+            try {
+              if (msg.error) {
+                this.logger.error(`[TRINITY][${symbol}] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
+                if (!hasResolved) {
+                  hasResolved = true;
+                  if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                  connection.removeSubscription(contractId);
+                  resolve(null);
                 }
-                
-                ws.close();
-                resolve(null);
+                return;
               }
-              return;
-            }
 
-            proposalId = msg.proposal.id;
-            const proposalPrice = Number(msg.proposal.ask_price);
-            
-            // ✅ LOG ao invés de DEBUG
-            this.logger.log(`[TRINITY][${symbol}] 📊 Proposta recebida: ID=${proposalId}, Preço=${proposalPrice}`);
-            
-            if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+              const contract = msg.proposal_open_contract;
+              if (!contract) return;
+
+              const now = Date.now();
+              updateCount++;
+
+              if (!firstUpdateTime) {
+                firstUpdateTime = now;
+                const timeToFirstUpdate = firstUpdateTime - monitorStartTime;
+                this.logger.log(`[TRINITY][${symbol}] ⚡ Primeira atualização em ${timeToFirstUpdate}ms | Contrato: ${contractId}`);
+              }
+
+              if (lastUpdateTime) {
+                const timeSinceLastUpdate = now - lastUpdateTime;
+                this.logger.debug(`[TRINITY][${symbol}] ⏱️ Update #${updateCount} | Δt=${timeSinceLastUpdate}ms | Total=${now - monitorStartTime}ms`);
+              }
+              lastUpdateTime = now;
+
+              const isFinalized =
+                contract.is_sold === 1 ||
+                contract.is_sold === true ||
+                contract.status === 'won' ||
+                contract.status === 'lost' ||
+                contract.status === 'sold';
+
+              if (isFinalized && !hasResolved) {
+                hasResolved = true;
+                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+
+                const profit = Number(contract.profit || 0);
+                const exitSpot = contract.exit_spot || contract.current_spot;
+                const monitorDuration = Date.now() - monitorStartTime;
+                const timeToFirstUpdate = firstUpdateTime ? firstUpdateTime - monitorStartTime : 0;
+                const avgUpdateInterval = lastUpdateTime && updateCount > 1
+                  ? (lastUpdateTime - (firstUpdateTime || monitorStartTime)) / (updateCount - 1)
+                  : 0;
+
+                this.logger.log(`[TRINITY][${symbol}] ✅ Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`);
+                this.logger.log(`[TRINITY][${symbol}] 📈 Performance: Primeira atualização: ${timeToFirstUpdate}ms | Total updates: ${updateCount} | Intervalo médio: ${avgUpdateInterval.toFixed(0)}ms`);
+                this.saveTrinityLog(userId, symbol, 'resultado', `✅ Contrato finalizado em ${monitorDuration}ms | Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`);
+
+                connection.removeSubscription(contractId);
+                resolve({ contractId, profit, exitSpot });
+              }
+            } catch (error) {
               if (!hasResolved) {
                 hasResolved = true;
-                clearTimeout(timeout);
-                this.logger.error(`[TRINITY][${symbol}] ❌ Proposta inválida | ID=${proposalId}, Preço=${proposalPrice}`);
-                this.saveTrinityLog(userId, symbol, 'erro',
-                  `❌ Proposta inválida recebida da Deriv | ID=${proposalId}, Preço=${proposalPrice}`, {
-                    etapa: 'proposal',
-                    response: msg.proposal,
-                  });
-                ws.close();
+                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao processar atualização do contrato:`, error);
+                this.saveTrinityLog(userId, symbol, 'erro', `Erro ao processar atualização do contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+                connection.removeSubscription(contractId);
                 resolve(null);
               }
-              return;
             }
-
-            this.logger.log(`[TRINITY][${symbol}] 💰 Executando compra | ProposalId=${proposalId} | Price=${proposalPrice}`);
-            ws.send(JSON.stringify({
-              buy: proposalId,
-              price: proposalPrice,
-            }));
-            return;
-          }
-
-          if (msg.buy) {
-            if (msg.buy.error) {
-              if (!hasResolved) {
-                hasResolved = true;
-                clearTimeout(timeout);
-                ws.close();
-                
-                const err = msg.buy.error;
-                const errorCode = err.code || '';
-                const errorMessage = err.message || JSON.stringify(err);
-                
-                this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao comprar contrato | ${errorCode} - ${errorMessage}`);
-                this.saveTrinityLog(userId, symbol, 'erro', `❌ Erro ao comprar contrato | ${errorCode} - ${errorMessage}`);
-                
-                if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-                  this.saveTrinityLog(userId, symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
-                }
-                
-                resolve(null);
-              }
-              return;
-            }
-
-            // ✅ Contrato criado com sucesso - NÃO fechar WS, iniciar monitoramento no mesmo WS
-            const contractId = msg.buy.contract_id;
-            if (!contractId) {
-              if (!hasResolved) {
-                hasResolved = true;
-                clearTimeout(timeout);
-                ws.close();
-                this.logger.error(`[TRINITY][${symbol}] ❌ Compra sem contract_id`);
-                resolve(null);
-              }
-              return;
-            }
-
-            contractCreated = true;
-            createdContractId = contractId;
-            
-            // ✅ Cancelar timeout de criação e iniciar timeout de monitoramento (60s)
-            clearTimeout(timeout);
-            startContractMonitorTimeout(contractId);
-            
-            this.logger.log(`[TRINITY][${symbol}] ✅ Contrato criado: ${contractId} | Monitorando no mesmo WS (max 60s)...`);
-            
-            // ✅ Inscrever para atualizações do contrato no MESMO WebSocket
-            ws.send(JSON.stringify({
-              proposal_open_contract: 1,
-              contract_id: contractId,
-              subscribe: 1,
-            }));
-            return;
-          }
-          
-          // ✅ MONITORAMENTO NO MESMO WS: Receber atualizações do contrato
-          if (msg.proposal_open_contract) {
-            const contract = msg.proposal_open_contract;
-            
-            // Verificar se contrato finalizou
-            const isFinalized = contract.is_sold === 1 || contract.is_sold === true || 
-                               contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
-            
-            if (isFinalized && !hasResolved) {
-              hasResolved = true;
-              clearTimeout(timeout);
-              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-              
-              const profit = Number(contract.profit || 0);
-              const contractIdResult = contract.contract_id;
-              
-              this.logger.log(`[TRINITY][${symbol}] ✅ Contrato ${contractIdResult} finalizado | Profit: $${profit.toFixed(2)}`);
-              
-              ws.close();
-              resolve({ contractId: contractIdResult, profit, exitSpot: contract.exit_spot || contract.current_spot });
-            }
-            return;
-          }
-        } catch (err) {
+          },
+          contractId,
+          90000,
+        ).catch((error) => {
           if (!hasResolved) {
             hasResolved = true;
-            clearTimeout(timeout);
             if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-            this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao processar mensagem WS: ${err instanceof Error ? err.message : String(err)}`);
-            this.saveTrinityLog(userId, symbol, 'erro',
-              `❌ Erro ao processar mensagem WS (criação de contrato) | ${err instanceof Error ? err.message : String(err)}`, {
-                etapa: 'ws_message',
-                error: err instanceof Error ? err.message : String(err),
-              });
-            ws.close();
+            this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao inscrever no contrato ${contractId}:`, error);
+            this.saveTrinityLog(userId, symbol, 'erro', `Erro ao inscrever no contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
             resolve(null);
           }
-        }
+        });
       });
-
-      ws.on('error', (error) => {
-        if (!hasResolved) {
-          hasResolved = true;
-          clearTimeout(timeout);
-          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-          this.logger.error(`[TRINITY][${symbol}] ❌ Erro no WebSocket: ${error.message}`);
-          this.saveTrinityLog(userId, symbol, 'erro',
-            `❌ Erro no WebSocket ao criar contrato | ${error.message}`, {
-              etapa: 'ws_error',
-              error: error.message,
-            });
-          ws.close();
-          resolve(null);
-        }
-      });
-
-      ws.on('close', (code, reason) => {
-        // ✅ Detectar fechamento prematuro do WebSocket (igual Orion)
-        if (!hasResolved) {
-          hasResolved = true;
-          clearTimeout(timeout);
-          if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-          this.logger.warn(`[TRINITY][${symbol}] ⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`);
-          this.saveTrinityLog(userId, symbol, 'erro',
-            `⚠️ WebSocket fechado antes de completar | Code: ${code} | Reason: ${reason?.toString()}`, {
-              etapa: 'ws_close',
-              code,
-              reason: reason?.toString(),
-            });
-          resolve(null);
-        }
-      });
-    });
+    } catch (error) {
+      this.logger.error(`[TRINITY][${symbol}] ❌ Erro ao executar trade via WebSocket (pool):`, error);
+      this.saveTrinityLog(userId, symbol, 'erro', `Erro ao executar trade | Tipo: ${contractParams.contract_type} | Valor: ${contractParams.amount} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+      return null;
+    }
   }
 
   // ✅ REMOVIDO: monitorTrinityContract - agora o monitoramento é feito no mesmo WebSocket em executeTrinityTradeDirect
@@ -1366,6 +1402,14 @@ export class TrinityStrategy implements IStrategy {
       
       asset.vitoriasConsecutivas += 1;
       asset.ultimoLucro = lucro;
+      // Resetar loss virtual
+      if (state.lossVirtualActive || state.lossVirtualCount > 0) {
+        this.saveTrinityLog(state.userId, symbol, 'info',
+          `✅ LOSS VIRTUAL DESATIVADO | Vitórias após ${state.lossVirtualCount} derrotas seguidas | Voltando ao modo normal`);
+      }
+      state.lossVirtualActive = false;
+      state.lossVirtualCount = 0;
+      state.lossVirtualOperation = null;
       
     } else {
       // ✅ DERROTA
@@ -1385,6 +1429,14 @@ export class TrinityStrategy implements IStrategy {
         // Primeira derrota: ativar martingale
         asset.martingaleStep = 1;
         asset.perdaAcumulada = perda;
+        // Loss virtual: contar perdas seguidas para acionar modo de segurança virtual
+        state.lossVirtualCount = (state.lossVirtualCount || 0) + 1;
+        state.lossVirtualOperation = operation;
+        if (!state.lossVirtualActive && state.lossVirtualCount >= 2) {
+          state.lossVirtualActive = true;
+          this.saveTrinityLog(state.userId, symbol, 'alerta',
+            `⚠️ LOSS VIRTUAL ATIVADO | ${state.lossVirtualCount} derrotas seguidas | Operação virtual até recuperar confiança`);
+        }
         
         // Calcular próxima aposta
         const proximaAposta = calcularProximaAposta(
@@ -1424,6 +1476,23 @@ export class TrinityStrategy implements IStrategy {
         // ✅ ZENIX v2.0: Verificar limite de entradas ANTES de incrementar
         // Conservador: máximo 5 entradas (martingaleStep 0-4, reseta quando chegar em 5)
         // Moderado/Agressivo: infinito (maxEntradas = Infinity)
+        if (state.modoMartingale === 'conservador' && nivelAntes >= 5) {
+          // Limite conservador (doc): resetar após 5 perdas
+          this.saveTrinityLog(state.userId, symbol, 'info', 
+            `MARTINGALE RESETADO (CONSERVADOR) | Limite de 5 entradas atingido`, {
+              evento: 'reset',
+              motivo: 'limite_conservador_5',
+              nivelAntes,
+              nivelDepois: 0,
+              perdaAceita: asset.perdaAcumulada + perda,
+            });
+          
+          this.logger.warn(`[TRINITY][${symbol}] ⚠️ CONSERVADOR: Resetando martingale após 5 perdas`);
+          asset.martingaleStep = 0;
+          asset.perdaAcumulada = 0;
+          asset.apostaInicial = asset.apostaBase;
+          return;
+        }
         if (config.maxEntradas !== Infinity && nivelAntes >= config.maxEntradas) {
           // Limite atingido: resetar martingale
           this.saveTrinityLog(state.userId, symbol, 'info', 
@@ -1447,6 +1516,13 @@ export class TrinityStrategy implements IStrategy {
         // Incrementar nível (ainda dentro do limite)
         asset.martingaleStep += 1;
         asset.perdaAcumulada += perda;
+        state.lossVirtualCount = (state.lossVirtualCount || 0) + 1;
+        state.lossVirtualOperation = operation;
+        if (!state.lossVirtualActive && state.lossVirtualCount >= 2) {
+          state.lossVirtualActive = true;
+          this.saveTrinityLog(state.userId, symbol, 'alerta',
+            `⚠️ LOSS VIRTUAL ATIVADO | ${state.lossVirtualCount} derrotas seguidas | Operação virtual até recuperar confiança`);
+        }
         
         // Calcular próxima aposta
         const proximaAposta = calcularProximaAposta(
@@ -2013,6 +2089,218 @@ export class TrinityStrategy implements IStrategy {
         this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Erro detalhado: ${error.message}`);
         this.logger.error(`[TRINITY][SaveLogsBatch][${userId}] Stack: ${error.stack}`);
       }
+    }
+  }
+
+  /**
+   * ✅ Obtém ou cria conexão WebSocket reutilizável por token (com keep-alive)
+   */
+  private async getOrCreateWebSocketConnection(token: string, userId?: string, symbol?: string): Promise<{
+    ws: WebSocket;
+    sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription: (subId: string) => void;
+  }> {
+    const existing = this.wsConnections.get(token);
+    if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+      return {
+        ws: existing.ws,
+        sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+          this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+        removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+      };
+    }
+
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+    this.logger.log(`[TRINITY][${symbol || 'POOL'}] 🔌 Abrindo WebSocket reutilizável: ${endpoint}`);
+
+    const socket = new WebSocket(endpoint, {
+      headers: { Origin: 'https://app.deriv.com' },
+    });
+
+    let authResolved = false;
+    let connectionTimeout: NodeJS.Timeout | null = null;
+
+    connectionTimeout = setTimeout(() => {
+      if (!authResolved) {
+        authResolved = true;
+        socket.close();
+        this.wsConnections.delete(token);
+      }
+    }, 30000);
+
+    socket.on('message', (data: Buffer) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        const conn = this.wsConnections.get(token);
+        if (!conn) {
+          this.logger.warn(`[TRINITY][${symbol || 'POOL'}] ⚠️ Mensagem recebida sem conexão no pool para token ${token.substring(0, 8)}`);
+          return;
+        }
+
+        if (msg.msg_type === 'authorize' && !authResolved) {
+          authResolved = true;
+          if (connectionTimeout) clearTimeout(connectionTimeout);
+
+          if (msg.error || (msg.authorize && msg.authorize.error)) {
+            const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+            this.logger.error(`[TRINITY][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`);
+            socket.close();
+            this.wsConnections.delete(token);
+            return;
+          }
+
+          conn.authorized = true;
+          this.logger.log(`[TRINITY][${symbol || 'POOL'}] ✅ Autorizado | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+
+          conn.keepAliveInterval = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+              try {
+                socket.send(JSON.stringify({ ping: 1 }));
+                this.logger.debug(`[TRINITY][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
+              } catch {
+                // ignorar
+              }
+            }
+          }, 90000);
+          return;
+        }
+
+        if (msg.proposal_open_contract) {
+          const contractId = msg.proposal_open_contract.contract_id;
+          if (contractId && conn.subscriptions.has(contractId)) {
+            const callback = conn.subscriptions.get(contractId)!;
+            callback(msg);
+            return;
+          }
+        }
+
+        if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+          const firstKey = conn.pendingRequests.keys().next().value;
+          if (firstKey) {
+            const pending = conn.pendingRequests.get(firstKey);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              conn.pendingRequests.delete(firstKey);
+              if (msg.error) {
+                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+              } else {
+                pending.resolve(msg);
+              }
+            }
+          }
+          return;
+        }
+      } catch {
+        // Ignorar erros de parse
+      }
+    });
+
+    socket.on('open', () => {
+      this.logger.log(`[TRINITY][${symbol || 'POOL'}] ✅ WebSocket conectado, enviando autorização...`);
+      const conn = {
+        ws: socket,
+        authorized: false,
+        keepAliveInterval: null,
+        requestIdCounter: 0,
+        pendingRequests: new Map(),
+        subscriptions: new Map(),
+      };
+      this.wsConnections.set(token, conn);
+      socket.send(JSON.stringify({ authorize: token }));
+    });
+
+    socket.on('error', () => {
+      if (!authResolved) {
+        if (connectionTimeout) clearTimeout(connectionTimeout);
+        authResolved = true;
+        this.wsConnections.delete(token);
+      }
+    });
+
+    socket.on('close', () => {
+      const conn = this.wsConnections.get(token);
+      if (conn) {
+        if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval);
+        conn.pendingRequests.forEach((pending) => {
+          clearTimeout(pending.timeout);
+          pending.reject(new Error('WebSocket fechado'));
+        });
+        conn.subscriptions.clear();
+      }
+      this.wsConnections.delete(token);
+      if (!authResolved) {
+        if (connectionTimeout) clearTimeout(connectionTimeout);
+        authResolved = true;
+      }
+    });
+
+    const conn = this.wsConnections.get(token)!;
+    return {
+      ws: conn.ws,
+      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+    };
+  }
+
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      const timeout = setTimeout(() => {
+        conn.pendingRequests.delete(requestId);
+        reject(new Error(`Timeout após ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Inscreve-se para atualizações via conexão existente
+   */
+  private async subscribeViaConnection(
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    const timeout = setTimeout(() => {
+      conn.subscriptions.delete(subId);
+    }, timeoutMs);
+
+    conn.subscriptions.set(subId, (msg: any) => {
+      clearTimeout(timeout);
+      callback(msg);
+    });
+
+    conn.ws.send(JSON.stringify(payload));
+  }
+
+  /**
+   * ✅ Remove subscription da conexão
+   */
+  private removeSubscriptionFromConnection(token: string, subId: string): void {
+    const conn = this.wsConnections.get(token);
+    if (conn) {
+      conn.subscriptions.delete(subId);
     }
   }
 
