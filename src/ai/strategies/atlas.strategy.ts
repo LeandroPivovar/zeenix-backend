@@ -746,7 +746,9 @@ export class AtlasStrategy implements IStrategy {
 
     if (isWin) {
       // ✅ VITÓRIA
-      const lucro = profit > 0 ? profit : stakeAmount * modeConfig.payout;
+      // O profit da API Deriv já é o lucro líquido (ganho bruto - aposta)
+      // Se profit > 0, usar diretamente; se não, calcular ganho bruto - aposta
+      const lucro = profit > 0 ? profit : (stakeAmount * modeConfig.payout - stakeAmount);
       state.capital += lucro;
       state.totalProfitLoss += lucro;
       
@@ -755,8 +757,10 @@ export class AtlasStrategy implements IStrategy {
         const nivelAntes = state.martingaleStep;
         const perdaRecuperada = state.perdaAcumulada;
         
+        // ✅ Calcular ganho bruto para exibição (lucro líquido + aposta)
+        const ganhoBrutoRecuperacao = lucro + stakeAmount;
         this.saveAtlasLog(state.userId, symbol, 'info', 
-          `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 | Perda recuperada: $${perdaRecuperada.toFixed(2)} | Ganho: $${lucro.toFixed(2)}`);
+          `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 | Perda recuperada: $${perdaRecuperada.toFixed(2)} | Ganho: $${ganhoBrutoRecuperacao.toFixed(2)} | Lucro: $${lucro.toFixed(2)}`);
         
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
@@ -785,9 +789,12 @@ export class AtlasStrategy implements IStrategy {
       }
       
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      // ✅ O profit da API Deriv já é lucro líquido (ganho bruto - aposta)
+      // Para exibir o ganho bruto, somamos a aposta de volta
+      const ganhoBruto = lucro + stakeAmount;
       this.saveAtlasLog(state.userId, symbol, 'resultado', 
         `✅ VITÓRIA! | Dígito: ${digitoResultado} (${digitoResultado > 3 ? 'OVER' : 'UNDER'}) ✅ | ` +
-        `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
+        `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
       
     } else {
       // ✅ DERROTA
