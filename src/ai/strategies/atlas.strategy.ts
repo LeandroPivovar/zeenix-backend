@@ -571,7 +571,9 @@ export class AtlasStrategy implements IStrategy {
       const connection = await this.getOrCreateWebSocketConnection(token, userId, symbol);
 
       const proposalStartTime = Date.now();
-      const proposalResponse: any = await connection.sendRequest({
+      // ✅ ATLAS: Para DIGITOVER/DIGITUNDER, é necessário o parâmetro barrier (dígito de comparação)
+      // ATLAS opera com OVER/UNDER baseado em dígito > 3, então barrier = 3
+      const proposalPayload: any = {
         proposal: 1,
         amount: contractParams.amount,
         basis: 'stake',
@@ -580,11 +582,21 @@ export class AtlasStrategy implements IStrategy {
         duration: 1,
         duration_unit: 't',
         symbol: contractParams.symbol,
-      }, 60000);
+      };
+      
+      // ✅ Adicionar barrier para contratos DIGITOVER/DIGITUNDER
+      if (contractParams.contract_type === 'DIGITOVER' || contractParams.contract_type === 'DIGITUNDER') {
+        proposalPayload.barrier = 3; // Dígito de comparação: > 3 (OVER) ou ≤ 3 (UNDER)
+      }
+      
+      const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
 
       const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
       if (errorObj) {
-        this.logger.error(`[ATLAS][${symbol}] ❌ Erro na proposta: ${JSON.stringify(errorObj)}`);
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+        this.logger.error(`[ATLAS][${symbol}] ❌ Erro na proposta: ${errorMessage} | Código: ${errorCode} | Tipo: ${contractParams.contract_type}`);
+        this.saveAtlasLog(userId, symbol, 'erro', `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
         return null;
       }
 
@@ -617,7 +629,10 @@ export class AtlasStrategy implements IStrategy {
 
       const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
       if (buyErrorObj) {
-        this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar: ${JSON.stringify(buyErrorObj)}`);
+        const errorCode = buyErrorObj?.code || '';
+        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
+        this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | Código: ${errorCode} | ProposalId: ${proposalId}`);
+        this.saveAtlasLog(userId, symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
         return null;
       }
 

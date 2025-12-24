@@ -361,9 +361,28 @@ export class AiController {
   }
 
   @Get('logs/:userId')
-  async getUserLogs(@Param('userId') userId: string) {
+  async getUserLogs(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
-      const logs = await this.aiService.getUserLogs(userId);
+      // Converter limit para número
+      // Se não especificado ou vazio, usar padrão 100
+      // Se for 'todos', passar undefined (sem limite)
+      // Caso contrário, converter para número
+      let limitNum: number | undefined = 100; // Padrão: 100
+      if (limit) {
+        if (limit.toLowerCase() === 'todos') {
+          limitNum = undefined; // Sem limite
+        } else {
+          const parsed = parseInt(limit, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            limitNum = parsed;
+          }
+        }
+      }
+      
+      const logs = await this.aiService.getUserLogs(userId, limitNum);
       return {
         success: true,
         data: logs,
