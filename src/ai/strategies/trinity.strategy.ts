@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
-import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
+import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - não é mais necessário (ticks vêm do AIService)
 
