@@ -561,13 +561,15 @@ export class OrionStrategy implements IStrategy {
 
     // Processar cada usuário
     for (const [userId, state] of this.velozUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) {
         this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] Operação ativa, pulando`);
         continue;
       }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
-      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale && !defesaAtiva) {
         this.logger.debug(
           `[ORION][Veloz][${userId}] 🔍 Verificando martingale: perdaAcumulada=$${state.perdaAcumulada.toFixed(2)}, direcao=${state.ultimaDirecaoMartingale}, martingaleStep=${state.martingaleStep || 0}`,
         );
@@ -601,6 +603,11 @@ export class OrionStrategy implements IStrategy {
         
         await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'veloz', proximaEntrada);
         continue;
+      }
+      if (state.perdaAcumulada > 0 && defesaAtiva) {
+        this.logger.log(
+          `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Ignorando martingale e recalculando sinal em modo PRECISO.`,
+        );
       }
 
       // ✅ Garantir que ticksDesdeUltimaOp está inicializado
@@ -797,10 +804,12 @@ export class OrionStrategy implements IStrategy {
 
     // Processar cada usuário
     for (const [userId, state] of this.moderadoUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
-      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale && !defesaAtiva) {
         const now = new Date();
         if (state.lastOperationTimestamp) {
           const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
@@ -831,6 +840,11 @@ export class OrionStrategy implements IStrategy {
         
         await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'moderado', proximaEntrada);
         continue;
+      }
+      if (state.perdaAcumulada > 0 && defesaAtiva) {
+        this.logger.log(
+          `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Ignorando martingale e recalculando sinal em modo PRECISO.`,
+        );
       }
 
       const now = new Date();
@@ -1010,10 +1024,12 @@ export class OrionStrategy implements IStrategy {
 
     // Processar cada usuário
     for (const [userId, state] of this.precisoUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
-      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale && !defesaAtiva) {
         // Continuar com martingale usando a mesma direção
         // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
         const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -1023,6 +1039,11 @@ export class OrionStrategy implements IStrategy {
         
         await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'preciso', proximaEntrada);
         continue;
+      }
+      if (state.perdaAcumulada > 0 && defesaAtiva) {
+        this.logger.log(
+          `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Ignorando martingale e recalculando sinal em modo PRECISO.`,
+        );
       }
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
@@ -1220,13 +1241,15 @@ export class OrionStrategy implements IStrategy {
     this.logger.log(`[ORION][Lenta] 🔄 Processando ${this.lentaUsers.size} usuário(s) | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria})`);
     
     for (const [userId, state] of this.lentaUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) {
         this.logger.debug(`[ORION][Lenta][${userId.substring(0, 8)}] Operação ativa, pulando`);
         continue;
       }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
-      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale && !defesaAtiva) {
         // Continuar com martingale usando a mesma direção
         // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
         const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -1236,6 +1259,11 @@ export class OrionStrategy implements IStrategy {
         
         await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'lenta', proximaEntrada);
         continue;
+      }
+      if (state.perdaAcumulada > 0 && defesaAtiva) {
+        this.logger.log(
+          `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Ignorando martingale e recalculando sinal em modo PRECISO.`,
+        );
       }
 
       const sinal = gerarSinalZenix(this.ticks, LENTA_CONFIG, 'LENTA');
