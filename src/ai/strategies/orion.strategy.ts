@@ -606,14 +606,13 @@ export class OrionStrategy implements IStrategy {
             continue;
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
             this.logger.log(
-              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal.`,
+              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
             );
-            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO.`);
-            // Resetar martingale para gerar novo sinal
-            state.perdaAcumulada = 0;
-            state.ultimaDirecaoMartingale = null;
-            state.martingaleStep = 0;
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
           }
         } else {
           // Defesa não está ativa - continuar martingale normalmente
@@ -781,8 +780,23 @@ export class OrionStrategy implements IStrategy {
         this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
       }
 
-      // ✅ Executar operação (entrada 1) - usando sinal do novo sistema
-      await this.executeOrionOperation(state, sinal, 'veloz', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'veloz', entryNumber);
     }
   }
 
@@ -869,14 +883,13 @@ export class OrionStrategy implements IStrategy {
             continue;
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
             this.logger.log(
-              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal.`,
+              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
             );
-            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO.`);
-            // Resetar martingale para gerar novo sinal
-            state.perdaAcumulada = 0;
-            state.ultimaDirecaoMartingale = null;
-            state.martingaleStep = 0;
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
           }
         } else {
           // Defesa não está ativa - continuar martingale normalmente
@@ -1023,8 +1036,23 @@ export class OrionStrategy implements IStrategy {
         this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
       }
 
-      // ✅ Executar operação (entrada 1) - usando sinal do novo sistema
-      await this.executeOrionOperation(state, sinal, 'moderado', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'moderado', entryNumber);
     }
   }
 
@@ -1091,13 +1119,11 @@ export class OrionStrategy implements IStrategy {
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
             this.logger.log(
-              `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal.`,
+              `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
             );
-            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO.`);
-            // Resetar martingale para gerar novo sinal
-            state.perdaAcumulada = 0;
-            state.ultimaDirecaoMartingale = null;
-            state.martingaleStep = 0;
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
           }
         } else {
           // Defesa não está ativa - continuar martingale normalmente
@@ -1224,8 +1250,23 @@ export class OrionStrategy implements IStrategy {
         this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
       }
 
-      // ✅ Executar operação (entrada 1) - usando sinal do novo sistema
-      await this.executeOrionOperation(state, sinal, 'preciso', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Preciso][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'preciso', entryNumber);
     }
   }
 
@@ -1330,14 +1371,13 @@ export class OrionStrategy implements IStrategy {
             continue;
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
             this.logger.log(
-              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal.`,
+              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
             );
-            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO.`);
-            // Resetar martingale para gerar novo sinal
-            state.perdaAcumulada = 0;
-            state.ultimaDirecaoMartingale = null;
-            state.martingaleStep = 0;
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
           }
         } else {
           // Defesa não está ativa - continuar martingale normalmente
@@ -1462,8 +1502,23 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
       this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
 
-      // ✅ Executar operação (entrada 1)
-      await this.executeOrionOperation(state, sinal.sinal, 'lenta', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal.sinal;
+        this.logger.log(
+          `[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal.sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal.sinal;
+      }
+      
+      // ✅ Executar operação
+      await this.executeOrionOperation(state, sinal.sinal, 'lenta', entryNumber);
     }
   }
 
