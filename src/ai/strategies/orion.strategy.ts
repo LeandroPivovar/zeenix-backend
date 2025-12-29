@@ -324,6 +324,9 @@ export class OrionStrategy implements IStrategy {
   
   // ✅ Rastreamento de logs de intervalo entre operações (para evitar logs duplicados)
   private intervaloLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que está aguardando intervalo
+  
+  // ✅ Rastreamento de log de direção inválida do martingale (para evitar logs duplicados)
+  private defesaDirecaoInvalidaLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que direção do martingale é inválida
 
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
@@ -842,10 +845,15 @@ export class OrionStrategy implements IStrategy {
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
             // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
-            this.logger.log(
-              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
-            );
-            this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ Garantir que o log seja gravado apenas uma vez
+            const key = `veloz_defesa_invalida_${userId}`;
+            if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
+              this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
+              this.logger.log(
+                `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+              );
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            }
             // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
             // A direção será atualizada quando o novo sinal for gerado
           }
@@ -1025,6 +1033,9 @@ export class OrionStrategy implements IStrategy {
         // Continuar martingale com nova direção
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
+        // ✅ Resetar flag de log quando direção for atualizada
+        const key = `veloz_defesa_invalida_${userId}`;
+        this.defesaDirecaoInvalidaLogsEnviados.delete(key);
         this.logger.log(
           `[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
         );
@@ -1032,6 +1043,9 @@ export class OrionStrategy implements IStrategy {
       } else {
         // Nova operação normal
         state.ultimaDirecaoMartingale = sinal;
+        // ✅ Resetar flag de log quando nova operação normal for iniciada
+        const key = `veloz_defesa_invalida_${userId}`;
+        this.defesaDirecaoInvalidaLogsEnviados.delete(key);
       }
       
       // ✅ Executar operação - usando sinal do novo sistema
@@ -1123,10 +1137,15 @@ export class OrionStrategy implements IStrategy {
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
             // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
-            this.logger.log(
-              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
-            );
-            this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ Garantir que o log seja gravado apenas uma vez
+            const key = `moderado_defesa_invalida_${userId}`;
+            if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
+              this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
+              this.logger.log(
+                `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+              );
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            }
             // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
             // A direção será atualizada quando o novo sinal for gerado
           }
@@ -1357,10 +1376,15 @@ export class OrionStrategy implements IStrategy {
             continue;
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
-            this.logger.log(
-              `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
-            );
-            this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ Garantir que o log seja gravado apenas uma vez
+            const key = `preciso_defesa_invalida_${userId}`;
+            if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
+              this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
+              this.logger.log(
+                `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+              );
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            }
             // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
             // A direção será atualizada quando o novo sinal for gerado
           }
@@ -1611,10 +1635,15 @@ export class OrionStrategy implements IStrategy {
           } else {
             // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
             // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
-            this.logger.log(
-              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
-            );
-            this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ Garantir que o log seja gravado apenas uma vez
+            const key = `lenta_defesa_invalida_${userId}`;
+            if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
+              this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
+              this.logger.log(
+                `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+              );
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            }
             // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
             // A direção será atualizada quando o novo sinal for gerado
           }
@@ -2946,6 +2975,16 @@ export class OrionStrategy implements IStrategy {
       if ('consecutive_losses' in state) {
         state.consecutive_losses = 0;
       }
+      
+      // ✅ Resetar flag de log de direção inválida quando operação for bem-sucedida
+      const keyVeloz = `veloz_defesa_invalida_${state.userId}`;
+      const keyModerado = `moderado_defesa_invalida_${state.userId}`;
+      const keyPreciso = `preciso_defesa_invalida_${state.userId}`;
+      const keyLenta = `lenta_defesa_invalida_${state.userId}`;
+      this.defesaDirecaoInvalidaLogsEnviados.delete(keyVeloz);
+      this.defesaDirecaoInvalidaLogsEnviados.delete(keyModerado);
+      this.defesaDirecaoInvalidaLogsEnviados.delete(keyPreciso);
+      this.defesaDirecaoInvalidaLogsEnviados.delete(keyLenta);
       
       if (consecutiveLossesAntes > 0) {
         this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | Losses consecutivos zerados após vitória (antes: ${consecutiveLossesAntes})`);
