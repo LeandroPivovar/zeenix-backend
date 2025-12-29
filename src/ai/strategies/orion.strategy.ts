@@ -265,6 +265,25 @@ class RiskManager {
       let adjustedStake = currentBalance - minAllowedBalance;
       // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
       adjustedStake = Math.round(adjustedStake * 100) / 100;
+      
+      // ✅ CORREÇÃO: Se adjustedStake < 0.35, usar o valor base original (permitir operação)
+      // O stop loss será verificado APÓS a perda, não antes
+      if (adjustedStake < 0.35) {
+        if (logger) {
+          if (isBlindadoActive) {
+            logger.log(
+              `⚠️ [RISCO] Stake ajustado ($${adjustedStake.toFixed(2)}) abaixo do mínimo. Usando valor base ($${baseStake.toFixed(2)}). Stop loss será verificado após perda.`,
+            );
+          } else {
+            logger.log(
+              `⚠️ [RISCO] Stake ajustado ($${adjustedStake.toFixed(2)}) abaixo do mínimo. Usando valor base ($${baseStake.toFixed(2)}). Stop loss será verificado após perda.`,
+            );
+          }
+        }
+        // ✅ Retornar valor base ao invés de 0 (permitir operação)
+        return Math.round(baseStake * 100) / 100;
+      }
+      
       if (adjustedStake > 0) {
         if (logger) {
           if (isBlindadoActive) {
@@ -276,21 +295,6 @@ class RiskManager {
               `⚠️ [RISCO] Stake ajustado de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar STOP LOSS NORMAL.`,
             );
           }
-        }
-        if (adjustedStake < 0.35) {
-          // Mínimo da Deriv
-          if (dynamicLimit < 0) {
-            if (logger) {
-              logger.log(
-                `🏆 [META PARCIAL] Stop Blindado atingido com Lucro de $${Math.abs(dynamicLimit).toFixed(2)}. Parabéns!`,
-              );
-            }
-          } else {
-            if (logger) {
-              logger.log('🚨 [STOP LOSS] Limite atingido. Parando operações.');
-            }
-          }
-          return 0;
         }
         return adjustedStake;
       }
@@ -2056,13 +2060,15 @@ export class OrionStrategy implements IStrategy {
         this.logger,
       );
       if (adjustedStake === 0) {
-        // Stop loss atingido - parar operações
-        state.isOperationActive = false;
-        // ✅ Resetar contador de ticks para permitir nova tentativa
-        if ('ticksDesdeUltimaOp' in state) {
-          state.ticksDesdeUltimaOp = 0;
-        }
-        return;
+        // ✅ CORREÇÃO: Se RiskManager retornou 0, usar valor base mesmo assim
+        // O stop loss será verificado APÓS a perda (no processOrionResult)
+        this.logger.warn(
+          `[ORION][${mode}][${state.userId}] ⚠️ RiskManager retornou 0. Usando valor base ($${stakeAmount.toFixed(2)}). Stop loss será verificado após perda.`,
+        );
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ RiskManager bloqueou stake. Usando valor base ($${stakeAmount.toFixed(2)}). Stop loss será verificado após perda.`);
+        // Continuar com stakeAmount original - não bloquear
+      } else {
+        stakeAmount = adjustedStake;
       }
       stakeAmount = adjustedStake;
       // ✅ Garantir arredondamento após ajuste do RiskManager
