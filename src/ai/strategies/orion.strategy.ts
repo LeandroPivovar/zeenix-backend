@@ -561,9 +561,9 @@ export class OrionStrategy implements IStrategy {
     const consecutiveLosses = state.consecutive_losses || 0;
     let effectiveMode: 'veloz' | 'moderado' | 'preciso' = currentMode;
     
+    // ✅ Apenas forçar modo PRECISO se tiver 3+ losses, mas não logar aqui
+    // (o log já é feito quando a defesa é ativada no processOrionResult)
     if (consecutiveLosses >= 3) {
-      this.logger.log(`🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando filtros de alta precisão.`);
-      this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO temporariamente.`);
       effectiveMode = 'preciso';
     }
 
