@@ -1676,6 +1676,89 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
+          return;
+        }
+        
+        // ✅ Verificar STOP-LOSS BLINDADO (protege X% do lucro conquistado)
+        // Stop Blindado só funciona quando está em LUCRO
+        if (lucroAtual > 0) {
+          const stopBlindadoConfig = await this.dataSource.query(
+            `SELECT 
+              COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
+              session_status
+             FROM ai_user_config 
+             WHERE user_id = ? AND is_active = 1
+             LIMIT 1`,
+            [state.userId],
+          );
+          
+          if (stopBlindadoConfig && stopBlindadoConfig.length > 0) {
+            const stopBlindadoPercent = parseFloat(stopBlindadoConfig[0].stopBlindadoPercent) || 50.0;
+            
+            // Calcular stop blindado (protege X% do lucro)
+            // Fórmula: stopBlindado = capitalInicial + (lucroAtual × percentual)
+            // Exemplo: $1000 inicial + ($100 lucro × 50%) = $1050
+            const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+            const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+            
+            // ✅ Log sempre visível para monitoramento (não apenas debug)
+            this.logger.log(
+              `[ORION][${mode}][${state.userId}] 🛡️ Verificando Stop Blindado | Lucro: $${lucroAtual.toFixed(2)} | ` +
+              `Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+              `Capital atual: $${capitalAtual.toFixed(2)}`,
+            );
+            
+            // ✅ Salvar log também no sistema de logs do usuário
+            this.saveOrionLog(
+              state.userId,
+              'R_10',
+              'info',
+              `🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Stop $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | Capital $${capitalAtual.toFixed(2)}`,
+            );
+            
+            // Se capital atual caiu abaixo do stop blindado → PARAR
+            if (capitalAtual <= stopBlindado) {
+              const lucroProtegido = capitalAtual - capitalInicial;
+              const percentualProtegido = lucroAtual > 0 ? (lucroProtegido / lucroAtual) * 100 : 0;
+              
+              this.logger.warn(
+                `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+                `Protegendo $${lucroProtegido.toFixed(2)} de lucro ` +
+                `(${percentualProtegido.toFixed(0)}% de $${lucroAtual.toFixed(2)} conquistados)`,
+              );
+              
+              this.saveOrionLog(
+                state.userId, 
+                'R_10', 
+                'alerta', 
+                `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)}`,
+              );
+              
+              const deactivationReason = 
+                `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+                `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+              
+              // Desativar a IA
+              await this.dataSource.query(
+                `UPDATE ai_user_config 
+                 SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [deactivationReason, state.userId],
+              );
+              
+              // Remover usuário do monitoramento
+              this.velozUsers.delete(state.userId);
+              this.moderadoUsers.delete(state.userId);
+              this.precisoUsers.delete(state.userId);
+              
+              this.logger.log(
+                `[ORION][${mode}][${state.userId}] 🛡️ IA DESATIVADA POR STOP BLINDADO | ` +
+                `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
+                `Saldo final: $${capitalAtual.toFixed(2)}`,
+              );
+              return;
+            }
+          }
         }
       }
     } catch (error) {
