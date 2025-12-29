@@ -3024,13 +3024,13 @@ export class OrionStrategy implements IStrategy {
           const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
           const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
           
-          // Se capital atual caiu abaixo do stop blindado → PARAR
-          if (capitalAtual <= stopBlindado) {
-            const lucroProtegido = capitalAtual - capitalInicial;
+          // Se capital da sessão caiu abaixo do stop blindado → PARAR
+          if (capitalSessao <= stopBlindado) {
+            const lucroProtegido = capitalSessao - capitalInicial;
             
             this.logger.warn(
               `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-              `Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+              `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
               `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)})`,
             );
             
@@ -3038,7 +3038,7 @@ export class OrionStrategy implements IStrategy {
               state.userId,
               this.symbol,
               'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
             );
             
             const deactivationReason = 
