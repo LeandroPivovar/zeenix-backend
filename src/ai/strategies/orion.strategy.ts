@@ -1877,6 +1877,7 @@ export class OrionStrategy implements IStrategy {
         }
         
         // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
+        // ✅ CORREÇÃO: Verificar ANTES de calcular stake para bloquear imediatamente
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
@@ -1886,8 +1887,8 @@ export class OrionStrategy implements IStrategy {
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
-             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ? 
-             WHERE user_id = ?`,
+             SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
             [`Stop loss atingido: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
           );
           
@@ -1897,31 +1898,44 @@ export class OrionStrategy implements IStrategy {
           this.precisoUsers.delete(state.userId);
           this.lentaUsers.delete(state.userId);
           
+          // ✅ IMPORTANTE: Bloquear operação imediatamente
+          state.isOperationActive = false;
           return; // NÃO EXECUTAR OPERAÇÃO
         }
         
-        // ✅ Verificar se a próxima aposta do martingale ultrapassaria o stop loss
-        if (lossLimit > 0 && entry > 1 && state.perdaAcumulada > 0) {
-          const payoutCliente = 92;
-          const proximaAposta = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
-          // Perda total potencial = perda atual + próxima aposta de martingale
-          const perdaTotalPotencial = perdaAtual + proximaAposta;
+        // ✅ Verificar se a operação atual ou próxima do martingale ultrapassaria o stop loss
+        if (lossLimit > 0 && lossLimit > 0) {
+          // Calcular stake estimado para verificar se ultrapassaria o stop loss
+          let stakeEstimado = state.apostaInicial || 0.35;
+          
+          if (entry > 1 && state.perdaAcumulada > 0) {
+            // Se está em martingale, calcular próxima aposta
+            const payoutCliente = 92;
+            stakeEstimado = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          }
+          
+          // Perda total potencial = perda atual + stake estimado
+          const perdaTotalPotencial = perdaAtual + stakeEstimado;
           
           if (perdaTotalPotencial > lossLimit) {
             this.logger.warn(
-              `[ORION][${mode}][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${perdaAtual.toFixed(2)} + Próxima: $${proximaAposta.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
+              `[ORION][${mode}][${state.userId}] 🛑 OPERAÇÃO BLOQUEADA! Stake estimado ($${stakeEstimado.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${perdaAtual.toFixed(2)} + Stake: $${stakeEstimado.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
             );
-            this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Martingale bloqueado! Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}`);
+            this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛑 OPERAÇÃO BLOQUEADA! Stake ($${stakeEstimado.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}`);
             
-            // Resetar martingale e voltar para aposta inicial
-            state.perdaAcumulada = 0;
-            state.ultimaDirecaoMartingale = null;
-            state.martingaleStep = 0;
-            if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
+            // ✅ BLOQUEAR OPERAÇÃO - não executar
+            state.isOperationActive = false;
             
-            // Continuar com aposta inicial ao invés de martingale
-            entry = 1;
-            this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Resetando para aposta inicial após bloqueio de martingale`);
+            // Se estava em martingale, resetar
+            if (entry > 1 && state.perdaAcumulada > 0) {
+              state.perdaAcumulada = 0;
+              state.ultimaDirecaoMartingale = null;
+              state.martingaleStep = 0;
+              if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
+              this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Martingale resetado após bloqueio por stop loss`);
+            }
+            
+            return; // NÃO EXECUTAR OPERAÇÃO
           }
         }
       }
@@ -2996,16 +3010,18 @@ export class OrionStrategy implements IStrategy {
         const profitTarget = parseFloat(config.profitTarget) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
         
-        // ✅ CORREÇÃO: Usar session_balance para calcular capital da sessão
-        // Capital da sessão = capitalInicial + session_balance (lucro/perda da sessão)
-        const sessionBalance = parseFloat(config.sessionBalance) || 0;
-        const capitalSessao = capitalInicial + sessionBalance;
+        // ✅ CORREÇÃO: Usar capital atual do estado em memória (mais preciso que session_balance do banco)
+        // O estado em memória sempre reflete o capital atual da sessão após o resultado
+        const capitalAtualMemoria = state.capital || capitalInicial;
         
-        // Calcular perda/lucro atual (session_balance já é o lucro/perda da sessão)
-        const lucroAtual = sessionBalance; // session_balance já é o lucro/perda
+        // Calcular perda/lucro atual baseado no capital atual em memória
+        const lucroAtual = capitalAtualMemoria - capitalInicial;
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
         
-        // ✅ Atualizar session_balance com o lucro/perda da sessão (não o capital atual)
+        // ✅ Usar capital da sessão para cálculos (capital atual em memória)
+        const capitalSessao = capitalAtualMemoria;
+        
+        // ✅ Atualizar session_balance no banco com o lucro/perda atual
         await this.dataSource.query(
           `UPDATE ai_user_config 
            SET session_balance = ?
