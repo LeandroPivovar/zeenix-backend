@@ -1910,44 +1910,46 @@ export class OrionStrategy implements IStrategy {
           return; // NÃO EXECUTAR OPERAÇÃO
         }
         
-        // ✅ Verificar se a operação atual ou próxima do martingale ultrapassaria o stop loss
-        if (lossLimit > 0 && lossLimit > 0) {
-          // Calcular stake estimado para verificar se ultrapassaria o stop loss
-          let stakeEstimado = state.apostaInicial || 0.35;
+        // ✅ CORREÇÃO: Não bloquear operação prévia se ultrapassaria stop loss
+        // Permitir operação com valor base e verificar stop loss APÓS a perda
+        // Se a operação perder e atingir o stop loss, então parar
+        if (lossLimit > 0 && entry > 1 && state.perdaAcumulada > 0) {
+          // Se está em martingale, verificar se a próxima aposta ultrapassaria o stop loss
+          // Se sim, usar aposta base ao invés de martingale
+          const payoutCliente = 92;
+          const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          const perdaTotalPotencial = perdaAtual + stakeMartingale;
           
-          if (entry > 1 && state.perdaAcumulada > 0) {
-            // Se está em martingale, calcular próxima aposta
-            const payoutCliente = 92;
-            stakeEstimado = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          if (perdaTotalPotencial > lossLimit) {
+            // ✅ Em vez de bloquear, usar aposta base e resetar martingale
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] ⚠️ Martingale bloqueado! Próxima aposta ($${stakeMartingale.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Usando aposta base.`,
+            );
+            this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Martingale bloqueado! Próxima aposta ($${stakeMartingale.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Usando aposta base.`);
+            
+            // Resetar martingale e usar aposta base
+            state.perdaAcumulada = 0;
+            state.ultimaDirecaoMartingale = null;
+            state.martingaleStep = 0;
+            if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
+            this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Martingale resetado. Continuando com aposta base.`);
+            // Continuar com entry = 1 (aposta base)
+            entry = 1;
           }
-          
-          // Perda total potencial = perda atual + stake estimado
-          const perdaTotalPotencial = perdaAtual + stakeEstimado;
+        }
+        
+        // ✅ Se for primeira entrada e stake base ultrapassaria stop loss, permitir mesmo assim
+        // O stop loss será verificado APÓS a perda (no processOrionResult)
+        if (lossLimit > 0 && entry === 1) {
+          const stakeBase = state.apostaInicial || 0.35;
+          const perdaTotalPotencial = perdaAtual + stakeBase;
           
           if (perdaTotalPotencial > lossLimit) {
             this.logger.warn(
-              `[ORION][${mode}][${state.userId}] 🛑 OPERAÇÃO BLOQUEADA! Stake estimado ($${stakeEstimado.toFixed(2)}) ultrapassaria stop loss! Perda atual: $${perdaAtual.toFixed(2)} + Stake: $${stakeEstimado.toFixed(2)} = $${perdaTotalPotencial.toFixed(2)} > Limite: $${lossLimit.toFixed(2)}`,
+              `[ORION][${mode}][${state.userId}] ⚠️ Atenção: Aposta base ($${stakeBase.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Permitindo operação. Stop loss será verificado após perda.`,
             );
-            this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛑 OPERAÇÃO BLOQUEADA! Stake ($${stakeEstimado.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}`);
-            
-            // ✅ BLOQUEAR OPERAÇÃO - não executar
-            state.isOperationActive = false;
-            
-            // ✅ Resetar contador de ticks mesmo quando bloqueado para permitir nova tentativa
-            if ('ticksDesdeUltimaOp' in state) {
-              state.ticksDesdeUltimaOp = 0;
-            }
-            
-            // Se estava em martingale, resetar
-            if (entry > 1 && state.perdaAcumulada > 0) {
-              state.perdaAcumulada = 0;
-              state.ultimaDirecaoMartingale = null;
-              state.martingaleStep = 0;
-              if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
-              this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Martingale resetado após bloqueio por stop loss`);
-            }
-            
-            return; // NÃO EXECUTAR OPERAÇÃO
+            this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Atenção: Aposta base ($${stakeBase.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Permitindo operação. Stop loss será verificado após perda.`);
+            // Continuar com a operação - não bloquear
           }
         }
       }
