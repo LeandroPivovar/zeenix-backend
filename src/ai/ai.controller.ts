@@ -17,6 +17,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { AiService, DigitParity, Tick } from './ai.service';
 import { TradeEventsService } from './trade-events.service';
+import { LogEventsService } from './log-events.service';
 import { Observable } from 'rxjs';
 
 @Controller('ai')
@@ -26,6 +27,7 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly tradeEventsService: TradeEventsService,
+    private readonly logEventsService: LogEventsService,
   ) {}
 
   @Post('start')
@@ -268,6 +270,13 @@ export class AiController {
     @Query('strategy') strategy?: string,
   ): Observable<MessageEvent> {
     return this.tradeEventsService.subscribe(userId, strategy);
+  }
+
+  @Sse('log-events/:userId')
+  logEvents(
+    @Param('userId') userId: string,
+  ): Observable<MessageEvent> {
+    return this.logEventsService.subscribe(userId);
   }
 
   // ========== ENDPOINTS PARA IA EM BACKGROUND ==========

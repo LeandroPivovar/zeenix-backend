@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { LogEventsService } from '../log-events.service';
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
 
@@ -349,6 +350,7 @@ export class OrionStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
+    private logEvents: LogEventsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -3906,6 +3908,22 @@ export class OrionStrategy implements IStrategy {
          VALUES ${placeholders}`,
         flatValues,
       );
+      
+      // ✅ Emitir eventos para cada log salvo (notificar frontend em tempo real)
+      for (const log of logs) {
+        const icon = icons[log.type] || 'ℹ️';
+        this.logEvents.emit({
+          userId,
+          type: 'log_created',
+          log: {
+            type: log.type,
+            icon,
+            message: log.message,
+            details: log.details,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
       
       this.logger.debug(`[ORION][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`);
     } catch (error) {
