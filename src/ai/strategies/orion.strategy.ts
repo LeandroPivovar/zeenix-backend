@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
-import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, ModoMartingale } from './common.types';
+import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
@@ -26,8 +26,10 @@ export interface VelozUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
+  consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
 }
 
 export interface ModeradoUserState {
@@ -48,8 +50,10 @@ export interface ModeradoUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
+  consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
   pendingTradeId?: number | null;
   pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
@@ -76,8 +80,10 @@ export interface PrecisoUserState {
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
+  ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
+  consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
 }
 
 // ============================================
@@ -116,42 +122,47 @@ function calcularApostaComSoros(
 
 /**
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
+ * Conforme documentação completa da estratégia ZENIX v2.0
  * 
- * Fórmula geral: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
- * 
- * CONSERVADOR: meta = perdas_totais (break-even)
- * MODERADO:    meta = perdas_totais × 1,25 (100% das perdas + 25% de lucro)
- * AGRESSIVO:   meta = perdas_totais × 1,50 (100% das perdas + 50% de lucro)
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / payout (break-even)
+ * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.25) / payout (recuperar 100% das perdas + 25% de lucro)
+ * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.50) / payout (recuperar 100% das perdas + 50% de lucro)
  * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
- * @param payoutCliente - Payout do cliente (payout_original - 3)
+ * @param payoutCliente - Payout do cliente (0.95 = 95% ou 92 = 92%)
+ * @param ultimaAposta - Última aposta feita (não usado mais, mantido para compatibilidade)
  * @returns Valor da próxima aposta calculada
  */
 function calcularProximaAposta(
   perdasTotais: number,
   modo: ModoMartingale,
   payoutCliente: number,
+  ultimaAposta: number = 0,
 ): number {
-  let metaRecuperacao = 0;
+  const PAYOUT = typeof payoutCliente === 'number' && payoutCliente > 1 
+    ? payoutCliente / 100  // Se for 92, converter para 0.92
+    : payoutCliente;       // Se já for 0.95, usar direto
+  
+  let aposta = 0;
   
   switch (modo) {
     case 'conservador':
       // Meta: recuperar 100% das perdas (break-even)
-      metaRecuperacao = perdasTotais;
+      // Fórmula: entrada_próxima = perdas_totais / payout
+      aposta = perdasTotais / PAYOUT;
       break;
     case 'moderado':
       // Meta: recuperar 100% das perdas + 25% de lucro
-      metaRecuperacao = perdasTotais * 1.25;
+      // Fórmula: entrada_próxima = (perdas_totais × 1.25) / payout
+      aposta = (perdasTotais * 1.25) / PAYOUT;
       break;
     case 'agressivo':
       // Meta: recuperar 100% das perdas + 50% de lucro
-      metaRecuperacao = perdasTotais * 1.50;
+      // Fórmula: entrada_próxima = (perdas_totais × 1.50) / payout
+      aposta = (perdasTotais * 1.50) / PAYOUT;
       break;
   }
-  
-  // Fórmula: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
-  const aposta = (metaRecuperacao * 100) / payoutCliente;
   
   return Math.round(aposta * 100) / 100; // 2 casas decimais
 }
@@ -165,6 +176,13 @@ export class OrionStrategy implements IStrategy {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
+  private lentaUsers = new Map<string, PrecisoUserState>(); // ✅ Modo lenta usa a mesma estrutura de preciso
+  
+  // ✅ Rastreamento de logs de coleta de dados (para evitar logs duplicados)
+  private coletaLogsEnviados = new Map<string, Set<number>>(); // userId -> Set de marcos já logados
+  
+  // ✅ Rastreamento de logs de intervalo entre operações (para evitar logs duplicados)
+  private intervaloLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que está aguardando intervalo
 
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
@@ -176,7 +194,7 @@ export class OrionStrategy implements IStrategy {
   }> = [];
   private logProcessing = false;
   private appId: string;
-  private symbol = 'R_10';
+  private symbol = 'R_100';
 
   // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
   private wsConnections: Map<
@@ -212,7 +230,7 @@ export class OrionStrategy implements IStrategy {
     // Log de diagnóstico a cada 50 ticks
     if (this.ticks.length % 50 === 0) {
       this.logger.debug(
-        `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size}`,
+        `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size} | Lenta: ${this.lentaUsers.size}`,
       );
     }
 
@@ -220,6 +238,7 @@ export class OrionStrategy implements IStrategy {
     await this.processVelozStrategies(tick);
     await this.processModeradoStrategies(tick);
     await this.processPrecisoStrategies(tick);
+    await this.processLentaStrategies(tick);
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
@@ -243,6 +262,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Veloz | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -256,6 +287,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Moderado | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -269,6 +312,51 @@ export class OrionStrategy implements IStrategy {
       // ✅ Log: Usuário ativado
       this.saveOrionLog(userId, 'SISTEMA', 'info', 
         `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Preciso | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
+    } else if (modeLower === 'lenta' || modeLower === 'lento') {
+      // ✅ Suporta tanto "lenta" quanto "lento" (ambos usam a mesma configuração)
+      this.logger.log(`[ORION] 🔵 Adicionando usuário ${userId} ao modo lenta/lento`);
+      this.upsertLentaUserState({
+        userId,
+        stakeAmount, // Capital total
+        apostaInicial, // Valor de entrada por operação
+        derivToken,
+        currency,
+        modoMartingale: modoMartingale || 'conservador',
+      });
+      
+      // ✅ Verificar se foi adicionado corretamente
+      const userAdded = this.lentaUsers.has(userId);
+      this.logger.log(`[ORION] ✅ Usuário ${userId} ${userAdded ? 'adicionado' : 'NÃO FOI ADICIONADO'} ao lentaUsers | Total: ${this.lentaUsers.size}`);
+      
+      // ✅ Log: Usuário ativado
+      this.saveOrionLog(userId, 'SISTEMA', 'info', 
+        `Usuário ATIVADO | Modo: ${mode || 'lenta'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+      
+      // ✅ Log imediato: Status de coleta de ticks
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = LENTA_CONFIG.amostraInicial;
+      const ticksFaltando = Math.max(0, amostraNecessaria - ticksAtuais);
+      if (ticksFaltando > 0) {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'info', 
+          `✅ Dados suficientes coletados | Modo: Lenta | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria}) | Iniciando operações...`);
+      }
+    } else {
+      this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -278,6 +366,7 @@ export class OrionStrategy implements IStrategy {
     this.velozUsers.delete(userId);
     this.moderadoUsers.delete(userId);
     this.precisoUsers.delete(userId);
+    this.lentaUsers.delete(userId);
     this.logger.log(`[ORION] Usuário ${userId} desativado`);
   }
 
@@ -285,7 +374,130 @@ export class OrionStrategy implements IStrategy {
     return this.velozUsers.get(userId) || 
            this.moderadoUsers.get(userId) || 
            this.precisoUsers.get(userId) || 
+           this.lentaUsers.get(userId) || 
            null;
+  }
+
+  /**
+   * ✅ NOVO: Detector de Ruído de Mercado (Anti-Ping-Pong)
+   * Retorna true se os últimos 4 ticks alternaram perfeitamente (ex: P, I, P, I)
+   */
+  private isPingPong(lastDigits: number[]): boolean {
+    if (lastDigits.length < 4) return false;
+    const last4 = lastDigits.slice(-4);
+    // Converte para 0 (Par) e 1 (Ímpar)
+    const types = last4.map(d => d % 2);
+    // Padrões de alternância perfeita (0=Par, 1=Ímpar)
+    // Verifica se [0,1,0,1] ou [1,0,1,0]
+    if ((types[0] === 0 && types[1] === 1 && types[2] === 0 && types[3] === 1) ||
+        (types[0] === 1 && types[1] === 0 && types[2] === 1 && types[3] === 0)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * ✅ NOVO: Check Signal - Estratégia Híbrida Dual-Core
+   * Substitui gerarSinalZenix para os modos Veloz, Normal e Preciso
+   * Implementa decisão adaptativa entre Reversão e Sequência baseada em aceleração
+   */
+  private check_signal(
+    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    currentMode: 'veloz' | 'moderado' | 'preciso',
+  ): DigitParity | null {
+    // Precisa de histórico mínimo para calcular aceleração
+    if (this.ticks.length < 20) return null;
+
+    // =================================================================
+    // 🚨 MODO DEFENSIVO AUTOMÁTICO
+    // Lógica: Se tiver 3 ou mais losses seguidos, força o modo PRECISO.
+    // Reversão: Ao ganhar, 'consecutive_losses' vira 0 e o 'else' restaura o modo.
+    // =================================================================
+    const consecutiveLosses = state.consecutive_losses || 0;
+    let effectiveMode: 'veloz' | 'moderado' | 'preciso' = currentMode;
+    
+    if (consecutiveLosses >= 3) {
+      this.logger.log(`🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando filtros de alta precisão.`);
+      this.saveOrionLog(state.userId, 'R_10', 'alerta', `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO temporariamente.`);
+      effectiveMode = 'preciso'; // Sobrescreve temporariamente para Sniper
+    }
+
+    // 1. Configuração dos Modos (A "Calibragem")
+    let THRESHOLD_PCT: number;
+    let THRESHOLD_ACCEL: number;
+    let ALLOW_REVERSAL: boolean;
+    let USE_PING_PONG: boolean;
+
+    if (effectiveMode === 'veloz') {
+      THRESHOLD_PCT = 0.55; // 55% (Agressivo)
+      THRESHOLD_ACCEL = -0.10; // Aceita desaceleração leve
+      ALLOW_REVERSAL = true;
+      USE_PING_PONG = true; // [ATIVO] Proteção contra ruído necessária aqui
+    } else if (effectiveMode === 'moderado') {
+      THRESHOLD_PCT = 0.60; // 60% (Padrão)
+      THRESHOLD_ACCEL = 0.0; // Estável ou subindo
+      ALLOW_REVERSAL = true;
+      USE_PING_PONG = false; // Desnecessário (filtro de % já resolve)
+    } else { // preciso
+      THRESHOLD_PCT = 0.70; // 70% (Exigente)
+      THRESHOLD_ACCEL = 0.05; // Aceleração forte (+5%)
+      ALLOW_REVERSAL = false; // [DESATIVADO] Só surfa a favor (Segurança máx)
+      USE_PING_PONG = false;
+    }
+
+    // 2. Preparação dos Dados
+    const lastDigits = this.ticks.map(t => t.digit);
+    
+    // [NOVO] Filtro Anti-Ping-Pong (Só roda se ativado pelo modo)
+    if (USE_PING_PONG && this.isPingPong(lastDigits)) {
+      this.logger.log(`⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`);
+      this.saveOrionLog(state.userId, 'R_10', 'info', `⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada para evitar ruído.`);
+      return null;
+    }
+
+    // Análises Estatísticas (4 Pilares)
+    const last10 = lastDigits.slice(-10);
+    const last20 = lastDigits.slice(-20);
+    const evens = last10.filter(d => d % 2 === 0);
+    const evenPct = evens.length / 10;
+    const last20Evens = last20.filter(d => d % 2 === 0);
+    const evenAccel = evenPct - (last20Evens.length / 20);
+
+    // 3. Decisão Híbrida (Dual-Core)
+    // --- CENÁRIO: PAR DOMINANDO ---
+    if (evenPct >= THRESHOLD_PCT) {
+      // Modo Sequência (Surfando a Onda)
+      if (evenAccel >= THRESHOLD_ACCEL) {
+        this.logger.log(`🌊 [${effectiveMode.toUpperCase()}] Tendência PAR (${(evenPct * 100).toFixed(0)}%). Surfando.`);
+        this.saveOrionLog(state.userId, 'R_10', 'sinal', `🌊 [${effectiveMode.toUpperCase()}] Tendência PAR (${(evenPct * 100).toFixed(0)}%). Modo Sequência - Surfando.`);
+        return 'PAR';
+      }
+      // Modo Reversão (Aposta Contra)
+      else if (ALLOW_REVERSAL && evenAccel < 0) {
+        this.logger.log(`🔄 [${effectiveMode.toUpperCase()}] Saturação PAR. Revertendo.`);
+        this.saveOrionLog(state.userId, 'R_10', 'sinal', `🔄 [${effectiveMode.toUpperCase()}] Saturação PAR. Modo Reversão - Apostando contra.`);
+        return 'IMPAR';
+      }
+    }
+    // --- CENÁRIO: ÍMPAR DOMINANDO ---
+    else if (evenPct <= (1.0 - THRESHOLD_PCT)) {
+      const oddPct = 1.0 - evenPct;
+      const oddAccel = -evenAccel;
+      // Modo Sequência
+      if (oddAccel >= THRESHOLD_ACCEL) {
+        this.logger.log(`🌊 [${effectiveMode.toUpperCase()}] Tendência ÍMPAR (${(oddPct * 100).toFixed(0)}%). Surfando.`);
+        this.saveOrionLog(state.userId, 'R_10', 'sinal', `🌊 [${effectiveMode.toUpperCase()}] Tendência ÍMPAR (${(oddPct * 100).toFixed(0)}%). Modo Sequência - Surfando.`);
+        return 'IMPAR';
+      }
+      // Modo Reversão
+      else if (ALLOW_REVERSAL && oddAccel < 0) {
+        this.logger.log(`🔄 [${effectiveMode.toUpperCase()}] Saturação ÍMPAR. Revertendo.`);
+        this.saveOrionLog(state.userId, 'R_10', 'sinal', `🔄 [${effectiveMode.toUpperCase()}] Saturação ÍMPAR. Modo Reversão - Apostando contra.`);
+        return 'PAR';
+      }
+    }
+
+    return null;
   }
 
   // Métodos privados para processamento
@@ -296,8 +508,41 @@ export class OrionStrategy implements IStrategy {
     }
     
     if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
-      this.logger.debug(`[ORION][Veloz] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`);
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
+      const ticksFaltando = amostraNecessaria - ticksAtuais;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.velozUsers.entries()) {
+        const key = `veloz_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz`);
+        }
+      }
+      
+      this.logger.debug(`[ORION][Veloz] Coletando amostra inicial (${ticksAtuais}/${amostraNecessaria})`);
       return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === VELOZ_CONFIG.amostraInicial) {
+      for (const [userId] of this.velozUsers.entries()) {
+        const key = `veloz_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Veloz | Amostra completa: ${VELOZ_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
     }
 
     // Incrementar contador de ticks
@@ -316,6 +561,8 @@ export class OrionStrategy implements IStrategy {
 
     // Processar cada usuário
     for (const [userId, state] of this.velozUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) {
         this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] Operação ativa, pulando`);
         continue;
@@ -323,29 +570,64 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
-        this.logger.debug(
-          `[ORION][Veloz][${userId}] 🔍 Verificando martingale: perdaAcumulada=$${state.perdaAcumulada.toFixed(2)}, direcao=${state.ultimaDirecaoMartingale}, martingaleStep=${state.martingaleStep || 0}`,
-        );
-        
         // Verificar intervalo entre operações (3 ticks)
         if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
           if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+            const key = `veloz_intervalo_${userId}`;
+            if (!this.intervaloLogsEnviados.has(key)) {
+              this.intervaloLogsEnviados.set(key, true);
+              const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
+              this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
+            }
             this.logger.debug(
               `[ORION][Veloz][${userId}] ⏱️ Aguardando intervalo (martingale): ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
             );
             continue;
+          } else {
+            // Limpar flag quando intervalo for completado
+            const key = `veloz_intervalo_${userId}`;
+            this.intervaloLogsEnviados.delete(key);
           }
         }
 
-        // Continuar com martingale usando a mesma direção
-        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
-        const proximaEntrada = (state.martingaleStep || 0) + 1;
-        this.logger.log(
-          `[ORION][Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | MartingaleStep: ${state.martingaleStep || 0}`,
-        );
-        
-        await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'veloz', proximaEntrada);
-        continue;
+        // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
+        if (defesaAtiva) {
+          // Validar se a direção do martingale ainda é válida com filtros do modo PRECISO
+          const sinalPreciso = this.check_signal(state, 'preciso');
+          if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
+            // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
+            const proximaEntrada = (state.martingaleStep || 0) + 1;
+            this.logger.log(
+              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            
+            await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'veloz', proximaEntrada);
+            continue;
+          } else {
+            // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
+            this.logger.log(
+              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
+          }
+        } else {
+          // Defesa não está ativa - continuar martingale normalmente
+          this.logger.debug(
+            `[ORION][Veloz][${userId}] 🔍 Verificando martingale: perdaAcumulada=$${state.perdaAcumulada.toFixed(2)}, direcao=${state.ultimaDirecaoMartingale}, martingaleStep=${state.martingaleStep || 0}`,
+          );
+          
+          const proximaEntrada = (state.martingaleStep || 0) + 1;
+          this.logger.log(
+            `[ORION][Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | MartingaleStep: ${state.martingaleStep || 0}`,
+          );
+          
+          await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'veloz', proximaEntrada);
+          continue;
+        }
       }
 
       // ✅ Garantir que ticksDesdeUltimaOp está inicializado
@@ -355,6 +637,12 @@ export class OrionStrategy implements IStrategy {
       
       // Verificar intervalo entre operações (3 ticks)
       if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+        const key = `veloz_intervalo_${userId}`;
+        if (!this.intervaloLogsEnviados.has(key)) {
+          this.intervaloLogsEnviados.set(key, true);
+          const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
+          this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
+        }
         // Log a cada 20 ticks para diagnóstico
         if (this.ticks.length % 20 === 0) {
           this.logger.debug(
@@ -362,49 +650,199 @@ export class OrionStrategy implements IStrategy {
           );
         }
         continue;
+      } else {
+        // Limpar flag quando intervalo for completado
+        const key = `veloz_intervalo_${userId}`;
+        this.intervaloLogsEnviados.delete(key);
       }
 
-      const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
-      if (!sinal || !sinal.sinal) {
+      // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
+      // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo veloz
+      const modoSinal = defesaAtiva ? 'preciso' : 'veloz';
+      const sinal = this.check_signal(state, modoSinal);
+      if (!sinal) {
         // Log quando não gera sinal (a cada 50 ticks para não poluir)
         if (this.ticks.length % 50 === 0) {
           this.logger.debug(
-            `[ORION][Veloz][${userId.substring(0, 8)}] ⚠️ Nenhum sinal gerado (confiança insuficiente ou desequilíbrio baixo)`,
+            `[ORION][Veloz][${userId.substring(0, 8)}] ⚠️ Nenhum sinal gerado`,
           );
         }
         continue;
       }
 
       this.logger.log(
-        `[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
+        `[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
       );
 
       // ✅ Salvar logs do sinal
-      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
-      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal}`);
       
-      // ✅ Salvar logs da análise
-      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      // ✅ Logs detalhados das 4 análises ZENIX (mantidos para referência/debug)
+      // Gerar análise ZENIX apenas para logs (não usada na decisão)
+      const sinalZenix = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
+      
+      // ✅ Logs detalhados das 4 análises (conforme documentação) - apenas para referência
+      if (sinalZenix) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0 (referência)`);
+        
+        const detalhes = sinalZenix.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * VELOZ_CONFIG.amostraInicial);
+        const impares = VELOZ_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${VELOZ_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${VELOZ_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= VELOZ_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinalZenix.confianca.toFixed(1)}% (limitado a 95%)`);
+        const confiancaOK = sinalZenix.confianca >= (VELOZ_CONFIG.confianciaMin * 100);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinalZenix.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(VELOZ_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO (ZENIX - referência)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinalZenix.sinal}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
+      }
 
-      // ✅ Executar operação (entrada 1)
-      await this.executeOrionOperation(state, sinal.sinal, 'veloz', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'veloz', entryNumber);
     }
   }
 
   private async processModeradoStrategies(latestTick: Tick): Promise<void> {
     if (this.moderadoUsers.size === 0) return;
-    if (this.ticks.length < MODERADO_CONFIG.amostraInicial) return;
+    
+    if (this.ticks.length < MODERADO_CONFIG.amostraInicial) {
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.moderadoUsers.entries()) {
+        const key = `moderado_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado`);
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === MODERADO_CONFIG.amostraInicial) {
+      for (const [userId] of this.moderadoUsers.entries()) {
+        const key = `moderado_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Moderado | Amostra completa: ${MODERADO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
+    }
 
     // Processar cada usuário
     for (const [userId, state] of this.moderadoUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
@@ -413,102 +851,674 @@ export class OrionStrategy implements IStrategy {
         if (state.lastOperationTimestamp) {
           const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
           if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
+            const key = `moderado_intervalo_${userId}`;
+            if (!this.intervaloLogsEnviados.has(key)) {
+              this.intervaloLogsEnviados.set(key, true);
+              const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
+              this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
+            }
             this.logger.debug(
               `[ORION][Moderado][${userId}] ⏱️ Aguardando intervalo (martingale): ${secondsSinceLastOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos} segundos`,
             );
             continue;
+          } else {
+            // Limpar flag quando intervalo for completado
+            const key = `moderado_intervalo_${userId}`;
+            this.intervaloLogsEnviados.delete(key);
           }
         }
 
-        // Continuar com martingale usando a mesma direção
-        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
-        const proximaEntrada = (state.martingaleStep || 0) + 1;
-        this.logger.log(
-          `[ORION][Moderado][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        
-        await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'moderado', proximaEntrada);
-        continue;
+        // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
+        if (defesaAtiva) {
+          const sinalPreciso = this.check_signal(state, 'preciso');
+          if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
+            // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
+            const proximaEntrada = (state.martingaleStep || 0) + 1;
+            this.logger.log(
+              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            
+            await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'moderado', proximaEntrada);
+            continue;
+          } else {
+            // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
+            this.logger.log(
+              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
+          }
+        } else {
+          // Defesa não está ativa - continuar martingale normalmente
+          const proximaEntrada = (state.martingaleStep || 0) + 1;
+          this.logger.log(
+            `[ORION][Moderado][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+          );
+          
+          await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'moderado', proximaEntrada);
+          continue;
+        }
       }
 
       const now = new Date();
       if (state.lastOperationTimestamp) {
         const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
-        if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) continue;
+        if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
+          const key = `moderado_intervalo_${userId}`;
+          if (!this.intervaloLogsEnviados.has(key)) {
+            this.intervaloLogsEnviados.set(key, true);
+            const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
+            this.saveOrionLog(userId, 'R_10', 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
+          }
+          continue;
+        } else {
+          // Limpar flag quando intervalo for completado
+          const key = `moderado_intervalo_${userId}`;
+          this.intervaloLogsEnviados.delete(key);
+        }
       }
 
-      const sinal = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
-      if (!sinal || !sinal.sinal) continue;
+      // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
+      // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo moderado
+      const modoSinal = defesaAtiva ? 'preciso' : 'moderado';
+      const sinal = this.check_signal(state, modoSinal);
+      if (!sinal) continue;
 
       this.logger.log(
-        `[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
+        `[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
       );
 
       // ✅ Salvar logs do sinal
-      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
-      this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal}`);
       
-      // ✅ Salvar logs da análise
-      this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      // ✅ Logs detalhados das 4 análises ZENIX (mantidos para referência/debug)
+      // Gerar análise ZENIX apenas para logs (não usada na decisão)
+      const sinalZenix = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
+      if (sinalZenix) {
+        // ✅ Logs detalhados das 4 análises (conforme documentação) - apenas para referência
+        this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0 (referência)`);
+        
+        const detalhes = sinalZenix.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * MODERADO_CONFIG.amostraInicial);
+        const impares = MODERADO_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${MODERADO_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${MODERADO_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= MODERADO_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(MODERADO_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinalZenix.confianca.toFixed(1)}% (limitado a 95%)`);
+        const confiancaOK = sinalZenix.confianca >= (MODERADO_CONFIG.confianciaMin * 100);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinalZenix.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(MODERADO_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO (ZENIX - referência)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinalZenix.sinal}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
+      }
 
-      // ✅ Executar operação (entrada 1)
-      await this.executeOrionOperation(state, sinal.sinal, 'moderado', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'moderado', entryNumber);
     }
   }
 
   private async processPrecisoStrategies(latestTick: Tick): Promise<void> {
     if (this.precisoUsers.size === 0) return;
-    if (this.ticks.length < PRECISO_CONFIG.amostraInicial) return;
+    
+    if (this.ticks.length < PRECISO_CONFIG.amostraInicial) {
+      const ticksAtuais = this.ticks.length;
+      const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
+      
+      // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+      for (const [userId] of this.precisoUsers.entries()) {
+        const key = `preciso_${userId}`;
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          // Log inicial apenas uma vez
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso`);
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Logar quando completar a coleta (apenas uma vez)
+    if (this.ticks.length === PRECISO_CONFIG.amostraInicial) {
+      for (const [userId] of this.precisoUsers.entries()) {
+        const key = `preciso_${userId}`;
+        if (this.coletaLogsEnviados.has(key)) {
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          // Se ainda não logou que completou, logar agora
+          if (!marcosLogados.has(100)) {
+            marcosLogados.add(100);
+            this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Preciso | Amostra completa: ${PRECISO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            // Limpar após um tempo para permitir novo ciclo se necessário
+            setTimeout(() => {
+              this.coletaLogsEnviados.delete(key);
+            }, 60000); // Limpar após 60 segundos
+          }
+        }
+      }
+    }
 
     // Processar cada usuário
     for (const [userId, state] of this.precisoUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
-        // Continuar com martingale usando a mesma direção
-        // ✅ CORREÇÃO: martingaleStep já foi incrementado após a perda anterior
-        const proximaEntrada = (state.martingaleStep || 0) + 1;
-        this.logger.log(
-          `[ORION][Preciso][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
+        // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
+        if (defesaAtiva) {
+          const sinalPreciso = this.check_signal(state, 'preciso');
+          if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
+            // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
+            const proximaEntrada = (state.martingaleStep || 0) + 1;
+            this.logger.log(
+              `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            
+            await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'preciso', proximaEntrada);
+            continue;
+          } else {
+            // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            this.logger.log(
+              `[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
+          }
+        } else {
+          // Defesa não está ativa - continuar martingale normalmente
+          const proximaEntrada = (state.martingaleStep || 0) + 1;
+          this.logger.log(
+            `[ORION][Preciso][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+          );
+          
+          await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'preciso', proximaEntrada);
+          continue;
+        }
+      }
+
+      // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
+      const sinal = this.check_signal(state, 'preciso');
+      if (!sinal) continue;
+
+      this.logger.log(
+        `[ORION][Preciso] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
+      );
+
+      // ✅ Salvar logs do sinal
+      this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal}`);
+      
+      // ✅ Logs detalhados das 4 análises ZENIX (mantidos para referência/debug)
+      // Gerar análise ZENIX apenas para logs (não usada na decisão)
+      const sinalZenix = gerarSinalZenix(this.ticks, PRECISO_CONFIG, 'PRECISO');
+      if (sinalZenix) {
+        // ✅ Logs detalhados das 4 análises (conforme documentação) - apenas para referência
+        this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0 (referência)`);
         
-        await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'preciso', proximaEntrada);
+        const detalhes = sinalZenix.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
+      if (deseq) {
+        const percPar = (deseq.percentualPar * 100).toFixed(1);
+        const percImpar = (deseq.percentualImpar * 100).toFixed(1);
+        const pares = Math.round(deseq.percentualPar * PRECISO_CONFIG.amostraInicial);
+        const impares = PRECISO_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${PRECISO_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${PRECISO_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= PRECISO_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(PRECISO_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
+      }
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinalZenix.confianca.toFixed(1)}% (limitado a 95%)`);
+        const confiancaOK = sinalZenix.confianca >= (PRECISO_CONFIG.confianciaMin * 100);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinalZenix.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(PRECISO_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO (ZENIX - referência)`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinalZenix.sinal}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinalZenix.confianca.toFixed(1)}%`);
+      }
+
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal;
+        this.logger.log(
+          `[ORION][Preciso][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal;
+      }
+      
+      // ✅ Executar operação - usando sinal do novo sistema
+      await this.executeOrionOperation(state, sinal, 'preciso', entryNumber);
+    }
+  }
+
+  private async processLentaStrategies(latestTick: Tick): Promise<void> {
+    if (this.lentaUsers.size === 0) {
+      this.logger.debug(`[ORION][Lenta] Nenhum usuário ativo (total: ${this.lentaUsers.size})`);
+      return;
+    }
+    
+    const ticksAtuais = this.ticks.length;
+    const amostraNecessaria = LENTA_CONFIG.amostraInicial;
+    
+    // ✅ Log de debug para confirmar que o método está sendo chamado
+    if (this.lentaUsers.size > 0 && ticksAtuais % 10 === 0) {
+      this.logger.debug(`[ORION][Lenta] 🔄 Método chamado | Usuários: ${this.lentaUsers.size} | Ticks: ${ticksAtuais} (necessário: ${amostraNecessaria})`);
+    }
+    
+    // ✅ CORREÇÃO: Como o sistema mantém 100 ticks, sempre teremos pelo menos 50 se houver 100 ticks
+    // Se já temos 100 ticks, podemos processar imediatamente (já temos mais que os 50 necessários)
+    // Se temos menos que 50 ticks, precisamos aguardar
+    if (ticksAtuais < amostraNecessaria) {
+      // ✅ Logar progresso periodicamente (a cada 5 ticks ou quando chegar em marcos importantes)
+      for (const [userId] of this.lentaUsers.entries()) {
+        const key = `lenta_${userId}`;
+        const ticksFaltando = amostraNecessaria - ticksAtuais;
+        
+        // Log inicial quando começar
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+          this.saveOrionLog(userId, 'R_10', 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+        } else {
+          // Logar progresso a cada 5 ticks ou em marcos (40, 45, 48, 49)
+          const marcosLogados = this.coletaLogsEnviados.get(key)!;
+          const marcos = [40, 45, 48, 49];
+          const deveLogar = marcos.includes(ticksAtuais) && !marcosLogados.has(ticksAtuais);
+          
+          if (deveLogar) {
+            marcosLogados.add(ticksAtuais);
+            this.saveOrionLog(userId, 'R_10', 'info', `📊 Coletando dados... | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+            this.logger.debug(`[ORION][Lenta][${userId}] 📊 Progresso: ${ticksAtuais}/${amostraNecessaria} ticks coletados`);
+          }
+        }
+      }
+      
+      return;
+    }
+    
+    // ✅ Se temos 50+ ticks, podemos processar (o sistema mantém 100 ticks, então sempre teremos pelo menos 50)
+    // Logar quando completar a coleta (apenas uma vez) - usar >= para garantir que funciona mesmo se já passou
+    // ✅ IMPORTANTE: Como o sistema mantém 100 ticks, se ticksAtuais >= 50, já podemos processar
+    if (ticksAtuais >= amostraNecessaria) {
+      for (const [userId] of this.lentaUsers.entries()) {
+        const key = `lenta_${userId}`;
+        // ✅ Garantir que a chave existe (mesmo se usuário foi ativado depois)
+        if (!this.coletaLogsEnviados.has(key)) {
+          this.coletaLogsEnviados.set(key, new Set());
+        }
+        
+        const marcosLogados = this.coletaLogsEnviados.get(key)!;
+        // Se ainda não logou que completou, logar agora
+        if (!marcosLogados.has(100)) {
+          marcosLogados.add(100);
+          this.saveOrionLog(userId, 'R_10', 'info', `✅ DADOS COLETADOS | Modo: Lenta | Amostra completa: ${amostraNecessaria} ticks | Ticks disponíveis: ${ticksAtuais} | Iniciando operações...`);
+          this.logger.log(`[ORION][Lenta][${userId}] ✅ Dados coletados! Ticks: ${ticksAtuais}/${amostraNecessaria} | Iniciando processamento...`);
+          // Limpar após um tempo para permitir novo ciclo se necessário
+          setTimeout(() => {
+            this.coletaLogsEnviados.delete(key);
+          }, 60000); // Limpar após 60 segundos
+        }
+      }
+    } else {
+      // ✅ Se ainda não temos 50 ticks, aguardar
+      this.logger.debug(`[ORION][Lenta] ⏳ Aguardando mais ticks | Atual: ${ticksAtuais} | Necessário: ${amostraNecessaria}`);
+      return;
+    }
+
+    // Processar cada usuário
+    this.logger.log(`[ORION][Lenta] 🔄 Processando ${this.lentaUsers.size} usuário(s) | Ticks disponíveis: ${ticksAtuais} (necessário: ${amostraNecessaria})`);
+    
+    for (const [userId, state] of this.lentaUsers.entries()) {
+      const consecutiveLosses = state.consecutive_losses || 0;
+      const defesaAtiva = consecutiveLosses >= 3;
+      if (state.isOperationActive) {
+        this.logger.debug(`[ORION][Lenta][${userId.substring(0, 8)}] Operação ativa, pulando`);
         continue;
       }
 
-      const sinal = gerarSinalZenix(this.ticks, PRECISO_CONFIG, 'PRECISO');
-      if (!sinal || !sinal.sinal) continue;
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
+      if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
+        // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
+        if (defesaAtiva) {
+          const sinalPreciso = this.check_signal(state, 'preciso');
+          if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
+            // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
+            const proximaEntrada = (state.martingaleStep || 0) + 1;
+            this.logger.log(
+              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            
+            await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'lenta', proximaEntrada);
+            continue;
+          } else {
+            // Direção do martingale não é válida com filtros do modo PRECISO - gerar novo sinal
+            // ✅ CORREÇÃO: Manter perda acumulada e continuar martingale com nova direção
+            this.logger.log(
+              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`,
+            );
+            this.saveOrionLog(userId, 'R_10', 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+            // ✅ NÃO resetar martingale - manter perda acumulada e continuar com nova direção
+            // A direção será atualizada quando o novo sinal for gerado
+          }
+        } else {
+          // Defesa não está ativa - continuar martingale normalmente
+          const proximaEntrada = (state.martingaleStep || 0) + 1;
+          this.logger.log(
+            `[ORION][Lenta][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+          );
+          
+          await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'lenta', proximaEntrada);
+          continue;
+        }
+      }
+
+      const sinal = gerarSinalZenix(this.ticks, LENTA_CONFIG, 'LENTA');
+      if (!sinal || !sinal.sinal) {
+        this.logger.debug(`[ORION][Lenta][${userId}] ⚠️ Nenhum sinal gerado (confiança insuficiente ou desequilíbrio baixo) | Ticks: ${this.ticks.length}`);
+        continue;
+      }
 
       this.logger.log(
-        `[ORION][Preciso] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
+        `[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`,
       );
 
       // ✅ Salvar logs do sinal
       this.saveOrionLog(userId, 'R_10', 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       this.saveOrionLog(userId, 'R_10', 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
       
-      // ✅ Salvar logs da análise
+      // ✅ Logs detalhados das 4 análises (conforme documentação)
       this.saveOrionLog(userId, 'R_10', 'analise', `🔍 ANÁLISE ZENIX v2.0`);
-      const deseq = sinal.detalhes?.desequilibrio;
+      
+      const detalhes = sinal.detalhes;
+      const deseq = detalhes?.desequilibrio;
+      const sequencias = detalhes?.sequencias;
+      const microTendencias = detalhes?.microTendencias;
+      const forca = detalhes?.forca;
+      const confiancaBase = detalhes?.confiancaBase || 0;
+      
+      // Histórico (últimos 20 ticks)
+      const ultimosTicks = this.ticks.slice(-20).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ Histórico (últimos 20): [${ultimosTicks}]`);
+      
+      // Distribuição
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        this.saveOrionLog(userId, 'R_10', 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+        const pares = Math.round(deseq.percentualPar * LENTA_CONFIG.amostraInicial);
+        const impares = LENTA_CONFIG.amostraInicial - pares;
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Distribuição: PAR: ${percPar}% (${pares}/${LENTA_CONFIG.amostraInicial}) | ÍMPAR: ${percImpar}% (${impares}/${LENTA_CONFIG.amostraInicial})`);
+        
+        // Desequilíbrio
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const simboloCheck = deseq.desequilibrio >= LENTA_CONFIG.desequilibrioMin ? '✅' : '❌';
+        this.saveOrionLog(userId, 'R_10', 'analise', `├─ Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${direcaoDeseq} ${simboloCheck} (≥ ${(LENTA_CONFIG.desequilibrioMin * 100).toFixed(1)}% requerido)`);
       }
-      this.saveOrionLog(userId, 'R_10', 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 1: Desequilíbrio Base
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 1: Desequilíbrio Base`);
+      if (deseq) {
+        const direcaoDeseq = deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR';
+        const direcaoOperar = deseq.operacao || 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${direcaoDeseq}: ${(deseq.desequilibrio * 100).toFixed(1)}% → Operar ${direcaoOperar}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Confiança base: ${confiancaBase.toFixed(1)}%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 2: Sequências Repetidas
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 2: Sequências Repetidas`);
+      const ultimos10Ticks = this.ticks.slice(-10).map(t => t.digit).join(',');
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos ${Math.min(10, this.ticks.length)} ticks: [${ultimos10Ticks}]`);
+      if (sequencias) {
+        const atendeRequerido = sequencias.tamanho >= 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Maior sequência: ${sequencias.tamanho} ticks ${sequencias.paridade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${sequencias.bonus > 0 ? '+' : ''}${sequencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 3: Micro-Tendências
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 3: Micro-Tendências`);
+      if (microTendencias) {
+        const perc10 = microTendencias.curtoPrazoPercPar ? (microTendencias.curtoPrazoPercPar * 100).toFixed(1) : 'N/A';
+        const perc20 = microTendencias.medioPrazoPercPar ? (microTendencias.medioPrazoPercPar * 100).toFixed(1) : 'N/A';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10 vs 20 ticks`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Últimos 10: PAR ${perc10}% | Últimos 20: PAR ${perc20}%`);
+        const aceleracao = microTendencias.aceleracao * 100;
+        const direcaoAcel = aceleracao > 0 ? 'PAR acelerando' : 'ÍMPAR acelerando';
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Aceleração: ${aceleracao > 0 ? '+' : ''}${aceleracao.toFixed(1)}% (${direcaoAcel})`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${microTendencias.bonus > 0 ? '+' : ''}${microTendencias.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // ANÁLISE 4: Força do Desequilíbrio
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 📊 ANÁLISE 4: Força do Desequilíbrio`);
+      if (deseq) {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Desequilíbrio atual: ${(deseq.desequilibrio * 100).toFixed(1)}%`);
+      }
+      if (forca) {
+        const atendeRequerido = forca.velocidade > 5;
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Ticks consecutivos com desequilíbrio ≥60%: ${forca.velocidade} ${atendeRequerido ? '(atende 5+ requerido)' : '(não atende 5+ requerido)'}`);
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: ${forca.bonus > 0 ? '+' : ''}${forca.bonus}%`);
+      } else {
+        this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Bônus: +0%`);
+      }
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      
+      // CONFIANÇA FINAL
+      this.saveOrionLog(userId, 'R_10', 'analise', `├─ 🎯 CONFIANÇA FINAL`);
+      const bonusSeq = sequencias?.bonus || 0;
+      const bonusMicro = microTendencias?.bonus || 0;
+      const bonusForca = forca?.bonus || 0;
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Base: ${confiancaBase.toFixed(1)}% + Sequências: ${bonusSeq}% + Micro: ${bonusMicro}% + Força: ${bonusForca}%`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ Total: ${sinal.confianca.toFixed(1)}% (limitado a 95%)`);
+      const confiancaOK = sinal.confianca >= (LENTA_CONFIG.confianciaMin * 100);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│  └─ ${confiancaOK ? '✅' : '❌'} Confiança: ${sinal.confianca.toFixed(1)}% ${confiancaOK ? '≥' : '<'} ${(LENTA_CONFIG.confianciaMin * 100).toFixed(1)}% (mínimo)`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `│`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `└─ ✅ SINAL GERADO`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Direção: ${sinal.sinal}`);
+      this.saveOrionLog(userId, 'R_10', 'analise', `   └─ Confiança: ${sinal.confianca.toFixed(1)}%`);
 
-      // ✅ Executar operação (entrada 1)
-      await this.executeOrionOperation(state, sinal.sinal, 'preciso', 1);
+      // ✅ CORREÇÃO: Se defesa está ativa e há perda acumulada, continuar martingale
+      let entryNumber = 1;
+      if (defesaAtiva && state.perdaAcumulada > 0) {
+        // Continuar martingale com nova direção
+        entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = sinal.sinal;
+        this.logger.log(
+          `[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal.sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
+        );
+        this.saveOrionLog(userId, 'R_10', 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+      } else {
+        // Nova operação normal
+        state.ultimaDirecaoMartingale = sinal.sinal;
+      }
+      
+      // ✅ Executar operação
+      await this.executeOrionOperation(state, sinal.sinal, 'lenta', entryNumber);
     }
   }
 
@@ -518,7 +1528,7 @@ export class OrionStrategy implements IStrategy {
   private async executeOrionOperation(
     state: VelozUserState | ModeradoUserState | PrecisoUserState,
     operation: DigitParity,
-    mode: 'veloz' | 'moderado' | 'preciso',
+    mode: 'veloz' | 'moderado' | 'preciso' | 'lenta',
     entry: number = 1,
   ): Promise<void> {
     // ✅ Declarar tradeId no escopo da função para ser acessível no catch
@@ -537,6 +1547,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -577,11 +1588,61 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
+          this.lentaUsers.delete(state.userId);
           
           return; // NÃO EXECUTAR OPERAÇÃO
         }
         
-        // Se tem stop loss configurado e a perda atual ultrapassou o limite
+        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0)
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
+        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
+        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          
+          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
+          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+          
+          // Se capital atual caiu abaixo do stop blindado → PARAR
+          if (capitalAtual <= stopBlindado) {
+            const lucroProtegido = capitalAtual - capitalInicial;
+            
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)}) - BLOQUEANDO OPERAÇÃO`,
+            );
+            
+            this.saveOrionLog(
+              state.userId,
+              'R_10',
+              'alerta',
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+            );
+            
+            const deactivationReason = 
+              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+            
+            // Desativar a IA
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [deactivationReason, state.userId],
+            );
+            
+            // Remover usuário do monitoramento
+            this.velozUsers.delete(state.userId);
+            this.moderadoUsers.delete(state.userId);
+            this.precisoUsers.delete(state.userId);
+            
+            return; // NÃO EXECUTAR OPERAÇÃO
+          }
+        }
+        
+        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
@@ -600,6 +1661,7 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
+          this.lentaUsers.delete(state.userId);
           
           return; // NÃO EXECUTAR OPERAÇÃO
         }
@@ -621,6 +1683,7 @@ export class OrionStrategy implements IStrategy {
             state.perdaAcumulada = 0;
             state.ultimaDirecaoMartingale = null;
             state.martingaleStep = 0;
+            if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
             
             // Continuar com aposta inicial ao invés de martingale
             entry = 1;
@@ -641,11 +1704,17 @@ export class OrionStrategy implements IStrategy {
     // Resetar contador de ticks
     if ('ticksDesdeUltimaOp' in state) {
       state.ticksDesdeUltimaOp = 0;
+      // Limpar flag de intervalo quando operação for executada
+      const key = `veloz_intervalo_${state.userId}`;
+      this.intervaloLogsEnviados.delete(key);
     }
 
     // Atualizar timestamp da última operação (Moderado)
     if ('lastOperationTimestamp' in state) {
       state.lastOperationTimestamp = new Date();
+      // Limpar flag de intervalo quando operação for executada
+      const key = `moderado_intervalo_${state.userId}`;
+      this.intervaloLogsEnviados.delete(key);
     }
 
     // ✅ ZENIX v2.0: Calcular stake baseado em Soros ou Martingale
@@ -1006,21 +2075,23 @@ export class OrionStrategy implements IStrategy {
           }
 
           // ✅ Processar autorização (apenas durante inicialização)
-          if (msg.authorize && !authResolved) {
+          // A API Deriv retorna msg.msg_type === 'authorize' com dados em msg.authorize
+          if (msg.msg_type === 'authorize' && !authResolved) {
             this.logger.debug(`[ORION] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
             authResolved = true;
             clearTimeout(connectionTimeout);
             
-            if (msg.authorize.error) {
-              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${JSON.stringify(msg.authorize.error)}`);
+            if (msg.error || (msg.authorize && msg.authorize.error)) {
+              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
               socket.close();
               this.wsConnections.delete(token);
-              reject(new Error(`Erro na autorização: ${msg.authorize.error.message}`));
+              reject(new Error(`Erro na autorização: ${errorMsg}`));
               return;
             }
             
             conn.authorized = true;
-            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
             
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
@@ -1533,7 +2604,23 @@ export class OrionStrategy implements IStrategy {
     state.isOperationActive = false;
     state.capital += profit;
     
+    // ✅ Sempre armazenar a última aposta usada (necessário para cálculo do martingale agressivo)
+    if ('ultimaApostaUsada' in state) {
+      state.ultimaApostaUsada = stakeAmount;
+    }
+    
     if (profit > 0) {
+      // ✅ VITÓRIA: Zerar consecutive_losses (Defesa Automática)
+      const consecutiveLossesAntes = state.consecutive_losses || 0;
+      if ('consecutive_losses' in state) {
+        state.consecutive_losses = 0;
+      }
+      
+      if (consecutiveLossesAntes > 0) {
+        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | Losses consecutivos zerados após vitória (antes: ${consecutiveLossesAntes})`);
+        this.saveOrionLog(state.userId, 'R_10', 'info', `🎯 DEFESA AUTOMÁTICA DESATIVADA | Losses consecutivos zerados: ${consecutiveLossesAntes} → 0`);
+      }
+      
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
       const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
       
@@ -1541,6 +2628,7 @@ export class OrionStrategy implements IStrategy {
       if ('perdaAcumulada' in state) state.perdaAcumulada = 0;
       if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
       if ('martingaleStep' in state) state.martingaleStep = 0;
+      if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
       
       if (estavaEmMartingale) {
         // Se estava em martingale, NÃO aplicar Soros
@@ -1578,6 +2666,21 @@ export class OrionStrategy implements IStrategy {
       
       this.saveOrionLog(state.userId, 'R_10', 'resultado', `✅ GANHOU | ${operation} | P&L: +$${profit.toFixed(2)}`);
     } else {
+      // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
+      const consecutiveLossesAntes = state.consecutive_losses || 0;
+      if ('consecutive_losses' in state) {
+        state.consecutive_losses = consecutiveLossesAntes + 1;
+      }
+      const consecutiveLossesAgora = state.consecutive_losses || 0;
+      
+      this.logger.log(`[ORION][${mode}][${state.userId}] 📊 LOSSES CONSECUTIVAS | ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
+      this.saveOrionLog(state.userId, 'R_10', 'resultado', `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
+      
+      if (consecutiveLossesAgora >= 3) {
+        this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos. Modo PRECISO será forçado na próxima entrada.`);
+        this.saveOrionLog(state.userId, 'R_10', 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos. Modo PRECISO será forçado na próxima entrada.`);
+      }
+      
       // ❌ PERDA: Resetar Soros e ativar martingale
       if ('vitoriasConsecutivas' in state) state.vitoriasConsecutivas = 0;
       if ('ultimoLucro' in state) state.ultimoLucro = 0;
@@ -1606,6 +2709,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
          WHERE user_id = ? AND is_active = 1
@@ -1657,7 +2761,55 @@ export class OrionStrategy implements IStrategy {
           return;
         }
         
-        // ✅ Verificar STOP LOSS
+        // ✅ Verificar STOP-LOSS BLINDADO (ZENIX v2.0 - protege lucros conquistados)
+        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
+        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
+        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
+        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          
+          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
+          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
+          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+          
+          // Se capital atual caiu abaixo do stop blindado → PARAR
+          if (capitalAtual <= stopBlindado) {
+            const lucroProtegido = capitalAtual - capitalInicial;
+            
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `Capital: $${capitalAtual.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)})`,
+            );
+            
+            this.saveOrionLog(
+              state.userId,
+              'R_10',
+              'alerta',
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital: $${capitalAtual.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+            );
+            
+            const deactivationReason = 
+              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+            
+            // Desativar a IA
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [deactivationReason, state.userId],
+            );
+            
+            // Remover usuário do monitoramento
+            this.velozUsers.delete(state.userId);
+            this.moderadoUsers.delete(state.userId);
+            this.precisoUsers.delete(state.userId);
+            return;
+          }
+        }
+        
+        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
@@ -1930,6 +3082,9 @@ export class OrionStrategy implements IStrategy {
                 if ('martingaleStep' in state) {
                   state.martingaleStep = 0;
                 }
+                if ('ultimaApostaUsada' in state) {
+                  state.ultimaApostaUsada = 0;
+                }
                 
                 if (estavaEmMartingale) {
                   // ✅ Se estava em martingale, NÃO aplicar Soros
@@ -2147,9 +3302,12 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Garantir que ticksDesdeUltimaOp está inicializado
         ticksDesdeUltimaOp: existing.ticksDesdeUltimaOp !== undefined ? existing.ticksDesdeUltimaOp : 0,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
+        // ✅ Preservar consecutive_losses ao atualizar
+        consecutive_losses: existing.consecutive_losses ?? 0,
       });
     } else {
       this.velozUsers.set(params.userId, {
@@ -2170,7 +3328,9 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+        consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
       });
     }
   }
@@ -2194,7 +3354,10 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
+        // ✅ Preservar consecutive_losses ao atualizar
+        consecutive_losses: existing.consecutive_losses ?? 0,
       });
     } else {
       this.moderadoUsers.set(params.userId, {
@@ -2215,7 +3378,9 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+        consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
       });
     }
   }
@@ -2239,7 +3404,10 @@ export class OrionStrategy implements IStrategy {
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
+        // ✅ Preservar consecutive_losses ao atualizar
+        consecutive_losses: existing.consecutive_losses ?? 0,
       });
     } else {
       this.precisoUsers.set(params.userId, {
@@ -2259,7 +3427,58 @@ export class OrionStrategy implements IStrategy {
         vitoriasConsecutivas: 0,
         apostaBase: apostaInicial, // ✅ Base para cálculos
         ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+        consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+      });
+    }
+  }
+
+  private upsertLentaUserState(params: {
+    userId: string;
+    stakeAmount: number; // Capital total da conta
+    apostaInicial?: number; // Valor de entrada por operação (opcional)
+    derivToken: string;
+    currency: string;
+    modoMartingale?: ModoMartingale;
+  }): void {
+    const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
+    const existing = this.lentaUsers.get(params.userId);
+    if (existing) {
+      Object.assign(existing, {
+        capital: params.stakeAmount,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
+        // ✅ Atualizar aposta inicial se fornecido
+        apostaInicial: params.apostaInicial || existing.apostaInicial,
+        apostaBase: params.apostaInicial || existing.apostaBase,
+        ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
+        // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
+        // ✅ Preservar consecutive_losses ao atualizar
+        consecutive_losses: existing.consecutive_losses ?? 0,
+      });
+    } else {
+      this.lentaUsers.set(params.userId, {
+        userId: params.userId,
+        derivToken: params.derivToken,
+        currency: params.currency,
+        capital: params.stakeAmount,
+        virtualCapital: params.stakeAmount,
+        lossVirtualActive: false,
+        lossVirtualCount: 0,
+        lossVirtualOperation: null,
+        isOperationActive: false,
+        martingaleStep: 0,
+        modoMartingale: params.modoMartingale || 'conservador',
+        perdaAcumulada: 0,
+        apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
+        vitoriasConsecutivas: 0,
+        apostaBase: apostaInicial, // ✅ Base para cálculos
+        ultimoLucro: 0,
+        ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
+        ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+        consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
       });
     }
   }
@@ -2294,11 +3513,16 @@ export class OrionStrategy implements IStrategy {
   ): void {
     // Validar parâmetros
     if (!userId || !type || !message || message.trim() === '') {
+      this.logger.warn(`[ORION][SaveLog] ⚠️ Parâmetros inválidos: userId=${userId}, type=${type}, message=${message}`);
       return;
     }
 
+    // Normalizar símbolo: usar o padrão da Orion, exceto logs de sistema
+    const symbolToUse = symbol === 'SISTEMA' ? 'SISTEMA' : this.symbol;
+
     // Adicionar à fila
-    this.logQueue.push({ userId, symbol, type, message, details });
+    this.logQueue.push({ userId, symbol: symbolToUse, type, message, details });
+    this.logger.debug(`[ORION][SaveLog] 📝 Log adicionado à fila | userId=${userId} | type=${type} | message=${message.substring(0, 50)}... | Fila: ${this.logQueue.length}`);
 
     // Processar fila em background (não bloqueia)
     this.processOrionLogQueue().catch(error => {

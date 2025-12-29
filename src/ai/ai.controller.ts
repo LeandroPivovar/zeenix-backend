@@ -305,10 +305,11 @@ export class AiController {
       lossLimit?: number;
       modoMartingale?: 'conservador' | 'moderado' | 'agressivo';
       strategy?: string;
+      stopLossBlindado?: boolean; // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false = desativado)
     },
   ) {
     try {
-      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}`);
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}`);
       
       await this.aiService.activateUserAI(
         body.userId,
@@ -321,6 +322,7 @@ export class AiController {
         body.modoMartingale || 'conservador',
         body.strategy || 'orion',
         body.entryValue, // ✅ Valor de entrada por operação (opcional)
+        body.stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
       );
       return {
         success: true,
@@ -359,9 +361,28 @@ export class AiController {
   }
 
   @Get('logs/:userId')
-  async getUserLogs(@Param('userId') userId: string) {
+  async getUserLogs(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
-      const logs = await this.aiService.getUserLogs(userId, 2000);
+      // Converter limit para número
+      // Se não especificado ou vazio, usar padrão 100
+      // Se for 'todos', passar undefined (sem limite)
+      // Caso contrário, converter para número
+      let limitNum: number | undefined = 100; // Padrão: 100
+      if (limit) {
+        if (limit.toLowerCase() === 'todos') {
+          limitNum = undefined; // Sem limite
+        } else {
+          const parsed = parseInt(limit, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            limitNum = parsed;
+          }
+        }
+      }
+      
+      const logs = await this.aiService.getUserLogs(userId, limitNum);
       return {
         success: true,
         data: logs,

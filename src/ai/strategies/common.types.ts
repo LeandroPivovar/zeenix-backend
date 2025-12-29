@@ -2,7 +2,7 @@ import { DigitParity, Tick } from '../ai.service';
 
 // Tipos comuns para estratégias
 export type ModoMartingale = 'conservador' | 'moderado' | 'agressivo';
-export type TradingMode = 'veloz' | 'moderado' | 'preciso';
+export type TradingMode = 'veloz' | 'moderado' | 'preciso' | 'lenta';
 
 // Configurações de modo
 export interface ModeConfig {
@@ -66,6 +66,53 @@ export const PRECISO_CONFIG: ModeConfig = {
   desequilibrioMin: 0.70,
   confianciaMin: 0.70,
   taxaAcertoEsperada: 0.82,
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.01,
+};
+
+export const LENTA_CONFIG: ModeConfig = {
+  amostraInicial: 50,
+  desequilibrioMin: 0.70,
+  confianciaMin: 0.80, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
+  taxaAcertoEsperada: 0.85,
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.01,
+};
+
+// ✅ ATLAS v2.0: Configurações para Extrema Alta Frequência (EHF)
+// Modo VELOZ: 3.000 ops/dia (~125 ops/minuto), intervalo 4.8s, sem loss virtual
+export const ATLAS_VELOZ_CONFIG: ModeConfig = {
+  amostraInicial: 3, // Buffer mínimo de 3 dígitos
+  intervaloSegundos: 4.8, // Uma operação a cada ~4.8 segundos
+  desequilibrioMin: 0.0, // Sem filtro de desequilíbrio mínimo (análise simplificada)
+  confianciaMin: 0.0, // Sem filtro de confiança mínimo
+  taxaAcertoEsperada: 0.55, // 55-60% (compensado pelo volume)
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.005,
+};
+
+// Modo NORMAL: 5.000 ops/dia (~208 ops/minuto), intervalo 2.9s, máximo 1 derrota virtual
+export const ATLAS_NORMAL_CONFIG: ModeConfig = {
+  amostraInicial: 10, // Buffer de 10 dígitos para análise de desequilíbrio
+  intervaloSegundos: 2.9, // Uma operação a cada ~2.9 segundos
+  desequilibrioMin: 0.7, // Filtro: se >70% Over, aguarda
+  confianciaMin: 0.0,
+  taxaAcertoEsperada: 0.60, // 60-65%
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.0075,
+};
+
+// Modo LENTO: 8.000 ops/dia (~333 ops/minuto), intervalo 1.8s, máximo 2 derrotas virtuais
+export const ATLAS_LENTO_CONFIG: ModeConfig = {
+  amostraInicial: 15, // Buffer de 15 dígitos para análise mais profunda
+  intervaloSegundos: 1.8, // Uma operação a cada ~1.8 segundos
+  desequilibrioMin: 0.75, // Filtro: se >75% Over, aguarda
+  confianciaMin: 0.0,
+  taxaAcertoEsperada: 0.62, // 62-67%
   payout: 0.95,
   minStake: 0.35,
   betPercent: 0.01,

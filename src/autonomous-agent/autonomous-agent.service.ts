@@ -3731,17 +3731,22 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
-  async getLogs(userId: string, limit: number = 2000): Promise<any[]> {
+  async getLogs(userId: string, limit?: number): Promise<any[]> {
     try {
       // Buscar logs (a tabela não tem created_at, apenas timestamp)
-      const logs = await this.dataSource.query(
-        `SELECT id, timestamp, log_level, module, message, metadata
-         FROM autonomous_agent_logs
-         WHERE user_id = ?
-         ORDER BY timestamp DESC
-         LIMIT ?`,
-        [userId, limit],
-      );
+      const query = limit
+        ? `SELECT id, timestamp, log_level, module, message, metadata
+           FROM autonomous_agent_logs
+           WHERE user_id = ?
+           ORDER BY timestamp DESC
+           LIMIT ?`
+        : `SELECT id, timestamp, log_level, module, message, metadata
+           FROM autonomous_agent_logs
+           WHERE user_id = ?
+           ORDER BY timestamp DESC`;
+      
+      const params = limit ? [userId, limit] : [userId];
+      const logs = await this.dataSource.query(query, params);
 
       // Mapear log_level e module para type e icon (formato igual à IA)
       const levelToType: Record<string, string> = {

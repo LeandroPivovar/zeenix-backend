@@ -209,5 +209,19 @@ export class SettingsController {
       this.getUserAgent(req)
     );
   }
+
+  @Get('email-connections')
+  async getEmailConnections(@Req() req: any) {
+    // Endpoint temporário para evitar erro 404
+    // Retorna informações básicas sobre conexões de email
+    const userId = req.user.userId;
+    const settings = await this.settingsService.getSettings(userId);
+    
+    return {
+      email: settings.email,
+      emailNotifications: settings.emailNotifications,
+      connections: [],
+    };
+  }
 }
 
