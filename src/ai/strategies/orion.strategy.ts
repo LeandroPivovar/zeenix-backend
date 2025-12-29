@@ -220,11 +220,15 @@ class RiskManager {
     let nextStake = baseStake;
     if (lastProfit > 0) {
       nextStake = baseStake + lastProfit;
+      // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
+      nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
         logger.log(`🚀 [SOROS] Ativado! Entrada: $${nextStake.toFixed(2)}`);
       }
     } else {
       nextStake = baseStake; // Volta para mão fixa após loss
+      // ✅ Arredondar para 2 casas decimais
+      nextStake = Math.round(nextStake * 100) / 100;
     }
 
     // 2. Verificação de Stop Loss de Precisão
@@ -258,7 +262,9 @@ class RiskManager {
 
     if (potentialBalanceAfterLoss < minAllowedBalance) {
       // Reduz a mão para não furar o chão
-      const adjustedStake = currentBalance - minAllowedBalance;
+      let adjustedStake = currentBalance - minAllowedBalance;
+      // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
+      adjustedStake = Math.round(adjustedStake * 100) / 100;
       if (adjustedStake > 0) {
         if (logger) {
           if (isBlindadoActive) {
@@ -290,7 +296,8 @@ class RiskManager {
       }
     }
 
-    return nextStake;
+    // ✅ Garantir que o retorno sempre tem 2 casas decimais
+    return Math.round(nextStake * 100) / 100;
   }
 }
 
@@ -661,7 +668,7 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(state.userId, this.symbol, 'sinal', 
             `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Par: ${(evenPct * 100).toFixed(0)}% (Saturação) | Sequência: ${seqCount}x PAR (Fadiga) | Entrada: ODD`);
           
-          return 'IMPAR';
+        return 'IMPAR';
         }
       }
     }
@@ -709,7 +716,7 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(state.userId, this.symbol, 'sinal', 
             `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Ímpar: ${(oddPct * 100).toFixed(0)}% (Saturação) | Sequência: ${seqCount}x ÍMPAR (Fadiga) | Entrada: EVEN`);
           
-          return 'PAR';
+        return 'PAR';
         }
       }
     }
@@ -1966,6 +1973,8 @@ export class OrionStrategy implements IStrategy {
         
         if (apostaSoros !== null) {
           stakeAmount = apostaSoros;
+          // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
+          stakeAmount = Math.round(stakeAmount * 100) / 100;
           this.logger.log(
             `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${vitoriasAtuais} | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Nova aposta: $${stakeAmount.toFixed(2)}`,
           );
@@ -1975,10 +1984,14 @@ export class OrionStrategy implements IStrategy {
             `[ORION][${mode}][${state.userId}] ⚠️ Soros retornou null, usando aposta inicial`,
           );
           stakeAmount = state.apostaInicial || state.capital || 0.35;
+          // ✅ Arredondar para 2 casas decimais
+          stakeAmount = Math.round(stakeAmount * 100) / 100;
         }
       } else {
         // Primeira entrada normal: usar aposta inicial
         stakeAmount = state.apostaInicial || state.capital || 0.35;
+        // ✅ Arredondar para 2 casas decimais
+        stakeAmount = Math.round(stakeAmount * 100) / 100;
       }
       
       // ✅ Garantir que martingaleStep está em 0 para primeira entrada
@@ -1989,6 +2002,9 @@ export class OrionStrategy implements IStrategy {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
       stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+      
+      // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
+      stakeAmount = Math.round(stakeAmount * 100) / 100;
       
       // Garantir valor mínimo
       if (stakeAmount < 0.35) {
@@ -2017,9 +2033,13 @@ export class OrionStrategy implements IStrategy {
         return;
       }
       stakeAmount = adjustedStake;
+      // ✅ Garantir arredondamento após ajuste do RiskManager
+      stakeAmount = Math.round(stakeAmount * 100) / 100;
     }
     
     // ✅ VALIDAÇÕES PREVENTIVAS após calcular stakeAmount
+    // ✅ Garantir que stakeAmount sempre tem exatamente 2 casas decimais antes de enviar
+    stakeAmount = Math.round(stakeAmount * 100) / 100;
     // 0. Cooldown para mitigar rate limit (se houve erro/timeout recente)
     if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) {
       this.logger.warn(`[ORION][${mode}][${state.userId}] ⏸️ Cooldown ativo para criação de contrato. Aguardando antes de nova tentativa.`);
@@ -2080,11 +2100,13 @@ export class OrionStrategy implements IStrategy {
       );
 
       // ✅ Executar trade E monitorar no MESMO WebSocket (mais rápido para contratos de 1 tick)
+      // ✅ Garantir arredondamento final antes de enviar (requisito da Deriv: máximo 2 casas decimais)
+      const finalStakeAmount = Math.round(stakeAmount * 100) / 100;
       const result = await this.executeOrionTradeViaWebSocket(
         state.derivToken,
         {
           contract_type: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-          amount: stakeAmount,
+          amount: finalStakeAmount,
           currency: state.currency || 'USD',
         },
         state.userId,
