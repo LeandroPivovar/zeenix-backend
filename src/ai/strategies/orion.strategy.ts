@@ -773,14 +773,18 @@ export class OrionStrategy implements IStrategy {
       }
     }
 
-    // Incrementar contador de ticks
+    // Incrementar contador de ticks (apenas se já houve pelo menos uma operação)
     for (const [userId, state] of this.velozUsers.entries()) {
       // ✅ Garantir que ticksDesdeUltimaOp está inicializado
       if (state.ticksDesdeUltimaOp === undefined) {
         state.ticksDesdeUltimaOp = 0;
       }
-      // ✅ Só incrementar se não houver operação ativa
-      if (!state.isOperationActive) {
+      // ✅ Só incrementar se não houver operação ativa E já houve pelo menos uma operação
+      // Verificar se já houve operação: há perda acumulada OU há última direção de martingale
+      const jaHouveOperacao = (state.perdaAcumulada && state.perdaAcumulada > 0) || 
+                               (state.ultimaDirecaoMartingale !== null && state.ultimaDirecaoMartingale !== undefined);
+      
+      if (!state.isOperationActive && jaHouveOperacao) {
         state.ticksDesdeUltimaOp += 1;
       }
     }
@@ -866,8 +870,12 @@ export class OrionStrategy implements IStrategy {
         state.ticksDesdeUltimaOp = 0;
       }
       
-      // Verificar intervalo entre operações (3 ticks)
-      if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
+      // ✅ CORREÇÃO: Só verificar intervalo se já houve pelo menos uma operação
+      // Se não há perda acumulada nem última direção, é a primeira operação - não precisa de intervalo
+      const jaHouveOperacao = state.perdaAcumulada > 0 || state.ultimaDirecaoMartingale !== null && state.ultimaDirecaoMartingale !== undefined;
+      
+      // Verificar intervalo entre operações (3 ticks) - apenas se já houve operação anterior
+      if (jaHouveOperacao && state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
         const key = `veloz_intervalo_${userId}`;
         if (!this.intervaloLogsEnviados.has(key)) {
           this.intervaloLogsEnviados.set(key, true);
@@ -881,7 +889,7 @@ export class OrionStrategy implements IStrategy {
           );
         }
         continue;
-      } else {
+      } else if (jaHouveOperacao) {
         // Limpar flag quando intervalo for completado
         const key = `veloz_intervalo_${userId}`;
         this.intervaloLogsEnviados.delete(key);
