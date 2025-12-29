@@ -775,7 +775,10 @@ export class OrionStrategy implements IStrategy {
       if (state.ticksDesdeUltimaOp === undefined) {
         state.ticksDesdeUltimaOp = 0;
       }
-      state.ticksDesdeUltimaOp += 1;
+      // ✅ Só incrementar se não houver operação ativa
+      if (!state.isOperationActive) {
+        state.ticksDesdeUltimaOp += 1;
+      }
     }
 
     // Log de diagnóstico a cada 10 ticks
@@ -1900,6 +1903,10 @@ export class OrionStrategy implements IStrategy {
           
           // ✅ IMPORTANTE: Bloquear operação imediatamente
           state.isOperationActive = false;
+          // ✅ Resetar contador de ticks mesmo quando bloqueado para permitir nova tentativa
+          if ('ticksDesdeUltimaOp' in state) {
+            state.ticksDesdeUltimaOp = 0;
+          }
           return; // NÃO EXECUTAR OPERAÇÃO
         }
         
@@ -1925,6 +1932,11 @@ export class OrionStrategy implements IStrategy {
             
             // ✅ BLOQUEAR OPERAÇÃO - não executar
             state.isOperationActive = false;
+            
+            // ✅ Resetar contador de ticks mesmo quando bloqueado para permitir nova tentativa
+            if ('ticksDesdeUltimaOp' in state) {
+              state.ticksDesdeUltimaOp = 0;
+            }
             
             // Se estava em martingale, resetar
             if (entry > 1 && state.perdaAcumulada > 0) {
@@ -2044,6 +2056,10 @@ export class OrionStrategy implements IStrategy {
       if (adjustedStake === 0) {
         // Stop loss atingido - parar operações
         state.isOperationActive = false;
+        // ✅ Resetar contador de ticks para permitir nova tentativa
+        if ('ticksDesdeUltimaOp' in state) {
+          state.ticksDesdeUltimaOp = 0;
+        }
         return;
       }
       stakeAmount = adjustedStake;
@@ -2058,6 +2074,10 @@ export class OrionStrategy implements IStrategy {
     if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) {
       this.logger.warn(`[ORION][${mode}][${state.userId}] ⏸️ Cooldown ativo para criação de contrato. Aguardando antes de nova tentativa.`);
       state.isOperationActive = false;
+      // ✅ Resetar contador de ticks para permitir nova tentativa
+      if ('ticksDesdeUltimaOp' in state) {
+        state.ticksDesdeUltimaOp = 0;
+      }
       return;
     }
 
@@ -2078,6 +2098,10 @@ export class OrionStrategy implements IStrategy {
       );
       state.isOperationActive = false;
       this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
+      // ✅ Resetar contador de ticks para permitir nova tentativa
+      if ('ticksDesdeUltimaOp' in state) {
+        state.ticksDesdeUltimaOp = 0;
+      }
       return; // Não tentar criar contrato se não tiver saldo suficiente
     }
 
@@ -2086,6 +2110,10 @@ export class OrionStrategy implements IStrategy {
       this.logger.error(`[ORION][${mode}][${state.userId}] ❌ Token Deriv inválido ou ausente`);
       state.isOperationActive = false;
       this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Token Deriv inválido ou ausente - Não é possível criar contrato`);
+      // ✅ Resetar contador de ticks para permitir nova tentativa
+      if ('ticksDesdeUltimaOp' in state) {
+        state.ticksDesdeUltimaOp = 0;
+      }
       return; // Não tentar criar contrato sem token
     }
     
