@@ -2764,9 +2764,9 @@ export class AiService implements OnModuleInit {
       const stopBlindado = initialBalance + (lucroLiquido * fatorProtecao);
       
       this.logger.debug(
-        `[StopBlindado][${userId}] Capital Inicial: $${initialBalance.toFixed(2)} | ` +
-        `Lucro Líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital Atual: $${capitalAtual.toFixed(2)} | ` +
+        `[StopBlindado][${userId}] Capital Inicial Sessão: $${initialBalance.toFixed(2)} | ` +
+        `Lucro Líquido Sessão: $${lucroLiquido.toFixed(2)} | ` +
+        `Capital Sessão Atual: $${capitalAtual.toFixed(2)} | ` +
         `Stop Blindado: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%)`,
       );
       
@@ -2831,7 +2831,7 @@ export class AiService implements OnModuleInit {
         this.logger.log(
           `[StopBlindado][${userId}] 🛡️ IA DESATIVADA | ` +
           `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-          `Capital final: $${capitalAtual.toFixed(2)}`,
+          `Capital Sessão final: $${capitalAtual.toFixed(2)}`,
         );
       }
     } catch (error) {
