@@ -663,7 +663,7 @@ export class OrionStrategy implements IStrategy {
       ALLOW_REVERSAL = true;
       USE_PING_PONG = true;
       MIN_SEQ = 0;
-    } else if (effectiveMode === 'moderado' || effectiveMode === 'normal') {
+    } else if (effectiveMode === 'moderado') {
       META_PCT = 0.55; // 55% Dominância (Equilíbrio)
       META_ACCEL = 0.0; // Estável
       ALLOW_REVERSAL = true;
