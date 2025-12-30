@@ -2956,91 +2956,86 @@ export class OrionStrategy implements IStrategy {
           return;
         }
         
-        // ✅ Verificar STOP-LOSS BLINDADO (protege X% do lucro conquistado)
-        // Stop Blindado só funciona quando está em LUCRO
-        if (lucroAtual > 0) {
-          const stopBlindadoConfig = await this.dataSource.query(
-            `SELECT 
-              COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent,
-              session_status
-             FROM ai_user_config 
-             WHERE user_id = ? AND is_active = 1
-             LIMIT 1`,
-            [state.userId],
+        // ✅ Verificar STOP-LOSS BLINDADO conforme documentação ORION Master Blueprint
+        // Regra: Ativa quando atinge 25% da meta, protege 50% do LUCRO MÁXIMO ATINGIDO (pico)
+        const riskManager = this.riskManagers.get(state.userId);
+        if (riskManager && lucroAtual > 0 && profitTarget > 0) {
+          // Usar o RiskManager para calcular corretamente (ele rastreia o pico máximo)
+          const currentBalance = capitalSessao;
+          const baseStake = state.apostaInicial || 0.35;
+          const lastProfit = profit;
+          
+          // Verificar se o Stop Blindado está ativo (atingiu 25% da meta)
+          // O RiskManager rastreia o pico máximo internamente
+          const activationTrigger = profitTarget * 0.25; // 25% da meta
+          
+          // O RiskManager já tem a lógica correta: verifica 25% da meta e protege 50% do pico
+          const adjustedStake = riskManager.calculateStake(
+            currentBalance,
+            baseStake,
+            lastProfit,
+            this.logger,
+            state.vitoriasConsecutivas || 0,
           );
           
-          if (stopBlindadoConfig && stopBlindadoConfig.length > 0) {
-            const stopBlindadoPercent = parseFloat(stopBlindadoConfig[0].stopBlindadoPercent) || 50.0;
-            
-            // Calcular stop blindado (protege X% do lucro)
-            // Fórmula: stopBlindado = capitalInicial + (lucroAtual × percentual)
-            // Exemplo: $1000 inicial + ($100 lucro × 50%) = $1050
-            const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
-            const lucroProtegido = lucroAtual * fatorProtecao; // Lucro que será protegido
-            const stopBlindado = capitalInicial + lucroProtegido;
-            
-            // ✅ CORREÇÃO: Usar capital da sessão (capitalInicial + session_balance)
-            const capitalSessao = capitalInicial + lucroAtual;
-            
-            // ✅ Log sempre visível para monitoramento (não apenas debug)
-            this.logger.log(
-              `[ORION][${mode}][${state.userId}] 🛡️ Verificando Stop Blindado | ` +
-              `Lucro Sessão: $${lucroAtual.toFixed(2)} | ` +
-              `Lucro Protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-              `Stop: $${stopBlindado.toFixed(2)} | ` +
-              `Capital Sessão: $${capitalSessao.toFixed(2)}`,
+          // Log informativo quando o Stop Blindado está ativo (apenas quando muda o pico)
+          // O RiskManager já faz esse log internamente quando o pico muda
+          
+          // Se o RiskManager retornou 0, significa que o Stop Blindado foi atingido
+          if (adjustedStake === 0) {
+            // Obter informações do pico para o log
+            const stopBlindadoConfig = await this.dataSource.query(
+              `SELECT COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent
+               FROM ai_user_config 
+               WHERE user_id = ? AND is_active = 1
+               LIMIT 1`,
+              [state.userId],
             );
             
-            // ✅ Salvar log também no sistema de logs do usuário
+            const stopBlindadoPercent = stopBlindadoConfig && stopBlindadoConfig.length > 0
+              ? parseFloat(stopBlindadoConfig[0].stopBlindadoPercent) || 50.0
+              : 50.0;
+            
+            // Calcular valores para o log (usando o pico do RiskManager)
+            // O RiskManager já calculou o minAllowedBalance baseado no pico
+            const lucroProtegido = capitalSessao - capitalInicial;
+            
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `Capital Sessão: $${capitalSessao.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
+            );
+            
             this.saveOrionLog(
-              state.userId,
-              this.symbol,
-              'info',
-              `🛡️ Stop Blindado: Lucro Sessão $${lucroAtual.toFixed(2)} | Lucro Protegido $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}%) | Stop $${stopBlindado.toFixed(2)} | Capital Sessão $${capitalSessao.toFixed(2)}`,
+              state.userId, 
+              this.symbol, 
+              'alerta', 
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
             );
             
-            // Se capital da sessão caiu abaixo do stop blindado → PARAR
-            if (capitalSessao <= stopBlindado) {
-              const lucroProtegido = capitalSessao - capitalInicial;
-              const percentualProtegido = lucroAtual > 0 ? (lucroProtegido / lucroAtual) * 100 : 0;
-              
-              this.logger.warn(
-                `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-                `Protegendo $${lucroProtegido.toFixed(2)} de lucro ` +
-                `(${percentualProtegido.toFixed(0)}% de $${lucroAtual.toFixed(2)} conquistados)`,
-              );
-              
-              this.saveOrionLog(
-                state.userId, 
-                this.symbol, 
-                'alerta', 
-                `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)}`,
-              );
-              
-              const deactivationReason = 
-                `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-                `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
-              
-              // Desativar a IA
-              await this.dataSource.query(
-                `UPDATE ai_user_config 
-                 SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-                 WHERE user_id = ? AND is_active = 1`,
-                [deactivationReason, state.userId],
-              );
-              
-              // Remover usuário do monitoramento
-              this.velozUsers.delete(state.userId);
-              this.moderadoUsers.delete(state.userId);
-              this.precisoUsers.delete(state.userId);
-              
-              this.logger.log(
-                `[ORION][${mode}][${state.userId}] 🛡️ IA DESATIVADA POR STOP BLINDADO | ` +
-                `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-                `Capital Sessão final: $${capitalSessao.toFixed(2)}`,
-              );
-              return;
-            }
+            const deactivationReason = 
+              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+              `(${stopBlindadoPercent}% do pico máximo conquistado)`;
+            
+            // Desativar a IA
+            await this.dataSource.query(
+              `UPDATE ai_user_config 
+               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [deactivationReason, state.userId],
+            );
+            
+            // Remover usuário do monitoramento
+            this.velozUsers.delete(state.userId);
+            this.moderadoUsers.delete(state.userId);
+            this.precisoUsers.delete(state.userId);
+            
+            this.logger.log(
+              `[ORION][${mode}][${state.userId}] 🛡️ IA DESATIVADA POR STOP BLINDADO | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
+              `Capital Sessão final: $${capitalSessao.toFixed(2)}`,
+            );
+            return;
           }
         }
       }
