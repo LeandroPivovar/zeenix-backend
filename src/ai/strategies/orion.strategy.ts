@@ -30,6 +30,7 @@ export interface VelozUserState {
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+  defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
 }
 
 export interface ModeradoUserState {
@@ -574,11 +575,14 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION] 🔄 RiskManager resetado para usuário ${userId} ao ativar`);
     }
     
-    // ✅ Resetar consecutive_losses no state ao ativar usuário
+    // ✅ Resetar consecutive_losses e defesaAtivaLogged no state ao ativar usuário
     const state = this.getUserState(userId);
     if (state && 'consecutive_losses' in state) {
       state.consecutive_losses = 0;
-      this.logger.log(`[ORION] 🔄 consecutive_losses resetado para usuário ${userId} ao ativar`);
+      if ('defesaAtivaLogged' in state) {
+        state.defesaAtivaLogged = false;
+      }
+      this.logger.log(`[ORION] 🔄 consecutive_losses e defesaAtivaLogged resetados para usuário ${userId} ao ativar`);
     }
     
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
@@ -654,15 +658,22 @@ export class OrionStrategy implements IStrategy {
 
     if (consecutiveLosses >= 3) {
       effectiveMode = 'preciso';
-      this.logger.log(
-        `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
-      );
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'alerta',
-        `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
-      );
+      // ✅ Logar apenas uma vez quando a defesa é ativada
+      if (!state.defesaAtivaLogged) {
+        this.logger.log(
+          `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
+        );
+        this.saveOrionLog(
+          state.userId,
+          this.symbol,
+          'alerta',
+          `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
+        );
+        state.defesaAtivaLogged = true;
+      }
+    } else {
+      // ✅ Resetar flag quando a defesa não está mais ativa
+      state.defesaAtivaLogged = false;
     }
 
     // 2. Calibragem dos Modos (ATUALIZADO)
@@ -3423,6 +3434,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
+        defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
       });
     } else {
       this.velozUsers.set(params.userId, {
@@ -3446,6 +3458,7 @@ export class OrionStrategy implements IStrategy {
         ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+        defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
       });
     }
   }
@@ -3473,6 +3486,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
+        defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
       });
     } else {
       this.moderadoUsers.set(params.userId, {
@@ -3496,6 +3510,7 @@ export class OrionStrategy implements IStrategy {
         ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+        defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
       });
     }
   }
@@ -3523,6 +3538,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
+        defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
       });
     } else {
       this.precisoUsers.set(params.userId, {
@@ -3545,6 +3561,7 @@ export class OrionStrategy implements IStrategy {
         ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+        defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
       });
     }
   }
@@ -3572,6 +3589,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
+        defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
       });
     } else {
       this.lentaUsers.set(params.userId, {
@@ -3594,6 +3612,7 @@ export class OrionStrategy implements IStrategy {
         ultimaApostaUsada: 0, // ✅ Última aposta usada (para cálculo do martingale agressivo)
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+        defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
       });
     }
   }
