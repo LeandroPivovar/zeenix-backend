@@ -1786,12 +1786,25 @@ export class OrionStrategy implements IStrategy {
           // ✅ Arredondar para 2 casas decimais
           stakeAmount = Math.round(stakeAmount * 100) / 100;
         }
-      } else {
-        // Primeira entrada normal: usar aposta inicial
-        stakeAmount = state.apostaInicial || state.capital || 0.35;
-        // ✅ Arredondar para 2 casas decimais
-        stakeAmount = Math.round(stakeAmount * 100) / 100;
-      }
+        } else {
+          // Primeira entrada normal: usar aposta inicial
+          // ✅ GARANTIR que após recuperar do martingale, sempre use aposta inicial
+          // Se vitoriasConsecutivas é 0 e ultimoLucro é 0, deve usar aposta inicial
+          if ((state.vitoriasConsecutivas || 0) === 0 && (state.ultimoLucro || 0) === 0) {
+            stakeAmount = state.apostaInicial || 0.35;
+            // ✅ Garantir que apostaBase também está resetada
+            if ('apostaBase' in state && state.apostaBase !== state.apostaInicial) {
+              state.apostaBase = state.apostaInicial || 0.35;
+              this.logger.debug(
+                `[ORION][${mode}][${state.userId}] 🔄 Corrigindo apostaBase para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)}`,
+              );
+            }
+          } else {
+            stakeAmount = state.apostaInicial || state.capital || 0.35;
+          }
+          // ✅ Arredondar para 2 casas decimais
+          stakeAmount = Math.round(stakeAmount * 100) / 100;
+        }
       
       // ✅ Garantir que martingaleStep está em 0 para primeira entrada
       if ('martingaleStep' in state) {
@@ -2744,6 +2757,7 @@ export class OrionStrategy implements IStrategy {
       }
       
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
+      // IMPORTANTE: Verificar ANTES de resetar perdaAcumulada
       const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
       
       // Resetar martingale primeiro
@@ -2753,13 +2767,26 @@ export class OrionStrategy implements IStrategy {
       if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
       
       if (estavaEmMartingale) {
-        // Se estava em martingale, NÃO aplicar Soros
+        // Se estava em martingale, NÃO aplicar Soros - RESETAR TUDO para aposta inicial
         if ('vitoriasConsecutivas' in state) state.vitoriasConsecutivas = 0;
         if ('ultimoLucro' in state) state.ultimoLucro = 0;
-        if ('apostaBase' in state) state.apostaBase = state.apostaInicial || 0.35;
+        if ('apostaBase' in state) {
+          state.apostaBase = state.apostaInicial || 0.35;
+        }
         
-        this.logger.log(`[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale!`);
-        this.saveOrionLog(state.userId, this.symbol, 'resultado', `✅ Recuperou perdas do martingale!`);
+        this.logger.log(
+          `[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale! ` +
+          `Resetando para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)} | ` +
+          `ApostaBase: $${(state.apostaBase || 0.35).toFixed(2)} | ` +
+          `UltimoLucro: $${(state.ultimoLucro || 0).toFixed(2)} | ` +
+          `VitoriasConsecutivas: ${state.vitoriasConsecutivas || 0}`,
+        );
+        this.saveOrionLog(
+          state.userId, 
+          this.symbol, 
+          'resultado', 
+          `✅ Recuperou perdas do martingale! Resetando para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)}`,
+        );
       } else {
         // NÃO estava em martingale: aplicar Soros
         if ('vitoriasConsecutivas' in state) {
