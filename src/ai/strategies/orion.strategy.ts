@@ -89,18 +89,19 @@ export interface PrecisoUserState {
 // ============================================
 // ESTRATÉGIA SOROS - ZENIX v2.0
 // ============================================
-const SOROS_MAX_NIVEL = 2; // Soros tem apenas 2 níveis (entrada 1, 2, 3)
+const SOROS_MAX_NIVEL = 3; // Soros tem 3 níveis (entrada 1, 2, 3, 4)
 
 /**
  * Calcula aposta com estratégia Soros aplicada
- * Soros funciona apenas até o nível 2 (3 entradas):
+ * Soros funciona até o nível 3 (4 entradas):
  * - Entrada 1: valor inicial
  * - Entrada 2 (Soros Nível 1): entrada anterior + lucro da entrada anterior
  * - Entrada 3 (Soros Nível 2): entrada anterior + lucro da entrada anterior
+ * - Entrada 4 (Soros Nível 3): entrada anterior + lucro da entrada anterior
  * 
  * @param entradaAnterior - Valor da entrada anterior
  * @param lucroAnterior - Lucro obtido na entrada anterior
- * @param vitoriasConsecutivas - Número de vitórias consecutivas (0, 1, ou 2)
+ * @param vitoriasConsecutivas - Número de vitórias consecutivas (0, 1, 2, ou 3)
  * @returns Valor da aposta com Soros aplicado, ou null se Soros não deve ser aplicado
  */
 function calcularApostaComSoros(
@@ -108,7 +109,7 @@ function calcularApostaComSoros(
   lucroAnterior: number,
   vitoriasConsecutivas: number,
 ): number | null {
-  // Soros só funciona até o nível 2 (vitoriasConsecutivas = 0, 1, ou 2)
+  // Soros funciona até o nível 3 (vitoriasConsecutivas = 0, 1, 2, ou 3)
   if (vitoriasConsecutivas <= 0 || vitoriasConsecutivas > SOROS_MAX_NIVEL) {
     return null; // Não está no Soros ou já passou do limite
   }
@@ -228,6 +229,7 @@ class RiskManager {
     baseStake: number,
     lastProfit: number,
     logger?: any,
+    vitoriasConsecutivas?: number,
   ): number {
     /**
      * Calcula o valor da próxima entrada baseado no Modo de Risco.
@@ -290,12 +292,12 @@ class RiskManager {
       }
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
-    else if (this.lastResultWasWin) {
-      // Soros Nível 1 Universal: Reinveste o lucro da anterior
+    else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
+      // Soros até Nível 3: Reinveste o lucro da anterior
       nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
-        logger.log(`🚀 [SOROS] Ativado! Entrada potencializada: $${nextStake.toFixed(2)}`);
+        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada potencializada: $${nextStake.toFixed(2)}`);
       }
     }
 
@@ -1809,11 +1811,14 @@ export class OrionStrategy implements IStrategy {
       const baseStake = state.apostaInicial || state.capital || 0.35;
       const lastProfit = state.ultimoLucro || 0;
       // RiskManager calcula stake incluindo recuperação se necessário e verifica Stop Loss
+      // Passar vitoriasConsecutivas para o RiskManager calcular Soros corretamente até nível 3
+      const vitoriasAtuais = state.vitoriasConsecutivas || 0;
       const adjustedStake = riskManager.calculateStake(
         state.capital,
         baseStake,
         lastProfit,
         this.logger,
+        vitoriasAtuais,
       );
       if (adjustedStake === 0) {
         // ✅ Se RiskManager retornou 0, parar operações (Stop Loss atingido)
@@ -1830,8 +1835,16 @@ export class OrionStrategy implements IStrategy {
           // (RiskManager pode ter ajustado para respeitar Stop Loss)
           stakeAmount = Math.max(stakeAmount, adjustedStake);
         } else {
-          // Primeira entrada: usar stake calculado pelo RiskManager (inclui Soros se aplicável)
-          stakeAmount = adjustedStake;
+          // Primeira entrada: se já calculamos Soros, manter o stake do Soros
+          // mas validar se não viola Stop Loss (usar o menor entre Soros e ajustado)
+          const vitoriasAtuais = state.vitoriasConsecutivas || 0;
+          if (vitoriasAtuais > 0 && vitoriasAtuais <= SOROS_MAX_NIVEL) {
+            // Já está no Soros: manter o stake calculado, mas respeitar limite do RiskManager
+            stakeAmount = Math.min(stakeAmount, adjustedStake);
+          } else {
+            // Não está no Soros: usar stake calculado pelo RiskManager
+            stakeAmount = adjustedStake;
+          }
         }
       }
       // ✅ Garantir arredondamento após ajuste do RiskManager
@@ -2740,10 +2753,10 @@ export class OrionStrategy implements IStrategy {
           state.vitoriasConsecutivas = (state.vitoriasConsecutivas || 0) + 1;
         }
         
-        if (state.vitoriasConsecutivas === 3) {
-          // Ciclo Soros completo
+        if (state.vitoriasConsecutivas === 4) {
+          // Ciclo Soros completo (4 vitórias: inicial + nível 1 + nível 2 + nível 3)
           this.logger.log(`[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO!`);
-          this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas`);
+          this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3)`);
           state.vitoriasConsecutivas = 0;
           state.ultimoLucro = 0;
           state.apostaBase = state.apostaInicial || 0.35;
@@ -3219,12 +3232,12 @@ export class OrionStrategy implements IStrategy {
                     `[ORION][${mode}][${state.userId}] ✅ VITÓRIA | Stake: $${stakeAmount.toFixed(2)} | Lucro: $${profit.toFixed(2)} | Vitórias consecutivas: ${state.vitoriasConsecutivas} | ApostaBase: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`,
                   );
                   
-                  // ✅ ZENIX v2.0: Se completou Soros nível 2 (3 vitórias consecutivas), reiniciar tudo
-                  if (state.vitoriasConsecutivas === 3) {
+                  // ✅ ZENIX v2.0: Se completou Soros nível 3 (4 vitórias consecutivas), reiniciar tudo
+                  if (state.vitoriasConsecutivas === 4) {
                     this.logger.log(
-                      `[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas. Reiniciando para entrada inicial.`,
+                      `[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3). Reiniciando para entrada inicial.`,
                     );
-                    this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 3 vitórias consecutivas`);
+                    this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3)`);
                     this.saveOrionLog(state.userId, this.symbol, 'resultado', `Reiniciando para entrada inicial: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`);
                     
                     // Resetar tudo
