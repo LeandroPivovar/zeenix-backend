@@ -180,28 +180,30 @@ export class NotificationsService {
       const capitalInicial = parseFloat(config.stake_amount) || 0;
 
       // ✅ Calcular lucro/perda da sessão: sessionBalance atual - capital inicial
-      // O session_balance no banco armazena o saldo acumulado total, não o lucro
+      // O session_balance no banco armazena o LUCRO/PERDA da sessão (não o saldo total)
+      // Conforme atualizado em orion.strategy.ts linha 2887-2892
       let sessionBalance = parseFloat(config.session_balance) || 0;
-      let lucroDaSessao = sessionBalance - capitalInicial;
+      let lucroDaSessao = sessionBalance; // ✅ session_balance já é o lucro/perda da sessão
       
-      // Se está ativa, tentar buscar o lucro real dos trades da sessão atual (mais preciso)
-      if (config.is_active === 1 || config.is_active === true) {
+      // ✅ Sempre buscar o lucro real dos trades da sessão atual (mais preciso)
+      // Isso funciona tanto para sessões ativas quanto paradas
+      if (config.created_at) {
         // Buscar o lucro/perda real da sessão atual baseado nos trades
         const tradesResult = await this.dataSource.query(
           `SELECT 
             COALESCE(SUM(profit_loss), 0) as total_profit_loss
            FROM ai_trades
            WHERE user_id = ?
-             AND created_at >= ?`,
+             AND created_at >= ?
+             AND status IN ('WON', 'LOST')`,
           [userId, config.created_at],
         );
         
         if (tradesResult && tradesResult.length > 0) {
           const lucroDosTrades = parseFloat(tradesResult[0].total_profit_loss) || 0;
-          // Usar o lucro dos trades se disponível (é mais preciso que session_balance)
-          if (lucroDosTrades !== 0 || lucroDaSessao === 0) {
-            lucroDaSessao = lucroDosTrades;
-          }
+          // ✅ Usar o lucro dos trades (é mais preciso e confiável)
+          // session_balance pode estar desatualizado ou incorreto
+          lucroDaSessao = lucroDosTrades;
         }
       }
 

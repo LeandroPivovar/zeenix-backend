@@ -3453,6 +3453,7 @@ export class AiService implements OnModuleInit {
 
   getStatistics() {
     if (this.ticks.length === 0) {
+      
       return null;
     }
 
