@@ -882,21 +882,7 @@ export class OrionStrategy implements IStrategy {
       }
     }
 
-    // Incrementar contador de ticks (apenas se já houve pelo menos uma operação)
-    for (const [userId, state] of this.velozUsers.entries()) {
-      // ✅ Garantir que ticksDesdeUltimaOp está inicializado
-      if (state.ticksDesdeUltimaOp === undefined) {
-        state.ticksDesdeUltimaOp = 0;
-      }
-      // ✅ Só incrementar se não houver operação ativa E já houve pelo menos uma operação
-      // Verificar se já houve operação: há perda acumulada OU há última direção de martingale
-      const jaHouveOperacao = (state.perdaAcumulada && state.perdaAcumulada > 0) || 
-                               (state.ultimaDirecaoMartingale !== null && state.ultimaDirecaoMartingale !== undefined);
-      
-      if (!state.isOperationActive && jaHouveOperacao) {
-        state.ticksDesdeUltimaOp += 1;
-      }
-    }
+    // ✅ Intervalo entre operações REMOVIDO - não é mais necessário rastrear ticksDesdeUltimaOp
 
     // Log de diagnóstico a cada 10 ticks
     if (this.ticks.length % 10 === 0) {
@@ -914,25 +900,7 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
-        // Verificar intervalo entre operações (3 ticks)
-        if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
-          if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
-            const key = `veloz_intervalo_${userId}`;
-            if (!this.intervaloLogsEnviados.has(key)) {
-              this.intervaloLogsEnviados.set(key, true);
-              const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
-              this.saveOrionLog(userId, this.symbol, 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
-            }
-            this.logger.debug(
-              `[ORION][Veloz][${userId}] ⏱️ Aguardando intervalo (martingale): ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
-            );
-            continue;
-          } else {
-            // Limpar flag quando intervalo for completado
-            const key = `veloz_intervalo_${userId}`;
-            this.intervaloLogsEnviados.delete(key);
-          }
-        }
+        // ✅ Intervalo entre operações REMOVIDO - executar imediatamente quando sinal válido
 
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
@@ -985,30 +953,7 @@ export class OrionStrategy implements IStrategy {
         state.ticksDesdeUltimaOp = 0;
       }
       
-      // ✅ CORREÇÃO: Só verificar intervalo se já houve pelo menos uma operação
-      // Se não há perda acumulada nem última direção, é a primeira operação - não precisa de intervalo
-      const jaHouveOperacao = state.perdaAcumulada > 0 || state.ultimaDirecaoMartingale !== null && state.ultimaDirecaoMartingale !== undefined;
-      
-      // Verificar intervalo entre operações (3 ticks) - apenas se já houve operação anterior
-      if (jaHouveOperacao && state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks!) {
-        const key = `veloz_intervalo_${userId}`;
-        if (!this.intervaloLogsEnviados.has(key)) {
-          this.intervaloLogsEnviados.set(key, true);
-          const ticksFaltando = VELOZ_CONFIG.intervaloTicks! - state.ticksDesdeUltimaOp;
-          this.saveOrionLog(userId, this.symbol, 'info', `⏱️ Aguardando intervalo entre operações | Modo: Veloz | Faltam ${ticksFaltando} tick(s) (${VELOZ_CONFIG.intervaloTicks} ticks mínimo)`);
-        }
-        // Log a cada 20 ticks para diagnóstico
-        if (this.ticks.length % 20 === 0) {
-          this.logger.debug(
-            `[ORION][Veloz][${userId.substring(0, 8)}] ⏱️ Aguardando intervalo: ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
-          );
-        }
-        continue;
-      } else if (jaHouveOperacao) {
-        // Limpar flag quando intervalo for completado
-        const key = `veloz_intervalo_${userId}`;
-        this.intervaloLogsEnviados.delete(key);
-      }
+      // ✅ Intervalo entre operações REMOVIDO - executar imediatamente quando sinal válido
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
       // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo veloz
@@ -1106,25 +1051,7 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
         const now = new Date();
-        if (state.lastOperationTimestamp) {
-          const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
-          if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
-            const key = `moderado_intervalo_${userId}`;
-            if (!this.intervaloLogsEnviados.has(key)) {
-              this.intervaloLogsEnviados.set(key, true);
-              const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
-              this.saveOrionLog(userId, this.symbol, 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
-            }
-            this.logger.debug(
-              `[ORION][Moderado][${userId}] ⏱️ Aguardando intervalo (martingale): ${secondsSinceLastOp.toFixed(1)}/${MODERADO_CONFIG.intervaloSegundos} segundos`,
-            );
-            continue;
-          } else {
-            // Limpar flag quando intervalo for completado
-            const key = `moderado_intervalo_${userId}`;
-            this.intervaloLogsEnviados.delete(key);
-          }
-        }
+        // ✅ Intervalo entre operações REMOVIDO - executar imediatamente quando sinal válido
 
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
@@ -1167,23 +1094,7 @@ export class OrionStrategy implements IStrategy {
         }
       }
 
-      const now = new Date();
-      if (state.lastOperationTimestamp) {
-        const secondsSinceLastOp = (now.getTime() - state.lastOperationTimestamp.getTime()) / 1000;
-        if (secondsSinceLastOp < MODERADO_CONFIG.intervaloSegundos!) {
-          const key = `moderado_intervalo_${userId}`;
-          if (!this.intervaloLogsEnviados.has(key)) {
-            this.intervaloLogsEnviados.set(key, true);
-            const segundosFaltando = (MODERADO_CONFIG.intervaloSegundos! - secondsSinceLastOp).toFixed(1);
-            this.saveOrionLog(userId, this.symbol, 'info', `⏱️ Aguardando intervalo entre operações | Modo: Moderado | Faltam ~${segundosFaltando}s (${MODERADO_CONFIG.intervaloSegundos}s mínimo)`);
-          }
-          continue;
-        } else {
-          // Limpar flag quando intervalo for completado
-          const key = `moderado_intervalo_${userId}`;
-          this.intervaloLogsEnviados.delete(key);
-        }
-      }
+      // ✅ Intervalo entre operações REMOVIDO - executar imediatamente quando sinal válido
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
       // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo moderado
@@ -1735,19 +1646,12 @@ export class OrionStrategy implements IStrategy {
     // entry é apenas para logs e cálculo do stake
 
     // Resetar contador de ticks
-    if ('ticksDesdeUltimaOp' in state) {
-      state.ticksDesdeUltimaOp = 0;
-      // Limpar flag de intervalo quando operação for executada
-      const key = `veloz_intervalo_${state.userId}`;
-      this.intervaloLogsEnviados.delete(key);
-    }
+    // ✅ Intervalo entre operações REMOVIDO - não é mais necessário resetar ticksDesdeUltimaOp
 
     // Atualizar timestamp da última operação (Moderado)
+    // ✅ Atualizar timestamp da última operação (pode ser útil para outras funcionalidades)
     if ('lastOperationTimestamp' in state) {
       state.lastOperationTimestamp = new Date();
-      // Limpar flag de intervalo quando operação for executada
-      const key = `moderado_intervalo_${state.userId}`;
-      this.intervaloLogsEnviados.delete(key);
     }
 
     // ✅ ZENIX v2.0: Calcular stake baseado em Soros ou Martingale
