@@ -2996,6 +2996,23 @@ export class OrionStrategy implements IStrategy {
           // O RiskManager rastreia o pico máximo internamente
           const activationTrigger = profitTarget * 0.25; // 25% da meta
           
+          // ✅ Log informativo do status do Stop Blindado
+          const percentualAteAtivacao = (lucroAtual / activationTrigger) * 100;
+          if (lucroAtual < activationTrigger) {
+            // Ainda não ativou - mostrar progresso
+            this.logger.log(
+              `[ORION][${mode}][${state.userId}] 🛡️ Stop Blindado: Lucro atual $${lucroAtual.toFixed(2)} | ` +
+              `Meta para ativar: $${activationTrigger.toFixed(2)} (25% de $${profitTarget.toFixed(2)}) | ` +
+              `Progresso: ${percentualAteAtivacao.toFixed(1)}%`,
+            );
+            this.saveOrionLog(
+              state.userId,
+              this.symbol,
+              'info',
+              `🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualAteAtivacao.toFixed(1)}%)`,
+            );
+          }
+          
           // O RiskManager já tem a lógica correta: verifica 25% da meta e protege 50% do pico
           const adjustedStake = riskManager.calculateStake(
             currentBalance,
