@@ -2976,15 +2976,18 @@ export class OrionStrategy implements IStrategy {
             // Fórmula: stopBlindado = capitalInicial + (lucroAtual × percentual)
             // Exemplo: $1000 inicial + ($100 lucro × 50%) = $1050
             const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
-            const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+            const lucroProtegido = lucroAtual * fatorProtecao; // Lucro que será protegido
+            const stopBlindado = capitalInicial + lucroProtegido;
             
             // ✅ CORREÇÃO: Usar capital da sessão (capitalInicial + session_balance)
             const capitalSessao = capitalInicial + lucroAtual;
             
             // ✅ Log sempre visível para monitoramento (não apenas debug)
             this.logger.log(
-              `[ORION][${mode}][${state.userId}] 🛡️ Verificando Stop Blindado | Lucro Sessão: $${lucroAtual.toFixed(2)} | ` +
-              `Stop: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+              `[ORION][${mode}][${state.userId}] 🛡️ Verificando Stop Blindado | ` +
+              `Lucro Sessão: $${lucroAtual.toFixed(2)} | ` +
+              `Lucro Protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+              `Stop: $${stopBlindado.toFixed(2)} | ` +
               `Capital Sessão: $${capitalSessao.toFixed(2)}`,
             );
             
@@ -2993,7 +2996,7 @@ export class OrionStrategy implements IStrategy {
               state.userId,
               this.symbol,
               'info',
-              `🛡️ Stop Blindado: Lucro Sessão $${lucroAtual.toFixed(2)} | Stop $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%) | Capital Sessão $${capitalSessao.toFixed(2)}`,
+              `🛡️ Stop Blindado: Lucro Sessão $${lucroAtual.toFixed(2)} | Lucro Protegido $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}%) | Stop $${stopBlindado.toFixed(2)} | Capital Sessão $${capitalSessao.toFixed(2)}`,
             );
             
             // Se capital da sessão caiu abaixo do stop blindado → PARAR
