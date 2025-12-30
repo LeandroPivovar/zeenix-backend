@@ -566,6 +566,19 @@ export class OrionStrategy implements IStrategy {
       this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
     
+    // ✅ Resetar RiskManager ao ativar usuário (garantir contadores zerados)
+    if (this.riskManagers.has(userId)) {
+      this.riskManagers.delete(userId);
+      this.logger.log(`[ORION] 🔄 RiskManager resetado para usuário ${userId} ao ativar`);
+    }
+    
+    // ✅ Resetar consecutive_losses no state ao ativar usuário
+    const state = this.getUserState(userId);
+    if (state && 'consecutive_losses' in state) {
+      state.consecutive_losses = 0;
+      this.logger.log(`[ORION] 🔄 consecutive_losses resetado para usuário ${userId} ao ativar`);
+    }
+    
     this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
   }
 
@@ -3395,8 +3408,8 @@ export class OrionStrategy implements IStrategy {
         // ✅ Garantir que ticksDesdeUltimaOp está inicializado
         ticksDesdeUltimaOp: existing.ticksDesdeUltimaOp !== undefined ? existing.ticksDesdeUltimaOp : 0,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Preservar consecutive_losses ao atualizar
-        consecutive_losses: existing.consecutive_losses ?? 0,
+        // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
+        consecutive_losses: 0,
       });
     } else {
       this.velozUsers.set(params.userId, {
@@ -3445,8 +3458,8 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.apostaInicial || existing.apostaBase,
         ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Preservar consecutive_losses ao atualizar
-        consecutive_losses: existing.consecutive_losses ?? 0,
+        // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
+        consecutive_losses: 0,
       });
     } else {
       this.moderadoUsers.set(params.userId, {
@@ -3495,8 +3508,8 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.apostaInicial || existing.apostaBase,
         ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Preservar consecutive_losses ao atualizar
-        consecutive_losses: existing.consecutive_losses ?? 0,
+        // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
+        consecutive_losses: 0,
       });
     } else {
       this.precisoUsers.set(params.userId, {
@@ -3544,8 +3557,8 @@ export class OrionStrategy implements IStrategy {
         apostaBase: params.apostaInicial || existing.apostaBase,
         ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
-        // ✅ Preservar consecutive_losses ao atualizar
-        consecutive_losses: existing.consecutive_losses ?? 0,
+        // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
+        consecutive_losses: 0,
       });
     } else {
       this.lentaUsers.set(params.userId, {
