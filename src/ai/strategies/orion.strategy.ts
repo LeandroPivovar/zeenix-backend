@@ -168,37 +168,58 @@ function calcularProximaAposta(
 }
 
 /**
- * ✅ [NOVO] RiskManager - Gestão de Risco de Precisão
- * Implementa Stop Loss de Precisão e Stop Blindado com Trava de Lucro
+ * ✅ ORION Master Blueprint: RiskManager
+ * Gerencia dinheiro com Modos de Risco Personalizados e Stop Blindado
  */
 class RiskManager {
   private initialBalance: number;
   private stopLossLimit: number;
   private profitTarget: number;
+  private riskMode: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
   private useBlindado: boolean;
   private maxBalance: number;
   public consecutiveLosses: number;
+  private totalLossAccumulated: number;
+  private lastResultWasWin: boolean;
+  private _blindadoActive: boolean;
 
   constructor(
     initialBalance: number,
     stopLossLimit: number,
     profitTarget: number,
+    riskMode: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO' = 'CONSERVADOR',
     useBlindado: boolean = true,
   ) {
     this.initialBalance = initialBalance;
     this.stopLossLimit = stopLossLimit;
-    this.profitTarget = profitTarget; // [NOVO] Meta de Lucro para calcular gatilho
+    this.profitTarget = profitTarget;
+    this.riskMode = riskMode.toUpperCase() as 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
     this.useBlindado = useBlindado;
     this.maxBalance = initialBalance;
-    this.consecutiveLosses = 0; // Contador para Defesa Automática
+    this.consecutiveLosses = 0;
+    this.totalLossAccumulated = 0.0;
+    this.lastResultWasWin = false;
+    this._blindadoActive = false;
+
+    // Validação de Segurança
+    if (this.stopLossLimit <= 0) {
+      console.error('❌ ERRO CRÍTICO: Stop Loss deve ser um valor positivo (ex: 100.00).');
+    }
   }
 
-  updateResult(profit: number): void {
-    /**Atualiza o saldo e contadores após cada operação*/
+  updateResult(profit: number, stakeUsed: number): void {
+    /**
+     * Chamar após cada operação para atualizar contadores
+     */
     if (profit < 0) {
       this.consecutiveLosses += 1;
+      this.totalLossAccumulated += stakeUsed;
+      this.lastResultWasWin = false;
     } else {
-      this.consecutiveLosses = 0; // Reseta ao ganhar (Desliga Defesa)
+      // Se ganhou, reseta ciclo de recuperação
+      this.consecutiveLosses = 0;
+      this.totalLossAccumulated = 0.0;
+      this.lastResultWasWin = true;
     }
   }
 
@@ -209,98 +230,140 @@ class RiskManager {
     logger?: any,
   ): number {
     /**
-     * Calcula o valor da entrada aplicando Soros e verificando Stop Loss.
+     * Calcula o valor da próxima entrada baseado no Modo de Risco.
+     * Retorna 0 se o Stop Loss (Normal ou Blindado) for atingido.
      */
-    // Atualiza o pico de saldo para o Stop Loss Blindado
+    // Atualiza Pico de Saldo (High Water Mark)
     if (currentBalance > this.maxBalance) {
       this.maxBalance = currentBalance;
     }
 
-    // 1. Lógica de Soros Nível 1
     let nextStake = baseStake;
-    if (lastProfit > 0) {
+    const PAYOUT_RATE = 0.95; // Estimativa conservadora do Payout (95%)
+
+    // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
+    if (this.consecutiveLosses > 0) {
+      // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
+      if (this.riskMode === 'CONSERVADOR') {
+        if (this.consecutiveLosses <= 5) {
+          // Martingale Simples para recuperar (x2.1 para cobrir spread)
+          nextStake = baseStake * Math.pow(2.1, this.consecutiveLosses);
+          nextStake = Math.round(nextStake * 100) / 100;
+          if (logger) {
+            logger.log(
+              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)}`,
+            );
+          }
+        } else {
+          // Aceita a perda e reseta
+          if (logger) {
+            logger.log(
+              `❌ [CONSERVADOR] Limite de 5 perdas atingido. Resetando para stake base.`,
+            );
+          }
+          this.consecutiveLosses = 0; // Reseta forçado
+          this.totalLossAccumulated = 0.0;
+          nextStake = baseStake;
+        }
+      }
+      // 2. MODERADO: Infinito + 25% de Lucro sobre a perda
+      else if (this.riskMode === 'MODERADO') {
+        const targetRecovery = this.totalLossAccumulated * 1.25; // Recupera + 25%
+        nextStake = targetRecovery / PAYOUT_RATE;
+        nextStake = Math.round(nextStake * 100) / 100;
+        if (logger) {
+          logger.log(
+            `⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`,
+          );
+        }
+      }
+      // 3. AGRESSIVO: Infinito + 50% de Lucro sobre a perda
+      else if (this.riskMode === 'AGRESSIVO') {
+        const targetRecovery = this.totalLossAccumulated * 1.50; // Recupera + 50%
+        nextStake = targetRecovery / PAYOUT_RATE;
+        nextStake = Math.round(nextStake * 100) / 100;
+        if (logger) {
+          logger.log(
+            `🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`,
+          );
+        }
+      }
+    }
+    // --- LÓGICA DE SOROS (APÓS WIN) ---
+    else if (this.lastResultWasWin) {
+      // Soros Nível 1 Universal: Reinveste o lucro da anterior
       nextStake = baseStake + lastProfit;
-      // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
-        logger.log(`🚀 [SOROS] Ativado! Entrada: $${nextStake.toFixed(2)}`);
+        logger.log(`🚀 [SOROS] Ativado! Entrada potencializada: $${nextStake.toFixed(2)}`);
       }
-    } else {
-      nextStake = baseStake; // Volta para mão fixa após loss
-      // ✅ Arredondar para 2 casas decimais
-      nextStake = Math.round(nextStake * 100) / 100;
     }
 
-    // 2. Verificação de Stop Loss de Precisão
-    const currentLoss = this.initialBalance - currentBalance;
-    const profitAccumulated = this.maxBalance - this.initialBalance;
-
-    // [NOVO] Gatilho de Ativação do Stop Blindado (25% da Meta)
+    // --- GESTÃO DE LIMITES (STOP LOSS vs BLINDADO) ---
+    // Definição: Quem manda agora? Stop Normal ou Blindado?
+    const currentProfit = currentBalance - this.initialBalance;
+    const profitAccumulatedAtPeak = this.maxBalance - this.initialBalance;
     const activationTrigger = this.profitTarget * 0.25;
+    let minAllowedBalance = 0.0;
+    let limitType = '';
 
-    // Se Stop Blindado E atingiu o gatilho de 25%
-    let isBlindadoActive = false;
-    let dynamicLimit: number;
-    
-    if (this.useBlindado && profitAccumulated >= activationTrigger) {
-      isBlindadoActive = true;
-      // Garante 50% do lucro acumulado (Trava de Lucro Real)
-      dynamicLimit = -(profitAccumulated * 0.5);
-      if (logger) {
+    // Verifica gatilho do Blindado (25% da meta atingida no pico)
+    if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger) {
+      this._blindadoActive = true;
+    }
+
+    if (this._blindadoActive) {
+      // MODO BLINDADO ATIVO: O Stop Loss Normal é DESABILITADO.
+      // Regra: Garantir 50% do lucro máximo atingido.
+      const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
+      minAllowedBalance = this.initialBalance + guaranteedProfit;
+      limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
+
+      // Mensagem informativa (apenas quando muda o pico)
+      if (currentBalance === this.maxBalance && logger) {
         logger.log(
-          `🛡️ [STOP BLINDADO] Lucro Pico: $${profitAccumulated.toFixed(2)} | Lucro Garantido: $${Math.abs(dynamicLimit).toFixed(2)}`,
+          `🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`,
         );
       }
     } else {
-      // Se não atingiu o gatilho, mantém o Stop Loss fixo original
-      dynamicLimit = this.stopLossLimit;
+      // MODO NORMAL: Vale o Stop Loss definido pelo usuário.
+      minAllowedBalance = this.initialBalance - this.stopLossLimit;
+      limitType = 'STOP LOSS NORMAL';
     }
 
-    // Verifica se a próxima entrada vai estourar o limite
-    const minAllowedBalance = this.initialBalance - dynamicLimit;
+    // --- AJUSTE DE PRECISÃO (VALIDAÇÃO FINAL) ---
+    // Esta lógica garante que a stake NUNCA viole o limite ativo (seja ele Normal ou Blindado).
     const potentialBalanceAfterLoss = currentBalance - nextStake;
-
     if (potentialBalanceAfterLoss < minAllowedBalance) {
-      // Reduz a mão para não furar o chão
+      // Se a perda dessa entrada fizer cruzar a linha vermelha, ajustamos a stake.
       let adjustedStake = currentBalance - minAllowedBalance;
-      // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
       adjustedStake = Math.round(adjustedStake * 100) / 100;
-      
-      // ✅ CORREÇÃO: Se adjustedStake < 0.35, usar o valor base original (permitir operação)
-      // O stop loss será verificado APÓS a perda, não antes
+
+      // Se a stake ajustada for menor que o mínimo da corretora (0.35), paramos.
       if (adjustedStake < 0.35) {
         if (logger) {
-          if (isBlindadoActive) {
+          if (this._blindadoActive) {
             logger.log(
-              `⚠️ [RISCO] Stake ajustado ($${adjustedStake.toFixed(2)}) abaixo do mínimo. Usando valor base ($${baseStake.toFixed(2)}). Stop loss será verificado após perda.`,
+              `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
           } else {
-            logger.log(
-              `⚠️ [RISCO] Stake ajustado ($${adjustedStake.toFixed(2)}) abaixo do mínimo. Usando valor base ($${baseStake.toFixed(2)}). Stop loss será verificado após perda.`,
-            );
+            logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
           }
         }
-        // ✅ Retornar valor base ao invés de 0 (permitir operação)
-        return Math.round(baseStake * 100) / 100;
+        return 0.0; // Sinal de parada
       }
-      
-      if (adjustedStake > 0) {
-        if (logger) {
-          if (isBlindadoActive) {
-            logger.log(
-              `⚠️ [RISCO] Stake ajustado de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)} para garantir LUCRO BLINDADO.`,
-            );
-          } else {
-            logger.log(
-              `⚠️ [RISCO] Stake ajustado de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar STOP LOSS NORMAL.`,
-            );
-          }
-        }
-        return adjustedStake;
+
+      if (logger) {
+        logger.log(
+          `⚠️ [PRECISÃO] Stake ajustada de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)}`,
+        );
+        logger.log(
+          ` • Motivo: Respeitar ${limitType} (Piso: $${minAllowedBalance.toFixed(2)})`,
+        );
       }
+      return adjustedStake;
     }
 
-    // ✅ Garantir que o retorno sempre tem 2 casas decimais
     return Math.round(nextStake * 100) / 100;
   }
 }
@@ -559,171 +622,186 @@ export class OrionStrategy implements IStrategy {
   }
 
   /**
-   * ✅ NOVO: Check Signal - Estratégia Híbrida Dual-Core (Versão Final Integrada)
-   * Integra lógica híbrida (Sequência/Reversão) com validadores ZENIX e gestão de risco de precisão
+   * ✅ ORION Master Blueprint: check_signal
+   * Retorna 'EVEN', 'ODD' ou None.
+   * Recebe risk_manager para verificar Defesa Automática.
    */
   private check_signal(
     state: VelozUserState | ModeradoUserState | PrecisoUserState,
     currentMode: 'veloz' | 'moderado' | 'preciso',
+    riskManager?: RiskManager,
   ): DigitParity | null {
-    // Precisa de histórico mínimo para calcular aceleração
     if (this.ticks.length < 20) return null;
 
-    // =================================================================
-    // 🚨 MODO DEFENSIVO AUTOMÁTICO
-    // =================================================================
-    const consecutiveLosses = state.consecutive_losses || 0;
+    // 1. Defesa Automática (Auto-Defense)
+    const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
     let effectiveMode: 'veloz' | 'moderado' | 'preciso' = currentMode;
-    
-    // ✅ Apenas forçar modo PRECISO se tiver 3+ losses, mas não logar aqui
-    // (o log já é feito quando a defesa é ativada no processOrionResult)
+
     if (consecutiveLosses >= 3) {
       effectiveMode = 'preciso';
+      this.logger.log(
+        `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
+      );
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'alerta',
+        `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
+      );
     }
 
-    // 1. Configuração dos Modos (A "Calibragem")
-    let THRESHOLD_PCT: number;
-    let THRESHOLD_ACCEL: number;
+    // 2. Calibragem dos Modos (ATUALIZADO)
+    let META_PCT: number;
+    let META_ACCEL: number;
     let ALLOW_REVERSAL: boolean;
     let USE_PING_PONG: boolean;
-    let MIN_SEQUENCE: number;
+    let MIN_SEQ: number;
 
     if (effectiveMode === 'veloz') {
-      THRESHOLD_PCT = 0.55;
-      THRESHOLD_ACCEL = -0.10;
+      META_PCT = 0.51; // 51% Dominância (Volume Máximo)
+      META_ACCEL = -0.10; // Aceita leve queda
       ALLOW_REVERSAL = true;
       USE_PING_PONG = true;
-      MIN_SEQUENCE = 0; // Não exige sequência mínima
-    } else if (effectiveMode === 'moderado') {
-      THRESHOLD_PCT = 0.60;
-      THRESHOLD_ACCEL = 0.0;
+      MIN_SEQ = 0;
+    } else if (effectiveMode === 'moderado' || effectiveMode === 'normal') {
+      META_PCT = 0.55; // 55% Dominância (Equilíbrio)
+      META_ACCEL = 0.0; // Estável
       ALLOW_REVERSAL = true;
       USE_PING_PONG = false;
-      MIN_SEQUENCE = 3; // [ZENIX] Exige confirmação de mini-sequência
-    } else { // preciso
-      THRESHOLD_PCT = 0.70;
-      THRESHOLD_ACCEL = 0.05;
+      MIN_SEQ = 3; // Exige 3 iguais
+    } else {
+      // PRECISO
+      META_PCT = 0.65; // 65% Dominância (Sniper)
+      META_ACCEL = 0.05; // Crescente
       ALLOW_REVERSAL = false;
       USE_PING_PONG = false;
-      MIN_SEQUENCE = 4; // [ZENIX] Exige sequência forte confirmada
+      MIN_SEQ = 4; // Exige 4 iguais
     }
 
-    // 2. Preparação dos Dados
+    // 3. Análise de Dados
     const lastDigits = this.ticks.map(t => t.digit);
-    
-    // [NOVO] Filtro Anti-Ping-Pong
+
+    // Filtro Anti-Ping-Pong (Só no Veloz)
     if (USE_PING_PONG && this.isPingPong(lastDigits)) {
       this.logger.log(`⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`);
-      this.saveOrionLog(state.userId, this.symbol, 'info', `⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`);
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'info',
+        `⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`,
+      );
       return null;
     }
 
-    // Análises Estatísticas (4 Pilares Integrados)
+    // Estatísticas
     const last10 = lastDigits.slice(-10);
     const last20 = lastDigits.slice(-20);
-    const evens = last10.filter(d => d % 2 === 0);
-    const evenPct = evens.length / 10;
-    const last20Evens = last20.filter(d => d % 2 === 0);
-    const evenAccel = evenPct - (last20Evens.length / 20);
-
-    // [ZENIX] Indicador de Sequência
+    const evens10 = last10.filter(d => d % 2 === 0).length;
+    const pctEven = evens10 / 10.0;
+    const evens20 = last20.filter(d => d % 2 === 0).length;
+    const accelEven = pctEven - evens20 / 20.0;
     const seqCount = this.getRepeatedSequenceCount(lastDigits);
-    const lastDigitIsEven = (lastDigits[lastDigits.length - 1] % 2 === 0);
+    const lastIsEven = lastDigits[lastDigits.length - 1] % 2 === 0;
 
-    // 3. Decisão Híbrida (Dual-Core)
-    // --- CENÁRIO: PAR DOMINANDO ---
-    if (evenPct >= THRESHOLD_PCT) {
-      // Modo Sequência (Surfando a Onda)
-      if (evenAccel >= THRESHOLD_ACCEL) {
-        // [ZENIX] Validação de Sequência para Modos Rígidos
-        if (MIN_SEQUENCE > 0) {
-          if (!lastDigitIsEven || seqCount < MIN_SEQUENCE) {
-            // Falhou na validação ZENIX (Tendência existe mas o tick atual contradiz)
-            return null;
+    // 4. Tomada de Decisão
+    // --- PAR DOMINANDO ---
+    if (pctEven >= META_PCT) {
+      // Aposta a Favor (Sequência)
+      if (accelEven >= META_ACCEL) {
+        // Validação ZENIX (Sequência Mínima)
+        if (MIN_SEQ > 0) {
+          if (!lastIsEven || seqCount < MIN_SEQ) {
+            return null; // Falhou na validação
           }
         }
 
-        // Cálculo de Força do Sinal
-        const strengthVal = evenPct * 100;
-        let strengthLabel: string;
-        if (strengthVal >= 76) strengthLabel = 'ALTA';
-        else if (strengthVal >= 65) strengthLabel = 'MÉDIA';
-        else strengthLabel = 'BAIXA';
+        // Força do Sinal
+        const strength = pctEven * 100;
+        const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
 
-        // [LOG DE AUDITORIA]
         this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-        this.logger.log(` • Dominância Par: ${(evenPct * 100).toFixed(0)}% (Meta: >= ${(THRESHOLD_PCT * 100).toFixed(0)}%) ✅`);
-        this.logger.log(` • Aceleração: ${evenAccel.toFixed(2)} (Meta: >= ${THRESHOLD_ACCEL.toFixed(2)}) ✅`);
-        this.logger.log(` • Sequência: ${seqCount}x PAR (Meta: >= ${MIN_SEQUENCE}) ✅`);
-        this.logger.log(` • Força do Sinal: ${strengthLabel} (${strengthVal.toFixed(1)}%)`);
+        this.logger.log(
+          ` • Dominância Par: ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅`,
+        );
+        this.logger.log(
+          ` • Aceleração: ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅`,
+        );
+        this.logger.log(` • Sequência: ${seqCount}x PAR (Meta: ${MIN_SEQ}) ✅`);
+        this.logger.log(` • Força: ${label} (${strength.toFixed(1)}%)`);
         this.logger.log(`🌊 [DECISÃO] Critérios atendidos. Entrada: EVEN`);
-        
-        this.saveOrionLog(state.userId, this.symbol, 'sinal', 
-          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Par: ${(evenPct * 100).toFixed(0)}% | Aceleração: ${evenAccel.toFixed(2)} | Sequência: ${seqCount}x PAR | Força: ${strengthLabel} | Entrada: EVEN`);
-        
+
+        this.saveOrionLog(
+          state.userId,
+          this.symbol,
+          'analise',
+          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]\n • Dominância Par: ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅\n • Aceleração: ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅\n • Sequência: ${seqCount}x PAR (Meta: ${MIN_SEQ}) ✅\n • Força: ${label} (${strength.toFixed(1)}%)\n🌊 [DECISÃO] Critérios atendidos. Entrada: EVEN`,
+        );
+
         return 'PAR';
       }
-      // Modo Reversão (Aposta Contra)
-      else if (ALLOW_REVERSAL && evenAccel < 0) {
-        // [ZENIX] Na reversão, queremos que a sequência atual esteja "cansada" (>= 5)
+      // Aposta Contra (Reversão)
+      else if (ALLOW_REVERSAL && accelEven < 0) {
         if (seqCount >= 5) {
-          this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-          this.logger.log(` • Dominância Par: ${(evenPct * 100).toFixed(0)}% (Saturação)`);
-          this.logger.log(` • Sequência: ${seqCount}x PAR (Fadiga detectada) ✅`);
-          this.logger.log(`🔄 [DECISÃO] Saturação detectada. Entrada: ODD`);
-          
-          this.saveOrionLog(state.userId, this.symbol, 'sinal', 
-            `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Par: ${(evenPct * 100).toFixed(0)}% (Saturação) | Sequência: ${seqCount}x PAR (Fadiga) | Entrada: ODD`);
-          
-        return 'IMPAR';
+          // Fadiga ZENIX
+          this.logger.log(`🔄 [DECISÃO] Saturação Par (${seqCount}x). Entrada: ODD`);
+          this.saveOrionLog(
+            state.userId,
+            this.symbol,
+            'sinal',
+            `🔄 [DECISÃO] Saturação Par (${seqCount}x). Entrada: ODD`,
+          );
+          return 'IMPAR';
         }
       }
     }
-    // --- CENÁRIO: ÍMPAR DOMINANDO ---
-    else if (evenPct <= (1.0 - THRESHOLD_PCT)) {
-      const oddPct = 1.0 - evenPct;
-      const oddAccel = -evenAccel;
-      
-      // Modo Sequência
-      if (oddAccel >= THRESHOLD_ACCEL) {
-        // [ZENIX] Validação de Sequência
-        if (MIN_SEQUENCE > 0) {
-          if (lastDigitIsEven || seqCount < MIN_SEQUENCE) {
-            // lastDigitIsEven é True se for Par, queremos Ímpar
+    // --- ÍMPAR DOMINANDO ---
+    else if (pctEven <= 1.0 - META_PCT) {
+      const pctOdd = 1.0 - pctEven;
+      const accelOdd = -accelEven;
+
+      // Aposta a Favor
+      if (accelOdd >= META_ACCEL) {
+        if (MIN_SEQ > 0) {
+          if (lastIsEven || seqCount < MIN_SEQ) {
+            // lastIsEven=True é Par
             return null;
           }
         }
 
-        const strengthVal = oddPct * 100;
-        let strengthLabel: string;
-        if (strengthVal >= 76) strengthLabel = 'ALTA';
-        else if (strengthVal >= 65) strengthLabel = 'MÉDIA';
-        else strengthLabel = 'BAIXA';
+        const strength = pctOdd * 100;
+        const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
 
         this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-        this.logger.log(` • Dominância Ímpar: ${(oddPct * 100).toFixed(0)}% (Meta: >= ${(THRESHOLD_PCT * 100).toFixed(0)}%) ✅`);
-        this.logger.log(` • Aceleração: ${oddAccel.toFixed(2)} (Meta: >= ${THRESHOLD_ACCEL.toFixed(2)}) ✅`);
-        this.logger.log(` • Sequência: ${seqCount}x ÍMPAR (Meta: >= ${MIN_SEQUENCE}) ✅`);
-        this.logger.log(` • Força do Sinal: ${strengthLabel} (${strengthVal.toFixed(1)}%)`);
+        this.logger.log(
+          ` • Dominância Ímpar: ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅`,
+        );
+        this.logger.log(
+          ` • Aceleração: ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅`,
+        );
+        this.logger.log(` • Sequência: ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ}) ✅`);
+        this.logger.log(` • Força: ${label} (${strength.toFixed(1)}%)`);
         this.logger.log(`🌊 [DECISÃO] Critérios atendidos. Entrada: ODD`);
-        
-        this.saveOrionLog(state.userId, this.symbol, 'sinal', 
-          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Ímpar: ${(oddPct * 100).toFixed(0)}% | Aceleração: ${oddAccel.toFixed(2)} | Sequência: ${seqCount}x ÍMPAR | Força: ${strengthLabel} | Entrada: ODD`);
-        
+
+        this.saveOrionLog(
+          state.userId,
+          this.symbol,
+          'analise',
+          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]\n • Dominância Ímpar: ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅\n • Aceleração: ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅\n • Sequência: ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ}) ✅\n • Força: ${label} (${strength.toFixed(1)}%)\n🌊 [DECISÃO] Critérios atendidos. Entrada: ODD`,
+        );
+
         return 'IMPAR';
       }
-      // Modo Reversão
-      else if (ALLOW_REVERSAL && oddAccel < 0) {
+      // Aposta Contra
+      else if (ALLOW_REVERSAL && accelOdd < 0) {
         if (seqCount >= 5) {
-          this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-          this.logger.log(` • Dominância Ímpar: ${(oddPct * 100).toFixed(0)}% (Saturação)`);
-          this.logger.log(` • Sequência: ${seqCount}x ÍMPAR (Fadiga detectada) ✅`);
-          this.logger.log(`🔄 [DECISÃO] Saturação detectada. Entrada: EVEN`);
-          
-          this.saveOrionLog(state.userId, this.symbol, 'sinal', 
-            `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}] Dominância Ímpar: ${(oddPct * 100).toFixed(0)}% (Saturação) | Sequência: ${seqCount}x ÍMPAR (Fadiga) | Entrada: EVEN`);
-          
-        return 'PAR';
+          this.logger.log(`🔄 [DECISÃO] Saturação Ímpar (${seqCount}x). Entrada: EVEN`);
+          this.saveOrionLog(
+            state.userId,
+            this.symbol,
+            'sinal',
+            `🔄 [DECISÃO] Saturação Ímpar (${seqCount}x). Entrada: EVEN`,
+          );
+          return 'PAR';
         }
       }
     }
@@ -831,7 +909,8 @@ export class OrionStrategy implements IStrategy {
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
           // Validar se a direção do martingale ainda é válida com filtros do modo PRECISO
-          const sinalPreciso = this.check_signal(state, 'preciso');
+          const riskManager = this.riskManagers.get(userId);
+          const sinalPreciso = this.check_signal(state, 'preciso', riskManager);
           if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
             // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
             const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -906,7 +985,8 @@ export class OrionStrategy implements IStrategy {
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
       // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo veloz
       const modoSinal = defesaAtiva ? 'preciso' : 'veloz';
-      const sinal = this.check_signal(state, modoSinal);
+      const riskManager = this.riskManagers.get(userId);
+      const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) {
         // Log quando não gera sinal (a cada 50 ticks para não poluir)
         if (this.ticks.length % 50 === 0) {
@@ -1123,7 +1203,8 @@ export class OrionStrategy implements IStrategy {
 
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
-          const sinalPreciso = this.check_signal(state, 'preciso');
+          const riskManager = this.riskManagers.get(userId);
+          const sinalPreciso = this.check_signal(state, 'preciso', riskManager);
           if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
             // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
             const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -1182,7 +1263,8 @@ export class OrionStrategy implements IStrategy {
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
       // Se defesa está ativa, usar filtros do modo PRECISO mesmo no modo moderado
       const modoSinal = defesaAtiva ? 'preciso' : 'moderado';
-      const sinal = this.check_signal(state, modoSinal);
+      const riskManager = this.riskManagers.get(userId);
+      const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) continue;
 
       this.logger.log(
@@ -1363,7 +1445,8 @@ export class OrionStrategy implements IStrategy {
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
-          const sinalPreciso = this.check_signal(state, 'preciso');
+          const riskManager = this.riskManagers.get(userId);
+          const sinalPreciso = this.check_signal(state, 'preciso', riskManager);
           if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
             // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
             const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -1401,7 +1484,8 @@ export class OrionStrategy implements IStrategy {
       }
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
-      const sinal = this.check_signal(state, 'preciso');
+      const riskManager = this.riskManagers.get(userId);
+      const sinal = this.check_signal(state, 'preciso', riskManager);
       if (!sinal) continue;
 
       this.logger.log(
@@ -1621,7 +1705,8 @@ export class OrionStrategy implements IStrategy {
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
         // ✅ Se defesa está ativa, validar a direção do martingale com filtros do modo PRECISO
         if (defesaAtiva) {
-          const sinalPreciso = this.check_signal(state, 'preciso');
+          const riskManager = this.riskManagers.get(userId);
+          const sinalPreciso = this.check_signal(state, 'preciso', riskManager);
           if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
             // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
             const proximaEntrada = (state.martingaleStep || 0) + 1;
@@ -1661,7 +1746,21 @@ export class OrionStrategy implements IStrategy {
 
       const sinal = gerarSinalZenix(this.ticks, LENTA_CONFIG, 'LENTA');
       if (!sinal || !sinal.sinal) {
-        this.logger.debug(`[ORION][Lenta][${userId}] ⚠️ Nenhum sinal gerado (confiança insuficiente ou desequilíbrio baixo) | Ticks: ${this.ticks.length}`);
+        // ✅ Log mais detalhado para diagnóstico
+        const ultimosTicks = this.ticks.slice(-LENTA_CONFIG.amostraInicial);
+        const pares = ultimosTicks.filter(t => t.digit % 2 === 0).length;
+        const impares = ultimosTicks.length - pares;
+        const percPar = (pares / ultimosTicks.length) * 100;
+        const percImpar = (impares / ultimosTicks.length) * 100;
+        const desequilibrio = Math.abs(percPar - percImpar) / 100;
+        
+        const motivo = desequilibrio < LENTA_CONFIG.desequilibrioMin 
+          ? `Desequilíbrio insuficiente: ${(desequilibrio * 100).toFixed(1)}% < ${(LENTA_CONFIG.desequilibrioMin * 100).toFixed(0)}% (mínimo)`
+          : `Confiança insuficiente (requer ≥${(LENTA_CONFIG.confianciaMin * 100).toFixed(0)}%)`;
+        
+        this.logger.debug(
+          `[ORION][Lenta][${userId}] ⚠️ Nenhum sinal gerado | ${motivo} | Distribuição: PAR ${percPar.toFixed(1)}% / ÍMPAR ${percImpar.toFixed(1)}% | Ticks: ${this.ticks.length}`
+        );
         continue;
       }
 
@@ -1832,9 +1931,16 @@ export class OrionStrategy implements IStrategy {
         // ✅ [NOVO] Criar/obter RiskManager para este usuário
         if (!this.riskManagers.has(state.userId)) {
           const useBlindado = config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined;
+          // Mapear modoMartingale para riskMode
+          const modoMartingale = state.modoMartingale || 'conservador';
+          const riskMode = modoMartingale.toUpperCase() === 'CONSERVADOR' 
+            ? 'CONSERVADOR' 
+            : modoMartingale.toUpperCase() === 'MODERADO' 
+            ? 'MODERADO' 
+            : 'AGRESSIVO';
           this.riskManagers.set(
             state.userId,
-            new RiskManager(capitalInicial, lossLimit, profitTarget, useBlindado),
+            new RiskManager(capitalInicial, lossLimit, profitTarget, riskMode, useBlindado),
           );
         }
         
@@ -2087,27 +2193,38 @@ export class OrionStrategy implements IStrategy {
     }
     
     // ✅ [NOVO] Aplicar RiskManager para ajustar stake (Stop Loss de Precisão)
+    // O RiskManager aplica sua própria lógica de recuperação baseada em consecutiveLosses
+    // e também verifica Stop Loss Normal vs Blindado
     const riskManager = this.riskManagers.get(state.userId);
     if (riskManager) {
+      const baseStake = state.apostaInicial || state.capital || 0.35;
       const lastProfit = state.ultimoLucro || 0;
+      // RiskManager calcula stake incluindo recuperação se necessário e verifica Stop Loss
       const adjustedStake = riskManager.calculateStake(
         state.capital,
-        stakeAmount,
+        baseStake,
         lastProfit,
         this.logger,
       );
       if (adjustedStake === 0) {
-        // ✅ CORREÇÃO: Se RiskManager retornou 0, usar valor base mesmo assim
-        // O stop loss será verificado APÓS a perda (no processOrionResult)
+        // ✅ Se RiskManager retornou 0, parar operações (Stop Loss atingido)
         this.logger.warn(
-          `[ORION][${mode}][${state.userId}] ⚠️ RiskManager retornou 0. Usando valor base ($${stakeAmount.toFixed(2)}). Stop loss será verificado após perda.`,
+          `[ORION][${mode}][${state.userId}] 🚨 RiskManager bloqueou operação. Stop Loss atingido.`,
         );
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ RiskManager bloqueou stake. Usando valor base ($${stakeAmount.toFixed(2)}). Stop loss será verificado após perda.`);
-        // Continuar com stakeAmount original - não bloquear
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 RiskManager bloqueou operação. Stop Loss atingido.`);
+        return; // Parar operação
       } else {
-        stakeAmount = adjustedStake;
+        // Se há martingale ativo (entry > 1), usar o stake calculado pelo martingale
+        // mas ajustado pelo RiskManager conforme Stop Loss
+        if (entry > 1) {
+          // Martingale: usar o maior entre o calculado pelo martingale e o do RiskManager
+          // (RiskManager pode ter ajustado para respeitar Stop Loss)
+          stakeAmount = Math.max(stakeAmount, adjustedStake);
+        } else {
+          // Primeira entrada: usar stake calculado pelo RiskManager (inclui Soros se aplicável)
+          stakeAmount = adjustedStake;
+        }
       }
-      stakeAmount = adjustedStake;
       // ✅ Garantir arredondamento após ajuste do RiskManager
       stakeAmount = Math.round(stakeAmount * 100) / 100;
     }
@@ -2961,7 +3078,7 @@ export class OrionStrategy implements IStrategy {
     // ✅ [NOVO] Atualizar RiskManager após cada operação
     const riskManager = this.riskManagers.get(state.userId);
     if (riskManager) {
-      riskManager.updateResult(profit);
+      riskManager.updateResult(profit, stakeAmount);
     }
     
     // ✅ Sempre armazenar a última aposta usada (necessário para cálculo do martingale agressivo)
