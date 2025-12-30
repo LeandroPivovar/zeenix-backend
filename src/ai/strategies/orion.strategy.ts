@@ -55,6 +55,7 @@ export interface ModeradoUserState {
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+  defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
   // ✅ PREVISÃO: Campos para rastrear trade pendente e fazer previsão
   pendingTradeId?: number | null;
   pendingTradeOperation?: DigitParity | null; // PAR ou IMPAR
@@ -85,6 +86,7 @@ export interface PrecisoUserState {
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
+  defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
 }
 
 // ============================================
