@@ -126,7 +126,7 @@ function calcularApostaComSoros(
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * Conforme documentação completa da estratégia ZENIX v2.0
  * 
- * CONSERVADOR: Próxima Aposta = Perda Acumulada / payout (break-even)
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada (apenas recuperar, sem lucro)
  * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.25) / payout (recuperar 100% das perdas + 25% de lucro)
  * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.50) / payout (recuperar 100% das perdas + 50% de lucro)
  * 
@@ -151,8 +151,9 @@ function calcularProximaAposta(
   switch (modo) {
     case 'conservador':
       // Meta: recuperar 100% das perdas (break-even)
-      // Fórmula: entrada_próxima = perdas_totais / payout
-      aposta = perdasTotais / PAYOUT;
+      // Fórmula: entrada_próxima = perdas_totais
+      // Quando ganhar, o retorno será: perdas_totais * payout ≈ perdas_totais (recuperação sem lucro)
+      aposta = perdasTotais;
       break;
     case 'moderado':
       // Meta: recuperar 100% das perdas + 25% de lucro
