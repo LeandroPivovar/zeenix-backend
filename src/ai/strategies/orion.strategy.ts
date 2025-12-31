@@ -307,11 +307,11 @@ class RiskManager {
     // Definição: Quem manda agora? Stop Normal ou Blindado?
     const currentProfit = currentBalance - this.initialBalance;
     const profitAccumulatedAtPeak = this.maxBalance - this.initialBalance;
-    const activationTrigger = this.profitTarget * 0.25;
+    const activationTrigger = this.profitTarget * 0.40;
     let minAllowedBalance = 0.0;
     let limitType = '';
 
-    // Verifica gatilho do Blindado (25% da meta atingida no pico)
+    // Verifica gatilho do Blindado (40% da meta atingida no pico)
     if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger) {
       this._blindadoActive = true;
     }
@@ -1514,7 +1514,7 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0 - Dynamic Trailing)
-        // Ativar se atingir 25% da meta. Proteger 50% do lucro máximo (PICO).
+        // Ativar se atingir 40% da meta. Proteger 50% do lucro máximo (PICO).
         if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           let profitPeak = parseFloat(config.profitPeak) || 0;
 
@@ -1524,7 +1524,7 @@ export class OrionStrategy implements IStrategy {
             profitPeak = lucroAtual;
 
             // ✅ Log quando profit peak aumenta
-            if (profitPeak >= profitTarget * 0.25) {
+            if (profitPeak >= profitTarget * 0.40) {
               const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
               const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
               const stopBlindado = capitalInicial + protectedAmount;
@@ -1549,8 +1549,8 @@ export class OrionStrategy implements IStrategy {
             ).catch(err => this.logger.error(`[ORION] Erro ao atualizar profit_peak:`, err));
           }
 
-          // Ativar apenas se atingiu 25% da meta
-          if (profitPeak >= profitTarget * 0.25) {
+          // Ativar apenas se atingiu 40% da meta
+          if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
             const fatorProtecao = stopBlindadoPercent / 100;
 
@@ -1565,7 +1565,7 @@ export class OrionStrategy implements IStrategy {
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] 🛡️✅ STOP BLINDADO ATIVADO! | ` +
                 `Meta: $${profitTarget.toFixed(2)} | ` +
-                `25% Meta: $${(profitTarget * 0.25).toFixed(2)} | ` +
+                `40% Meta: $${(profitTarget * 0.40).toFixed(2)} | ` +
                 `Pico Atual: $${profitPeak.toFixed(2)} | ` +
                 `Protegendo: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
                 `Stop Level: $${stopBlindado.toFixed(2)}`
@@ -1652,8 +1652,8 @@ export class OrionStrategy implements IStrategy {
         // ✅ Verificar Stop Loss Blindado para Martingale
         if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined && entry > 1) {
           const profitPeak = Math.max(parseFloat(config.profitPeak) || 0, lucroAtual);
-          // Só ativa se atingiu 25% da meta
-          if (profitPeak >= profitTarget * 0.25) {
+          // Só ativa se atingiu 40% da meta
+          if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
             const stopBlindado = capitalInicial + protectedAmount;
@@ -1879,8 +1879,8 @@ export class OrionStrategy implements IStrategy {
         // 2. Verificar Stop Loss Blindado
         if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           const profitPeak = parseFloat(config.profitPeak) || 0;
-          // Só ativa se atingiu 25% da meta
-          if (profitPeak >= profitTarget * 0.25) {
+          // Só ativa se atingiu 40% da meta
+          if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
             const stopBlindado = capitalInicial + protectedAmount;
@@ -3041,7 +3041,7 @@ export class OrionStrategy implements IStrategy {
             profitPeak = lucroAtual;
 
             // ✅ Log quando profit peak aumenta após vitória
-            if (profitPeak >= profitTarget * 0.25) {
+            if (profitPeak >= profitTarget * 0.40) {
               const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
               const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
               const stopBlindado = capitalInicial + protectedAmount;
@@ -3067,7 +3067,7 @@ export class OrionStrategy implements IStrategy {
           }
 
           // Check Stop
-          if (profitPeak >= profitTarget * 0.25) {
+          if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const fatorProtecao = stopBlindadoPercent / 100;
             const protectedAmount = profitPeak * fatorProtecao;
@@ -3124,7 +3124,7 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Verificar STOP-LOSS BLINDADO conforme documentação ORION Master Blueprint
-        // Regra: Ativa quando atinge 25% da meta, protege 50% do LUCRO MÁXIMO ATINGIDO (pico)
+        // Regra: Ativa quando atinge 40% da meta, protege 50% do LUCRO MÁXIMO ATINGIDO (pico)
         const riskManager = this.riskManagers.get(state.userId);
         if (riskManager && lucroAtual > 0 && profitTarget > 0) {
           // Usar o RiskManager para calcular corretamente (ele rastreia o pico máximo)
@@ -3132,9 +3132,9 @@ export class OrionStrategy implements IStrategy {
           const baseStake = state.apostaInicial || 0.35;
           const lastProfit = profit;
 
-          // Verificar se o Stop Blindado está ativo (atingiu 25% da meta)
+          // Verificar se o Stop Blindado está ativo (atingiu 40% da meta)
           // O RiskManager rastreia o pico máximo internamente
-          const activationTrigger = profitTarget * 0.25; // 25% da meta
+          const activationTrigger = profitTarget * 0.40; // 40% da meta
 
           // ✅ Log informativo do status do Stop Blindado
           const percentualAteAtivacao = (lucroAtual / activationTrigger) * 100;
@@ -3142,7 +3142,7 @@ export class OrionStrategy implements IStrategy {
             // Ainda não ativou - mostrar progresso
             this.logger.log(
               `[ORION][${mode}][${state.userId}] 🛡️ Stop Blindado: Lucro atual $${lucroAtual.toFixed(2)} | ` +
-              `Meta para ativar: $${activationTrigger.toFixed(2)} (25% de $${profitTarget.toFixed(2)}) | ` +
+              `Meta para ativar: $${activationTrigger.toFixed(2)} (40% de $${profitTarget.toFixed(2)}) | ` +
               `Progresso: ${percentualAteAtivacao.toFixed(1)}%`,
             );
             this.saveOrionLog(
@@ -3153,7 +3153,7 @@ export class OrionStrategy implements IStrategy {
             );
           }
 
-          // O RiskManager já tem a lógica correta: verifica 25% da meta e protege 50% do pico
+          // O RiskManager já tem a lógica correta: verifica 40% da meta e protege 50% do pico
           const adjustedStake = riskManager.calculateStake(
             currentBalance,
             baseStake,
