@@ -1433,6 +1433,7 @@ export class OrionStrategy implements IStrategy {
   ): Promise<void> {
     // ✅ Declarar tradeId no escopo da função para ser acessível no catch
     let tradeId: number | null = null;
+    let forcedStake: number | null = null; // ✅ Variável para forçar limite de stake (stop loss)
 
     if (state.isOperationActive) {
       this.logger.warn(`[ORION][${mode}] Usuário ${state.userId} já possui operação ativa`);
@@ -1627,28 +1628,14 @@ export class OrionStrategy implements IStrategy {
               // Usuário pediu "reajuste seu valor".
               // Se houver saldo positivo (> 0.35), usamos o saldo restante. Senão reiniciamos.
               if (saldoDisponivel >= 0.35) {
-                this.logger.warn(`[ORION] 🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel}`);
-                // Modificar state.perdaAcumulada para gerar stake menor? Não, apenas usar stake menor.
-                // Mas aqui é apenas verificação. Precisamos passar essa "instrução" adiante ou bloquear.
-                // Vamos bloquear o Martingale e usar o stake ajustado como aposta base?
-                // Melhor: avisar e deixar o fluxo normal calcular, mas vamos interceptar depois?
-                // Não, aqui estamos dentro do bloco que decide se usa martingale.
+                this.logger.warn(`[ORION] 🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel.toFixed(2)}`);
+                this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ Ajustando martingale para respeitar Stop Blindado: $${stakeMartingale.toFixed(2)} ➔ $${saldoDisponivel.toFixed(2)}`);
 
-                // DECISÃO: Resetar para aposta base (segurança) E se possível usar o saldo restante se for < base
-                // Mas o código existente apenas reseta para aposta base.
+                // ✅ NÃO resetar o estado do martingale, apenas limitar o valor da aposta
+                // Isso garante que se ganhar, o sistema reconheça como vitória de martingale e reset para aposta inicial
+                forcedStake = saldoDisponivel;
 
-                // Vamos resetar para M0 e usar aposta base (ou ajustada se a base também for muito alta)
-                this.logger.warn(
-                  `[ORION][${mode}][${state.userId}] 🛡️ Martingale ultrapassaria Stop Blindado. Resetando para aposta base. Stake calc: ${stakeMartingale.toFixed(2)}, Disp: ${saldoDisponivel.toFixed(2)}`
-                );
-                this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ Martingale ultrapassaria Stop Blindado. Usando aposta segura.`);
-
-                state.perdaAcumulada = 0;
-                state.ultimaDirecaoMartingale = null;
-                state.martingaleStep = 0;
-                if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
-                entry = 1;
-                // O fluxo seguirá para usar aposta base.
+                // O fluxo segue para execução com o novo stakeAmount
               } else {
                 // Sem saldo nem para aposta mínima -> Stop Loss será acionado na próxima verificação ou agora
                 // Se blocked here, we return.
@@ -1797,6 +1784,14 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(
         `[ORION][${mode}][${state.userId}] 🔄 MARTINGALE | Entrada ${entry} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | Stake calculado: $${stakeAmount.toFixed(2)}`,
       );
+    }
+
+    // ✅ Aplicar limite forçado (se houver) decorrente do Stop Loss Blindado/Normal
+    if (forcedStake !== null) {
+      if (stakeAmount > forcedStake) {
+        this.logger.warn(`[ORION] 🛡️ Aplicando limite forçado de stake: ${stakeAmount.toFixed(2)} -> ${forcedStake.toFixed(2)}`);
+        stakeAmount = forcedStake;
+      }
     }
 
     // ✅ [NOVO] Aplicar RiskManager para ajustar stake (Stop Loss de Precisão)
