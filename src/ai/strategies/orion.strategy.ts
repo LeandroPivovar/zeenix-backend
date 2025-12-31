@@ -140,6 +140,7 @@ function calcularProximaAposta(
   perdasTotais: number,
   modo: ModoMartingale,
   payoutCliente: number,
+  baseStake: number = 0.35,
   ultimaAposta: number = 0,
 ): number {
   const PAYOUT = typeof payoutCliente === 'number' && payoutCliente > 1
@@ -151,9 +152,9 @@ function calcularProximaAposta(
   switch (modo) {
     case 'conservador':
       // Meta: recuperar 100% das perdas (break-even)
-      // Fórmula: entrada_próxima = perdas_totais
-      // Quando ganhar, o retorno será: perdas_totais * payout ≈ perdas_totais (recuperação sem lucro)
-      aposta = perdasTotais;
+      // Meta: recuperar perdas + 100% de lucro (Dobra a entrada)
+      // Fórmula: entrada_próxima = perdas_totais + base_stake
+      aposta = perdasTotais + baseStake;
       break;
     case 'moderado':
       // Meta: recuperar 100% das perdas + 25% de lucro
@@ -250,12 +251,13 @@ class RiskManager {
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
-          // CONSERVADOR: Apenas recuperar a perda acumulada (sem lucro e sem cobrir payout)
-          nextStake = this.totalLossAccumulated;
+          // CONSERVADOR: Recuperar perdas + 100% de lucro (Dobra a entrada)
+          // Fórmula: próxima = perda_total + base (ex: 10 perda + 10 base = 20)
+          nextStake = this.totalLossAccumulated + baseStake;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
             logger.log(
-              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)}`,
+              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Dobra)`,
             );
           }
         } else {
@@ -1660,7 +1662,8 @@ export class OrionStrategy implements IStrategy {
 
             // Calcular próximo stake do martingale
             const payoutCliente = 92;
-            const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+            const baseStake = state.apostaInicial || 0.35;
+            const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
             const perdaTotalPotencial = perdaAtual + stakeMartingale; // Perda atual + novo risco (?) 
             // Na verdade, queremos saber se: Capital Sessão - Stake < Stop Blindado
             const saldoDisponivel = capitalSessao - stopBlindado;
@@ -1694,7 +1697,8 @@ export class OrionStrategy implements IStrategy {
           // Se está em martingale, verificar se a próxima aposta ultrapassaria o stop loss
           // Se sim, usar aposta base ao invés de martingale
           const payoutCliente = 92;
-          const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+          const baseStake = state.apostaInicial || 0.35;
+          const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
           const perdaTotalPotencial = perdaAtual + stakeMartingale;
 
           if (perdaTotalPotencial > lossLimit) {
@@ -1812,7 +1816,8 @@ export class OrionStrategy implements IStrategy {
     } else {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
-      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+      const baseStake = state.apostaInicial || 0.35;
+      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
 
       // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
       stakeAmount = Math.round(stakeAmount * 100) / 100;
