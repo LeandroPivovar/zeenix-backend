@@ -430,7 +430,7 @@ export class OrionStrategy implements IStrategy {
   }
 
   async initialize(): Promise<void> {
-    this.logger.log('[ORION] Estratégia ORION inicializada');
+    this.logger.log('[ORION] Estratégia ORION inicializada - v2.0.1 (Conservative Doubling Fixed)');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -3131,7 +3131,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Verificar STOP-LOSS BLINDADO conforme documentação ORION Master Blueprint
         // Regra: Ativa quando atinge 40% da meta, protege 50% do LUCRO MÁXIMO ATINGIDO (pico)
         const riskManager = this.riskManagers.get(state.userId);
-        if (riskManager && lucroAtual > 0 && profitTarget > 0) {
+        if (riskManager && lucroAtual > 0 && profitTarget > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           // Usar o RiskManager para calcular corretamente (ele rastreia o pico máximo)
           const currentBalance = capitalSessao;
           const baseStake = state.apostaInicial || 0.35;
