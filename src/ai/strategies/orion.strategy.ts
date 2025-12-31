@@ -250,8 +250,8 @@ class RiskManager {
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
-          // Martingale Simples para recuperar (x2.1 para cobrir spread)
-          nextStake = baseStake * Math.pow(2.1, this.consecutiveLosses);
+          // CONSERVADOR: Apenas recuperar a perda acumulada (sem lucro e sem cobrir payout)
+          nextStake = this.totalLossAccumulated;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
             logger.log(
