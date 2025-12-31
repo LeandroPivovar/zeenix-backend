@@ -1519,7 +1519,29 @@ export class OrionStrategy implements IStrategy {
 
           // Auto-healing: se lucro atual superou o pico registrado, atualizar pico
           if (lucroAtual > profitPeak) {
+            const profitPeakAnterior = profitPeak;
             profitPeak = lucroAtual;
+
+            // ✅ Log quando profit peak aumenta
+            if (profitPeak >= profitTarget * 0.25) {
+              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+              const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+              const stopBlindado = capitalInicial + protectedAmount;
+
+              this.logger.log(
+                `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
+                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
+                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+                `Stop Level: $${stopBlindado.toFixed(2)}`
+              );
+              this.saveOrionLog(
+                state.userId,
+                this.symbol,
+                'info',
+                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`
+              );
+            }
+
             // Atualizar no banco em background
             this.dataSource.query(
               `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
@@ -1535,6 +1557,26 @@ export class OrionStrategy implements IStrategy {
             // Trailing Stop: Protege % do PICO de lucro
             const protectedAmount = profitPeak * fatorProtecao;
             const stopBlindado = capitalInicial + protectedAmount;
+
+            // ✅ Log quando Stop Blindado é ativado pela primeira vez (só loga se ainda não logou)
+            const stopBlindadoKey = `stop_blindado_ativado_${state.userId}`;
+            if (!this.defesaDirecaoInvalidaLogsEnviados.has(stopBlindadoKey)) {
+              this.defesaDirecaoInvalidaLogsEnviados.set(stopBlindadoKey, true);
+              this.logger.log(
+                `[ORION][${mode}][${state.userId}] 🛡️✅ STOP BLINDADO ATIVADO! | ` +
+                `Meta: $${profitTarget.toFixed(2)} | ` +
+                `25% Meta: $${(profitTarget * 0.25).toFixed(2)} | ` +
+                `Pico Atual: $${profitPeak.toFixed(2)} | ` +
+                `Protegendo: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+                `Stop Level: $${stopBlindado.toFixed(2)}`
+              );
+              this.saveOrionLog(
+                state.userId,
+                this.symbol,
+                'info',
+                `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}% do pico $${profitPeak.toFixed(2)}) | Stop: $${stopBlindado.toFixed(2)}`
+              );
+            }
 
             // Se capital da sessão caiu abaixo do stop blindado → PARAR
             if (capitalSessao <= stopBlindado) {
@@ -2995,7 +3037,29 @@ export class OrionStrategy implements IStrategy {
 
           // Auto-healing / Update Peak
           if (lucroAtual > profitPeak) {
+            const profitPeakAnterior = profitPeak;
             profitPeak = lucroAtual;
+
+            // ✅ Log quando profit peak aumenta após vitória
+            if (profitPeak >= profitTarget * 0.25) {
+              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+              const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+              const stopBlindado = capitalInicial + protectedAmount;
+
+              this.logger.log(
+                `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
+                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
+                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
+                `Stop Level: $${stopBlindado.toFixed(2)}`
+              );
+              this.saveOrionLog(
+                state.userId,
+                this.symbol,
+                'info',
+                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`
+              );
+            }
+
             // Update DB
             await this.dataSource.query(
               `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
