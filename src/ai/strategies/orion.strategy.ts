@@ -1794,6 +1794,100 @@ export class OrionStrategy implements IStrategy {
       }
     }
 
+    // ✅ [NOVO] VALIDAÇÃO UNIFICADA: Garantir que TODAS as entradas (Martingale, Soros, Normal) respeitam Stop Loss
+    try {
+      const stopLossConfig = await this.dataSource.query(
+        `SELECT 
+          COALESCE(loss_limit, 0) as lossLimit,
+          COALESCE(profit_target, 0) as profitTarget,
+          COALESCE(session_balance, 0) as sessionBalance,
+          COALESCE(stake_amount, 0) as capitalInicial,
+          COALESCE(profit_peak, 0) as profitPeak,
+          stop_blindado_percent as stopBlindadoPercent
+         FROM ai_user_config 
+         WHERE user_id = ? AND is_active = 1
+         LIMIT 1`,
+        [state.userId],
+      );
+
+      if (stopLossConfig && stopLossConfig.length > 0) {
+        const config = stopLossConfig[0];
+        const lossLimit = parseFloat(config.lossLimit) || 0;
+        const profitTarget = parseFloat(config.profitTarget) || 0;
+        const capitalInicial = parseFloat(config.capitalInicial) || 0;
+        const sessionBalance = parseFloat(config.sessionBalance) || 0;
+        const capitalSessao = capitalInicial + sessionBalance;
+        const lucroAtual = sessionBalance;
+        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+
+        let maxStakeAllowed = Infinity;
+
+        // 1. Verificar Stop Loss Normal
+        if (lossLimit > 0) {
+          const remainingLoss = lossLimit - perdaAtual;
+          if (remainingLoss > 0) {
+            maxStakeAllowed = Math.min(maxStakeAllowed, remainingLoss);
+          } else {
+            maxStakeAllowed = 0;
+          }
+        }
+
+        // 2. Verificar Stop Loss Blindado
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+          const profitPeak = parseFloat(config.profitPeak) || 0;
+          // Só ativa se atingiu 25% da meta
+          if (profitPeak >= profitTarget * 0.25) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+            const stopBlindado = capitalInicial + protectedAmount;
+            const availableCapitalAboveStop = capitalSessao - stopBlindado;
+
+            if (availableCapitalAboveStop > 0) {
+              maxStakeAllowed = Math.min(maxStakeAllowed, availableCapitalAboveStop);
+            } else {
+              maxStakeAllowed = 0;
+            }
+          }
+        }
+
+        // 3. Aplicar limite se necessário
+        if (maxStakeAllowed !== Infinity && stakeAmount > maxStakeAllowed) {
+          const originalStake = stakeAmount;
+
+          // Se o limite é menor que o mínimo (0.35), bloquear operação
+          if (maxStakeAllowed < 0.35) {
+            this.logger.warn(
+              `[ORION][${mode}][${state.userId}] 🛑 Stake mínimo (0.35) excede limite de Stop Loss (${maxStakeAllowed.toFixed(2)}). Bloqueando operação.`,
+            );
+            this.saveOrionLog(
+              state.userId,
+              this.symbol,
+              'alerta',
+              `🛑 Operação bloqueada: stake mínimo excede limite de Stop Loss`,
+            );
+            return; // Bloquear operação
+          }
+
+          // Ajustar stake para o máximo permitido
+          stakeAmount = Math.max(0.35, maxStakeAllowed);
+          stakeAmount = Math.round(stakeAmount * 100) / 100;
+
+          this.logger.warn(
+            `[ORION][${mode}][${state.userId}] 🛡️ Stake ajustado para respeitar Stop Loss: $${originalStake.toFixed(2)} -> $${stakeAmount.toFixed(2)}`,
+          );
+          this.saveOrionLog(
+            state.userId,
+            this.symbol,
+            'alerta',
+            `🛡️ Stake ajustado: $${originalStake.toFixed(2)} -> $${stakeAmount.toFixed(2)} (Stop Loss)`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao validar stake contra Stop Loss:`, error);
+      // Continuar mesmo se houver erro na validação (fail-open)
+    }
+
     // ✅ [NOVO] Aplicar RiskManager para ajustar stake (Stop Loss de Precisão)
     // O RiskManager aplica sua própria lógica de recuperação baseada em consecutiveLosses
     // e também verifica Stop Loss Normal vs Blindado
