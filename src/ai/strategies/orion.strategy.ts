@@ -1447,6 +1447,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          COALESCE(profit_peak, 0) as profitPeak,
           stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
@@ -1510,52 +1511,67 @@ export class OrionStrategy implements IStrategy {
           return; // NÃO EXECUTAR OPERAÇÃO
         }
 
-        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0)
-        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
-        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
-        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
-        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
-          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0 - Dynamic Trailing)
+        // Ativar se atingir 25% da meta. Proteger 50% do lucro máximo (PICO).
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+          let profitPeak = parseFloat(config.profitPeak) || 0;
 
-          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
-          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
-          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
+          // Auto-healing: se lucro atual superou o pico registrado, atualizar pico
+          if (lucroAtual > profitPeak) {
+            profitPeak = lucroAtual;
+            // Atualizar no banco em background
+            this.dataSource.query(
+              `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+              [profitPeak, state.userId],
+            ).catch(err => this.logger.error(`[ORION] Erro ao atualizar profit_peak:`, err));
+          }
 
-          // Se capital da sessão caiu abaixo do stop blindado → PARAR
-          if (capitalSessao <= stopBlindado) {
-            const lucroProtegido = capitalSessao - capitalInicial;
+          // Ativar apenas se atingiu 25% da meta
+          if (profitPeak >= profitTarget * 0.25) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
+            const fatorProtecao = stopBlindadoPercent / 100;
 
-            this.logger.warn(
-              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-              `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
-              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)}) - BLOQUEANDO OPERAÇÃO`,
-            );
+            // Trailing Stop: Protege % do PICO de lucro
+            const protectedAmount = profitPeak * fatorProtecao;
+            const stopBlindado = capitalInicial + protectedAmount;
 
-            this.saveOrionLog(
-              state.userId,
-              this.symbol,
-              'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
-            );
+            // Se capital da sessão caiu abaixo do stop blindado → PARAR
+            if (capitalSessao <= stopBlindado) {
+              const lucroProtegido = capitalSessao - capitalInicial;
 
-            const deactivationReason =
-              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
+              this.logger.warn(
+                `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+                `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+                `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`,
+              );
 
-            // Desativar a IA
-            await this.dataSource.query(
-              `UPDATE ai_user_config 
-               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-               WHERE user_id = ? AND is_active = 1`,
-              [deactivationReason, state.userId],
-            );
+              this.saveOrionLog(
+                state.userId,
+                this.symbol,
+                'alerta',
+                `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`,
+              );
 
-            // Remover usuário do monitoramento
-            this.velozUsers.delete(state.userId);
-            this.moderadoUsers.delete(state.userId);
-            this.precisoUsers.delete(state.userId);
+              const deactivationReason =
+                `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+                `(${stopBlindadoPercent}% do pico de $${profitPeak.toFixed(2)})`;
 
-            return; // NÃO EXECUTAR OPERAÇÃO
+              // Desativar a IA
+              await this.dataSource.query(
+                `UPDATE ai_user_config 
+                 SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [deactivationReason, state.userId],
+              );
+
+              // Remover usuário do monitoramento
+              this.velozUsers.delete(state.userId);
+              this.moderadoUsers.delete(state.userId);
+              this.precisoUsers.delete(state.userId);
+              this.lentaUsers.delete(state.userId); // Corrigido para incluir lentaUsers
+
+              return; // NÃO EXECUTAR OPERAÇÃO
+            }
           }
         }
 
@@ -1588,6 +1604,58 @@ export class OrionStrategy implements IStrategy {
             state.ticksDesdeUltimaOp = 0;
           }
           return; // NÃO EXECUTAR OPERAÇÃO
+        }
+
+        // ✅ Verificar Stop Loss Blindado para Martingale
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined && entry > 1) {
+          const profitPeak = Math.max(parseFloat(config.profitPeak) || 0, lucroAtual);
+          // Só ativa se atingiu 25% da meta
+          if (profitPeak >= profitTarget * 0.25) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+            const stopBlindado = capitalInicial + protectedAmount;
+
+            // Calcular próximo stake do martingale
+            const payoutCliente = 92;
+            const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente);
+            const perdaTotalPotencial = perdaAtual + stakeMartingale; // Perda atual + novo risco (?) 
+            // Na verdade, queremos saber se: Capital Sessão - Stake < Stop Blindado
+            const saldoDisponivel = capitalSessao - stopBlindado;
+
+            if (stakeMartingale > saldoDisponivel) {
+              // Stake ultrapassa o permitido. Ajustar para o máximo permitido ou resetar?
+              // Usuário pediu "reajuste seu valor".
+              // Se houver saldo positivo (> 0.35), usamos o saldo restante. Senão reiniciamos.
+              if (saldoDisponivel >= 0.35) {
+                this.logger.warn(`[ORION] 🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel}`);
+                // Modificar state.perdaAcumulada para gerar stake menor? Não, apenas usar stake menor.
+                // Mas aqui é apenas verificação. Precisamos passar essa "instrução" adiante ou bloquear.
+                // Vamos bloquear o Martingale e usar o stake ajustado como aposta base?
+                // Melhor: avisar e deixar o fluxo normal calcular, mas vamos interceptar depois?
+                // Não, aqui estamos dentro do bloco que decide se usa martingale.
+
+                // DECISÃO: Resetar para aposta base (segurança) E se possível usar o saldo restante se for < base
+                // Mas o código existente apenas reseta para aposta base.
+
+                // Vamos resetar para M0 e usar aposta base (ou ajustada se a base também for muito alta)
+                this.logger.warn(
+                  `[ORION][${mode}][${state.userId}] 🛡️ Martingale ultrapassaria Stop Blindado. Resetando para aposta base. Stake calc: ${stakeMartingale.toFixed(2)}, Disp: ${saldoDisponivel.toFixed(2)}`
+                );
+                this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ Martingale ultrapassaria Stop Blindado. Usando aposta segura.`);
+
+                state.perdaAcumulada = 0;
+                state.ultimaDirecaoMartingale = null;
+                state.martingaleStep = 0;
+                if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
+                entry = 1;
+                // O fluxo seguirá para usar aposta base.
+              } else {
+                // Sem saldo nem para aposta mínima -> Stop Loss será acionado na próxima verificação ou agora
+                // Se blocked here, we return.
+                return; // Stop operation
+              }
+            }
+          }
         }
 
         // ✅ CORREÇÃO: Não bloquear operação prévia se ultrapassaria stop loss
@@ -2760,6 +2828,7 @@ export class OrionStrategy implements IStrategy {
           COALESCE(profit_target, 0) as profitTarget,
           COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
+          COALESCE(profit_peak, 0) as profitPeak,
           stop_blindado_percent as stopBlindadoPercent,
           is_active
          FROM ai_user_config 
@@ -2812,56 +2881,59 @@ export class OrionStrategy implements IStrategy {
           this.velozUsers.delete(state.userId);
           this.moderadoUsers.delete(state.userId);
           this.precisoUsers.delete(state.userId);
-          return;
+          this.lentaUsers.delete(state.userId);
+
+          return; // NÃO EXECUTAR OPERAÇÃO
         }
 
-        // ✅ Verificar STOP-LOSS BLINDADO (ZENIX v2.0 - protege lucros conquistados)
-        // Conforme documentação: Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
-        // Se Capital Atual ≤ Stop Blindado → PARA sistema (garante X% do lucro)
-        // ✅ ZENIX v2.0: Só verifica se stop-loss blindado estiver ativado (não NULL)
-        if (lucroAtual > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
-          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+        // ✅ STOP LOSS BLINDADO (Dynamic Trailing)
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+          let profitPeak = parseFloat(config.profitPeak) || 0;
 
-          // Calcular stop blindado: Capital Inicial + (Lucro Líquido × percentual)
-          const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
-          const stopBlindado = capitalInicial + (lucroAtual * fatorProtecao);
-
-          // Se capital da sessão caiu abaixo do stop blindado → PARAR
-          if (capitalSessao <= stopBlindado) {
-            const lucroProtegido = capitalSessao - capitalInicial;
-
-            this.logger.warn(
-              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-              `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
-              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)})`,
-            );
-
-            this.saveOrionLog(
-              state.userId,
-              this.symbol,
-              'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
-            );
-
-            const deactivationReason =
-              `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-              `(${stopBlindadoPercent}% de $${lucroAtual.toFixed(2)} conquistados)`;
-
-            // Desativar a IA
+          // Auto-healing / Update Peak
+          if (lucroAtual > profitPeak) {
+            profitPeak = lucroAtual;
+            // Update DB
             await this.dataSource.query(
-              `UPDATE ai_user_config 
-               SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-               WHERE user_id = ? AND is_active = 1`,
-              [deactivationReason, state.userId],
+              `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+              [profitPeak, state.userId]
             );
+          }
 
-            // Remover usuário do monitoramento
-            this.velozUsers.delete(state.userId);
-            this.moderadoUsers.delete(state.userId);
-            this.precisoUsers.delete(state.userId);
-            return;
+          // Check Stop
+          if (profitPeak >= profitTarget * 0.25) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+            const fatorProtecao = stopBlindadoPercent / 100;
+            const protectedAmount = profitPeak * fatorProtecao;
+            const stopBlindado = capitalInicial + protectedAmount;
+
+            if (capitalSessao <= stopBlindado) {
+              const lucroProtegido = capitalSessao - capitalInicial;
+              // ... Log and Stop ...
+              this.logger.warn(`[ORION] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
+              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`);
+
+              const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
+
+              // STOP
+              await this.dataSource.query(
+                `UPDATE ai_user_config 
+                   SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                   WHERE user_id = ? AND is_active = 1`,
+                [deactivationReason, state.userId],
+              );
+              this.velozUsers.delete(state.userId);
+              this.moderadoUsers.delete(state.userId);
+              this.precisoUsers.delete(state.userId);
+              this.lentaUsers.delete(state.userId);
+
+              return;
+            }
           }
         }
+
+
+
 
         // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {

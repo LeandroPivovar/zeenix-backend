@@ -121,7 +121,7 @@ export class AutonomousAgentService implements OnModuleInit {
     @Optional() @Inject(AutonomousAgentLogsStreamService) private readonly logsStreamService?: AutonomousAgentLogsStreamService,
     @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
     @Optional() @Inject(DerivService) private readonly derivService?: DerivService,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
@@ -150,10 +150,10 @@ export class AutonomousAgentService implements OnModuleInit {
       // Obter configurações do usuário (tradeCurrency: USD, BTC, ou DEMO)
       const settings = await this.settingsService.getSettings(userId);
       const tradeCurrency = settings.tradeCurrency || 'USD';
-      
+
       // Obter informações da Deriv (contas e tokens)
       const derivInfo: any = await this.derivService.connectAndGetAccount(providedToken || '', parseInt(this.appId), tradeCurrency === 'DEMO' ? 'USD' : tradeCurrency);
-      
+
       if (!derivInfo) {
         this.logger.warn(`[GetCorrectToken] DerivInfo não disponível, usando token fornecido`);
         if (!providedToken) {
@@ -173,7 +173,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const accountsByCurrency = raw.accountsByCurrency || derivInfo.accountsByCurrency || {};
         const allAccounts: AccountEntry[] = Object.values(accountsByCurrency).flat() as AccountEntry[];
         const usdDemoAccounts: AccountEntry[] = ((accountsByCurrency['USD'] || []) as AccountEntry[]).filter((acc) => acc.isDemo === true);
-        
+
         if (usdDemoAccounts.length > 0) {
           targetLoginid = usdDemoAccounts[0].loginid;
           this.logger.log(`[GetCorrectToken] ✅ Usando conta demo USD: ${targetLoginid}`);
@@ -193,10 +193,10 @@ export class AutonomousAgentService implements OnModuleInit {
         targetLoginid = derivInfo.loginid || undefined;
         this.logger.log(`[GetCorrectToken] Usando conta real: ${targetLoginid}`);
       }
-      
+
       // Buscar token do loginid específico
       let token = (targetLoginid && tokensByLoginId[targetLoginid]) || null;
-      
+
       if (!token) {
         // Fallback: usar o primeiro token disponível ou o token fornecido
         const loginIds = Object.keys(tokensByLoginId);
@@ -264,35 +264,35 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log(`[SyncAgents] Sincronizando ${activeAgents.length} agentes ativos`);
 
       for (const agent of activeAgents) {
-      this.upsertAgentState({
-        userId: agent.user_id.toString(),
-        initialStake: parseFloat(agent.initial_stake),
-        dailyProfitTarget: parseFloat(agent.daily_profit_target),
-        dailyLossLimit: parseFloat(agent.daily_loss_limit),
-        initialBalance: parseFloat(agent.initial_balance) || 0,
-        derivToken: agent.deriv_token,
-        currency: agent.currency,
-        symbol: agent.symbol || SENTINEL_CONFIG.symbol,
-        tradingMode: (agent.trading_mode || 'normal') as TradingMode,
-        managementMode: (agent.risk_level || 'balanced') as ManagementMode,
-        stopLossType: (agent.stop_loss_type || 'normal') as StopLossType,
-        martingaleLevel: (agent.martingale_level || 'M0') as MartingaleLevel,
-        martingaleCount: agent.martingale_count || 0,
-        lastLossAmount: parseFloat(agent.last_loss_amount) || 0,
-        sorosLevel: agent.soros_level || 0,
-        sorosStake: parseFloat(agent.soros_stake) || 0,
-        sorosProfit: parseFloat(agent.soros_profit) || 0,
-        operationsSincePause: agent.operations_since_pause || 0,
-        lastTradeAt: agent.last_trade_at ? new Date(agent.last_trade_at) : null,
-        nextTradeAt: agent.next_trade_at ? new Date(agent.next_trade_at) : null,
-        dailyProfit: parseFloat(agent.daily_profit) || 0,
-        dailyLoss: parseFloat(agent.daily_loss) || 0,
-        profitPeak: parseFloat(agent.profit_peak) || 0,
-        sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
-      });
+        this.upsertAgentState({
+          userId: agent.user_id.toString(),
+          initialStake: parseFloat(agent.initial_stake),
+          dailyProfitTarget: parseFloat(agent.daily_profit_target),
+          dailyLossLimit: parseFloat(agent.daily_loss_limit),
+          initialBalance: parseFloat(agent.initial_balance) || 0,
+          derivToken: agent.deriv_token,
+          currency: agent.currency,
+          symbol: agent.symbol || SENTINEL_CONFIG.symbol,
+          tradingMode: (agent.trading_mode || 'normal') as TradingMode,
+          managementMode: (agent.risk_level || 'balanced') as ManagementMode,
+          stopLossType: (agent.stop_loss_type || 'normal') as StopLossType,
+          martingaleLevel: (agent.martingale_level || 'M0') as MartingaleLevel,
+          martingaleCount: agent.martingale_count || 0,
+          lastLossAmount: parseFloat(agent.last_loss_amount) || 0,
+          sorosLevel: agent.soros_level || 0,
+          sorosStake: parseFloat(agent.soros_stake) || 0,
+          sorosProfit: parseFloat(agent.soros_profit) || 0,
+          operationsSincePause: agent.operations_since_pause || 0,
+          lastTradeAt: agent.last_trade_at ? new Date(agent.last_trade_at) : null,
+          nextTradeAt: agent.next_trade_at ? new Date(agent.next_trade_at) : null,
+          dailyProfit: parseFloat(agent.daily_profit) || 0,
+          dailyLoss: parseFloat(agent.daily_loss) || 0,
+          profitPeak: parseFloat(agent.profit_peak) || 0,
+          sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
+        });
 
-      // Estabelecer conexão WebSocket para agentes ativos
-      await this.ensureWebSocketConnection(agent.user_id.toString());
+        // Estabelecer conexão WebSocket para agentes ativos
+        await this.ensureWebSocketConnection(agent.user_id.toString());
       }
     } catch (error) {
       this.logger.error('[SyncAgents] Erro ao sincronizar agentes:', error);
@@ -386,7 +386,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Obter token correto baseado na conta configurada pelo usuário (demo/real)
       // Isso garante que usamos a conta correta (demo ou real) conforme configurado
       const correctToken = await this.getCorrectTokenForUser(userId, config.derivToken);
-      
+
       this.logger.log(`[ActivateAgent] Token obtido: ${correctToken ? 'SIM' : 'NÃO'} (original: ${config.derivToken ? 'SIM' : 'NÃO'})`);
 
       // Verificar se já existe configuração
@@ -434,7 +434,7 @@ export class AutonomousAgentService implements OnModuleInit {
             session_status = 'active',
             next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
             updated_at = NOW()`;
-        
+
         const updateParams = [
           config.initialStake,
           config.dailyProfitTarget,
@@ -501,28 +501,28 @@ export class AutonomousAgentService implements OnModuleInit {
       const tradingModeName = tradingMode === 'veloz' ? 'Veloz' : tradingMode === 'lento' ? 'Lento' : 'Normal';
       const managementModeName = riskLevel === 'conservative' ? 'Conservador' : riskLevel === 'aggressive' ? 'Agressivo' : 'Moderado';
       const stopLossName = stopLossType === 'blindado' ? 'Blindado' : 'Normal';
-      
+
       await this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Modo de Negociação: ${tradingModeName}`,
       );
-      
+
       await this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Modo de Gestão: ${managementModeName}`,
       );
-      
+
       await this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Tipo de Stop Loss: ${stopLossName}`,
       );
-      
+
       await this.saveLog(
         userId,
         'INFO',
@@ -605,7 +605,7 @@ export class AutonomousAgentService implements OnModuleInit {
     if (this.agentStates.size === 0) {
       return;
     }
-    
+
     this.logger.debug(`[ProcessActiveAgents] Processando ${this.agentStates.size} agente(s) ativo(s)`);
 
     const now = new Date();
@@ -628,7 +628,7 @@ export class AutonomousAgentService implements OnModuleInit {
            FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE`,
           [userId],
         );
-        
+
         if (config && config.length > 0 && config[0].last_pause_at && state.nextTradeAt && state.nextTradeAt <= now) {
           // Pausa acabou, logar retomada
           await this.saveLog(
@@ -681,25 +681,31 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Verificar stop loss (Normal ou Blindado)
     if (cfg.stop_loss_type === 'blindado') {
-      // Stop Loss Blindado: Proteger 50% do lucro acumulado
+      // Stop Loss Blindado Dinâmico
+      // Ativa apenas se o lucro atual atingir 25% da meta
+      const profitTarget = parseFloat(cfg.daily_profit_target) || 0;
       const profitPeak = parseFloat(cfg.profit_peak) || 0;
-      const protectedProfit = profitPeak * 0.50; // 50% do pico
-      const initialBalance = parseFloat(cfg.initial_balance) || 0;
-      const blindBalance = initialBalance + protectedProfit;
-      const currentBalance = initialBalance + parseFloat(cfg.daily_profit) - parseFloat(cfg.daily_loss);
-      
-      if (currentBalance <= blindBalance) {
-        await this.saveLog(
-          state.userId,
-          'WARN',
-          'RISK',
-          `STOP LOSS BLINDADO ATINGIDO! Saldo atual (${currentBalance.toFixed(2)}) está abaixo do saldo blindado (${blindBalance.toFixed(2)}). Parando operações.`,
-        );
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
-          [state.userId],
-        );
-        return false;
+
+      // Só ativa a proteção se já tiver atingido 25% da meta em algum momento (pico)
+      if (profitPeak >= profitTarget * 0.25) {
+        const protectedProfit = profitPeak * 0.50; // Protege 50% do pico
+        const initialBalance = parseFloat(cfg.initial_balance) || 0;
+        const blindBalance = initialBalance + protectedProfit;
+        const currentBalance = initialBalance + parseFloat(cfg.daily_profit) - parseFloat(cfg.daily_loss);
+
+        if (currentBalance <= blindBalance) {
+          await this.saveLog(
+            state.userId,
+            'WARN',
+            'RISK',
+            `STOP LOSS BLINDADO ATINGIDO! Saldo atual (${currentBalance.toFixed(2)}) abaixo do saldo blindado (${blindBalance.toFixed(2)}). Pico=${profitPeak.toFixed(2)}, Protegido=${protectedProfit.toFixed(2)}.`,
+          );
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
+            [state.userId],
+          );
+          return false;
+        }
       }
     } else {
       // Stop Loss Normal: Verificar limite de perda
@@ -707,7 +713,7 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.handleStopLoss(state.userId);
         return false;
       }
-      
+
       // Verificar se próxima entrada (com Martingale) ultrapassaria o limite
       if (state.martingaleLevel !== 'M0') {
         // Se estiver em Martingale, verificar se o próximo stake ultrapassaria o limite
@@ -734,10 +740,10 @@ export class AutonomousAgentService implements OnModuleInit {
       const tradingConfig = SENTINEL_CONFIG.tradingModes[state.tradingMode];
       const ticksRequired = tradingConfig.ticksRequired;
       const minConfidenceScore = tradingConfig.minConfidenceScore;
-      
+
       // Obter histórico de preços
       const prices = await this.getPriceHistory(state.userId, state.symbol);
-      
+
       if (prices.length < ticksRequired) {
         this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/${ticksRequired}). Aguardando mais ticks...`);
         await this.saveLog(
@@ -884,7 +890,7 @@ export class AutonomousAgentService implements OnModuleInit {
       'ANALYZER',
       `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
-    ).catch(() => {}); // Não bloquear se houver erro
+    ).catch(() => { }); // Não bloquear se houver erro
 
     // Log adicional quando não há direção definida para debug
     if (!direction) {
@@ -893,13 +899,13 @@ export class AutonomousAgentService implements OnModuleInit {
         'DEBUG',
         'ANALYZER',
         `Nenhuma direção definida. Pontuações: RISE=${riseScore.toFixed(1)}%, FALL=${fallScore.toFixed(1)}% (mínimo=${minScoreForDirection}%)`,
-        { 
+        {
           ema10, ema25, ema50, rsi, momentum,
           riseScore,
           fallScore,
           minScoreForDirection,
         },
-      ).catch(() => {});
+      ).catch(() => { });
     } else {
       // Log quando direção é definida
       this.saveLog(
@@ -913,7 +919,7 @@ export class AutonomousAgentService implements OnModuleInit {
           riseScore,
           fallScore,
         },
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     return {
@@ -1079,7 +1085,7 @@ export class AutonomousAgentService implements OnModuleInit {
     let score = 0;
 
     // Peso das EMAs (40%)
-    const emaAlignment = direction === 'RISE' 
+    const emaAlignment = direction === 'RISE'
       ? (ema10 - ema25) / ema25 * 100 + (ema25 - ema50) / ema50 * 100
       : (ema25 - ema10) / ema10 * 100 + (ema50 - ema25) / ema25 * 100;
     score += Math.min(40, Math.max(0, emaAlignment * 2));
@@ -1119,7 +1125,7 @@ export class AutonomousAgentService implements OnModuleInit {
       const highDigits = digits.filter(d => d >= 5).length;
       const highPercent = highDigits / 20;
       imbalance = `${(highPercent * 100).toFixed(0)}%_UP`;
-      
+
       if (highPercent <= 0.6) {
         // Log de análise estatística (falhou)
         await this.saveLog(
@@ -1128,7 +1134,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: highPercent, direction: 'RISE', highDigits, totalDigits: 20 },
-        ).catch(() => {});
+        ).catch(() => { });
         return false;
       }
 
@@ -1142,7 +1148,7 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
       sequenceOk = consecutiveLow < 4;
-      
+
       if (consecutiveLow >= 4) {
         // Log de análise estatística (falhou por sequência)
         await this.saveLog(
@@ -1151,7 +1157,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: highPercent, direction: 'RISE', consecutiveLow, sequenceOk: false },
-        ).catch(() => {});
+        ).catch(() => { });
         return false;
       }
     }
@@ -1160,7 +1166,7 @@ export class AutonomousAgentService implements OnModuleInit {
       const lowDigits = digits.filter(d => d < 5).length;
       const lowPercent = lowDigits / 20;
       imbalance = `${(lowPercent * 100).toFixed(0)}%_DOWN`;
-      
+
       if (lowPercent <= 0.6) {
         // Log de análise estatística (falhou)
         await this.saveLog(
@@ -1169,7 +1175,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: lowPercent, direction: 'FALL', lowDigits, totalDigits: 20 },
-        ).catch(() => {});
+        ).catch(() => { });
         return false;
       }
 
@@ -1183,7 +1189,7 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
       sequenceOk = consecutiveHigh < 4;
-      
+
       if (consecutiveHigh >= 4) {
         // Log de análise estatística (falhou por sequência)
         await this.saveLog(
@@ -1192,7 +1198,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: lowPercent, direction: 'FALL', consecutiveHigh, sequenceOk: false },
-        ).catch(() => {});
+        ).catch(() => { });
         return false;
       }
     }
@@ -1204,7 +1210,7 @@ export class AutonomousAgentService implements OnModuleInit {
       'ANALYZER',
       `📊 Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=${sequenceOk}`,
       { imbalance, direction, sequenceOk },
-    ).catch(() => {});
+    ).catch(() => { });
 
     return true;
   }
@@ -1224,14 +1230,14 @@ export class AutonomousAgentService implements OnModuleInit {
       // Determinar tipo de contrato baseado no nível de Martingale/Soros
       let contractType: string;
       let stakeAmount: number;
-      
+
       // Verificar se está em modo Soros
       if (state.sorosLevel > 0) {
         // Soros: usar stake calculado do Soros
         contractType = analysis.direction; // Rise/Fall para Soros
         stakeAmount = state.sorosStake;
-        
-            // Log de Soros ativo (formato da documentação)
+
+        // Log de Soros ativo (formato da documentação)
         await this.saveLog(
           state.userId,
           'INFO',
@@ -1247,7 +1253,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // Operação normal: Rise/Fall
         contractType = analysis.direction;
         stakeAmount = state.initialStake;
-        
+
         // Log de operação normal
         await this.saveLog(
           state.userId,
@@ -1259,7 +1265,7 @@ export class AutonomousAgentService implements OnModuleInit {
             stake: stakeAmount,
             contractType,
           },
-        ).catch(() => {});
+        ).catch(() => { });
       } else if (state.martingaleLevel === 'M1' || state.martingaleLevel === 'M2') {
         // Recuperação M1 ou M2: Precisa consultar payout primeiro para calcular stake
         if (state.martingaleLevel === 'M1') {
@@ -1267,7 +1273,7 @@ export class AutonomousAgentService implements OnModuleInit {
         } else {
           contractType = analysis.direction === 'RISE' ? 'ONETOUCH' : 'NOTOUCH';
         }
-        
+
         // Log antes de calcular stake de Martingale
         await this.saveLog(
           state.userId,
@@ -1278,11 +1284,11 @@ export class AutonomousAgentService implements OnModuleInit {
             martingaleLevel: state.martingaleLevel,
             contractType,
           },
-        ).catch(() => {});
+        ).catch(() => { });
 
         // Consultar payout e calcular stake de recuperação
         stakeAmount = await this.calculateMartingaleStake(state, contractType);
-        
+
         if (stakeAmount <= 0 || !isFinite(stakeAmount)) {
           await this.saveLog(
             state.userId,
@@ -1297,7 +1303,7 @@ export class AutonomousAgentService implements OnModuleInit {
           state.isOperationActive = false;
           return;
         }
-        
+
         // Log após calcular stake de Martingale
         await this.saveLog(
           state.userId,
@@ -1308,7 +1314,7 @@ export class AutonomousAgentService implements OnModuleInit {
             martingaleLevel: state.martingaleLevel,
             calculatedStake: stakeAmount,
           },
-        ).catch(() => {});
+        ).catch(() => { });
 
         // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
         const stopLossCheck = await this.checkStopLossAfterStake(state, stakeAmount);
@@ -1328,12 +1334,12 @@ export class AutonomousAgentService implements OnModuleInit {
             `SELECT daily_loss_limit, daily_loss FROM autonomous_agent_config WHERE user_id = ?`,
             [state.userId],
           );
-          
+
           if (config && config.length > 0) {
             const currentLoss = parseFloat(config[0].daily_loss) || 0;
             const lossLimit = parseFloat(config[0].daily_loss_limit) || 0;
             const maxAllowedStake = lossLimit - currentLoss;
-            
+
             if (maxAllowedStake > 0 && maxAllowedStake < stakeAmount) {
               stakeAmount = maxAllowedStake;
               await this.saveLog(
@@ -1361,7 +1367,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Duração dinâmica (5-10 ticks)
       const duration = Math.floor(
         Math.random() * (SENTINEL_CONFIG.contractDurationMax - SENTINEL_CONFIG.contractDurationMin + 1) +
-          SENTINEL_CONFIG.contractDurationMin,
+        SENTINEL_CONFIG.contractDurationMin,
       );
 
       // Log de proposta enviada (formato da documentação)
@@ -1421,7 +1427,7 @@ export class AutonomousAgentService implements OnModuleInit {
           martingaleLevel: state.martingaleLevel,
           sorosLevel: state.sorosLevel,
         },
-      ).catch(() => {});
+      ).catch(() => { });
 
       // Processar resultado
       await this.handleTradeResult(state, tradeId, result, stakeAmount);
@@ -1506,16 +1512,16 @@ export class AutonomousAgentService implements OnModuleInit {
 
             const entryPrice = Number(
               contract.entry_spot ||
-                contract.entry_tick ||
-                contract.spot ||
-                0,
+              contract.entry_tick ||
+              contract.spot ||
+              0,
             );
             const exitPrice = Number(
               contract.exit_spot ||
-                contract.exit_tick ||
-                contract.current_spot ||
-                contract.spot ||
-                0,
+              contract.exit_tick ||
+              contract.current_spot ||
+              contract.spot ||
+              0,
             );
             const profit = Number(contract.profit || contract.profit_percentage || 0);
             const status = contract.is_sold === 1 || contract.status === 'sold' ? 'sold' : 'active';
@@ -1641,7 +1647,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('open', () => {
         this.logger.log(`[ExecuteTrade] WS conectado para trade ${tradeId}`);
-        this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida.').catch(() => {});
+        this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida.').catch(() => { });
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
 
@@ -1664,10 +1670,10 @@ export class AutonomousAgentService implements OnModuleInit {
               'ERROR',
               'API',
               `Erro da Deriv API. erro=${errorMessage}`,
-              { 
-                error: msg.error, 
+              {
+                error: msg.error,
                 errorDetails,
-                fullMessage: msg, 
+                fullMessage: msg,
                 tradeId,
                 contractType,
                 derivContractType: contractType === 'RISE' ? 'CALL' : (contractType === 'FALL' ? 'PUT' : contractType),
@@ -1676,7 +1682,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 symbol: state.symbol,
                 currency: state.currency,
               },
-            ).catch(() => {});
+            ).catch(() => { });
             await this.dataSource.query(
               'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
               ['ERROR', errorMessage, tradeId],
@@ -1692,12 +1698,12 @@ export class AutonomousAgentService implements OnModuleInit {
               'API',
               `Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`,
               { loginid: msg.authorize?.loginid, tradeId },
-            ).catch(() => {});
+            ).catch(() => { });
 
             // Usar o mesmo fluxo da IA: proposal → buy (conforme padrão da Deriv API)
             // A API da Deriv não aceita compra direta com parameters para RISE/FALL
             // Deve usar proposal primeiro para obter proposal_id e ask_price
-            
+
             // Mapear RISE/FALL para CALL/PUT (Deriv API espera CALL/PUT para R_75)
             let derivContractType: string;
             if (contractType === 'RISE') {
@@ -1708,7 +1714,7 @@ export class AutonomousAgentService implements OnModuleInit {
               // Para outros tipos (HIGHER, LOWER, ONETOUCH, NOTOUCH), usar como está
               derivContractType = contractType;
             }
-            
+
             // Enviar proposal para obter proposal_id e payout (conforme padrão da IA)
             const proposalPayload = {
               proposal: 1,
@@ -1733,8 +1739,8 @@ export class AutonomousAgentService implements OnModuleInit {
                 martingaleLevel: state.martingaleLevel,
                 sorosLevel: state.sorosLevel,
               },
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             await this.saveLog(
               state.userId,
               'DEBUG',
@@ -1747,8 +1753,8 @@ export class AutonomousAgentService implements OnModuleInit {
                 stake: stakeAmount,
                 duration,
               },
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             ws.send(JSON.stringify(proposalPayload));
             return;
           }
@@ -1763,7 +1769,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 'TRADER',
                 `Proposta inválida. trade_id=${tradeId}`,
                 { tradeId, proposal },
-              ).catch(() => {});
+              ).catch(() => { });
               finalize(new Error('Proposta inválida'));
               return;
             }
@@ -1771,21 +1777,21 @@ export class AutonomousAgentService implements OnModuleInit {
             const proposalId = proposal.id;
             const proposalPrice = Number(proposal.ask_price || stakeAmount);
             const payoutAbsolute = Number(proposal.payout || 0);
-            
+
             // Atualizar payout no banco (lucro líquido = payout - stakeAmount)
             if (payoutAbsolute > 0) {
               const payoutLiquido = payoutAbsolute - stakeAmount;
               await this.dataSource.query(
                 'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
                 [payoutLiquido, tradeId],
-              ).catch(() => {});
+              ).catch(() => { });
 
               // Calcular payout percentual para logs
-              const payoutPercentual = proposalPrice > 0 
-                ? ((payoutAbsolute / proposalPrice - 1) * 100) 
+              const payoutPercentual = proposalPrice > 0
+                ? ((payoutAbsolute / proposalPrice - 1) * 100)
                 : 0;
               const payoutCliente = payoutPercentual - 3;
-              
+
               // Logs de payout (formato da documentação)
               await this.saveLog(
                 state.userId,
@@ -1797,8 +1803,8 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutAbsolute,
                   proposalPrice,
                 },
-              ).catch(() => {});
-              
+              ).catch(() => { });
+
               await this.saveLog(
                 state.userId,
                 'DEBUG',
@@ -1809,7 +1815,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutPercentual,
                   markup: 3,
                 },
-              ).catch(() => {});
+              ).catch(() => { });
             }
 
             // Enviar buy com proposal_id (seguindo padrão da IA)
@@ -1828,7 +1834,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 proposalId,
                 proposalPrice,
               },
-            ).catch(() => {});
+            ).catch(() => { });
 
             ws.send(JSON.stringify(buyPayload));
             return;
@@ -1844,7 +1850,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 'TRADER',
                 `Compra não confirmada. trade_id=${tradeId}`,
                 { tradeId, buy },
-              ).catch(() => {});
+              ).catch(() => { });
               finalize(new Error('Compra não confirmada'));
               return;
             }
@@ -1853,13 +1859,13 @@ export class AutonomousAgentService implements OnModuleInit {
             const buyPrice = Number(buy.buy_price || stakeAmount);
             // Tentar múltiplas fontes para entry_spot
             const entrySpot = Number(
-              buy.entry_spot || 
-              buy.spot || 
-              buy.current_spot || 
-              buy.entry_tick || 
+              buy.entry_spot ||
+              buy.spot ||
+              buy.current_spot ||
+              buy.entry_tick ||
               0
             );
-            
+
             // Extrair payout da resposta do buy (se disponível)
             const payoutAbsolute = Number(buy.payout || 0);
             if (payoutAbsolute > 0) {
@@ -1871,11 +1877,11 @@ export class AutonomousAgentService implements OnModuleInit {
               );
 
               // Calcular payout percentual para logs
-              const payoutPercentual = buyPrice > 0 
-                ? ((payoutAbsolute / buyPrice - 1) * 100) 
+              const payoutPercentual = buyPrice > 0
+                ? ((payoutAbsolute / buyPrice - 1) * 100)
                 : 0;
               const payoutCliente = payoutPercentual - 3;
-              
+
               // Logs de payout (formato da documentação)
               await this.saveLog(
                 state.userId,
@@ -1887,8 +1893,8 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutAbsolute,
                   buyPrice,
                 },
-              ).catch(() => {});
-              
+              ).catch(() => { });
+
               await this.saveLog(
                 state.userId,
                 'DEBUG',
@@ -1899,7 +1905,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutPercentual,
                   markup: 3,
                 },
-              ).catch(() => {});
+              ).catch(() => { });
             }
 
             this.logger.log(
@@ -1912,7 +1918,7 @@ export class AutonomousAgentService implements OnModuleInit {
                WHERE id = ?`,
               [contractId, entrySpot, tradeId],
             );
-            
+
             this.logger.log(`[ExecuteTrade] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
             // Inscrever para monitorar contrato (seguindo padrão do AiService)
@@ -1925,8 +1931,8 @@ export class AutonomousAgentService implements OnModuleInit {
                 tradeId,
                 contractId,
               },
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             ws.send(
               JSON.stringify({
                 proposal_open_contract: 1,
@@ -1934,11 +1940,11 @@ export class AutonomousAgentService implements OnModuleInit {
                 subscribe: 1,
               }),
             );
-            
+
             this.logger.log(
               `[ExecuteTrade] Compra confirmada | trade=${tradeId} | contrato=${contractId} | preço=${buyPrice}`,
             );
-            
+
             await this.saveLog(
               state.userId,
               'INFO',
@@ -1950,66 +1956,66 @@ export class AutonomousAgentService implements OnModuleInit {
                 entryPrice: entrySpot,
                 buyPrice,
               },
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             return;
           }
 
           // Processar proposal_open_contract (seguindo padrão do AiService)
           if (msg.msg_type === 'proposal_open_contract') {
             const contract = msg.proposal_open_contract;
-            
+
             // Se contrato ainda não foi vendido, verificar se podemos obter payout e entry_price
             if (!contract || contract.is_sold !== 1) {
               // Atualizar entry_price se ainda não foi atualizado e estiver disponível no contract
               const contractEntrySpot = Number(
-                contract.entry_spot || 
-                contract.entry_tick || 
-                contract.spot || 
+                contract.entry_spot ||
+                contract.entry_tick ||
+                contract.spot ||
                 0
               );
-              
+
               if (contractEntrySpot > 0) {
                 // Verificar se entry_price ainda está zerado no banco
                 const currentTrade = await this.dataSource.query(
                   'SELECT entry_price FROM autonomous_agent_trades WHERE id = ?',
                   [tradeId],
                 );
-                
-                if (currentTrade && currentTrade.length > 0 && 
-                    (currentTrade[0].entry_price === 0 || currentTrade[0].entry_price === null)) {
+
+                if (currentTrade && currentTrade.length > 0 &&
+                  (currentTrade[0].entry_price === 0 || currentTrade[0].entry_price === null)) {
                   await this.dataSource.query(
                     `UPDATE autonomous_agent_trades 
                      SET entry_price = ? 
                      WHERE id = ? AND (entry_price = 0 OR entry_price IS NULL)`,
                     [contractEntrySpot, tradeId],
                   );
-                  
+
                   this.logger.log(
                     `[ExecuteTrade] ✅ entry_price atualizado via proposal_open_contract | tradeId=${tradeId} | entryPrice=${contractEntrySpot}`,
                   );
                 }
               }
-              
+
               // Obter payout via proposal_open_contract se não foi obtido na resposta do buy
               if (contract.payout && contract.buy_price) {
                 const payoutAbsolute = Number(contract.payout || 0);
                 const buyPrice = Number(contract.buy_price || stakeAmount);
-                
+
                 if (payoutAbsolute > 0) {
                   // Atualizar payout no banco (lucro líquido = payout - stakeAmount)
                   const payoutLiquido = payoutAbsolute - stakeAmount;
                   await this.dataSource.query(
                     'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
                     [payoutLiquido, tradeId],
-                  ).catch(() => {});
+                  ).catch(() => { });
 
                   // Calcular payout percentual para logs
-                  const payoutPercentual = buyPrice > 0 
-                    ? ((payoutAbsolute / buyPrice - 1) * 100) 
+                  const payoutPercentual = buyPrice > 0
+                    ? ((payoutAbsolute / buyPrice - 1) * 100)
                     : 0;
                   const payoutCliente = payoutPercentual - 3;
-                  
+
                   // Logs de payout (formato da documentação)
                   await this.saveLog(
                     state.userId,
@@ -2021,8 +2027,8 @@ export class AutonomousAgentService implements OnModuleInit {
                       payoutAbsolute,
                       buyPrice,
                     },
-                  ).catch(() => {});
-                  
+                  ).catch(() => { });
+
                   await this.saveLog(
                     state.userId,
                     'DEBUG',
@@ -2033,10 +2039,10 @@ export class AutonomousAgentService implements OnModuleInit {
                       payoutPercentual,
                       markup: 3,
                     },
-                  ).catch(() => {});
+                  ).catch(() => { });
                 }
               }
-              
+
               // Log de atualização do contrato (seguindo padrão do AiService)
               await this.saveLog(
                 state.userId,
@@ -2049,8 +2055,8 @@ export class AutonomousAgentService implements OnModuleInit {
                   isSold: contract.is_sold || 0,
                   status: contract.status || 'active',
                 },
-              ).catch(() => {});
-              
+              ).catch(() => { });
+
               return;
             }
 
@@ -2083,7 +2089,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
-              ).catch(() => {});
+              ).catch(() => { });
             } else {
               await this.saveLog(
                 state.userId,
@@ -2096,7 +2102,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
-              ).catch(() => {});
+              ).catch(() => { });
             }
 
             // Finalizar com resultado
@@ -2151,15 +2157,48 @@ export class AutonomousAgentService implements OnModuleInit {
     try {
       // Obter configuração do Stop Loss
       const config = await this.dataSource.query(
-        `SELECT stop_loss_type, daily_loss_limit, daily_loss FROM autonomous_agent_config WHERE user_id = ?`,
+        `SELECT stop_loss_type, daily_loss_limit, daily_loss, daily_profit_target, profit_peak, initial_balance, daily_profit FROM autonomous_agent_config WHERE user_id = ?`,
         [state.userId],
       );
 
       if (config && config.length > 0) {
         const cfg = config[0];
 
-        // Se for Stop Loss Blindado, não verificar aqui (é verificado após vitória)
+        // Se for Stop Loss Blindado
         if (cfg.stop_loss_type === 'blindado') {
+          // Calcular limite blindado
+          const profitTarget = parseFloat(cfg.daily_profit_target) || 0;
+          const profitPeak = parseFloat(cfg.profit_peak) || 0;
+
+          // Só verificar se já tiver ativado (atingido 25% da meta)
+          if (profitPeak >= profitTarget * 0.25) {
+            const protectedProfit = profitPeak * 0.50; // Protege 50% do pico
+            const initialBalance = parseFloat(cfg.initial_balance) || 0;
+            const blindBalance = initialBalance + protectedProfit;
+            const currentBalance = initialBalance + parseFloat(cfg.daily_profit) - parseFloat(cfg.daily_loss);
+
+            // Quanto ainda podemos perder até bater no blindBalance?
+            const allowedLoss = currentBalance - blindBalance;
+
+            if (calculatedStake > allowedLoss) {
+              // Stake ultrapassa o permitido pelo stop blindado
+              // Retornar falso e informar qual é o máximo permitido
+              // Nota: se allowedLoss for negativo ou zero, o canProcessAgent já deve ter bloqueado, mas verificamos aqui também
+              if (allowedLoss <= 0) {
+                return {
+                  canProceed: false,
+                  message: `Stop Loss Blindado atingido. Saldo protegido: ${blindBalance.toFixed(2)}`,
+                };
+              }
+
+              return {
+                canProceed: false,
+                message: `Stake (${calculatedStake.toFixed(2)}) ultrapassa limite do Stop Blindado. Máximo permitido: ${allowedLoss.toFixed(2)}`,
+              };
+            }
+          }
+
+          // Se não ativou ainda ou se o stake cabe no limite, prosseguir
           return { canProceed: true };
         }
 
@@ -2212,7 +2251,7 @@ export class AutonomousAgentService implements OnModuleInit {
         clearTimeout(timeout);
         try {
           ws.close();
-        } catch (e) {}
+        } catch (e) { }
         if (error) {
           reject(error);
         } else {
@@ -2244,15 +2283,15 @@ export class AutonomousAgentService implements OnModuleInit {
               // Para outros tipos (HIGHER, LOWER, ONETOUCH, NOTOUCH), usar como está
               derivContractType = contractType;
             }
-            
+
             // Log de consulta de payout (formato da documentação)
             await this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
               `Querying payout for contract_type=${contractType} (Deriv: ${derivContractType})`,
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             // Enviar proposal para consultar payout (usar stake mínimo para consulta)
             ws.send(JSON.stringify({
               proposal: 1,
@@ -2276,12 +2315,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
             const askPrice = Number(proposal.ask_price || 1);
             const payoutAbsolute = Number(proposal.payout || 0);
-            
+
             // Calcular payout percentual: (payout / ask_price - 1) × 100
-            const payoutPercentual = askPrice > 0 
-              ? ((payoutAbsolute / askPrice - 1) * 100) 
+            const payoutPercentual = askPrice > 0
+              ? ((payoutAbsolute / askPrice - 1) * 100)
               : 0;
-            
+
             // Calcular payout_cliente = payout_original - 3%
             const payoutCliente = payoutPercentual - 3;
 
@@ -2291,14 +2330,14 @@ export class AutonomousAgentService implements OnModuleInit {
               'DEBUG',
               'TRADER',
               `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             await this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
               `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
-            ).catch(() => {});
+            ).catch(() => { });
 
             if (payoutCliente <= 0) {
               finalize(new Error('Payout cliente inválido'));
@@ -2310,21 +2349,21 @@ export class AutonomousAgentService implements OnModuleInit {
               `SELECT daily_loss, risk_level FROM autonomous_agent_config WHERE user_id = ?`,
               [state.userId],
             );
-            
-            const totalLosses = config && config.length > 0 
-              ? parseFloat(config[0].daily_loss) || 0 
+
+            const totalLosses = config && config.length > 0
+              ? parseFloat(config[0].daily_loss) || 0
               : 0;
-            
-            const mode = config && config.length > 0 
-              ? config[0].risk_level || 'balanced' 
+
+            const mode = config && config.length > 0
+              ? config[0].risk_level || 'balanced'
               : 'balanced';
-            
+
             // Obter multiplicador do modo
             const multiplier = SENTINEL_CONFIG.managementMultipliers[mode as ManagementMode] || 1.25;
-            
+
             // Calcular meta de lucro
             const targetProfit = totalLosses * multiplier;
-            
+
             // Calcular stake: (meta × 100) / payout_cliente
             const recoveryStake = (targetProfit * 100) / payoutCliente;
 
@@ -2340,8 +2379,8 @@ export class AutonomousAgentService implements OnModuleInit {
                 mode: modeName,
                 multiplier,
               },
-            ).catch(() => {});
-            
+            ).catch(() => { });
+
             await this.saveLog(
               state.userId,
               'DEBUG',
@@ -2353,7 +2392,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 recoveryStake,
                 calculation: `(targetProfit * 100) / payoutCliente = (${targetProfit.toFixed(2)} * 100) / ${payoutCliente.toFixed(2)} = ${recoveryStake.toFixed(2)}`,
               },
-            ).catch(() => {});
+            ).catch(() => { });
 
             finalize(undefined, recoveryStake);
           }
@@ -2379,7 +2418,7 @@ export class AutonomousAgentService implements OnModuleInit {
   ): Promise<void> {
     // Log de entrada no handleTradeResult
     this.logger.log(`[HandleTradeResult][${state.userId}] Iniciando processamento. trade_id=${tradeId}, status=${result.status}, profit_loss=${result.profitLoss.toFixed(2)}`);
-    
+
     await this.saveLog(
       state.userId,
       'DEBUG',
@@ -2393,7 +2432,7 @@ export class AutonomousAgentService implements OnModuleInit {
         martingaleLevelBefore: state.martingaleLevel,
         sorosLevelBefore: state.sorosLevel,
       },
-    ).catch(() => {});
+    ).catch(() => { });
 
     const won = result.status === 'WON';
 
@@ -2419,7 +2458,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // 3. Se estiver em Martingale, resetar E ativar Soros
       // 4. Se não estiver em Martingale, ativar Soros
       state.dailyProfit += result.profitLoss;
-      
+
       // Atualizar profit_peak para Stop Loss Blindado
       if (state.dailyProfit > state.profitPeak) {
         state.profitPeak = state.dailyProfit;
@@ -2437,7 +2476,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 2;
         state.sorosStake = nextStake;
         state.sorosProfit = result.profitLoss; // Profit da última operação ganha
-        
+
         // Verificar se a coluna soros_profit existe antes de usar
         const hasSorosProfit = await this.hasSorosProfitColumn();
         if (hasSorosProfit) {
@@ -2469,7 +2508,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 0;
         state.sorosStake = 0;
         state.sorosProfit = 0.0; // Resetar profit (conforme documentação)
-        
+
         // Verificar se a coluna soros_profit existe antes de usar
         const hasSorosProfit = await this.hasSorosProfitColumn();
         if (hasSorosProfit) {
@@ -2502,7 +2541,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.martingaleLevel = 'M0';
         state.martingaleCount = 0;
         state.lastLossAmount = 0;
-        
+
         await this.dataSource.query(
           `UPDATE autonomous_agent_config SET
             martingale_level = 'M0',
@@ -2531,7 +2570,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 1;
         state.sorosStake = sorosStake;
         state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
-        
+
         // Verificar se a coluna soros_profit existe antes de usar
         const hasSorosProfit = await this.hasSorosProfitColumn();
         if (hasSorosProfit) {
@@ -2563,7 +2602,7 @@ export class AutonomousAgentService implements OnModuleInit {
         state.sorosLevel = 1;
         state.sorosStake = sorosStake;
         state.sorosProfit = result.profitLoss; // Armazenar profit da última operação
-        
+
         // Verificar se a coluna soros_profit existe antes de usar
         const hasSorosProfit = await this.hasSorosProfitColumn();
         if (hasSorosProfit) {
@@ -2620,7 +2659,7 @@ export class AutonomousAgentService implements OnModuleInit {
           martingaleLevel: state.martingaleLevel,
           sorosLevel: state.sorosLevel,
         },
-      ).catch(() => {});
+      ).catch(() => { });
 
       // Se estava em Soros, entrar em recuperação imediatamente
       if (state.sorosLevel > 0) {
@@ -2628,23 +2667,23 @@ export class AutonomousAgentService implements OnModuleInit {
         const sorosLevelBefore = state.sorosLevel;
         const sorosStakeBefore = state.sorosStake;
         const sorosProfitBefore = state.sorosProfit;
-        
+
         // Calcular perda líquida: stake atual - profit da última operação ganha (conforme documentação)
         // net_loss = stake - soros_profit
         const netLoss = stakeAmount - state.sorosProfit;
-        
+
         await this.saveLog(
           state.userId,
           'DEBUG',
           'RISK',
           `Soros loss calculation. soros_stake=${sorosStakeBefore.toFixed(2)}, soros_profit=${sorosProfitBefore.toFixed(2)}, stake_lost=${stakeAmount.toFixed(2)}, net_loss=${netLoss.toFixed(2)}`,
-        ).catch(() => {});
-        
+        ).catch(() => { });
+
         // Resetar Soros
         state.sorosLevel = 0;
         state.sorosStake = 0;
         state.sorosProfit = 0;
-        
+
         // Verificar se a coluna soros_profit existe antes de usar
         const hasSorosProfit = await this.hasSorosProfitColumn();
         if (hasSorosProfit) {
@@ -2658,7 +2697,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [state.userId],
           );
         }
-        
+
         await this.saveLog(
           state.userId,
           'WARN',
@@ -2671,7 +2710,7 @@ export class AutonomousAgentService implements OnModuleInit {
             nextMartingaleLevel: 'M1',
           },
         );
-        
+
         // Atualizar lastLossAmount para o cálculo de Martingale
         state.lastLossAmount = netLoss;
       }
@@ -2681,22 +2720,22 @@ export class AutonomousAgentService implements OnModuleInit {
         `SELECT daily_loss, risk_level, martingale_count FROM autonomous_agent_config WHERE user_id = ?`,
         [state.userId],
       );
-      
-      const totalLosses = config && config.length > 0 
-        ? parseFloat(config[0].daily_loss) || 0 
+
+      const totalLosses = config && config.length > 0
+        ? parseFloat(config[0].daily_loss) || 0
         : 0;
-      
-      const mode = config && config.length > 0 
-        ? config[0].risk_level || 'balanced' 
+
+      const mode = config && config.length > 0
+        ? config[0].risk_level || 'balanced'
         : 'balanced';
-      
-      const currentMartingaleCount = config && config.length > 0 
-        ? (config[0].martingale_count || 0) 
+
+      const currentMartingaleCount = config && config.length > 0
+        ? (config[0].martingale_count || 0)
         : 0;
 
       // Verificar limite M5 para Conservador
       const martingaleLimit = SENTINEL_CONFIG.martingaleLimits[mode as ManagementMode] || Infinity;
-      
+
       if (mode === 'conservative' && currentMartingaleCount >= martingaleLimit) {
         // Limite M5 atingido: aceitar perda e resetar
         state.martingaleLevel = 'M0';
@@ -2710,14 +2749,14 @@ export class AutonomousAgentService implements OnModuleInit {
            WHERE user_id = ?`,
           [state.userId],
         );
-        
+
         await this.saveLog(
           state.userId,
           'WARN',
           'RISK',
           `Limite M5 atingido no modo Conservador. Aceitando perda e resetando para M0.`,
         );
-        
+
         // Pausa de 15-30 segundos
         const pauseSeconds = 15 + Math.floor(Math.random() * 16); // 15-30 segundos
         await this.updateNextTradeAt(state.userId, pauseSeconds);
@@ -2727,7 +2766,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'HUMANIZER',
           `Pausa após M5. duração_segundos=${pauseSeconds}`,
         );
-        
+
         this.logger.log(
           `[HandleTradeResult][${state.userId}] ❌ PERDA. Limite M5 atingido, resetando para M0`,
         );
@@ -2738,11 +2777,11 @@ export class AutonomousAgentService implements OnModuleInit {
       const prices = await this.getPriceHistory(state.userId, state.symbol);
       const tradingConfig = SENTINEL_CONFIG.tradingModes[state.tradingMode];
       const minTicks = tradingConfig.ticksRequired;
-      
+
       if (prices.length >= minTicks) {
         const recentPrices = prices.slice(-minTicks);
         const analysis = this.performTechnicalAnalysis(recentPrices, state.userId);
-        
+
         // Para Martingale, exigir confiança maior (80% mínimo)
         if (analysis.confidenceScore >= 80) {
           // Determinar próximo nível de Martingale
@@ -2755,12 +2794,12 @@ export class AutonomousAgentService implements OnModuleInit {
             // Já está em M2, manter
             nextLevel = 'M2';
           }
-          
+
           const newCount = currentMartingaleCount + 1;
           state.martingaleLevel = nextLevel;
           state.martingaleCount = newCount;
           state.lastLossAmount = stakeAmount;
-          
+
           await this.dataSource.query(
             `UPDATE autonomous_agent_config SET
               martingale_level = ?,
@@ -2771,7 +2810,7 @@ export class AutonomousAgentService implements OnModuleInit {
           );
 
           const modeName = mode === 'conservative' ? 'Conservador' : mode === 'aggressive' ? 'Agressivo' : 'Moderado';
-          
+
           await this.saveLog(
             state.userId,
             'WARN',
@@ -2836,7 +2875,7 @@ export class AutonomousAgentService implements OnModuleInit {
   private getRandomInterval(): number {
     return Math.floor(
       Math.random() * (SENTINEL_CONFIG.maxIntervalSeconds - SENTINEL_CONFIG.minIntervalSeconds + 1) +
-        SENTINEL_CONFIG.minIntervalSeconds,
+      SENTINEL_CONFIG.minIntervalSeconds,
     );
   }
 
@@ -2856,7 +2895,7 @@ export class AutonomousAgentService implements OnModuleInit {
     const pauseMinutes =
       Math.floor(
         Math.random() * (SENTINEL_CONFIG.pauseMaxMinutes - SENTINEL_CONFIG.pauseMinMinutes + 1) +
-          SENTINEL_CONFIG.pauseMinMinutes,
+        SENTINEL_CONFIG.pauseMinMinutes,
       );
 
     await this.dataSource.query(
@@ -3069,8 +3108,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('open', () => {
         this.logger.log(`[WebSocket][${userId}] ✅ Conexão estabelecida`);
-        this.saveLog(userId, 'INFO', 'API', 'Conexão WebSocket aberta.').catch(() => {});
-        
+        this.saveLog(userId, 'INFO', 'API', 'Conexão WebSocket aberta.').catch(() => { });
+
         // Autorizar
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
@@ -3081,8 +3120,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
           if (msg.error) {
             this.logger.error(`[WebSocket][${userId}] ❌ Erro:`, msg.error);
-            this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`).catch(() => {});
-            
+            this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`).catch(() => { });
+
             // Tentar reconectar após delay
             setTimeout(() => {
               this.establishWebSocketConnection(userId);
@@ -3093,8 +3132,8 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'authorize') {
             isAuthorized = true;
             this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
-            this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`).catch(() => {});
-            
+            this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`).catch(() => { });
+
             // Subscribir aos ticks
             ws.send(JSON.stringify({
               ticks_history: state.symbol,
@@ -3111,19 +3150,19 @@ export class AutonomousAgentService implements OnModuleInit {
             const history = msg.history;
             if (history && history.prices) {
               subscriptionId = history.id || null;
-              
+
               // Processar histórico inicial
               const ticks: PriceTick[] = history.prices.map((price: number, index: number) => ({
                 value: parseFloat(price.toString()),
                 epoch: history.times ? history.times[index] : Math.floor(Date.now() / 1000),
-                timestamp: history.times 
+                timestamp: history.times
                   ? new Date(history.times[index] * 1000).toISOString()
                   : new Date().toISOString(),
               }));
 
               this.priceHistory.set(userId, ticks);
               this.logger.log(`[WebSocket][${userId}] 📊 Histórico inicial recebido: ${ticks.length} ticks`);
-              this.saveLog(userId, 'INFO', 'API', `📊 Histórico inicial de preços recebido. ticks=${ticks.length}`).catch(() => {});
+              this.saveLog(userId, 'INFO', 'API', `📊 Histórico inicial de preços recebido. ticks=${ticks.length}`).catch(() => { });
             }
             return;
           }
@@ -3134,7 +3173,7 @@ export class AutonomousAgentService implements OnModuleInit {
               const priceTick: PriceTick = {
                 value: parseFloat(tick.quote),
                 epoch: tick.epoch || Math.floor(Date.now() / 1000),
-                timestamp: tick.epoch 
+                timestamp: tick.epoch
                   ? new Date(tick.epoch * 1000).toISOString()
                   : new Date().toISOString(),
               };
@@ -3150,13 +3189,13 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('error', (error) => {
         this.logger.error(`[WebSocket][${userId}] ❌ Erro no WebSocket:`, error);
-        this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${error.message || 'Erro desconhecido'}`).catch(() => {});
+        this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${error.message || 'Erro desconhecido'}`).catch(() => { });
       });
 
       ws.on('close', () => {
         this.logger.warn(`[WebSocket][${userId}] 🔌 Conexão WebSocket fechada`);
         this.wsConnections.delete(userId);
-        this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.').catch(() => {});
+        this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.').catch(() => { });
 
         // Tentar reconectar se o agente ainda estiver ativo
         const currentState = this.agentStates.get(userId);
@@ -3170,8 +3209,8 @@ export class AutonomousAgentService implements OnModuleInit {
       this.wsConnections.set(userId, ws);
     } catch (error) {
       this.logger.error(`[EstablishWebSocket][${userId}] ❌ Erro ao estabelecer conexão:`, error);
-      this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`).catch(() => {});
-      
+      this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`).catch(() => { });
+
       // Tentar reconectar após delay
       setTimeout(() => {
         this.establishWebSocketConnection(userId);
@@ -3267,7 +3306,7 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     const cfg = config[0];
-    
+
     // Garantir que session_date seja retornado como string ISO se existir
     let sessionDate: string | null = null;
     if (cfg.session_date) {
@@ -3294,7 +3333,7 @@ export class AutonomousAgentService implements OnModuleInit {
         sessionDate = null;
       }
     }
-    
+
     let createdAt: string | null = null;
     if (cfg.created_at) {
       if (cfg.created_at instanceof Date) {
@@ -3305,7 +3344,7 @@ export class AutonomousAgentService implements OnModuleInit {
         createdAt = String(cfg.created_at);
       }
     }
-    
+
     return {
       isActive: cfg.is_active === 1 || cfg.is_active === true,
       initialStake: parseFloat(cfg.initial_stake),
@@ -3372,16 +3411,16 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Marcar como em progresso
     this.updateInProgress.add(userId);
-    
+
     try {
       // ✅ CORREÇÃO: Adicionar controle de retry para evitar loop infinito
       // Buscar trades com entry_price ou exit_price zerados e que tenham contract_id
       // Excluir trades que falharam recentemente para evitar loop infinito
       let tradesToUpdate: any[];
       try {
-      // Tentar usar coluna last_update_attempt se existir
-      tradesToUpdate = await this.dataSource.query(
-        `SELECT id, contract_id, entry_price, exit_price, status
+        // Tentar usar coluna last_update_attempt se existir
+        tradesToUpdate = await this.dataSource.query(
+          `SELECT id, contract_id, entry_price, exit_price, status
          FROM autonomous_agent_trades
          WHERE user_id = ? 
            AND contract_id IS NOT NULL 
@@ -3391,13 +3430,13 @@ export class AutonomousAgentService implements OnModuleInit {
            AND (last_update_attempt IS NULL OR last_update_attempt < DATE_SUB(NOW(), INTERVAL 1 HOUR))
          ORDER BY created_at DESC
          LIMIT ?`,
-        [userId, limit],
-      );
-    } catch (error) {
-      // Se a coluna não existir, buscar sem filtro de last_update_attempt
-      this.logger.warn(`[UpdateTradesWithMissingPrices] Coluna last_update_attempt não encontrada, usando query sem filtro`);
-      tradesToUpdate = await this.dataSource.query(
-        `SELECT id, contract_id, entry_price, exit_price, status
+          [userId, limit],
+        );
+      } catch (error) {
+        // Se a coluna não existir, buscar sem filtro de last_update_attempt
+        this.logger.warn(`[UpdateTradesWithMissingPrices] Coluna last_update_attempt não encontrada, usando query sem filtro`);
+        tradesToUpdate = await this.dataSource.query(
+          `SELECT id, contract_id, entry_price, exit_price, status
          FROM autonomous_agent_trades
          WHERE user_id = ? 
            AND contract_id IS NOT NULL 
@@ -3406,116 +3445,116 @@ export class AutonomousAgentService implements OnModuleInit {
            AND status IN ('WON', 'LOST', 'ACTIVE')
          ORDER BY created_at DESC
          LIMIT ?`,
-        [userId, limit],
-      );
-    }
-
-    if (tradesToUpdate.length === 0) {
-      this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
-      return { updated: 0, errors: 0, deleted: 0 };
-    }
-
-    // Obter o token do usuário
-    const state = this.agentStates.get(userId);
-    if (!state || !state.derivToken) {
-      this.logger.warn(`[UpdateTradesWithMissingPrices] Token não encontrado para userId=${userId}`);
-      return { updated: 0, errors: tradesToUpdate.length, deleted: 0 };
-    }
-
-    // Type assertion explícita para garantir que TypeScript reconhece que não é null
-    const derivToken: string = state.derivToken as string;
-    let updated = 0;
-    let errors = 0;
-
-    // ✅ Controle de retry: rastrear trades que falharam nesta execução
-    const failedTrades = new Set<number>();
-    let deleted = 0;
-
-    for (const trade of tradesToUpdate) {
-      // ✅ Pular trades que já falharam nesta execução
-      if (failedTrades.has(trade.id)) {
-        continue;
+          [userId, limit],
+        );
       }
 
-      try {
-        this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
-        const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
-        
-        if (contractDetails) {
-          const updates: string[] = [];
-          const values: any[] = [];
-          
-          if ((trade.entry_price === 0 || trade.entry_price === null) && contractDetails.entryPrice > 0) {
-            updates.push('entry_price = ?');
-            values.push(contractDetails.entryPrice);
-            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: entry_price atualizado para ${contractDetails.entryPrice}`);
-          }
-          
-          if ((trade.exit_price === 0 || trade.exit_price === null) && contractDetails.exitPrice > 0) {
-            updates.push('exit_price = ?');
-            values.push(contractDetails.exitPrice);
-            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: exit_price atualizado para ${contractDetails.exitPrice}`);
-          }
-          
-          if (updates.length > 0) {
-            values.push(trade.id);
+      if (tradesToUpdate.length === 0) {
+        this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
+        return { updated: 0, errors: 0, deleted: 0 };
+      }
+
+      // Obter o token do usuário
+      const state = this.agentStates.get(userId);
+      if (!state || !state.derivToken) {
+        this.logger.warn(`[UpdateTradesWithMissingPrices] Token não encontrado para userId=${userId}`);
+        return { updated: 0, errors: tradesToUpdate.length, deleted: 0 };
+      }
+
+      // Type assertion explícita para garantir que TypeScript reconhece que não é null
+      const derivToken: string = state.derivToken as string;
+      let updated = 0;
+      let errors = 0;
+
+      // ✅ Controle de retry: rastrear trades que falharam nesta execução
+      const failedTrades = new Set<number>();
+      let deleted = 0;
+
+      for (const trade of tradesToUpdate) {
+        // ✅ Pular trades que já falharam nesta execução
+        if (failedTrades.has(trade.id)) {
+          continue;
+        }
+
+        try {
+          this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
+          const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
+
+          if (contractDetails) {
+            const updates: string[] = [];
+            const values: any[] = [];
+
+            if ((trade.entry_price === 0 || trade.entry_price === null) && contractDetails.entryPrice > 0) {
+              updates.push('entry_price = ?');
+              values.push(contractDetails.entryPrice);
+              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: entry_price atualizado para ${contractDetails.entryPrice}`);
+            }
+
+            if ((trade.exit_price === 0 || trade.exit_price === null) && contractDetails.exitPrice > 0) {
+              updates.push('exit_price = ?');
+              values.push(contractDetails.exitPrice);
+              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: exit_price atualizado para ${contractDetails.exitPrice}`);
+            }
+
+            if (updates.length > 0) {
+              values.push(trade.id);
+              try {
+                await this.dataSource.query(
+                  `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
+                  values,
+                );
+                updated++;
+              } catch (updateError) {
+                this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar banco para trade ${trade.id}:`, updateError);
+                errors++;
+              }
+            }
+          } else {
+            // ✅ Não foi possível obter detalhes do contrato - deletar trade
+            this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}, deletando trade ${trade.id}`);
             try {
               await this.dataSource.query(
-                `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
-                values,
+                `DELETE FROM autonomous_agent_trades WHERE id = ?`,
+                [trade.id],
               );
-              updated++;
-            } catch (updateError) {
-              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar banco para trade ${trade.id}:`, updateError);
+              deleted++;
+              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco`);
+            } catch (deleteError) {
+              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
               errors++;
             }
           }
-        } else {
-          // ✅ Não foi possível obter detalhes do contrato - deletar trade
-          this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}, deletando trade ${trade.id}`);
-          try {
-            await this.dataSource.query(
-              `DELETE FROM autonomous_agent_trades WHERE id = ?`,
-              [trade.id],
-            );
-            deleted++;
-            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco`);
-          } catch (deleteError) {
-            this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
-            errors++;
-          }
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, errorMessage);
-        
-        // ✅ Se for erro de validação ou timeout, deletar o trade
-        if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout') || errorMessage.includes('WrongResponse')) {
-          this.logger.warn(`[UpdateTradesWithMissingPrices] Erro ao consultar contrato ${trade.contract_id} (${errorMessage}), deletando trade ${trade.id}`);
-          try {
-            await this.dataSource.query(
-              `DELETE FROM autonomous_agent_trades WHERE id = ?`,
-              [trade.id],
-            );
-            deleted++;
-            this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco devido a erro: ${errorMessage}`);
-          } catch (deleteError) {
-            this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
-            errors++;
-          }
-        } else {
-          // Para outros erros, apenas marcar como erro
-          failedTrades.add(trade.id);
-          errors++;
-        }
-      }
-      
-      // ✅ Aumentar delay entre requisições para não sobrecarregar a API
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, errorMessage);
 
-    this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${deleted} deletados, ${errors} erros`);
-    return { updated, errors, deleted };
+          // ✅ Se for erro de validação ou timeout, deletar o trade
+          if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout') || errorMessage.includes('WrongResponse')) {
+            this.logger.warn(`[UpdateTradesWithMissingPrices] Erro ao consultar contrato ${trade.contract_id} (${errorMessage}), deletando trade ${trade.id}`);
+            try {
+              await this.dataSource.query(
+                `DELETE FROM autonomous_agent_trades WHERE id = ?`,
+                [trade.id],
+              );
+              deleted++;
+              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco devido a erro: ${errorMessage}`);
+            } catch (deleteError) {
+              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
+              errors++;
+            }
+          } else {
+            // Para outros erros, apenas marcar como erro
+            failedTrades.add(trade.id);
+            errors++;
+          }
+        }
+
+        // ✅ Aumentar delay entre requisições para não sobrecarregar a API
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${deleted} deletados, ${errors} erros`);
+      return { updated, errors, deleted };
     } finally {
       // ✅ Sempre remover do conjunto de execuções em progresso
       this.updateInProgress.delete(userId);
@@ -3562,7 +3601,7 @@ export class AutonomousAgentService implements OnModuleInit {
     // Usar initialBalance como valor total da conta configurada (sempre usar este valor quando disponível)
     // Se initialBalance for 0, tentar buscar o saldo atual da conta Deriv como fallback
     let totalCapital = initialBalance > 0 ? initialBalance : 0;
-    
+
     // Se initialBalance não estiver configurado, tentar buscar saldo atual da conta
     if (totalCapital === 0 && config && config.length > 0) {
       if (!this.derivService) {
@@ -3578,14 +3617,14 @@ export class AutonomousAgentService implements OnModuleInit {
             const accountInfo = await this.derivService.connectAndGetAccount(derivToken, appId, currency);
             if (accountInfo && accountInfo.balance) {
               // accountInfo.balance pode ser um objeto {value, currency} ou um número
-              const balanceValue = typeof accountInfo.balance === 'object' 
-                ? accountInfo.balance.value 
+              const balanceValue = typeof accountInfo.balance === 'object'
+                ? accountInfo.balance.value
                 : accountInfo.balance;
-              
+
               if (balanceValue && balanceValue > 0) {
                 totalCapital = typeof balanceValue === 'number' ? balanceValue : parseFloat(String(balanceValue)) || 0;
                 this.logger.log(`[GetSessionStats][${userId}] ✅ initial_balance não configurado, usando saldo atual da conta: ${totalCapital}`);
-                
+
                 // Atualizar initial_balance no banco para próximas consultas
                 try {
                   await this.dataSource.query(
@@ -3610,13 +3649,13 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
     }
-    
+
     this.logger.log(`[GetSessionStats][${userId}] 📊 totalCapital: ${totalCapital}, initialBalance: ${initialBalance}`);
 
     // Contar TODAS as operações do dia de autonomous_agent_trades (independente do status)
     const autonomousTradesAll = allAutonomousTrades && allAutonomousTrades.length > 0 ? parseInt(allAutonomousTrades[0].total_trades) || 0 : 0;
     const totalTradesToday = autonomousTradesAll;
-    
+
     // Para estatísticas (wins/losses), usar apenas trades finalizados
     const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
 
@@ -3692,11 +3731,11 @@ export class AutonomousAgentService implements OnModuleInit {
     try {
       const now = new Date();
       const timestampISO = now.toISOString();
-      
+
       // Formato da documentação: [TIMESTAMP] [LOG_LEVEL] [MÓDULO] - MENSAGEM
       // A mensagem já deve vir formatada, apenas adicionamos o prefixo
       const logMessage = `[${timestampISO}] [${level}] [${module}] - ${message}`;
-      
+
       // Log no console também
       switch (level) {
         case 'ERROR':
@@ -3744,7 +3783,7 @@ export class AutonomousAgentService implements OnModuleInit {
            FROM autonomous_agent_logs
            WHERE user_id = ?
            ORDER BY timestamp DESC`;
-      
+
       const params = limit ? [userId, limit] : [userId];
       const logs = await this.dataSource.query(query, params);
 
@@ -3784,7 +3823,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
         // Mapear log_level para type
         const type = levelToType[log.log_level] || 'info';
-        
+
         // Obter icon baseado no módulo ou type
         const icon = moduleToIcon[log.module] || (type === 'erro' ? '🚫' : type === 'alerta' ? '⚠️' : 'ℹ️');
 
@@ -3805,7 +3844,7 @@ export class AutonomousAgentService implements OnModuleInit {
           second: '2-digit',
           hour12: false,
         });
-        
+
         // Converter timestamp do banco para ISO string para o frontend poder parsear
         let timestampISO: string | null = null;
         if (log.timestamp) {
@@ -3823,7 +3862,7 @@ export class AutonomousAgentService implements OnModuleInit {
             this.logger.warn(`[GetLogs] Erro ao converter timestamp do log ${log.id}:`, error);
           }
         }
-        
+
         return {
           id: log.id,
           timestamp: timestampISO || formattedTime, // Retornar ISO string para o frontend parsear, ou formato formatado como fallback
