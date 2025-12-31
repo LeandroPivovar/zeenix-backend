@@ -1532,14 +1532,13 @@ export class OrionStrategy implements IStrategy {
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
                 `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-                `Stop Level: $${stopBlindado.toFixed(2)}`
+                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`
+                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
               );
             }
 
@@ -3050,14 +3049,13 @@ export class OrionStrategy implements IStrategy {
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
                 `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-                `Stop Level: $${stopBlindado.toFixed(2)}`
+                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} | Stop: $${stopBlindado.toFixed(2)}`
+                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
               );
             }
 
