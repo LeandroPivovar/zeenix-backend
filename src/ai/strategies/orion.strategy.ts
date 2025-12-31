@@ -2852,10 +2852,13 @@ export class OrionStrategy implements IStrategy {
           state.vitoriasConsecutivas = (state.vitoriasConsecutivas || 0) + 1;
         }
 
-        if (state.vitoriasConsecutivas === 4) {
-          // Ciclo Soros completo (4 vitórias: inicial + nível 1 + nível 2 + nível 3)
-          this.logger.log(`[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO!`);
-          this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3)`);
+        // ✅ Verificar se completou o ciclo Soros (vitórias > SOROS_MAX_NIVEL)
+        // Com SOROS_MAX_NIVEL = 1: após 2 vitórias (inicial + nível 1), resetar
+        // Com SOROS_MAX_NIVEL = 3: após 4 vitórias (inicial + níveis 1, 2, 3), resetar
+        if (state.vitoriasConsecutivas > SOROS_MAX_NIVEL) {
+          // Ciclo Soros completo
+          this.logger.log(`[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`);
+          this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`);
           state.vitoriasConsecutivas = 0;
           state.ultimoLucro = 0;
           state.apostaBase = state.apostaInicial || 0.35;
