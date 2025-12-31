@@ -1800,7 +1800,6 @@ export class OrionStrategy implements IStrategy {
         `SELECT 
           COALESCE(loss_limit, 0) as lossLimit,
           COALESCE(profit_target, 0) as profitTarget,
-          COALESCE(session_balance, 0) as sessionBalance,
           COALESCE(stake_amount, 0) as capitalInicial,
           COALESCE(profit_peak, 0) as profitPeak,
           stop_blindado_percent as stopBlindadoPercent
@@ -1815,8 +1814,11 @@ export class OrionStrategy implements IStrategy {
         const lossLimit = parseFloat(config.lossLimit) || 0;
         const profitTarget = parseFloat(config.profitTarget) || 0;
         const capitalInicial = parseFloat(config.capitalInicial) || 0;
-        const sessionBalance = parseFloat(config.sessionBalance) || 0;
-        const capitalSessao = capitalInicial + sessionBalance;
+
+        // ✅ IMPORTANTE: Usar state.capital (valor atual em memória) ao invés de consultar DB
+        // Isso garante que estamos usando o saldo MAIS RECENTE após todas as operações
+        const capitalSessao = state.capital;
+        const sessionBalance = capitalSessao - capitalInicial;
         const lucroAtual = sessionBalance;
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
 
@@ -1841,6 +1843,15 @@ export class OrionStrategy implements IStrategy {
             const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
             const stopBlindado = capitalInicial + protectedAmount;
             const availableCapitalAboveStop = capitalSessao - stopBlindado;
+
+            this.logger.debug(
+              `[ORION][${mode}][${state.userId}] 🛡️ Stop Blindado Check:` +
+              ` Capital: $${capitalSessao.toFixed(2)} |` +
+              ` Profit Peak: $${profitPeak.toFixed(2)} |` +
+              ` Protected: $${protectedAmount.toFixed(2)} |` +
+              ` Stop Level: $${stopBlindado.toFixed(2)} |` +
+              ` Available: $${availableCapitalAboveStop.toFixed(2)}`
+            );
 
             if (availableCapitalAboveStop > 0) {
               maxStakeAllowed = Math.min(maxStakeAllowed, availableCapitalAboveStop);
