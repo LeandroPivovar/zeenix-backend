@@ -154,10 +154,9 @@ function calcularProximaAposta(
 
   switch (modo) {
     case 'conservador':
-      // Meta: recuperar 100% das perdas (break-even)
-      // Meta: recuperar perdas + 100% de lucro (Dobra a entrada)
-      // Fórmula: entrada_próxima = perdas_totais + base_stake
-      aposta = perdasTotais + baseStake;
+      // Meta: recuperar apenas o valor da perda (break-even)
+      // Fórmula: entrada_próxima = perdas_totais / payout
+      aposta = perdasTotais / PAYOUT;
       break;
     case 'moderado':
       // Meta: recuperar 100% das perdas + 25% de lucro
@@ -254,13 +253,13 @@ class RiskManager {
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
-          // CONSERVADOR: Recuperar perdas + 100% de lucro (Dobra a entrada)
-          // Fórmula: próxima = perda_total + base (ex: 10 perda + 10 base = 20)
-          nextStake = this.totalLossAccumulated + baseStake;
+          // CONSERVADOR: Recuperar apenas o valor da última perda (Break-even)
+          // Fórmula conforme pedido: nextStake = totalLossAccumulated / 0.92
+          nextStake = this.totalLossAccumulated / 0.92;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
             logger.log(
-              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Dobra)`,
+              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Break-even)`,
             );
           }
         } else {
@@ -1599,7 +1598,23 @@ export class OrionStrategy implements IStrategy {
       // Martingale: calcular próxima aposta
       const payoutCliente = 92; // Payout padrão (95 - 3)
       const baseStake = state.apostaInicial || 0.35;
-      stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
+
+      // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 5 martingales (6 losses totais)
+      // entry 1: base, entry 2-6: martingale 1-5, entry 7: reset
+      if (state.modoMartingale === 'conservador' && entry > 6) {
+        this.logger.warn(`[ORION][${mode}][${state.userId}] ❌ Limite de 5 martingales atingido no modo CONSERVADOR. Resetando.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `❌ Limite de 5 martingales atingido no modo CONSERVADOR. Resetando para aposta base.`);
+
+        state.perdaAcumulada = 0;
+        state.martingaleStep = 0;
+        state.vitoriasConsecutivas = 0;
+        state.consecutive_losses = 0;
+        if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
+
+        stakeAmount = baseStake;
+      } else {
+        stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
+      }
 
       // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
       stakeAmount = Math.round(stakeAmount * 100) / 100;
