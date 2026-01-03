@@ -95,10 +95,11 @@ export const ATLAS_VELOZ_CONFIG: ModeConfig = {
 };
 
 // Modo NORMAL: 5.000 ops/dia (~208 ops/minuto), intervalo 2.9s, máximo 1 derrota virtual
+// DOCUMENTAÇÃO: Verifica últimos 5 dígitos. Se ratio > 0.8 (4 ou 5 > 3), aguarda.
 export const ATLAS_NORMAL_CONFIG: ModeConfig = {
-  amostraInicial: 10, // Buffer de 10 dígitos para análise de desequilíbrio
+  amostraInicial: 5, // Buffer de 5 dígitos para análise de desequilíbrio
   intervaloSegundos: 2.9, // Uma operação a cada ~2.9 segundos
-  desequilibrioMin: 0.7, // Filtro: se >70% Over, aguarda
+  desequilibrioMin: 0.8, // Filtro: se >80% Over (>3), aguarda
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.60, // 60-65%
   payout: 0.95,
@@ -107,10 +108,11 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
 };
 
 // Modo LENTO: 8.000 ops/dia (~333 ops/minuto), intervalo 1.8s, máximo 2 derrotas virtuais
+// DOCUMENTAÇÃO: Verifica últimos 10 dígitos. Se ratio > 0.7, aguarda.
 export const ATLAS_LENTO_CONFIG: ModeConfig = {
-  amostraInicial: 15, // Buffer de 15 dígitos para análise mais profunda
+  amostraInicial: 10, // Buffer de 10 dígitos para análise mais profunda
   intervaloSegundos: 1.8, // Uma operação a cada ~1.8 segundos
-  desequilibrioMin: 0.75, // Filtro: se >75% Over, aguarda
+  desequilibrioMin: 0.7, // Filtro: se >70% Over, aguarda
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.62, // 62-67%
   payout: 0.95,
