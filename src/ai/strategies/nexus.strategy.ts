@@ -388,7 +388,7 @@ export class NexusStrategy implements IStrategy {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction };
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 1)`,
+             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
             [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
         );
         return r.insertId || r[0]?.insertId;
@@ -404,7 +404,7 @@ export class NexusStrategy implements IStrategy {
                 basis: 'stake',
                 contract_type: params.contract_type,
                 currency: params.currency || 'USD',
-                duration: 1,
+                duration: 5,
                 duration_unit: 't',
                 symbol: this.symbol,
                 barrier: params.barrier
