@@ -380,9 +380,11 @@ export class ApolloStrategy implements IStrategy {
     userId?: string,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
     try {
+      this.logger.log(`[APOLLO] 🔌 Iniciando conexão WebSocket para trade...`);
       const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
       // Solicitar proposta
+      this.logger.log(`[APOLLO] 📝 Solicitando proposta para Over ${contractParams.barrier} | Stake: ${contractParams.amount}`);
       const proposalResponse: any = await connection.sendRequest({
         proposal: 1,
         amount: contractParams.amount,
@@ -404,7 +406,10 @@ export class ApolloStrategy implements IStrategy {
       const proposalId = proposalResponse.proposal?.id;
       const proposalPrice = Number(proposalResponse.proposal?.ask_price);
 
+      this.logger.log(`[APOLLO] ✅ Proposta recebida: ID=${proposalId} | Preço=${proposalPrice}`);
+
       // Comprar contrato
+      this.logger.log(`[APOLLO] 🛒 Efetuando compra...`);
       const buyResponse: any = await connection.sendRequest({
         buy: proposalId,
         price: proposalPrice,
@@ -417,6 +422,7 @@ export class ApolloStrategy implements IStrategy {
       }
 
       const contractId = buyResponse.buy?.contract_id;
+      this.logger.log(`[APOLLO] ✅ Compra efetuada! Contrato ID: ${contractId}. Monitorando...`);
 
       // Monitorar contrato
       return await new Promise((resolve) => {
@@ -424,6 +430,7 @@ export class ApolloStrategy implements IStrategy {
         const contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
+            this.logger.warn(`[APOLLO] ⚠️ Timeout monitorando contrato ${contractId}`);
             connection.removeSubscription(contractId);
             resolve(null);
           }
@@ -433,11 +440,16 @@ export class ApolloStrategy implements IStrategy {
           { proposal_open_contract: 1, contract_id: contractId },
           (msg: any) => {
             const contract = msg.proposal_open_contract;
+
+            // Debug esporádico pode ajudar se travar
+            // this.logger.debug(`[APOLLO] 🔍 Status contrato ${contractId}: ${contract?.status}`);
+
             if (!contract) return;
 
             if (contract.is_sold || contract.status === 'sold') {
               if (!hasResolved) {
                 hasResolved = true;
+                this.logger.log(`[APOLLO] ✅ Contrato ${contractId} finalizado. Lucro: ${contract.profit}`);
                 clearTimeout(contractMonitorTimeout);
                 connection.removeSubscription(contractId);
 
