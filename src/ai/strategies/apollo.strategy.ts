@@ -437,23 +437,25 @@ export class ApolloStrategy implements IStrategy {
         }, 90000);
 
         connection.subscribe(
-          { proposal_open_contract: 1, contract_id: contractId },
+          { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
           (msg: any) => {
             const contract = msg.proposal_open_contract;
 
-            // Debug esporádico pode ajudar se travar
-            // this.logger.debug(`[APOLLO] 🔍 Status contrato ${contractId}: ${contract?.status}`);
+            // Debug esporádico ou log de progresso
+            if (contract.status === 'open' || contract.status === 'running') {
+              this.logger.debug(`[APOLLO] 🔍 Contrato ${contractId} em andamento...`);
+            }
 
             if (!contract) return;
 
             if (contract.is_sold || contract.status === 'sold') {
               if (!hasResolved) {
                 hasResolved = true;
-                this.logger.log(`[APOLLO] ✅ Contrato ${contractId} finalizado. Lucro: ${contract.profit}`);
+                const profit = Number(contract.profit || 0);
+                this.logger.log(`[APOLLO] ✅ Contrato ${contractId} finalizado. Status: ${contract.status}, Lucro: ${profit}`);
                 clearTimeout(contractMonitorTimeout);
                 connection.removeSubscription(contractId);
 
-                const profit = Number(contract.profit || 0);
                 const exitSpot = contract.exit_tick || contract.current_spot || 0;
 
                 resolve({
