@@ -4531,6 +4531,7 @@ export class AiService implements OnModuleInit {
           modoMartingale: modoMartingale || 'conservador',
           profitTarget: profitTarget || null,
           lossLimit: lossLimit || null,
+          stopLossBlindado: stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
         });
         this.logger.log(`[ActivateAI] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
 
