@@ -286,9 +286,9 @@ export class TitanStrategy implements IStrategy {
     private async createTradeRecord(state: TitanUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
         const analysisData = { strategy: 'titan', mode: state.mode, direction };
         const r = await this.dataSource.query(
-            `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol)
-       VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?)`,
-            [state.userId, direction, entryPrice, stake, direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD', JSON.stringify(analysisData), this.symbol]
+            `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
+       VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, ?)`,
+            [state.userId, direction, entryPrice, stake, direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD', JSON.stringify(analysisData), this.symbol, '1t']
         );
         return r.insertId || r[0]?.insertId;
     }
