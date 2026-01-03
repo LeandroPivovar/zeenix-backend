@@ -144,6 +144,16 @@ export class TitanStrategy implements IStrategy {
 
     private wsConnections = new Map<string, any>();
 
+    // ✅ Sistema de logs (Titan)
+    private logQueue: Array<{
+        userId: string;
+        symbol: string;
+        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+        message: string;
+        details?: any;
+    }> = [];
+    private logProcessing = false;
+
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
@@ -233,7 +243,17 @@ export class TitanStrategy implements IStrategy {
             stakeAmount, lossLimit || 50, profitTarget || 100,
             modoMartingale.toUpperCase(), stopLossBlindado !== false
         ));
+
         this.logger.log(`[TITAN] ${userId} ativado em ${titanMode}`);
+
+        // ✅ Log: Usuário ativado
+        this.saveTitanLog(userId, 'SISTEMA', 'info',
+            `Usuário ATIVADO | Modo: ${titanMode} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
+
+        // ✅ Log imediato: Status de coleta de ticks
+        let requiredTicks = titanMode === 'VELOZ' ? 10 : titanMode === 'NORMAL' ? 20 : 50;
+        this.saveTitanLog(userId, this.symbol, 'info',
+            `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${titanMode} | Coleta inicial iniciada.`);
     }
 
     async deactivateUser(userId: string): Promise<void> {
@@ -333,5 +353,83 @@ export class TitanStrategy implements IStrategy {
             });
             setTimeout(() => finish(null), 20000);
         });
+    }
+
+    /**
+     * ✅ TITAN: Sistema de Logs Detalhados
+     */
+    private saveTitanLog(
+        userId: string,
+        symbol: string,
+        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
+        message: string,
+        details?: any,
+    ): void {
+        if (!userId || !type || !message || message.trim() === '') return;
+
+        const symbolToUse = symbol === 'SISTEMA' ? 'SISTEMA' : this.symbol;
+        this.logQueue.push({ userId, symbol: symbolToUse, type, message, details });
+        this.processTitanLogQueue().catch(error => {
+            this.logger.error(`[TITAN][SaveLog] Erro ao processar fila de logs:`, error);
+        });
+    }
+
+    private async processTitanLogQueue(): Promise<void> {
+        if (this.logProcessing || this.logQueue.length === 0) return;
+        this.logProcessing = true;
+
+        try {
+            const batch = this.logQueue.splice(0, 50);
+            if (batch.length === 0) {
+                this.logProcessing = false;
+                return;
+            }
+
+            const logsByUser = new Map<string, typeof batch>();
+            for (const log of batch) {
+                if (!logsByUser.has(log.userId)) logsByUser.set(log.userId, []);
+                logsByUser.get(log.userId)!.push(log);
+            }
+
+            for (const [userId, logs] of logsByUser.entries()) {
+                await this.saveTitanLogsBatch(userId, logs);
+            }
+        } catch (error) {
+            this.logger.error(`[TITAN][ProcessLogQueue] Erro ao processar logs:`, error);
+        } finally {
+            this.logProcessing = false;
+            if (this.logQueue.length > 0) {
+                setTimeout(() => this.processTitanLogQueue(), 0);
+            }
+        }
+    }
+
+    private async saveTitanLogsBatch(userId: string, logs: typeof this.logQueue): Promise<void> {
+        if (logs.length === 0) return;
+
+        try {
+            const icons: Record<string, string> = {
+                'info': 'ℹ️', 'tick': '📊', 'analise': '🔍', 'sinal': '🎯',
+                'operacao': '⚡', 'resultado': '💰', 'alerta': '⚠️', 'erro': '❌',
+            };
+
+            const placeholders = logs.map(() => '(?, ?, ?, ?, ?, NOW())').join(', ');
+            const flatValues: any[] = [];
+
+            for (const log of logs) {
+                const icon = icons[log.type] || 'ℹ️';
+                const detailsJson = log.details ? JSON.stringify(log.details) : JSON.stringify({ symbol: log.symbol });
+                flatValues.push(userId, log.type, icon, log.message, detailsJson);
+            }
+
+            await this.dataSource.query(
+                `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES ${placeholders}`,
+                flatValues,
+            );
+
+            this.tradeEvents.emit({ userId, type: 'updated', strategy: 'titan', status: 'LOG' });
+        } catch (error) {
+            this.logger.error(`[TITAN][SaveLogsBatch][${userId}] Erro ao salvar logs:`, error);
+        }
     }
 }
