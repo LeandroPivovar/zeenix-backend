@@ -4,7 +4,7 @@ import { filter, map } from 'rxjs/operators';
 
 interface TradeEventPayload {
   userId: string;
-  type: 'created' | 'updated' | 'corrected' | 'stopped_blindado' | 'stopped_loss' | 'blindado_activated';
+  type: 'created' | 'updated' | 'corrected' | 'stopped_blindado' | 'stopped_loss' | 'blindado_activated' | 'stopped_profit';
   tradeId?: number;
   status?: string;
   strategy?: string;

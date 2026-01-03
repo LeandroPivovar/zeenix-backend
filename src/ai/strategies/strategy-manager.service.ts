@@ -7,7 +7,8 @@ import { OrionStrategy } from './orion.strategy';
 import { TrinityStrategy } from './trinity.strategy';
 import { AtlasStrategy } from './atlas.strategy';
 import { ApolloStrategy } from './apollo.strategy';
-import { TitanStrategy } from './titan.strategy'; // Added TitanStrategy import
+import { TitanStrategy } from './titan.strategy';
+import { NexusStrategy } from './nexus.strategy';
 
 @Injectable()
 export class StrategyManagerService implements OnModuleInit {
@@ -20,7 +21,8 @@ export class StrategyManagerService implements OnModuleInit {
     private trinityStrategy: TrinityStrategy,
     private atlasStrategy: AtlasStrategy,
     private apolloStrategy: ApolloStrategy,
-    private titanStrategy: TitanStrategy, // Added TitanStrategy to constructor
+    private titanStrategy: TitanStrategy,
+    private nexusStrategy: NexusStrategy,
   ) { }
 
   async onModuleInit() {
@@ -29,14 +31,16 @@ export class StrategyManagerService implements OnModuleInit {
     this.strategies.set('trinity', this.trinityStrategy);
     this.strategies.set('atlas', this.atlasStrategy);
     this.strategies.set('apollo', this.apolloStrategy);
-    this.strategies.set('titan', this.titanStrategy); // Registered TitanStrategy
+    this.strategies.set('titan', this.titanStrategy);
+    this.strategies.set('nexus', this.nexusStrategy);
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
     await this.trinityStrategy.initialize();
     await this.atlasStrategy.initialize();
     await this.apolloStrategy.initialize();
-    await this.titanStrategy.initialize(); // Initialized TitanStrategy
+    await this.titanStrategy.initialize();
+    await this.nexusStrategy.initialize();
 
     this.logger.log(`[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')} `);
   }
@@ -48,8 +52,9 @@ export class StrategyManagerService implements OnModuleInit {
     // ORION agora usa R_100 como símbolo padrão
     if (!symbol || symbol === 'R_100') {
       await this.orionStrategy.processTick(tick, 'R_100');
-      await this.apolloStrategy.processTick(tick, 'R_100'); // APOLLO também usa R_100
-      await this.titanStrategy.processTick(tick, 'R_100'); // Titan also uses R_100
+      await this.apolloStrategy.processTick(tick, 'R_100');
+      await this.titanStrategy.processTick(tick, 'R_100');
+      await this.nexusStrategy.processTick(tick, 'R_100');
     }
 
     // TRINITY processa R_10, R_25, R_50
