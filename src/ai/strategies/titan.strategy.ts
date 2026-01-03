@@ -501,7 +501,18 @@ export class TitanStrategy implements IStrategy {
                 state.ultimoLucro = result.profit;
                 const status = result.profit >= 0 ? 'WON' : 'LOST';
                 const previousWins = state.vitoriasConsecutivas;
-                state.vitoriasConsecutivas = status === 'WON' ? state.vitoriasConsecutivas + 1 : 0;
+
+                // ✅ FIX: Se venceu uma operação de recuperação (Martingale), reseta o ciclo 
+                // para não ativar Soros com o lucro alto da recuperação.
+                if (status === 'WON') {
+                    if (previousConsecutiveLosses > 0) {
+                        state.vitoriasConsecutivas = 0; // Reset total após recuperação
+                    } else {
+                        state.vitoriasConsecutivas++;
+                    }
+                } else {
+                    state.vitoriasConsecutivas = 0;
+                }
 
                 // Extract exit digit from result
                 const exitDigit = result.exitSpot ? result.exitSpot.toString().slice(-1) : '?';
