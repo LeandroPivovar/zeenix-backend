@@ -305,7 +305,10 @@ export class ApolloStrategy implements IStrategy {
     this.saveApolloLog(state.userId, 'operacao', `🚀 [TRADE] Comprando Over ${state.currentBarrier} | Stake: $${stakeToUse.toFixed(2)}`);
     this.logger.log(`[APOLLO][${state.userId}] 🚀 [TRADE] Comprando Over ${state.currentBarrier} | Stake: $${stakeToUse.toFixed(2)}`);
 
+    let tradeId: number | null = null;
     try {
+      tradeId = await this.createApolloTradeRecord(state, stakeToUse, state.currentBarrier);
+
       const result = await this.executeTradeViaWebSocket(state.derivToken, {
         contract_type: "DIGITOVER",
         barrier: state.currentBarrier,
@@ -314,18 +317,30 @@ export class ApolloStrategy implements IStrategy {
       }, state.userId);
 
       if (result) {
-        await this.processResult(state, result, stakeToUse, riskManager);
+        await this.processResult(state, result, stakeToUse, riskManager, tradeId);
       } else {
         state.isOperationActive = false;
+        if (tradeId) {
+          await this.dataSource.query(
+            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+            ['Timeout ou erro na execução via WebSocket', tradeId]
+          ).catch(() => { });
+        }
       }
 
     } catch (e) {
       this.logger.error(`[APOLLO][${state.userId}] Erro na execução: ${e.message}`);
       state.isOperationActive = false;
+      if (tradeId) {
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [e.message || 'Erro na execução', tradeId]
+        ).catch(() => { });
+      }
     }
   }
 
-  private async processResult(state: ApolloUserState, result: { profit: number, exitSpot: any, contractId: string }, stakeUsed: number, riskManager: RiskManager) {
+  private async processResult(state: ApolloUserState, result: { profit: number, exitSpot: any, contractId: string }, stakeUsed: number, riskManager: RiskManager, tradeId: number | null) {
     const profit = result.profit;
     const isWin = profit > 0;
 
@@ -340,6 +355,7 @@ export class ApolloStrategy implements IStrategy {
 
     if (currentProfit >= state.profitTarget) {
       this.saveApolloLog(state.userId, 'info', "🏆 [META] Objetivo Diário Conquistado!");
+      if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
       await this.deactivateApolloUser(state.userId, 'target_reached');
       return;
     }
@@ -363,7 +379,7 @@ export class ApolloStrategy implements IStrategy {
       }, 1000);
     }
 
-    await this.saveTradeToDb(state.userId, result, isWin, stakeUsed, state.mode, state.currentBarrier, state.symbol);
+    if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
   }
 
   /**
@@ -533,29 +549,84 @@ export class ApolloStrategy implements IStrategy {
     this.apolloUsers.delete(userId);
   }
 
-  private async saveTradeToDb(userId: string, result: any, isWin: boolean, stake: number, mode: string, barrier: number, symbol: string) {
+  /**
+   * ✅ APOLLO: Cria registro de trade no banco
+   */
+  private async createApolloTradeRecord(
+    state: ApolloUserState,
+    stakeAmount: number,
+    barrier: number,
+  ): Promise<number> {
     const analysisData = {
       strategy: 'apollo',
-      mode,
+      mode: state.mode,
       barrier,
-      result_digit: result.exitSpot
+      virtualLoss: state.virtualLoss,
+      timestamp: new Date().toISOString(),
     };
 
-    await this.dataSource.query(
-      `INSERT INTO ai_trades 
-           (user_id, gemini_signal, entry_price, stake_amount, status, profit_loss, exit_price, contract_type, created_at, closed_at, analysis_data, symbol)
-           VALUES (?, ?, 0, ?, ?, ?, ?, 'DIGITOVER', NOW(), NOW(), ?, ?)`,
-      [userId, `OVER_${barrier}`, stake, isWin ? 'WON' : 'LOST', result.profit, result.exitSpot, JSON.stringify(analysisData), symbol]
-    );
+    let insertResult: any;
+    try {
+      insertResult = await this.dataSource.query(
+        `INSERT INTO ai_trades 
+         (user_id, gemini_signal, entry_price, stake_amount, status, 
+          gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+        [
+          state.userId,
+          `OVER_${barrier}`,
+          0, // entry_price inicial
+          stakeAmount,
+          'PENDING',
+          1,
+          `Apollo Strategy - Mode: ${state.mode}, Barrier: ${barrier}`,
+          'DIGITOVER',
+          JSON.stringify(analysisData),
+          state.symbol,
+        ],
+      );
+    } catch (error: any) {
+      this.logger.error(`[APOLLO] Erro ao criar registro de trade:`, error);
+      throw error;
+    }
 
-    this.tradeEvents.emit({
-      userId,
-      type: 'updated',
-      tradeId: 0,
-      status: isWin ? 'WON' : 'LOST',
-      strategy: 'apollo',
-      profitLoss: result.profit
-    });
+    const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+    return result?.insertId || null;
+  }
+
+  /**
+   * ✅ APOLLO: Atualiza registro de trade no banco
+   */
+  private async updateApolloTradeRecord(
+    state: ApolloUserState,
+    tradeId: number,
+    status: string,
+    result: any,
+    profit: number,
+  ) {
+    if (!tradeId) return;
+
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades
+         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+         WHERE id = ?`,
+        [result?.contractId || null, result?.exitSpot || 0, profit, status, tradeId],
+      );
+
+      // Emitir evento de atualização
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'updated',
+        tradeId,
+        status: status as any,
+        strategy: 'apollo',
+        profitLoss: profit,
+        exitPrice: result?.exitSpot || 0,
+      });
+    } catch (error) {
+      this.logger.error(`[APOLLO] Erro ao atualizar registro de trade ${tradeId}:`, error);
+    }
   }
 
   private saveApolloLog(userId: string, type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro', message: string) {
