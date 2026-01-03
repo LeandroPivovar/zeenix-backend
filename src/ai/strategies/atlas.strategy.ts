@@ -487,20 +487,21 @@ export class AtlasStrategy implements IStrategy {
         stakeAmount = state.ultimaApostaUsada + (state.ultimoLucro * SOROS_FACTOR);
       }
     }
-
     // Ajuste final
     stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
     state.ultimaApostaUsada = stakeAmount;
 
-    // ✅ ATLAS: Filtro de Latência (crítico para EHF)
+    // ✅ ATLAS: Filtro de Latência (crítico para EHF) - DESATIVADO A PEDIDO DO CLIENTE
+    /*
     const connection = this.wsConnections.get(state.derivToken);
     if (connection && connection.lastLatency > 500) {
-      this.saveAtlasLog(state.userId, symbol, 'alerta',
+      this.saveAtlasLog(state.userId, symbol, 'alerta', 
         `⚠️ Latência alta detectada: ${connection.lastLatency}ms | Operação abortada`);
       state.isOperationActive = false;
       state.creationCooldownUntil = Date.now() + 2000;
       return;
     }
+    */
 
     const contractType = operation === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER';
 
