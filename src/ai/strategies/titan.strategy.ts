@@ -53,12 +53,28 @@ class RiskManager {
         }
     }
 
+    get blindadoActive(): boolean {
+        return this._blindadoActive;
+    }
+
+    get profitAccumulatedAtPeak(): number {
+        return this.maxBalance - this.initialBalance;
+    }
+
+    get guaranteedProfit(): number {
+        if (!this._blindadoActive) return 0;
+        return this.profitAccumulatedAtPeak * 0.5;
+    }
+
     calculateStake(
         currentBalance: number,
         baseStake: number,
         lastProfit: number,
         logger?: any,
         vitoriasConsecutivas?: number,
+        userId?: string,
+        symbol?: string,
+        logCallback?: (userId: string, symbol: string, type: string, message: string) => void,
     ): number {
         if (currentBalance > this.maxBalance) {
             this.maxBalance = currentBalance;
@@ -93,8 +109,13 @@ class RiskManager {
         const activationTrigger = this.profitTarget * 0.40;
         let minAllowedBalance = 0.0;
 
-        if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger) {
+        if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
+            if (userId && symbol && logCallback) {
+                const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
+                logCallback(userId, symbol, 'alerta',
+                    `🛡️ [BLINDADO] Gatilho de 40% da Meta atingido!\n• Stop Loss Normal: DESATIVADO ❌\n• Stop Loss Blindado: ATIVADO ✅\n• Novo Piso de Proteção: Saldo Inicial + $${guaranteedProfit.toFixed(2)} (50% do Lucro Atual)`);
+            }
         }
 
         if (this._blindadoActive) {
@@ -108,6 +129,13 @@ class RiskManager {
         if (potentialBalanceAfterLoss < minAllowedBalance) {
             let adjustedStake = currentBalance - minAllowedBalance;
             adjustedStake = Math.round(adjustedStake * 100) / 100;
+
+            if (userId && symbol && logCallback) {
+                const balanceRemaining = (currentBalance - minAllowedBalance).toFixed(2);
+                logCallback(userId, symbol, 'alerta',
+                    `⚠️ [RISCO] Entrada calculada ($${nextStake.toFixed(2)}) violaria o Stop Loss.\n• Ajuste de Precisão: Stake reduzida para $${adjustedStake.toFixed(2)} (Saldo Restante Permitido: $${balanceRemaining})`);
+            }
+
             if (adjustedStake < 0.35) return 0.0;
             return adjustedStake;
         }
@@ -130,6 +158,8 @@ interface TitanUserState {
     vitoriasConsecutivas: number;
     ultimoLucro: number;
     ticksColetados: number;
+    sorosActive: boolean;
+    sorosStake: number;
 }
 
 @Injectable()
@@ -225,14 +255,26 @@ export class TitanStrategy implements IStrategy {
         if (state.mode === 'VELOZ') {
             const evens = window.slice(-10).filter(d => d % 2 === 0).length;
             signal = evens > 5 ? 'PAR' : evens < 5 ? 'IMPAR' : null;
+            if (signal) {
+                const criterio = signal === 'PAR' ? `Maioria PAR (${evens}/10)` : `Maioria ÍMPAR (${10 - evens}/10)`;
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ]\\n• Critério: ${criterio}`);
+            }
         } else if (state.mode === 'NORMAL') {
             const last3 = window.slice(-3).map(d => d % 2);
             if (last3.every(v => v === 0)) signal = 'PAR';
             else if (last3.every(v => v === 1)) signal = 'IMPAR';
+            if (signal) {
+                const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE NORMAL]\\n• Critério: Sequência 3x ${tipo} detectada`);
+            }
         } else if (state.mode === 'PRECISO') {
             const last5 = window.slice(-5).map(d => d % 2);
             if (last5.every(v => v === 0)) signal = 'PAR';
             else if (last5.every(v => v === 1)) signal = 'IMPAR';
+            if (signal) {
+                const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO]\\n• Critério: Sequência 5x ${tipo} detectada`);
+            }
         }
 
         if (signal) state.lastDirection = signal;
@@ -249,7 +291,8 @@ export class TitanStrategy implements IStrategy {
             modoMartingale: modoMartingale || 'conservador',
             mode: titanMode, originalMode: titanMode,
             lastDirection: null, isOperationActive: false,
-            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
+            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0,
+            sorosActive: false, sorosStake: 0
         });
 
         this.riskManagers.set(userId, new RiskManager(
@@ -278,21 +321,55 @@ export class TitanStrategy implements IStrategy {
 
     private async executeOperation(state: TitanUserState, direction: DigitParity): Promise<void> {
         const riskManager = this.riskManagers.get(state.userId)!;
-        const stake = riskManager.calculateStake(state.capital, state.apostaInicial, state.ultimoLucro, this.logger, state.vitoriasConsecutivas);
+        const saveTitanLogCallback = (userId: string, symbol: string, type: string, message: string) => {
+            this.saveTitanLog(userId, symbol, type as any, message);
+        };
+        const stake = riskManager.calculateStake(
+            state.capital,
+            state.apostaInicial,
+            state.ultimoLucro,
+            this.logger,
+            state.vitoriasConsecutivas,
+            state.userId,
+            this.symbol,
+            saveTitanLogCallback
+        );
 
         if (stake <= 0) {
-            this.logger.warn(`[TITAN][${state.userId}] Stop Loss atingido.`);
+            const blindadoMsg = riskManager.blindadoActive
+                ? `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
+                : `🛑 [STOP LOSS] Limite de perda atingido.\\n• Sessão Encerrada para proteção do capital.`;
+
+            this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
             await this.deactivateUser(state.userId);
             await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_risk' WHERE user_id = ?`, [state.userId]);
             return;
         }
+
+        // ⚔️ Log: Persistência antes da entrada (se ativo)
+        if (riskManager.consecutiveLosses > 0 && state.lastDirection !== null) {
+            const stakeIndicator = riskManager.consecutiveLosses > 1 ? ' - Martingale' : '';
+            this.saveTitanLog(state.userId, this.symbol, 'sinal',
+                `⚔️ [PERSISTÊNCIA] Recuperação ativa (${riskManager.consecutiveLosses}x Loss).\\n• Mantendo direção anterior: ${direction} 🔒 (Stake: $${stake.toFixed(2)}${stakeIndicator})`);
+        }
+
+        // ⚔️ Log: Entrada Confirmada
+        let stakeIndicator = '';
+        if (state.sorosActive && state.vitoriasConsecutivas > 0) {
+            stakeIndicator = ' - SOROS';
+        } else if (riskManager.consecutiveLosses > 0) {
+            stakeIndicator = ' - Martingale';
+        }
+
+        const directionDisplay = direction === 'PAR' ? 'EVEN' : 'ODD';
+        this.saveTitanLog(state.userId, this.symbol, 'sinal',
+            `⚔️ [TITAN] Entrada Confirmada: ${directionDisplay} (Stake: $${stake.toFixed(2)}${stakeIndicator})`);
 
         state.isOperationActive = true;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            this.logger.log(`[TITAN][TRADE] Executando: ${direction} $${stake}`);
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
                 contract_type: direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
                 amount: stake,
@@ -300,11 +377,53 @@ export class TitanStrategy implements IStrategy {
             }, state.userId);
 
             if (result) {
+                const previousConsecutiveLosses = riskManager.consecutiveLosses;
                 riskManager.updateResult(result.profit, stake);
                 state.capital += result.profit;
                 state.ultimoLucro = result.profit;
                 const status = result.profit >= 0 ? 'WON' : 'LOST';
+                const previousWins = state.vitoriasConsecutivas;
                 state.vitoriasConsecutivas = status === 'WON' ? state.vitoriasConsecutivas + 1 : 0;
+
+                // Extract exit digit from result
+                const exitDigit = result.exitSpot ? result.exitSpot.toString().slice(-1) : '?';
+                const resultType = direction === 'PAR' ? 'PAR' : 'ÍMPAR';
+
+                // 📊 Log: Resultado Detalhado
+                if (status === 'WON') {
+                    this.saveTitanLog(state.userId, this.symbol, 'resultado',
+                        `✅ [WIN] Resultado: ${resultType} (${exitDigit}). Lucro: +$${result.profit.toFixed(2)}\\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+
+                    // Soros Logic
+                    if (state.vitoriasConsecutivas === 1 && !state.sorosActive) {
+                        // First win, activate Soros
+                        state.sorosActive = true;
+                        state.sorosStake = state.apostaInicial + result.profit;
+                        this.saveTitanLog(state.userId, this.symbol, 'info',
+                            `🚀 [SOROS] Ativado! Próxima entrada potencializada: $${state.sorosStake.toFixed(2)}`);
+                    } else if (state.vitoriasConsecutivas >= 2 && state.sorosActive) {
+                        // Soros cycle completed (won with Soros stake)
+                        state.sorosActive = false;
+                        state.sorosStake = 0;
+                        this.saveTitanLog(state.userId, this.symbol, 'info',
+                            `🔄 [SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base ($${state.apostaInicial.toFixed(2)}).`);
+                    }
+
+                    // Recuperação completa
+                    if (previousConsecutiveLosses > 0) {
+                        this.saveTitanLog(state.userId, this.symbol, 'info',
+                            `✅ [RECUPERAÇÃO] Ciclo zerado. Retornando ao modo original (${state.originalMode}).`);
+                    }
+                } else {
+                    this.saveTitanLog(state.userId, this.symbol, 'resultado',
+                        `📉 [LOSS] Perda de $${Math.abs(result.profit).toFixed(2)}. Iniciando/Continuando Recuperação.`);
+
+                    // Reset Soros on loss
+                    if (state.sorosActive) {
+                        state.sorosActive = false;
+                        state.sorosStake = 0;
+                    }
+                }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'titan', profitLoss: result.profit });
