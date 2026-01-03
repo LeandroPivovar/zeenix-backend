@@ -1,4 +1,3 @@
-```typescript
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -22,7 +21,7 @@ export class StrategyManagerService implements OnModuleInit {
     private atlasStrategy: AtlasStrategy,
     private apolloStrategy: ApolloStrategy,
     private titanStrategy: TitanStrategy, // Added TitanStrategy to constructor
-  ) {}
+  ) { }
 
   async onModuleInit() {
     // Registrar estratégias
@@ -39,7 +38,7 @@ export class StrategyManagerService implements OnModuleInit {
     await this.apolloStrategy.initialize();
     await this.titanStrategy.initialize(); // Initialized TitanStrategy
 
-    this.logger.log(`[StrategyManager] ✅ ${ this.strategies.size } estratégias registradas: ${ Array.from(this.strategies.keys()).join(', ') } `);
+    this.logger.log(`[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')} `);
   }
 
   /**
@@ -74,7 +73,7 @@ export class StrategyManagerService implements OnModuleInit {
     }
 
     await strategyInstance.activateUser(userId, config);
-    this.logger.log(`[StrategyManager] Usuário ${ userId } ativado na estratégia ${ strategy } `);
+    this.logger.log(`[StrategyManager] Usuário ${userId} ativado na estratégia ${strategy} `);
   }
 
   /**
@@ -84,7 +83,7 @@ export class StrategyManagerService implements OnModuleInit {
     for (const strategy of this.strategies.values()) {
       await strategy.deactivateUser(userId);
     }
-    this.logger.log(`[StrategyManager] Usuário ${ userId } desativado de todas as estratégias`);
+    this.logger.log(`[StrategyManager] Usuário ${userId} desativado de todas as estratégias`);
   }
 
   /**
