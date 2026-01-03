@@ -780,9 +780,8 @@ export class AtlasStrategy implements IStrategy {
         state.apostaInicial = state.apostaBase;
         state.virtualLossCount = 0; // ✅ ATLAS: Resetar loss virtual na recuperação
       }
-
-      // ✅ Soros: verificar ciclo
-      if (!state.isInRecovery) {
+      // ✅ Soros: verificar ciclo (Apenas se NÃO estava em recuperação)
+      else if (!state.isInRecovery) {
         if (state.vitoriasConsecutivas === 0) {
           // Primeira vitória: ativar Soros Nível 1
           state.vitoriasConsecutivas = 1;
