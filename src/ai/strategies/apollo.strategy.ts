@@ -41,6 +41,8 @@ export interface ApolloUserState {
   // Controle de Aposta e Barreira
   currentStake: number;
   currentBarrier: number;
+  apostaInicial: number;
+  symbol: string;
 }
 
 // Configuração Padrão do Usuário (fallback)
@@ -502,7 +504,9 @@ export class ApolloStrategy implements IStrategy {
         maxProfitReached: 0.0,
         trailingStopActive: false,
         currentStake: config.apostaInicial,
-        currentBarrier: 3
+        currentBarrier: 3,
+        apostaInicial: config.apostaInicial,
+        symbol: this.symbol
       });
     }
   }
@@ -541,18 +545,30 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private saveApolloLog(userId: string, type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro', message: string) {
+    const icons: Record<string, string> = {
+      'info': 'ℹ️',
+      'tick': '📊',
+      'analise': '🔍',
+      'sinal': '🎯',
+      'operacao': '⚡',
+      'resultado': '💰',
+      'alerta': '⚠️',
+      'erro': '❌',
+    };
+
+    const icon = icons[type] || 'ℹ️';
+
     this.dataSource.query(
-      `INSERT INTO ai_logs (user_id, strategy, symbol, type, message, timestamp) VALUES (?, 'apollo', ?, ?, ?, NOW())`,
-      [userId, this.symbol, type, message]
+      `INSERT INTO ai_logs (user_id, strategy, symbol, type, icon, message, timestamp) VALUES (?, 'apollo', ?, ?, ?, ?, NOW())`,
+      [userId, this.symbol, type, icon, message]
     ).catch(e => console.error('Error saving log', e));
 
-    this.tradeEvents.emitLog({
+    this.tradeEvents.emit({
       userId,
+      type: 'updated',
       strategy: 'apollo',
       symbol: this.symbol,
-      type,
-      message,
-      timestamp: new Date()
+      status: 'LOG',
     });
   }
 
