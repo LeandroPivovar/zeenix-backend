@@ -140,9 +140,20 @@ export class TitanStrategy implements IStrategy {
     private riskManagers = new Map<string, RiskManager>();
     private ticks: Tick[] = [];
     private symbol = 'R_100';
-    private appId = 65543;
+    private appId: string;
 
-    private wsConnections = new Map<string, any>();
+    // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
+    private wsConnections: Map<
+        string,
+        {
+            ws: WebSocket;
+            authorized: boolean;
+            keepAliveInterval: NodeJS.Timeout | null;
+            requestIdCounter: number;
+            pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+            subscriptions: Map<string, (msg: any) => void>;
+        }
+    > = new Map();
 
     // ✅ Sistema de logs (Titan)
     private logQueue: Array<{
@@ -157,7 +168,9 @@ export class TitanStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
-    ) { }
+    ) {
+        this.appId = process.env.DERIV_APP_ID || '111346';
+    }
 
     async initialize(): Promise<void> {
         this.logger.log('[TITAN] Estratégia TITAN Master inicializada');
@@ -295,6 +308,10 @@ export class TitanStrategy implements IStrategy {
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'titan', profitLoss: result.profit });
+            } else {
+                // Se falhou ao executar, marcar como falha ou remover o trade pendente
+                this.logger.warn(`[TITAN][${state.userId}] Trade ${tradeId} falhou na execução.`);
+                await this.dataSource.query(`UPDATE ai_trades SET status = 'ERROR' WHERE id = ?`, [tradeId]);
             }
         } catch (e) {
             this.logger.error(`[TITAN][ERR] ${e.message}`);
@@ -313,46 +330,318 @@ export class TitanStrategy implements IStrategy {
         return r.insertId || r[0]?.insertId;
     }
 
+    /**
+     * ✅ TITAN: Executa trade via WebSocket REUTILIZÁVEL (pool por token) E monitora resultado
+     */
     private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<any> {
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-        return new Promise((resolve) => {
-            const ws = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
-            let resolved = false;
+        try {
+            // ✅ PASSO 1: Obter ou criar conexão WebSocket reutilizável
+            const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-            const finish = (result: any) => {
-                if (resolved) return;
-                resolved = true;
-                ws.close();
-                resolve(result);
-            };
+            // ✅ PASSO 2: Solicitar proposta
+            const proposalStartTime = Date.now();
+            this.logger.debug(`[TITAN] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${params.contract_type} | Valor: $${params.amount}`);
 
-            ws.on('open', () => ws.send(JSON.stringify({ authorize: token })));
-            ws.on('message', (data) => {
-                const msg = JSON.parse(data.toString());
-                if (msg.authorize) {
-                    ws.send(JSON.stringify({
-                        buy: 1, subscribe: 1, price: params.amount,
-                        parameters: {
-                            amount: params.amount, basis: 'stake', contract_type: params.contract_type,
-                            currency: params.currency, duration: 1, duration_unit: 't', symbol: this.symbol
+            const proposalResponse: any = await connection.sendRequest({
+                proposal: 1,
+                amount: params.amount,
+                basis: 'stake',
+                contract_type: params.contract_type,
+                currency: params.currency || 'USD',
+                duration: 1,
+                duration_unit: 't',
+                symbol: this.symbol,
+            }, 60000);
+
+            if (proposalResponse.error) {
+                const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
+                this.logger.error(`[TITAN] ❌ Erro na proposta: ${errorMsg}`);
+                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro na proposta: ${errorMsg}`);
+                return null;
+            }
+
+            const proposalId = proposalResponse.proposal?.id;
+            const proposalPrice = Number(proposalResponse.proposal?.ask_price);
+
+            if (!proposalId) return null;
+
+            const buyStartTime = Date.now();
+            this.logger.debug(`[TITAN] 💰 [${userId || 'SYSTEM'}] Comprando contrato | ProposalId: ${proposalId}`);
+
+            // ✅ PASSO 3: Comprar contrato
+            let buyResponse: any;
+            try {
+                buyResponse = await connection.sendRequest({
+                    buy: proposalId,
+                    price: proposalPrice
+                }, 60000);
+            } catch (error: any) {
+                const errorMessage = error?.message || JSON.stringify(error);
+                this.logger.error(`[TITAN] ❌ Erro ao comprar contrato: ${errorMessage}`);
+                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
+                return null;
+            }
+
+            if (buyResponse.error) {
+                const errorMsg = buyResponse.error.message || JSON.stringify(buyResponse.error);
+                this.logger.error(`[TITAN] ❌ Erro na compra: ${errorMsg}`);
+                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro na compra: ${errorMsg}`);
+                return null;
+            }
+
+            const contractId = buyResponse.buy?.contract_id;
+            if (!contractId) return null;
+
+            this.logger.log(`[TITAN] ✅ [${userId || 'SYSTEM'}] Contrato criado | ContractId: ${contractId}`);
+            if (userId) this.saveTitanLog(userId, this.symbol, 'operacao', `✅ Contrato criado: ${contractId}`);
+
+            // ✅ PASSO 4: Monitorar contrato
+            return new Promise((resolve) => {
+                let hasResolved = false;
+                const timeout = setTimeout(() => {
+                    if (!hasResolved) {
+                        hasResolved = true;
+                        connection.removeSubscription(contractId);
+                        resolve(null);
+                    }
+                }, 90000);
+
+                connection.subscribe(
+                    { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
+                    (msg: any) => {
+                        if (msg.error) {
+                            if (!hasResolved) {
+                                hasResolved = true;
+                                clearTimeout(timeout);
+                                connection.removeSubscription(contractId);
+                                resolve(null);
+                            }
+                            return;
                         }
-                    }));
+
+                        const c = msg.proposal_open_contract;
+                        if (c && c.is_sold) {
+                            if (!hasResolved) {
+                                hasResolved = true;
+                                clearTimeout(timeout);
+                                connection.removeSubscription(contractId);
+                                const profit = Number(c.profit);
+                                const exitSpot = c.exit_tick;
+                                this.logger.log(`[TITAN] ✅ Resultado: $${profit}`);
+                                if (userId) this.saveTitanLog(userId, this.symbol, 'resultado', `✅ Resultado: $${profit}`);
+                                resolve({ contractId: c.contract_id, profit, exitSpot });
+                            }
+                        }
+                    },
+                    contractId
+                ).catch(() => {
+                    if (!hasResolved) {
+                        hasResolved = true;
+                        clearTimeout(timeout);
+                        resolve(null);
+                    }
+                });
+            });
+
+        } catch (error) {
+            this.logger.error(`[TITAN] ❌ Erro ao executar trade via WS: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ Obtém ou cria conexão WebSocket reutilizável por token
+     */
+    private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+        ws: WebSocket;
+        sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+        removeSubscription: (subId: string) => void;
+    }> {
+        const existing = this.wsConnections.get(token);
+
+        if (existing) {
+            if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+                return {
+                    ws: existing.ws,
+                    sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+                    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+                        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+                    removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+                };
+            } else {
+                if (existing.keepAliveInterval) clearInterval(existing.keepAliveInterval);
+                existing.ws.close();
+                this.wsConnections.delete(token);
+            }
+        }
+
+        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        const ws = await new Promise<WebSocket>((resolve, reject) => {
+            const socket = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
+            let authResolved = false;
+
+            const connectionTimeout = setTimeout(() => {
+                if (!authResolved) {
+                    socket.close();
+                    this.wsConnections.delete(token);
+                    reject(new Error('Timeout ao conectar (20s)'));
                 }
-                if (msg.buy) {
-                    const contractId = msg.buy.contract_id;
-                    ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 }));
-                }
-                if (msg.proposal_open_contract) {
-                    const c = msg.proposal_open_contract;
-                    if (c.is_sold) finish({ contractId: c.contract_id, profit: Number(c.profit), exitSpot: c.exit_tick });
-                }
-                if (msg.error) {
-                    this.logger.error(`[TITAN][WS_ERR] ${msg.error.message}`);
-                    finish(null);
+            }, 20000);
+
+            socket.on('message', (data: WebSocket.RawData) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) return;
+
+                    const conn = this.wsConnections.get(token);
+                    if (!conn) return;
+
+                    if (msg.msg_type === 'authorize' && !authResolved) {
+                        authResolved = true;
+                        clearTimeout(connectionTimeout);
+
+                        if (msg.error) {
+                            socket.close();
+                            this.wsConnections.delete(token);
+                            reject(new Error(msg.error.message));
+                            return;
+                        }
+
+                        conn.authorized = true;
+                        conn.keepAliveInterval = setInterval(() => {
+                            if (socket.readyState === WebSocket.OPEN) {
+                                try { socket.send(JSON.stringify({ ping: 1 })); } catch (e) { }
+                            }
+                        }, 90000);
+
+                        resolve(socket);
+                        return;
+                    }
+
+                    if (msg.proposal_open_contract) {
+                        const contractId = msg.proposal_open_contract.contract_id;
+                        if (contractId && conn.subscriptions.has(contractId)) {
+                            conn.subscriptions.get(contractId)!(msg);
+                            return;
+                        }
+                    }
+
+                    if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+                        const firstKey = conn.pendingRequests.keys().next().value;
+                        if (firstKey) {
+                            const pending = conn.pendingRequests.get(firstKey);
+                            if (pending) {
+                                clearTimeout(pending.timeout);
+                                conn.pendingRequests.delete(firstKey);
+                                if (msg.error) pending.reject(new Error(msg.error.message));
+                                else pending.resolve(msg);
+                            }
+                        }
+                    }
+                } catch (e) { }
+            });
+
+            socket.on('open', () => {
+                const conn = {
+                    ws: socket,
+                    authorized: false,
+                    keepAliveInterval: null,
+                    requestIdCounter: 0,
+                    pendingRequests: new Map(),
+                    subscriptions: new Map(),
+                };
+                this.wsConnections.set(token, conn);
+                socket.send(JSON.stringify({ authorize: token }));
+            });
+
+            socket.on('error', (err) => {
+                if (!authResolved) {
+                    clearTimeout(connectionTimeout);
+                    authResolved = true;
+                    this.wsConnections.delete(token);
+                    reject(err);
                 }
             });
-            setTimeout(() => finish(null), 20000);
+
+            socket.on('close', () => {
+                const conn = this.wsConnections.get(token);
+                if (conn) {
+                    if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval);
+                    conn.pendingRequests.forEach(p => { clearTimeout(p.timeout); p.reject(new Error('WS closed')); });
+                    conn.subscriptions.clear();
+                }
+                this.wsConnections.delete(token);
+                if (!authResolved) {
+                    clearTimeout(connectionTimeout);
+                    reject(new Error('WS closed before auth'));
+                }
+            });
         });
+
+        const conn = this.wsConnections.get(token)!;
+        return {
+            ws: conn.ws,
+            sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+            subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+                this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+            removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        };
+    }
+
+    private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+        const conn = this.wsConnections.get(token);
+        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+            throw new Error('Conexão WebSocket indisponível');
+        }
+
+        return new Promise((resolve, reject) => {
+            const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+            const timeout = setTimeout(() => {
+                conn.pendingRequests.delete(requestId);
+                reject(new Error(`Timeout ${timeoutMs}ms`));
+            }, timeoutMs);
+            conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+            conn.ws.send(JSON.stringify(payload));
+        });
+    }
+
+    private async subscribeViaConnection(token: string, payload: any, callback: (msg: any) => void, subId: string, timeoutMs: number): Promise<void> {
+        const conn = this.wsConnections.get(token);
+        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+            throw new Error('Conexão WebSocket indisponível');
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                conn.subscriptions.delete(subId);
+                reject(new Error(`Timeout ao inscrever ${subId}`));
+            }, timeoutMs);
+
+            const wrappedCallback = (msg: any) => {
+                if (msg.proposal_open_contract || msg.error) {
+                    clearTimeout(timeout);
+                    if (msg.error) {
+                        conn.subscriptions.delete(subId);
+                        reject(new Error(msg.error.message));
+                        return;
+                    }
+                    conn.subscriptions.set(subId, callback);
+                    resolve();
+                    callback(msg);
+                    return;
+                }
+                callback(msg);
+            };
+
+            conn.subscriptions.set(subId, wrappedCallback);
+            conn.ws.send(JSON.stringify(payload));
+        });
+    }
+
+    private removeSubscriptionFromConnection(token: string, subId: string): void {
+        const conn = this.wsConnections.get(token);
+        if (conn) conn.subscriptions.delete(subId);
     }
 
     /**
