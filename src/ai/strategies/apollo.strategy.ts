@@ -557,10 +557,11 @@ export class ApolloStrategy implements IStrategy {
     };
 
     const icon = icons[type] || 'ℹ️';
+    const details = JSON.stringify({ strategy: 'apollo', symbol: this.symbol });
 
     this.dataSource.query(
-      `INSERT INTO ai_logs (user_id, strategy, symbol, type, icon, message, timestamp) VALUES (?, 'apollo', ?, ?, ?, ?, NOW())`,
-      [userId, this.symbol, type, icon, message]
+      `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
+      [userId, type, icon, message, details]
     ).catch(e => console.error('Error saving log', e));
 
     this.tradeEvents.emit({
