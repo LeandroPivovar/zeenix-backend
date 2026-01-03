@@ -195,6 +195,9 @@ export class TitanStrategy implements IStrategy {
     }> = [];
     private logProcessing = false;
 
+    // ✅ Stop Loss Blindado: Track users que já foram notificados da ativação
+    private blindadoActivatedUsers = new Set<string>();
+
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
@@ -257,7 +260,7 @@ export class TitanStrategy implements IStrategy {
             signal = evens > 5 ? 'PAR' : evens < 5 ? 'IMPAR' : null;
             if (signal) {
                 const criterio = signal === 'PAR' ? `Maioria PAR (${evens}/10)` : `Maioria ÍMPAR (${10 - evens}/10)`;
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ]\\n• Critério: ${criterio}`);
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ]\n• Critério: ${criterio}`);
             }
         } else if (state.mode === 'NORMAL') {
             const last3 = window.slice(-3).map(d => d % 2);
@@ -265,7 +268,7 @@ export class TitanStrategy implements IStrategy {
             else if (last3.every(v => v === 1)) signal = 'IMPAR';
             if (signal) {
                 const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE NORMAL]\\n• Critério: Sequência 3x ${tipo} detectada`);
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE NORMAL]\n• Critério: Sequência 3x ${tipo} detectada`);
             }
         } else if (state.mode === 'PRECISO') {
             const last5 = window.slice(-5).map(d => d % 2);
@@ -273,7 +276,7 @@ export class TitanStrategy implements IStrategy {
             else if (last5.every(v => v === 1)) signal = 'IMPAR';
             if (signal) {
                 const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO]\\n• Critério: Sequência 5x ${tipo} detectada`);
+                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO]\n• Critério: Sequência 5x ${tipo} detectada`);
             }
         }
 
@@ -337,20 +340,135 @@ export class TitanStrategy implements IStrategy {
 
         if (stake <= 0) {
             const blindadoMsg = riskManager.blindadoActive
-                ? `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
-                : `🛑 [STOP LOSS] Limite de perda atingido.\\n• Sessão Encerrada para proteção do capital.`;
+                ? `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
+                : `🛑 [STOP LOSS] Limite de perda atingido.\n• Sessão Encerrada para proteção do capital.`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
+
+            // Emit event for frontend modal
+            const sessionStatus = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
+            this.tradeEvents.emit({
+                userId: state.userId,
+                type: sessionStatus,
+                strategy: 'titan',
+                profitProtected: riskManager.blindadoActive ? riskManager.guaranteedProfit : undefined
+            });
+
             await this.deactivateUser(state.userId);
-            await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_risk' WHERE user_id = ?`, [state.userId]);
+            await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [sessionStatus, state.userId]);
             return;
+        }
+
+        // ✅ VERIFICAR STOP LOSS BLINDADO (antes de executar trade)
+        try {
+            const blindadoConfig = await this.dataSource.query(
+                `SELECT profit_peak, stop_blindado_percent, profit_target,
+                        stake_amount as capitalInicial, session_balance
+                 FROM ai_user_config WHERE user_id = ? AND is_active = 1
+                 LIMIT 1`,
+                [state.userId]
+            );
+
+            if (blindadoConfig && blindadoConfig.length > 0) {
+                const config = blindadoConfig[0];
+                const sessionBalance = parseFloat(config.session_balance) || 0;
+                const capitalInicial = parseFloat(config.capitalInicial) || 0;
+                const profitTarget = parseFloat(config.profit_target) || 0;
+                const capitalSessao = capitalInicial + sessionBalance;
+                const lucroAtual = sessionBalance;
+
+                // Update profit peak if current profit is higher
+                let profitPeak = parseFloat(config.profit_peak) || 0;
+                if (lucroAtual > profitPeak) {
+                    profitPeak = lucroAtual;
+                    // Update in background
+                    this.dataSource.query(
+                        `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+                        [profitPeak, state.userId]
+                    ).catch(err => this.logger.error(`[TITAN] Erro ao atualizar profit_peak:`, err));
+                }
+
+                // Check if Blindado should activate (40% of profit target reached)
+                if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
+                    if (profitPeak >= profitTarget * 0.40) {
+                        const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
+                        const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+                        const stopBlindado = capitalInicial + protectedAmount;
+
+                        // Log activation (only once per user)
+                        if (!this.blindadoActivatedUsers.has(state.userId)) {
+                            this.blindadoActivatedUsers.add(state.userId);
+
+                            this.saveTitanLog(state.userId, this.symbol, 'alerta',
+                                `🛡️ [BLINDADO] Gatilho de 40% da Meta atingido!\n• Stop Loss Normal: DESATIVADO ❌\n• Stop Loss Blindado: ATIVADO ✅\n• Novo Piso de Proteção: Saldo Inicial + $${protectedAmount.toFixed(2)} (50% do Lucro Atual)`);
+
+                            // Emit event for frontend
+                            this.tradeEvents.emit({
+                                userId: state.userId,
+                                type: 'blindado_activated',
+                                strategy: 'titan',
+                                profitPeak,
+                                protectedAmount
+                            });
+                        }
+
+                        // Log profit peak update (if already activated and peak increased)
+                        if (this.blindadoActivatedUsers.has(state.userId) && lucroAtual > (parseFloat(config.profit_peak) || 0)) {
+                            this.saveTitanLog(state.userId, this.symbol, 'info',
+                                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`);
+                        }
+
+                        // Check if capital fell below protected level -> TRIGGER BLINDADO
+                        if (capitalSessao <= stopBlindado) {
+                            const lucroProtegido = capitalSessao - capitalInicial;
+
+                            this.logger.warn(
+                                `[TITAN][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+                                `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+                                `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`
+                            );
+
+                            this.saveTitanLog(state.userId, this.symbol, 'alerta',
+                                `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${lucroProtegido.toFixed(2)}.`);
+
+                            const deactivationReason =
+                                `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
+                                `(${stopBlindadoPercent}% do pico de $${profitPeak.toFixed(2)})`;
+
+                            // Deactivate AI
+                            await this.dataSource.query(
+                                `UPDATE ai_user_config 
+                                 SET is_active = 0, session_status = 'stopped_blindado', 
+                                     deactivation_reason = ?, deactivated_at = NOW()
+                                 WHERE user_id = ? AND is_active = 1`,
+                                [deactivationReason, state.userId]
+                            );
+
+                            // Emit event for frontend modal
+                            this.tradeEvents.emit({
+                                userId: state.userId,
+                                type: 'stopped_blindado',
+                                strategy: 'titan',
+                                profitProtected: lucroProtegido
+                            });
+
+                            // Deactivate user
+                            await this.deactivateUser(state.userId);
+                            return; // NÃO EXECUTAR OPERAÇÃO
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            this.logger.error(`[TITAN][${state.userId}] Erro ao verificar Stop Loss Blindado:`, error);
+            // Continue even if there's an error (fail-open)
         }
 
         // ⚔️ Log: Persistência antes da entrada (se ativo)
         if (riskManager.consecutiveLosses > 0 && state.lastDirection !== null) {
             const stakeIndicator = riskManager.consecutiveLosses > 1 ? ' - Martingale' : '';
             this.saveTitanLog(state.userId, this.symbol, 'sinal',
-                `⚔️ [PERSISTÊNCIA] Recuperação ativa (${riskManager.consecutiveLosses}x Loss).\\n• Mantendo direção anterior: ${direction} 🔒 (Stake: $${stake.toFixed(2)}${stakeIndicator})`);
+                `⚔️ [PERSISTÊNCIA] Recuperação ativa (${riskManager.consecutiveLosses}x Loss).\n• Mantendo direção anterior: ${direction} 🔒 (Stake: $${stake.toFixed(2)}${stakeIndicator})`);
         }
 
         // ⚔️ Log: Entrada Confirmada
@@ -392,7 +510,7 @@ export class TitanStrategy implements IStrategy {
                 // 📊 Log: Resultado Detalhado
                 if (status === 'WON') {
                     this.saveTitanLog(state.userId, this.symbol, 'resultado',
-                        `✅ [WIN] Resultado: ${resultType} (${exitDigit}). Lucro: +$${result.profit.toFixed(2)}\\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+                        `✅ [WIN] Resultado: ${resultType} (${exitDigit}). Lucro: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
 
                     // Soros Logic
                     if (state.vitoriasConsecutivas === 1 && !state.sorosActive) {
