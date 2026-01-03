@@ -240,10 +240,10 @@ function calcularApostaComSoros(
   if (vitoriasConsecutivas <= 0 || vitoriasConsecutivas > SOROS_MAX_NIVEL) {
     return null; // Não está no Soros ou já passou do limite
   }
-  
+
   // Soros: entrada anterior + lucro anterior
   const apostaComSoros = entradaAnterior + lucroAnterior;
-  
+
   // Arredondar para 2 casas decimais
   return Math.round(apostaComSoros * 100) / 100;
 }
@@ -268,7 +268,7 @@ function calcularProximaAposta(
   payoutCliente: number,
 ): number {
   let metaRecuperacao = 0;
-  
+
   switch (modo) {
     case 'conservador':
       // Meta: recuperar 100% das perdas (break-even)
@@ -283,10 +283,10 @@ function calcularProximaAposta(
       metaRecuperacao = perdasTotais * 1.50;
       break;
   }
-  
+
   // Fórmula: entrada_próxima = meta_de_recuperação × 100 / payout_cliente
   const aposta = (metaRecuperacao * 100) / payoutCliente;
-  
+
   return Math.round(aposta * 100) / 100; // 2 casas decimais
 }
 
@@ -308,10 +308,10 @@ function calcularDesequilibrio(ticks: Tick[], janela: number): {
   const ultimos = ticks.slice(-janela);
   const pares = ultimos.filter(t => t.digit % 2 === 0).length;
   const impares = ultimos.filter(t => t.digit % 2 === 1).length;
-  
+
   const percentualPar = pares / janela;
   const percentualImpar = impares / janela;
-  
+
   // Determinar operação (operar no OPOSTO do desequilíbrio)
   let operacao: DigitParity | null = null;
   if (percentualPar > percentualImpar) {
@@ -320,7 +320,7 @@ function calcularDesequilibrio(ticks: Tick[], janela: number): {
     operacao = 'PAR'; // Desequilíbrio de ÍMPAR → operar PAR (reversão)
   }
   // Se percentualPar === percentualImpar (50%/50%), operacao fica null
-  
+
   return {
     percentualPar,
     percentualImpar,
@@ -342,11 +342,11 @@ function analisarSequencias(ticks: Tick[]): {
   if (ticks.length === 0) {
     return { tamanho: 0, paridade: 'PAR', bonus: 0 };
   }
-  
+
   let sequenciaAtual = 1;
   const ultimoTick = ticks[ticks.length - 1];
   const paridadeAtual: DigitParity = ultimoTick.digit % 2 === 0 ? 'PAR' : 'IMPAR';
-  
+
   // Contar quantos ticks consecutivos têm a mesma paridade
   for (let i = ticks.length - 2; i >= 0; i--) {
     const paridadeTick: DigitParity = ticks[i].digit % 2 === 0 ? 'PAR' : 'IMPAR';
@@ -356,7 +356,7 @@ function analisarSequencias(ticks: Tick[]): {
       break;
     }
   }
-  
+
   return {
     tamanho: sequenciaAtual,
     paridade: paridadeAtual,
@@ -376,12 +376,12 @@ function analisarMicroTendencias(ticks: Tick[]): {
   if (ticks.length < 20) {
     return { aceleracao: 0, bonus: 0 };
   }
-  
+
   const deseq10 = calcularDesequilibrio(ticks.slice(-10), 10).desequilibrio;
   const deseq20 = calcularDesequilibrio(ticks.slice(-20), 20).desequilibrio;
-  
+
   const aceleracao = Math.abs(deseq10 - deseq20);
-  
+
   return {
     aceleracao,
     bonus: aceleracao > 0.10 ? 8 : 0, // Bônus +8% se aceleração > 10%
@@ -400,12 +400,12 @@ function analisarForcaDesequilibrio(ticks: Tick[], janela: number): {
   if (ticks.length < janela + 1) {
     return { velocidade: 0, bonus: 0 };
   }
-  
+
   const deseqAtual = calcularDesequilibrio(ticks, janela).desequilibrio;
   const deseqAnterior = calcularDesequilibrio(ticks.slice(0, -1), janela).desequilibrio;
-  
+
   const velocidade = Math.abs(deseqAtual - deseqAnterior);
-  
+
   return {
     velocidade,
     bonus: velocidade > 0.05 ? 10 : 0, // Bônus +10% se velocidade > 5%
@@ -446,32 +446,32 @@ function gerarSinalZenix(
   if (ticks.length < config.amostraInicial) {
     return null;
   }
-  
+
   // 2. ANÁLISE 1: Desequilíbrio Estatístico (Base)
   const analiseDeseq = calcularDesequilibrio(ticks, config.amostraInicial);
-  
+
   // Verificar se atingiu limiar mínimo
   if (analiseDeseq.desequilibrio < config.desequilibrioMin) {
     return null; // Desequilíbrio insuficiente
   }
-  
+
   // Se não há operação definida (50%/50%), não gerar sinal
   if (!analiseDeseq.operacao) {
     return null;
   }
-  
+
   // Confiança base = desequilíbrio em % (ex: 70% → 70)
   const confiancaBase = analiseDeseq.desequilibrio * 100;
-  
+
   // 3. ANÁLISE 2: Sequências Repetidas
   const analiseSeq = analisarSequencias(ticks);
-  
+
   // 4. ANÁLISE 3: Micro-Tendências
   const analiseMicro = analisarMicroTendencias(ticks);
-  
+
   // 5. ANÁLISE 4: Força do Desequilíbrio
   const analiseForca = analisarForcaDesequilibrio(ticks, config.amostraInicial);
-  
+
   // 6. Calcular confiança final
   const confiancaFinal = calcularConfiancaFinal(
     confiancaBase,
@@ -479,28 +479,28 @@ function gerarSinalZenix(
     analiseMicro.bonus,
     analiseForca.bonus,
   );
-  
+
   // 7. Verificar confiança mínima do modo
   if (confiancaFinal < config.confianciaMin * 100) {
     return null; // Confiança insuficiente
   }
-  
+
   // 8. Construir motivo detalhado
   const motivoParts: string[] = [];
   motivoParts.push(`Deseq: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% ${analiseDeseq.percentualPar > analiseDeseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
-  
+
   if (analiseSeq.bonus > 0) {
     motivoParts.push(`Seq: ${analiseSeq.tamanho} ${analiseSeq.paridade} (+${analiseSeq.bonus}%)`);
   }
-  
+
   if (analiseMicro.bonus > 0) {
     motivoParts.push(`Micro: ${(analiseMicro.aceleracao * 100).toFixed(1)}% (+${analiseMicro.bonus}%)`);
   }
-  
+
   if (analiseForca.bonus > 0) {
     motivoParts.push(`Força: ${(analiseForca.velocidade * 100).toFixed(1)}% (+${analiseForca.bonus}%)`);
   }
-  
+
   // 9. Retornar sinal completo
   return {
     sinal: analiseDeseq.operacao,
@@ -552,57 +552,57 @@ export class AiService implements OnModuleInit {
   private precisoUsers = new Map<string, PrecisoUserState>();
   private trinityUsers = new Map<string, TrinityUserState>(); // ✅ TRINITY: Usuários usando estratégia TRINITY
   private userSessionIds = new Map<string, string>(); // Mapeia userId para sessionId único
-  
+
   // ✅ TRINITY: WebSockets e ticks separados por ativo
   private trinityWebSockets: {
     R_10: WebSocket.WebSocket | null;
     R_25: WebSocket.WebSocket | null;
     R_50: WebSocket.WebSocket | null;
   } = {
-    R_10: null,
-    R_25: null,
-    R_50: null,
-  };
+      R_10: null,
+      R_25: null,
+      R_50: null,
+    };
   // ✅ TRINITY: Keep-alive intervals por ativo
   private trinityKeepAliveIntervals: {
     R_10: NodeJS.Timeout | null;
     R_25: NodeJS.Timeout | null;
     R_50: NodeJS.Timeout | null;
   } = {
-    R_10: null,
-    R_25: null,
-    R_50: null,
-  };
-  
+      R_10: null,
+      R_25: null,
+      R_50: null,
+    };
+
   private trinityTicks: {
     R_10: Tick[];
     R_25: Tick[];
     R_50: Tick[];
   } = {
-    R_10: [],
-    R_25: [],
-    R_50: [],
-  };
-  
+      R_10: [],
+      R_25: [],
+      R_50: [],
+    };
+
   private trinitySubscriptions: {
     R_10: string | null;
     R_25: string | null;
     R_50: string | null;
   } = {
-    R_10: null,
-    R_25: null,
-    R_50: null,
-  };
-  
+      R_10: null,
+      R_25: null,
+      R_50: null,
+    };
+
   private trinityConnected: {
     R_10: boolean;
     R_25: boolean;
     R_50: boolean;
   } = {
-    R_10: false,
-    R_25: false,
-    R_50: false,
-  };
+      R_10: false,
+      R_25: false,
+      R_50: false,
+    };
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -620,7 +620,7 @@ export class AiService implements OnModuleInit {
     try {
       await this.initializeTables();
       this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
-      
+
       // Inicializar conexão WebSocket
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
       try {
@@ -656,10 +656,10 @@ export class AiService implements OnModuleInit {
       this.ws.on('open', async () => {
         this.logger.log('✅ Conexão WebSocket aberta com sucesso');
         this.isConnected = true;
-        
+
         // ✅ Salvar estado da nova conexão
         await this.saveWebSocketState();
-        
+
         this.subscribeToTicks();
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
@@ -734,7 +734,7 @@ export class AiService implements OnModuleInit {
    */
   private startKeepAlive(): void {
     this.stopKeepAlive(); // Garantir que não há intervalo duplicado
-    
+
     this.keepAliveInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         try {
@@ -748,7 +748,7 @@ export class AiService implements OnModuleInit {
         this.stopKeepAlive();
       }
     }, 90000); // 90 segundos (menos de 2 minutos)
-    
+
     this.logger.log('✅ Keep-alive iniciado (ping a cada 90s)');
   }
 
@@ -764,13 +764,13 @@ export class AiService implements OnModuleInit {
   }
 
   // ======================== TRINITY: Inicialização de WebSockets ========================
-  
+
   /**
    * ✅ TRINITY: Inicializa conexões WebSocket para os 3 ativos (R_10, R_25, R_50)
    */
   async initializeTrinityWebSockets(): Promise<void> {
     const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
-    
+
     for (const symbol of symbols) {
       if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
         this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
@@ -857,7 +857,7 @@ export class AiService implements OnModuleInit {
    */
   private startTrinityKeepAlive(symbol: 'R_10' | 'R_25' | 'R_50'): void {
     this.stopTrinityKeepAlive(symbol); // Garantir que não há intervalo duplicado
-    
+
     this.trinityKeepAliveIntervals[symbol] = setInterval(() => {
       const ws = this.trinityWebSockets[symbol];
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -872,7 +872,7 @@ export class AiService implements OnModuleInit {
         this.stopTrinityKeepAlive(symbol);
       }
     }, 90000); // 90 segundos (menos de 2 minutos)
-    
+
     this.logger.log(`[TRINITY][${symbol}] ✅ Keep-alive iniciado (ping a cada 90s)`);
   }
 
@@ -988,26 +988,26 @@ export class AiService implements OnModuleInit {
     // ✅ Log de todas as mensagens recebidas para diagnóstico
     if (msg.msg_type) {
       this.logger.debug(`[AiService] 📥 Mensagem recebida: msg_type=${msg.msg_type} | subscription=${msg.subscription?.id || 'N/A'}`);
-      
+
       // ✅ Log detalhado para mensagens de tick_history que podem conter subscription ID
       if (msg.msg_type === 'ticks_history' || msg.msg_type === 'tick') {
         this.logger.debug(`[AiService] 📊 Estrutura da mensagem ${msg.msg_type}: subscription=${JSON.stringify(msg.subscription)}, subscription_id=${msg.subscription_id}, id=${msg.id}`);
       }
     }
-    
-        // ✅ Tentar capturar subscription ID mesmo em mensagens de erro
-        if (msg.subscription?.id) {
-          if (this.subscriptionId !== msg.subscription.id) {
-            this.subscriptionId = msg.subscription.id;
-            this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
-            this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem: ${this.subscriptionId}`);
-          }
-        }
-    
+
+    // ✅ Tentar capturar subscription ID mesmo em mensagens de erro
+    if (msg.subscription?.id) {
+      if (this.subscriptionId !== msg.subscription.id) {
+        this.subscriptionId = msg.subscription.id;
+        this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
+        this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem: ${this.subscriptionId}`);
+      }
+    }
+
     if (msg.error) {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
       this.logger.error('❌ Erro da API:', errorMsg);
-      
+
       // ✅ Se o erro é genérico, recriar WebSocket imediatamente (provavelmente após restart do servidor)
       if (errorMsg.includes('Sorry, an error occurred') || errorMsg.includes('error occurred while processing')) {
         this.logger.warn(`[AiService] ⚠️ Erro genérico da API detectado - Recriando WebSocket imediatamente...`);
@@ -1021,20 +1021,20 @@ export class AiService implements OnModuleInit {
         });
         return;
       }
-      
+
       // ✅ Se o erro é "You are already subscribed", significa que há uma subscription ativa
       // Tentar extrair o subscription ID da mensagem de erro ou da mensagem completa
       if (errorMsg.includes('already subscribed')) {
         this.logger.warn(`[AiService] ⚠️ Subscription já existe, mas subscriptionId não foi capturado. Tentando extrair...`);
         this.logger.debug(`[AiService] 📊 Estrutura completa da mensagem de erro: ${JSON.stringify(msg, null, 2)}`);
-        
+
         // Tentar extrair subscription ID de vários lugares possíveis
-        const possibleSubId = msg.subscription?.id || 
-                             msg.subscription_id || 
-                             msg.id || 
-                             msg.echo_req?.req_id ||
-                             msg.req_id;
-        
+        const possibleSubId = msg.subscription?.id ||
+          msg.subscription_id ||
+          msg.id ||
+          msg.echo_req?.req_id ||
+          msg.req_id;
+
         if (possibleSubId) {
           this.subscriptionId = possibleSubId;
           this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
@@ -1044,7 +1044,7 @@ export class AiService implements OnModuleInit {
           // recriar WebSocket imediatamente (provavelmente após restart do servidor)
           this.logger.warn(`[AiService] ⚠️ Não foi possível extrair subscription ID do erro "already subscribed".`);
           this.logger.warn(`[AiService] ⚠️ Recriando WebSocket para limpar subscription antiga...`);
-          
+
           // Recriar WebSocket imediatamente para limpar estado
           this.recreateWebSocket().catch((error) => {
             this.logger.error(`[AiService] ❌ Erro ao recriar WebSocket:`, error);
@@ -1065,7 +1065,7 @@ export class AiService implements OnModuleInit {
         this.logger.log(`[AiService] 📊 Resposta de ticks_history recebida`);
         this.logger.debug(`[AiService] 📊 Estrutura completa da mensagem: ${JSON.stringify(Object.keys(msg))}`);
         this.logger.debug(`[AiService] 📊 Conteúdo completo da mensagem: ${JSON.stringify(msg, null, 2)}`);
-        
+
         // Capturar subscription ID (pode estar em diferentes lugares)
         const subId = msg.subscription?.id || msg.subscription_id || msg.id || msg.echo_req?.req_id;
         if (subId) {
@@ -1076,7 +1076,7 @@ export class AiService implements OnModuleInit {
           this.logger.warn(`[AiService] ⚠️ Subscription ID não encontrado na mensagem ticks_history`);
           this.logger.warn(`[AiService] ⚠️ Tentando extrair de outros campos: subscription=${JSON.stringify(msg.subscription)}, subscription_id=${msg.subscription_id}, id=${msg.id}, echo_req=${JSON.stringify(msg.echo_req)}`);
         }
-        
+
         // Processar histórico se presente
         if (msg.history?.prices) {
           this.logger.log(`[AiService] 📊 Processando histórico da subscription: ${msg.history.prices.length} preços`);
@@ -1100,7 +1100,7 @@ export class AiService implements OnModuleInit {
         this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)} | subscription=${msg.subscription?.id || 'N/A'}`);
         this.processTick(msg.tick);
         break;
-        
+
       default:
         // ✅ Log de mensagens desconhecidas para diagnóstico
         if (msg.msg_type) {
@@ -1130,10 +1130,10 @@ export class AiService implements OnModuleInit {
 
       return {
         value,
-      epoch: history.times ? history.times[index] : Date.now() / 1000,
-      timestamp: history.times
-        ? new Date(history.times[index] * 1000).toLocaleTimeString('pt-BR')
-        : new Date().toLocaleTimeString('pt-BR'),
+        epoch: history.times ? history.times[index] : Date.now() / 1000,
+        timestamp: history.times
+          ? new Date(history.times[index] * 1000).toLocaleTimeString('pt-BR')
+          : new Date().toLocaleTimeString('pt-BR'),
         digit,
         parity,
       };
@@ -1147,7 +1147,7 @@ export class AiService implements OnModuleInit {
       this.logger.debug('⚠️ Tick recebido sem quote');
       return;
     }
-    
+
     // Log a cada 50 ticks para diagnóstico
     const currentTickCount = this.ticks.length;
     if (currentTickCount % 50 === 0 || currentTickCount === 0) {
@@ -1270,7 +1270,7 @@ export class AiService implements OnModuleInit {
           this.logger.log(
             `[Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
           );
-          
+
           await this.executeVelozOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
           return;
         }
@@ -1300,7 +1300,7 @@ export class AiService implements OnModuleInit {
 
         // ✅ ZENIX v2.0: Gerar sinal usando análise completa
         const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
-        
+
         if (!sinal || !sinal.sinal) {
           // 🔍 DEBUG: Logar por que não gerou sinal
           if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
@@ -1314,17 +1314,17 @@ export class AiService implements OnModuleInit {
           }
           return; // Sem sinal válido
         }
-        
+
         this.logger.log(
           `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
           `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
           `  └─ ${sinal.motivo}`,
         );
-        
+
         // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
         // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
         this.saveLogAsync(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
-        
+
         // Formatar distribuição
         const deseq = sinal.detalhes?.desequilibrio;
         if (deseq) {
@@ -1333,14 +1333,14 @@ export class AiService implements OnModuleInit {
           this.saveLogAsync(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
           this.saveLogAsync(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
         }
-        
-        
+
+
         // ANÁLISE 1: Desequilíbrio Base
         this.saveLogAsync(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
         this.saveLogAsync(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
         this.saveLogAsync(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
-        
-        
+
+
         // ANÁLISE 2: Sequências Repetidas
         const seqInfo = sinal.detalhes?.sequencias;
         const bonusSeq = seqInfo?.bonus || 0;
@@ -1352,8 +1352,8 @@ export class AiService implements OnModuleInit {
           this.saveLogAsync(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
           this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
         }
-        
-        
+
+
         // ANÁLISE 3: Micro-Tendências
         const microInfo = sinal.detalhes?.microTendencias;
         const bonusMicro = microInfo?.bonus || 0;
@@ -1365,8 +1365,8 @@ export class AiService implements OnModuleInit {
           this.saveLogAsync(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
           this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
         }
-        
-        
+
+
         // ANÁLISE 4: Força do Desequilíbrio
         const forcaInfo = sinal.detalhes?.forca;
         const bonusForca = forcaInfo?.bonus || 0;
@@ -1378,13 +1378,13 @@ export class AiService implements OnModuleInit {
           this.saveLogAsync(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
           this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
         }
-        
+
         this.saveLogAsync(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
         this.saveLogAsync(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
-        
+
         this.saveLogAsync(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
         this.saveLogAsync(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
-        
+
         // Executar operação (não bloqueia mais por logs)
         await this.executeVelozOperation(state, sinal.sinal, 1);
       } catch (error) {
@@ -1500,10 +1500,10 @@ export class AiService implements OnModuleInit {
       );
       return false;
     }
-    
+
     // ✅ OTIMIZAÇÃO: Usar cache em vez de consultar banco a cada tick
     const config = await this.getCachedUserConfig(state.userId);
-    
+
     if (!config) {
       // Não há sessão ativa
       this.logger.warn(
@@ -1511,7 +1511,7 @@ export class AiService implements OnModuleInit {
       );
       return false;
     }
-    
+
     // Verificar se já foi parada
     if (config.sessionStatus === 'stopped_profit' || config.sessionStatus === 'stopped_loss' || config.sessionStatus === 'stopped_blindado') {
       this.logger.warn(
@@ -1519,7 +1519,7 @@ export class AiService implements OnModuleInit {
       );
       return false;
     }
-    
+
     // ✅ VERIFICAR LIMITES ANTES DE OPERAR
     // Se atingiu take profit (stop win)
     if (config.profitTarget && config.sessionBalance >= config.profitTarget) {
@@ -1532,7 +1532,7 @@ export class AiService implements OnModuleInit {
       this.invalidateUserConfigCache(state.userId);
       return false;
     }
-    
+
     // Se atingiu stop loss
     if (config.lossLimit && config.sessionBalance <= -config.lossLimit) {
       this.logger.warn(
@@ -1544,7 +1544,7 @@ export class AiService implements OnModuleInit {
       this.invalidateUserConfigCache(state.userId);
       return false;
     }
-    
+
     return true;
   }
 
@@ -1630,7 +1630,7 @@ export class AiService implements OnModuleInit {
         clearTimeout(timeout);
         try {
           ws.close();
-        } catch (e) {}
+        } catch (e) { }
         if (error) {
           reject(error);
         } else {
@@ -1675,12 +1675,12 @@ export class AiService implements OnModuleInit {
 
             const askPrice = Number(proposal.ask_price || 1);
             const payoutAbsolute = Number(proposal.payout || 0);
-            
+
             // Calcular payout percentual: (payout / ask_price - 1) × 100
-            const payoutPercentual = askPrice > 0 
-              ? ((payoutAbsolute / askPrice - 1) * 100) 
+            const payoutPercentual = askPrice > 0
+              ? ((payoutAbsolute / askPrice - 1) * 100)
               : 0;
-            
+
             // Calcular payout_cliente = payout_original - 3%
             const payoutCliente = payoutPercentual - MARKUP_ZENIX;
 
@@ -1716,7 +1716,7 @@ export class AiService implements OnModuleInit {
     // Entrada 2: Soros Nível 1 (entrada 1 + lucro entrada 1)
     // Entrada 3: Soros Nível 2 (entrada 2 + lucro entrada 2)
     // Entrada 4+: Martingale (recuperação)
-    
+
     if (entry === 1) {
       // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
@@ -1724,7 +1724,7 @@ export class AiService implements OnModuleInit {
       }
       return Math.max(0.35, state.apostaBase); // Mínimo da Deriv: 0.35
     }
-    
+
     if (entry === 2) {
       // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
       if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -1733,14 +1733,14 @@ export class AiService implements OnModuleInit {
           state.ultimoLucro,
           1, // Soros nível 1
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
         }
       }
       // Se não está no Soros, entrar em martingale
     }
-    
+
     if (entry === 3) {
       // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
       if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -1749,7 +1749,7 @@ export class AiService implements OnModuleInit {
           state.ultimoLucro,
           2, // Soros nível 2
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
         }
@@ -1761,7 +1761,7 @@ export class AiService implements OnModuleInit {
     // Consultar payout via API antes de calcular
     const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-    
+
     try {
       payoutCliente = await this.consultarPayoutCliente(
         state.derivToken,
@@ -1779,7 +1779,7 @@ export class AiService implements OnModuleInit {
       state.modoMartingale,
       payoutCliente,
     );
-    
+
     this.logger.debug(
       `[Veloz][Martingale ${state.modoMartingale.toUpperCase()}] ` +
       `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
@@ -1817,7 +1817,7 @@ export class AiService implements OnModuleInit {
       if (state.apostaBase <= 0) {
         state.apostaBase = state.capital || 0.35; // Inicializar apenas se ainda não tiver valor
       }
-      
+
       // ✅ ZENIX v2.0: Aplicar estratégia Soros se houver vitórias consecutivas
       // Entrada 2 = Soros nível 1, Entrada 3 = Soros nível 2
       if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.ultimoLucro > 0) {
@@ -1835,13 +1835,13 @@ export class AiService implements OnModuleInit {
           );
         }
       }
-      
+
       state.apostaInicial = stakeAmount;
       state.perdaAcumulada = 0;
-      
+
       const config = CONFIGS_MARTINGALE[state.modoMartingale];
-      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
-                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
+        state.modoMartingale === 'moderado' ? 0.25 : 0.50;
       this.logger.log(
         `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
         `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
@@ -1850,7 +1850,7 @@ export class AiService implements OnModuleInit {
         `Máx entradas: ${config.maxEntradas === Infinity ? '∞' : config.maxEntradas} | ` +
         `Multiplicador lucro: ${(multiplicadorLucro * 100).toFixed(0)}%`,
       );
-      
+
       // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
       // 📋 LOG: Operação sendo executada
       this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
@@ -1868,7 +1868,7 @@ export class AiService implements OnModuleInit {
     } else {
       // ✅ Verificar se é Soros ou Martingale
       const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
-      
+
       if (isSoros) {
         // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
         // 📋 LOG: Operação Soros
@@ -2022,12 +2022,12 @@ export class AiService implements OnModuleInit {
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint);
-      
+
       let proposalId: string | null = null;
       let proposalPrice: number | null = null;
       let contractId: string | null = null;
       let isCompleted = false;
-      
+
       const timeout = setTimeout(() => {
         if (!isCompleted) {
           isCompleted = true;
@@ -2064,7 +2064,7 @@ export class AiService implements OnModuleInit {
       ws.on('message', async (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
-          
+
           if (msg.error) {
             await this.dataSource.query(
               'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
@@ -2074,22 +2074,22 @@ export class AiService implements OnModuleInit {
             return;
           }
 
-              if (msg.msg_type === 'authorize') {
-                const proposalPayload = {
-                  proposal: 1,
-                  amount: stakeAmount,
-                  basis: 'stake',
+          if (msg.msg_type === 'authorize') {
+            const proposalPayload = {
+              proposal: 1,
+              amount: stakeAmount,
+              basis: 'stake',
               contract_type: contractType,
               currency,
               duration: 1,
               duration_unit: 't',
-                  symbol: this.symbol,
-                };
-                
+              symbol: this.symbol,
+            };
+
             this.logger.log('[Veloz] Enviando proposal dígito', proposalPayload);
             ws.send(JSON.stringify(proposalPayload));
             return;
-              }
+          }
 
           if (msg.msg_type === 'proposal') {
             const proposal = msg.proposal;
@@ -2101,7 +2101,7 @@ export class AiService implements OnModuleInit {
             proposalId = proposal.id;
             proposalPrice = Number(proposal.ask_price);
             const payout = Number(proposal.payout || 0);
-            
+
             await this.dataSource.query(
               'UPDATE ai_trades SET payout = ? WHERE id = ?',
               [payout - stakeAmount, tradeId],
@@ -2109,8 +2109,8 @@ export class AiService implements OnModuleInit {
 
             ws.send(
               JSON.stringify({
-              buy: proposalId,
-              price: proposalPrice,
+                buy: proposalId,
+                price: proposalPrice,
               }),
             );
             return;
@@ -2137,7 +2137,7 @@ export class AiService implements OnModuleInit {
                WHERE id = ?`,
               [contractId, entrySpot, tradeId],
             );
-            
+
             this.logger.log(`[Veloz] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
             ws.send(
@@ -2241,12 +2241,12 @@ export class AiService implements OnModuleInit {
       // ✅ VITÓRIA
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
-      
+
       // ✅ VALIDAÇÃO: Verificar se recuperou toda a perda acumulada (se estava em martingale)
       if (entry > 1 && state.perdaAcumulada > 0) {
         const recuperacaoEsperada = state.perdaAcumulada;
         const recuperacaoReal = result.profitLoss;
-        
+
         if (recuperacaoReal < recuperacaoEsperada) {
           this.logger.warn(
             `[Veloz][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
@@ -2257,13 +2257,13 @@ export class AiService implements OnModuleInit {
           );
         }
       }
-      
+
       // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
       // Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
       // Entrada 1: vitoriasConsecutivas = 0 → após vitória, vira 1
       // Entrada 2: vitoriasConsecutivas = 1 (Soros nível 1) → após vitória, vira 2
       // Entrada 3: vitoriasConsecutivas = 2 (Soros nível 2) → após vitória, reinicia tudo
-      
+
       if (entry <= 3 && state.perdaAcumulada === 0) {
         // Está no Soros (entradas 1, 2 ou 3 sem perda acumulada)
         if (entry === 1) {
@@ -2297,7 +2297,7 @@ export class AiService implements OnModuleInit {
         state.ultimoLucro = 0;
         this.logger.log(`[Veloz][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
       }
-      
+
       this.logger.log(
         `[Veloz][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
         `Ganho: $${result.profitLoss.toFixed(2)} | ` +
@@ -2306,7 +2306,7 @@ export class AiService implements OnModuleInit {
         `Capital: $${state.virtualCapital.toFixed(2)} | ` +
         `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
       );
-      
+
       // 📋 LOG: Resultado - VITÓRIA
       await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
       await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
@@ -2315,12 +2315,12 @@ export class AiService implements OnModuleInit {
       await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
       await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
       await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
-      
+
       if (entry > 1) {
         await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
         await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
-      
+
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
       // Se completou Soros nível 2, reiniciar tudo
       if (entry === 3 && state.vitoriasConsecutivas === 2) {
@@ -2335,7 +2335,7 @@ export class AiService implements OnModuleInit {
         await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
         return;
       }
-      
+
       // Se ainda está no Soros, calcular próxima aposta
       if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
         const proximaApostaComSoros = calcularApostaComSoros(
@@ -2349,9 +2349,9 @@ export class AiService implements OnModuleInit {
       } else {
         await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
       }
-      
+
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
-      
+
       // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
       state.martingaleStep = 0;
@@ -2395,7 +2395,7 @@ export class AiService implements OnModuleInit {
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
       `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
-    
+
     // 📋 LOG: Resultado - DERROTA
     await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
     await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
@@ -2412,7 +2412,7 @@ export class AiService implements OnModuleInit {
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-      
+
       try {
         payoutCliente = await this.consultarPayoutCliente(
           state.derivToken,
@@ -2430,7 +2430,7 @@ export class AiService implements OnModuleInit {
         state.modoMartingale,
         payoutCliente,
       );
-      
+
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
       // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
       try {
@@ -2444,40 +2444,40 @@ export class AiService implements OnModuleInit {
            LIMIT 1`,
           [state.userId],
         );
-        
+
         if (limitsResult && limitsResult.length > 0) {
           const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
           const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
           const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
-          
+
           if (lossLimit > 0) {
             // Capital disponível = capital inicial + saldo da sessão
             const capitalDisponivel = initialCapital + sessionBalance;
-            
+
             // Stop-loss disponível = quanto ainda pode perder
             const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
-            
+
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
               this.logger.warn(
                 `[Veloz][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
                 `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
               );
-              
+
               // 📋 LOG: Stop-Loss Normal ativado
               await this.saveLog(state.userId, 'alerta', `⚠️ STOP-LOSS NORMAL: Próxima aposta ultrapassaria limite`);
               await this.saveLog(state.userId, 'alerta', `Reduzindo para $${state.capital.toFixed(2)} e resetando martingale`);
-              
+
               // Reduzir para valor inicial
               proximaAposta = state.capital;
-              
+
               // Resetar martingale (mas continuar operando)
               state.isOperationActive = false;
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
-              
+
               this.logger.log(
                 `[Veloz][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
               );
@@ -2488,24 +2488,24 @@ export class AiService implements OnModuleInit {
       } catch (error) {
         this.logger.error(`[Veloz][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
-      
+
       // Calcular lucro esperado baseado no modo
-      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
-                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
+        state.modoMartingale === 'moderado' ? 0.25 : 0.50;
       const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
-      
+
       this.logger.log(
         `[Veloz][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
       );
-      
+
       // 📋 LOG: Martingale ativado
       await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
       await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
       await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
-      
+
       // Executar próxima entrada
       await this.executeVelozOperation(state, proposal, entry + 1);
       return;
@@ -2513,13 +2513,13 @@ export class AiService implements OnModuleInit {
 
     // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
     const prejuizoAceito = state.perdaAcumulada;
-    
+
     this.logger.warn(
       `[Veloz][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
       `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
       `Resetando para valor inicial`,
     );
-    
+
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
       await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
@@ -2532,7 +2532,7 @@ export class AiService implements OnModuleInit {
       await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
       await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
     }
-    
+
     // Resetar martingale
     state.isOperationActive = false;
     state.martingaleStep = 0;
@@ -2547,7 +2547,7 @@ export class AiService implements OnModuleInit {
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins = total_wins + 1' : 'total_losses = total_losses + 1';
-    
+
     // Buscar saldo atual da sessão
     const currentBalanceResult = await this.dataSource.query(
       `SELECT COALESCE(session_balance, 0) as currentBalance
@@ -2556,10 +2556,10 @@ export class AiService implements OnModuleInit {
        LIMIT 1`,
       [userId],
     );
-    
+
     const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
     const newBalance = currentBalance + profitLoss;
-    
+
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
@@ -2570,18 +2570,18 @@ export class AiService implements OnModuleInit {
        WHERE user_id = ? AND is_active = TRUE`,
       [newBalance, userId],
     );
-    
+
     this.logger.debug(`[IncrementVelozStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
-    
+
     // ✅ Verificar limites de lucro/perda após atualizar stats
     await this.checkAndEnforceLimits(userId);
     // Invalidar cache após atualização de saldo
     this.invalidateUserConfigCache(userId);
-    
+
     // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
     await this.checkStopBlindado(userId);
   }
-  
+
   /**
    * Verifica se os limites de lucro/perda diários foram atingidos e desativa a IA automaticamente
    * Usa o session_balance que é atualizado após cada trade
@@ -2596,37 +2596,37 @@ export class AiService implements OnModuleInit {
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
-      
+
       if (!configResult || configResult.length === 0) {
         // Invalidar cache se não há mais sessão ativa
         this.invalidateUserConfigCache(userId);
         return;
       }
-      
+
       const config = configResult[0];
-      
+
       // Se já foi parada, não precisa verificar
       if (config.session_status && config.session_status !== 'active') {
         return;
       }
-      
+
       const profitTarget = parseFloat(config.profit_target) || null;
       const lossLimit = parseFloat(config.loss_limit) || null;
-      
+
       // Se não há limites configurados, não fazer nada
       if (!profitTarget && !lossLimit) {
         return;
       }
-      
+
       // Usar o session_balance que já está atualizado após cada trade
       const sessionBalance = parseFloat(config.sessionBalance) || 0;
-      
+
       this.logger.debug(`[CheckLimits][${userId}] Saldo: $${sessionBalance.toFixed(2)} | Alvo: ${profitTarget} | Limite: ${lossLimit}`);
-      
+
       let shouldDeactivate = false;
       let deactivationReason = '';
       let sessionStatus: string | null = null;
-      
+
       // Verificar se atingiu meta de lucro (stop win)
       if (profitTarget && sessionBalance >= profitTarget) {
         shouldDeactivate = true;
@@ -2634,7 +2634,7 @@ export class AiService implements OnModuleInit {
         deactivationReason = `Meta de lucro diária atingida: $${sessionBalance.toFixed(2)} (Meta: $${profitTarget})`;
         this.logger.log(`[CheckLimits][${userId}] 🎯 STOP WIN: ${deactivationReason}`);
       }
-      
+
       // Verificar se atingiu limite de perda (stop loss)
       if (lossLimit && sessionBalance <= -lossLimit) {
         shouldDeactivate = true;
@@ -2642,7 +2642,7 @@ export class AiService implements OnModuleInit {
         deactivationReason = `Limite de perda diária atingido: -$${Math.abs(sessionBalance).toFixed(2)} (Limite: $${lossLimit})`;
         this.logger.warn(`[CheckLimits][${userId}] 🛑 STOP LOSS: ${deactivationReason}`);
       }
-      
+
       // Desativar IA se necessário
       if (shouldDeactivate && sessionStatus) {
         // Atualizar configuração com status da sessão e desativar
@@ -2656,10 +2656,10 @@ export class AiService implements OnModuleInit {
            WHERE user_id = ?`,
           [sessionStatus, deactivationReason, userId],
         );
-        
+
         // ✅ OTIMIZAÇÃO: Invalidar cache após mudança de configuração
         this.invalidateUserConfigCache(userId);
-        
+
         // Parar imediatamente qualquer trade em andamento
         // Remover do mapa de usuários ativos para impedir novos trades
         if (this.velozUsers.has(userId)) {
@@ -2671,7 +2671,7 @@ export class AiService implements OnModuleInit {
           this.velozUsers.delete(userId);
           this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Veloz)`);
         }
-        
+
         // Remover também dos outros modos se estiverem ativos
         if (this.moderadoUsers.has(userId)) {
           const state = this.moderadoUsers.get(userId);
@@ -2681,7 +2681,7 @@ export class AiService implements OnModuleInit {
           this.moderadoUsers.delete(userId);
           this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Moderado)`);
         }
-        
+
         if (this.precisoUsers.has(userId)) {
           const state = this.precisoUsers.get(userId);
           if (state) {
@@ -2690,7 +2690,7 @@ export class AiService implements OnModuleInit {
           this.precisoUsers.delete(userId);
           this.logger.log(`[CheckLimits][${userId}] Usuário removido do mapa de usuários ativos (Preciso)`);
         }
-        
+
         // Registrar log de desativação automática
         this.logger.log(`[CheckLimits][${userId}] 🚫 IA DESATIVADA AUTOMATICAMENTE: ${deactivationReason} | Status: ${sessionStatus} | Saldo final: $${sessionBalance.toFixed(2)}`);
       }
@@ -2724,67 +2724,67 @@ export class AiService implements OnModuleInit {
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
-      
+
       if (!configResult || configResult.length === 0) {
         return;
       }
-      
+
       const config = configResult[0];
-      
+
       // Se já foi parada, não verificar
       if (config.session_status && config.session_status !== 'active') {
         return;
       }
-      
+
       const initialBalance = parseFloat(config.initialBalance) || 0;
       const sessionBalance = parseFloat(config.sessionBalance) || 0; // ✅ session_balance já é o lucro/perda acumulada
       const stopBlindadoPercentRaw = config.stopBlindadoPercent;
-      
+
       // ✅ ZENIX v2.0: Stop Blindado só funciona se estiver ativado (não NULL)
       if (stopBlindadoPercentRaw === null || stopBlindadoPercentRaw === undefined) {
         return; // Stop Blindado desativado
       }
-      
+
       const stopBlindadoPercent = parseFloat(stopBlindadoPercentRaw) || 50.0;
-      
+
       // ✅ session_balance já é o lucro líquido acumulada (pode ser negativo)
       const lucroLiquido = sessionBalance;
-      
+
       // Stop Blindado só ativa se estiver em LUCRO
       if (lucroLiquido <= 0) {
         return; // Ainda não há lucro para proteger
       }
-      
+
       // ✅ Calcular capital atual e stop blindado conforme documentação ZENIX v2.0
       // Capital Atual = Capital Inicial + Lucro Líquido
       const capitalAtual = initialBalance + lucroLiquido;
-      
+
       // Stop Blindado = Capital Inicial + (Lucro Líquido × Percentual)
       const fatorProtecao = stopBlindadoPercent / 100; // 50% → 0.5
       const stopBlindado = initialBalance + (lucroLiquido * fatorProtecao);
-      
+
       this.logger.debug(
         `[StopBlindado][${userId}] Capital Inicial Sessão: $${initialBalance.toFixed(2)} | ` +
         `Lucro Líquido Sessão: $${lucroLiquido.toFixed(2)} | ` +
         `Capital Sessão Atual: $${capitalAtual.toFixed(2)} | ` +
         `Stop Blindado: $${stopBlindado.toFixed(2)} (${stopBlindadoPercent}%)`,
       );
-      
+
       // ✅ Se capital atual caiu abaixo do stop blindado → PARAR
       if (capitalAtual <= stopBlindado) {
         const lucroProtegido = capitalAtual - initialBalance; // Lucro que será protegido
         const percentualProtegido = (lucroProtegido / lucroLiquido) * 100;
-        
+
         this.logger.warn(
           `[StopBlindado][${userId}] 🛡️ ATIVADO! ` +
           `Protegendo $${lucroProtegido.toFixed(2)} de lucro ` +
           `(${percentualProtegido.toFixed(0)}% de $${lucroLiquido.toFixed(2)})`,
         );
-        
-        const deactivationReason = 
+
+        const deactivationReason =
           `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
           `(${stopBlindadoPercent}% de $${lucroLiquido.toFixed(2)} conquistados)`;
-        
+
         // Desativar IA
         await this.dataSource.query(
           `UPDATE ai_user_config 
@@ -2796,10 +2796,10 @@ export class AiService implements OnModuleInit {
            WHERE user_id = ?`,
           [deactivationReason, userId],
         );
-        
+
         // ✅ OTIMIZAÇÃO: Invalidar cache após mudança de configuração
         this.invalidateUserConfigCache(userId);
-        
+
         // Remover usuário dos mapas ativos (todos os modos)
         if (this.velozUsers.has(userId)) {
           const state = this.velozUsers.get(userId);
@@ -2809,7 +2809,7 @@ export class AiService implements OnModuleInit {
           this.velozUsers.delete(userId);
           this.logger.log(`[StopBlindado][${userId}] Removido do mapa Veloz`);
         }
-        
+
         if (this.moderadoUsers.has(userId)) {
           const state = this.moderadoUsers.get(userId);
           if (state) {
@@ -2818,7 +2818,7 @@ export class AiService implements OnModuleInit {
           this.moderadoUsers.delete(userId);
           this.logger.log(`[StopBlindado][${userId}] Removido do mapa Moderado`);
         }
-        
+
         if (this.precisoUsers.has(userId)) {
           const state = this.precisoUsers.get(userId);
           if (state) {
@@ -2827,7 +2827,7 @@ export class AiService implements OnModuleInit {
           this.precisoUsers.delete(userId);
           this.logger.log(`[StopBlindado][${userId}] Removido do mapa Preciso`);
         }
-        
+
         this.logger.log(
           `[StopBlindado][${userId}] 🛡️ IA DESATIVADA | ` +
           `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
@@ -2846,7 +2846,7 @@ export class AiService implements OnModuleInit {
   // ============================================
   // SISTEMA DE LOGS OTIMIZADO - PERFORMANCE
   // ============================================
-  
+
   // Fila de logs para processamento assíncrono
   private logQueue: Array<{
     userId: string;
@@ -2892,7 +2892,7 @@ export class AiService implements OnModuleInit {
     try {
       // Processar até 50 logs por vez
       const batch = this.logQueue.splice(0, 50);
-      
+
       if (batch.length === 0) {
         this.logProcessing = false;
         return;
@@ -2994,7 +2994,7 @@ export class AiService implements OnModuleInit {
         console.error(`[SaveLog] Parâmetros inválidos: userId=${userId}, type=${type}`);
         return;
       }
-      
+
       // ✅ Pular se mensagem estiver vazia (linhas em branco)
       if (!message || message.trim() === '') {
         return;
@@ -3028,7 +3028,7 @@ export class AiService implements OnModuleInit {
           sessionId,
         ],
       );
-      
+
       // ✅ DEBUG: Logar apenas em caso de erro ou para rastreamento
       if (!result || !result.insertId) {
         this.logger.error(`[SaveLog][${userId}] ⚠️ INSERT não retornou insertId:`, result);
@@ -3060,20 +3060,20 @@ export class AiService implements OnModuleInit {
         ORDER BY created_at DESC
         LIMIT 1
       `;
-      
+
       const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
       const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
-      
+
       if (sessionCreatedAt) {
         this.logger.debug(`[GetUserLogs] 📅 Filtrando logs da sessão atual (desde ${sessionCreatedAt})`);
       } else {
         this.logger.warn(`[GetUserLogs] ⚠️ Nenhuma sessão ativa encontrada, retornando todos os logs`);
       }
-      
+
       // 🕐 BUSCAR TIMESTAMPS E CONVERTER PARA HORÁRIO DE BRASÍLIA (UTC-3)
       // ✅ INCLUIR created_at PARA COMPARAÇÃO CORRETA NO FRONTEND
       // ✅ Filtrar apenas logs da sessão atual
-      const query = limit 
+      const query = limit
         ? `SELECT 
             id,
             timestamp,
@@ -3099,8 +3099,8 @@ export class AiService implements OnModuleInit {
            WHERE user_id = ?
            ${sessionCreatedAt ? 'AND created_at >= ?' : ''}
            ORDER BY created_at DESC`;
-      
-      const params = limit 
+
+      const params = limit
         ? (sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit])
         : (sessionCreatedAt ? [userId, sessionCreatedAt] : [userId]);
       const logs = await this.dataSource.query(query, params);
@@ -3124,7 +3124,7 @@ export class AiService implements OnModuleInit {
         }
 
         // Converter para horário de Brasília (UTC-3) e formatar como HH:mm:ss
-        const formattedTime = date.toLocaleTimeString('pt-BR', { 
+        const formattedTime = date.toLocaleTimeString('pt-BR', {
           timeZone: 'America/Sao_Paulo',
           hour: '2-digit',
           minute: '2-digit',
@@ -3235,7 +3235,7 @@ export class AiService implements OnModuleInit {
    */
   private async syncTrinityUsersFromDb(): Promise<void> {
     this.logger.debug(`[SyncTrinity] 🔍 Buscando usuários Trinity no banco...`);
-    
+
     // ✅ Buscar entry_value se a coluna existir
     let configs: any[];
     try {
@@ -3298,7 +3298,7 @@ export class AiService implements OnModuleInit {
         this.logger.debug(
           `[SyncTrinity] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | mode=${config.mode} | martingale=${config.modoMartingale}`,
         );
-        
+
         try {
           await this.strategyManager.activateUser(config.userId, 'trinity', {
             mode: config.mode || 'veloz',
@@ -3345,15 +3345,15 @@ export class AiService implements OnModuleInit {
         }
       }
     }
-    
+
     // ✅ CORREÇÃO: Inicializar WebSockets para R_25 e R_50 SEMPRE que houver usuários Trinity ativos
     // (anteriormente isso só acontecia no bloco else, quando StrategyManager não estava disponível)
     if (configs.length > 0) {
       const needsInit = ['R_10', 'R_25', 'R_50'].some(
-        symbol => !this.trinityConnected[symbol as 'R_10' | 'R_25' | 'R_50'] || 
-                  this.trinityWebSockets[symbol as 'R_10' | 'R_25' | 'R_50']?.readyState !== WebSocket.OPEN
+        symbol => !this.trinityConnected[symbol as 'R_10' | 'R_25' | 'R_50'] ||
+          this.trinityWebSockets[symbol as 'R_10' | 'R_25' | 'R_50']?.readyState !== WebSocket.OPEN
       );
-      
+
       if (needsInit) {
         this.logger.log(`[SyncTrinity] 🔌 Inicializando WebSockets para ${configs.length} usuário(s) Trinity ativo(s)`);
         await this.initializeTrinityWebSockets().catch(error => {
@@ -3373,11 +3373,11 @@ export class AiService implements OnModuleInit {
   }) {
     const { userId, stakeAmount, entryValue, derivToken, currency, modoMartingale = 'conservador' } = params;
     const apostaInicial = entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
-    
+
     this.logger.log(
       `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | martingale=${modoMartingale}`,
     );
-    
+
     const existing = this.velozUsers.get(userId);
 
     if (existing) {
@@ -3453,7 +3453,7 @@ export class AiService implements OnModuleInit {
 
   getStatistics() {
     if (this.ticks.length === 0) {
-      
+
       return null;
     }
 
@@ -3514,47 +3514,47 @@ export class AiService implements OnModuleInit {
     this.logger.debug(`[ensureTickStreamReady] Aguardando ${minTicks} ticks (atual: ${this.ticks.length})...`);
     let attempts = 0;
     const maxAttempts = 3; // ✅ Reduzido de 60 para 3 tentativas
-    
+
     while (this.ticks.length < minTicks && attempts < maxAttempts) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       attempts++;
-      
+
       // ✅ Log a cada tentativa
       this.logger.debug(`[ensureTickStreamReady] Tentativa ${attempts}/${maxAttempts} - Ticks: ${this.ticks.length}/${minTicks}`);
-      
+
       // ✅ Na terceira tentativa, fazer verificação completa do WebSocket e imprimir logs detalhados
       if (attempts === maxAttempts) {
         this.logger.warn(`[ensureTickStreamReady] ⚠️ Terceira tentativa - Verificando WebSocket...`);
-        
+
         // Verificação detalhada do WebSocket
         const wsState = this.ws ? {
           exists: true,
           readyState: this.ws.readyState,
-          readyStateText: this.ws.readyState === WebSocket.OPEN ? 'OPEN' : 
-                          this.ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' : 
-                          this.ws.readyState === WebSocket.CLOSING ? 'CLOSING' : 
-                          this.ws.readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN',
+          readyStateText: this.ws.readyState === WebSocket.OPEN ? 'OPEN' :
+            this.ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+              this.ws.readyState === WebSocket.CLOSING ? 'CLOSING' :
+                this.ws.readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN',
           url: this.ws.url || 'N/A',
         } : { exists: false };
-        
+
         this.logger.warn(`[ensureTickStreamReady] 📊 Estado do WebSocket:`, JSON.stringify(wsState, null, 2));
         this.logger.warn(`[ensureTickStreamReady] 📊 Estado da conexão (isConnected): ${this.isConnected}`);
         this.logger.warn(`[ensureTickStreamReady] 📊 Subscription ID: ${this.subscriptionId || 'N/A'}`);
         this.logger.warn(`[ensureTickStreamReady] 📊 Símbolo: ${this.symbol || 'N/A'}`);
         this.logger.warn(`[ensureTickStreamReady] 📊 Total de ticks recebidos: ${this.ticks.length}`);
         this.logger.warn(`[ensureTickStreamReady] 📊 Último tick: ${this.ticks.length > 0 ? JSON.stringify(this.ticks[this.ticks.length - 1]) : 'Nenhum'}`);
-        
+
         // Verificar se há mensagens sendo recebidas
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.logger.warn(`[ensureTickStreamReady] ✅ WebSocket está OPEN, mas não está recebendo ticks`);
-          
+
           // ✅ Se não há subscription ID, verificar se já recebemos erro "already subscribed"
           // Se sim, não tentar criar uma nova subscription - aguardar que os ticks cheguem
           if (!this.subscriptionId || this.subscriptionId === 'N/A') {
             const timeSinceLastError = Date.now() - this.lastAlreadySubscribedTime;
             const timeSinceLastTick = this.lastTickReceivedTime > 0 ? Date.now() - this.lastTickReceivedTime : Infinity;
             const shouldWaitForTicks = this.hasReceivedAlreadySubscribed && timeSinceLastError < 30000; // Aguardar 30 segundos após receber "already subscribed"
-            
+
             // ✅ Se não estamos recebendo ticks há mais de 60 segundos, recriar WebSocket mesmo sem subscriptionId
             if (timeSinceLastTick > 60000 && this.lastTickReceivedTime > 0) {
               this.logger.warn(`[ensureTickStreamReady] ⚠️ Não recebendo ticks há ${Math.floor(timeSinceLastTick / 1000)}s e não temos subscriptionId - Recriando WebSocket...`);
@@ -3626,13 +3626,13 @@ export class AiService implements OnModuleInit {
           this.logger.error(`[ensureTickStreamReady] ❌ Erro ao recriar WebSocket:`, error);
         }
       }
-      
+
       this.logger.error(`[ensureTickStreamReady] ❌ Timeout após ${maxAttempts} tentativas: Não foi possível obter ${minTicks} ticks (obtidos: ${this.ticks.length})`);
       throw new Error(
         `Não foi possível obter ${minTicks} ticks recentes do símbolo ${this.symbol}`,
       );
     }
-    
+
     this.logger.debug(`[ensureTickStreamReady] ✅ Ticks suficientes: ${this.ticks.length}/${minTicks}`);
   }
 
@@ -3643,7 +3643,7 @@ export class AiService implements OnModuleInit {
     try {
       const ticksData = this.ticks.slice(-50); // Salvar apenas os últimos 50 ticks
       const ticksJson = JSON.stringify(ticksData);
-      
+
       await this.dataSource.query(`
         INSERT INTO ai_websocket_state 
         (symbol, subscription_id, ticks_data, total_ticks, last_tick_received_at, websocket_url, is_connected, connection_created_at)
@@ -3665,7 +3665,7 @@ export class AiService implements OnModuleInit {
         this.ws ? this.ws.url : null,
         this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN
       ]);
-      
+
       this.logger.debug(`[saveWebSocketState] ✅ Estado salvo: ${this.ticks.length} ticks, subscriptionId=${this.subscriptionId || 'N/A'}`);
     } catch (error) {
       this.logger.error(`[saveWebSocketState] ❌ Erro ao salvar estado:`, error);
@@ -3684,15 +3684,15 @@ export class AiService implements OnModuleInit {
         ORDER BY updated_at DESC
         LIMIT 1
       `, [this.symbol]);
-      
+
       if (result.length === 0) {
         this.logger.debug(`[loadWebSocketState] Nenhum estado salvo encontrado para ${this.symbol}`);
         return null;
       }
-      
+
       const state = result[0];
       let ticks: Tick[] = [];
-      
+
       if (state.ticks_data) {
         try {
           ticks = JSON.parse(state.ticks_data);
@@ -3701,7 +3701,7 @@ export class AiService implements OnModuleInit {
           this.logger.warn(`[loadWebSocketState] ⚠️ Erro ao parsear ticks_data:`, error);
         }
       }
-      
+
       return {
         ticks,
         subscriptionId: state.subscription_id || null
@@ -3718,7 +3718,7 @@ export class AiService implements OnModuleInit {
   private async recreateWebSocket(): Promise<void> {
     this.websocketReconnectAttempts++;
     this.logger.warn(`[recreateWebSocket] 🔄 Tentativa ${this.websocketReconnectAttempts}: Recriando WebSocket...`);
-    
+
     // ✅ Cancelar subscription antiga se existir antes de fechar
     if (this.subscriptionId && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.logger.log(`[recreateWebSocket] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
@@ -3726,10 +3726,10 @@ export class AiService implements OnModuleInit {
       // Aguardar um pouco para o comando forget ser processado
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-    
+
     // ✅ Salvar estado atual antes de fechar
     await this.saveWebSocketState();
-    
+
     // ✅ Fechar conexão atual
     if (this.ws) {
       try {
@@ -3742,16 +3742,16 @@ export class AiService implements OnModuleInit {
       }
       this.ws = null;
     }
-    
+
     this.isConnected = false;
     this.subscriptionId = null;
     this.hasReceivedAlreadySubscribed = false; // Resetar flag
     this.lastAlreadySubscribedTime = 0; // Resetar timestamp
     this.stopKeepAlive();
-    
+
     // ✅ Aguardar um pouco antes de reconectar
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
+
     // ✅ Tentar recuperar estado salvo
     const savedState = await this.loadWebSocketState();
     if (savedState && savedState.ticks.length > 0) {
@@ -3762,7 +3762,7 @@ export class AiService implements OnModuleInit {
         this.logger.log(`[recreateWebSocket] ✅ Subscription ID recuperado: ${savedState.subscriptionId}`);
       }
     }
-    
+
     // ✅ Criar nova conexão
     try {
       await this.initialize();
@@ -3799,10 +3799,10 @@ export class AiService implements OnModuleInit {
       proposal,
       lossVirtual: userState
         ? {
-            active: userState.lossVirtualActive,
-            count: userState.lossVirtualCount,
-            operation: userState.lossVirtualOperation,
-          }
+          active: userState.lossVirtualActive,
+          count: userState.lossVirtualCount,
+          operation: userState.lossVirtualOperation,
+        }
         : null,
     };
   }
@@ -3829,15 +3829,15 @@ export class AiService implements OnModuleInit {
   async getSessionStats(userId: string) {
     // Buscar todas as trades do usuário do dia atual (timezone America/Sao_Paulo)
     this.logger.log(`[GetSessionStats] 📊 Buscando estatísticas do dia para userId=${userId}`);
-    
+
     // Pegar data atual no timezone do Brasil
     const now = new Date();
     const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const startOfDay = new Date(brazilTime.getFullYear(), brazilTime.getMonth(), brazilTime.getDate(), 0, 0, 0);
     const endOfDay = new Date(brazilTime.getFullYear(), brazilTime.getMonth(), brazilTime.getDate(), 23, 59, 59);
-    
+
     this.logger.log(`[GetSessionStats] 🕐 Filtrando trades do dia: ${startOfDay.toISOString()} até ${endOfDay.toISOString()}`);
-    
+
     const query = `
       SELECT 
         COUNT(*) as totalTrades,
@@ -3898,7 +3898,7 @@ export class AiService implements OnModuleInit {
     let sessionWins = 0;
     let sessionLosses = 0;
     let sessionWinrate = 0;
-    
+
     if (sessionCreatedAt) {
       const sessionTradesQuery = `
         SELECT 
@@ -3949,7 +3949,7 @@ export class AiService implements OnModuleInit {
   async getTradeHistory(userId: string, limit?: number) {
     // Buscar histórico de trades do usuário (sem limite, apenas da sessão atual)
     this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}${limit ? `, limit=${limit}` : ' (sem limite)'}`);
-    
+
     // ✅ CORREÇÃO: Buscar data de criação da sessão atual para filtrar apenas operações da sessão
     const sessionQuery = `
       SELECT created_at as sessionCreatedAt
@@ -3958,16 +3958,16 @@ export class AiService implements OnModuleInit {
       ORDER BY created_at DESC
       LIMIT 1
     `;
-    
+
     const sessionResult = await this.dataSource.query(sessionQuery, [userId]);
     const sessionCreatedAt = sessionResult.length > 0 ? sessionResult[0].sessionCreatedAt : null;
-    
+
     if (sessionCreatedAt) {
       this.logger.log(`[GetTradeHistory] 📅 Filtrando operações da sessão atual (desde ${sessionCreatedAt})`);
     } else {
       this.logger.warn(`[GetTradeHistory] ⚠️ Nenhuma sessão ativa encontrada, retornando todas as operações`);
     }
-    
+
     // ✅ Tentar buscar com symbol, se falhar, buscar sem symbol (campo pode não existir ainda)
     // ✅ EXCLUIR operações com status ERROR do histórico
     let query = `
@@ -3992,12 +3992,12 @@ export class AiService implements OnModuleInit {
       ORDER BY COALESCE(closed_at, created_at) DESC
       ${limit ? 'LIMIT ?' : ''}
     `;
-    
+
     let result;
-    const queryParams = limit 
+    const queryParams = limit
       ? (sessionCreatedAt ? [userId, sessionCreatedAt, limit] : [userId, limit])
       : (sessionCreatedAt ? [userId, sessionCreatedAt] : [userId]);
-    
+
     try {
       result = await this.dataSource.query(query, queryParams);
       this.logger.debug(`[GetTradeHistory] 📝 Query executada com symbol${sessionCreatedAt ? ' e filtro de sessão' : ''}`);
@@ -4032,27 +4032,27 @@ export class AiService implements OnModuleInit {
         throw error;
       }
     }
-    
+
     this.logger.log(`[GetTradeHistory] ✅ Query executada, ${result.length} registros encontrados`);
 
     const mapped = result.map((trade: any) => {
       // ✅ Converter DECIMAL do MySQL corretamente (pode vir como string ou number)
       let entryPrice: number | null = null;
       if (trade.entryPrice != null && trade.entryPrice !== undefined) {
-        const entryValue = typeof trade.entryPrice === 'string' 
-          ? parseFloat(trade.entryPrice) 
+        const entryValue = typeof trade.entryPrice === 'string'
+          ? parseFloat(trade.entryPrice)
           : Number(trade.entryPrice);
         entryPrice = !isNaN(entryValue) && entryValue > 0 ? entryValue : null;
       }
-      
+
       let exitPrice: number | null = null;
       if (trade.exitPrice != null && trade.exitPrice !== undefined) {
-        const exitValue = typeof trade.exitPrice === 'string' 
-          ? parseFloat(trade.exitPrice) 
+        const exitValue = typeof trade.exitPrice === 'string'
+          ? parseFloat(trade.exitPrice)
           : Number(trade.exitPrice);
         exitPrice = !isNaN(exitValue) && exitValue > 0 ? exitValue : null;
       }
-      
+
       // ✅ DEBUG: Logar valores para verificar (apenas primeiros 3)
       const tradeIndex = result.indexOf(trade);
       if (tradeIndex < 3) {
@@ -4063,7 +4063,7 @@ export class AiService implements OnModuleInit {
           `status=${trade.status}`
         );
       }
-      
+
       return {
         id: trade.id,
         signal: trade.signal,
@@ -4080,7 +4080,7 @@ export class AiService implements OnModuleInit {
         closedAt: trade.closedAt,
       };
     });
-    
+
     return mapped;
   }
 
@@ -4110,7 +4110,7 @@ export class AiService implements OnModuleInit {
 
   async initializeTables(): Promise<void> {
     this.logger.log('Inicializando tabelas da IA...');
-    
+
     // Criar tabela ai_user_config
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS ai_user_config (
@@ -4144,7 +4144,7 @@ export class AiService implements OnModuleInit {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       COMMENT='Configuração de IA de trading por usuário - múltiplas sessões permitidas'
     `);
-    
+
     // Verificar tipo da coluna user_id
     const userIdColumn = await this.dataSource.query(`
       SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
@@ -4153,30 +4153,30 @@ export class AiService implements OnModuleInit {
       AND TABLE_NAME = 'ai_user_config'
       AND COLUMN_NAME = 'user_id'
     `);
-    
+
     // Se user_id for INT, migrar para VARCHAR
     if (userIdColumn.length > 0 && userIdColumn[0].DATA_TYPE !== 'varchar') {
       this.logger.warn('🔄 Migrando user_id de INT para VARCHAR(36)...');
-      
+
       try {
         // Remover índice temporariamente
         await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
       } catch (error) {
         // Índice pode não existir, continuar
       }
-      
+
       // Alterar tipo da coluna
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
       `);
-      
+
       // Recriar índice (não-unique para permitir múltiplas sessões)
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
-      
+
       this.logger.log('✅ Migração concluída: user_id agora é VARCHAR(36)');
     }
-    
+
     // Verificar se as colunas profit_target e loss_limit existem antes de adicionar
     // (Compatível com MySQL 5.7+)
     const columns = await this.dataSource.query(`
@@ -4185,9 +4185,9 @@ export class AiService implements OnModuleInit {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'ai_user_config'
     `);
-    
+
     const columnNames = columns.map((col: any) => col.COLUMN_NAME);
-    
+
     // ✅ Adicionar entry_value se não existir
     if (!columnNames.includes('entry_value')) {
       this.logger.log('🔄 Adicionando coluna entry_value...');
@@ -4199,7 +4199,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna entry_value adicionada');
     }
-    
+
     // Adicionar profit_target se não existir
     if (!columnNames.includes('profit_target')) {
       await this.dataSource.query(`
@@ -4208,7 +4208,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna profit_target adicionada');
     }
-    
+
     // Adicionar loss_limit se não existir
     if (!columnNames.includes('loss_limit')) {
       await this.dataSource.query(`
@@ -4217,7 +4217,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna loss_limit adicionada');
     }
-    
+
     // Adicionar deactivation_reason se não existir
     if (!columnNames.includes('deactivation_reason')) {
       await this.dataSource.query(`
@@ -4226,7 +4226,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna deactivation_reason adicionada');
     }
-    
+
     // Adicionar deactivated_at se não existir
     if (!columnNames.includes('deactivated_at')) {
       await this.dataSource.query(`
@@ -4235,7 +4235,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna deactivated_at adicionada');
     }
-    
+
     // Adicionar modo_martingale se não existir
     if (!columnNames.includes('modo_martingale')) {
       await this.dataSource.query(`
@@ -4246,7 +4246,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna modo_martingale adicionada');
     }
-    
+
     // Adicionar strategy se não existir
     if (!columnNames.includes('strategy')) {
       await this.dataSource.query(`
@@ -4257,7 +4257,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Coluna strategy adicionada');
     }
-    
+
     // ✅ Criar tabela para salvar estado do WebSocket
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS ai_websocket_state (
@@ -4278,7 +4278,7 @@ export class AiService implements OnModuleInit {
       COMMENT='Estado do WebSocket para recuperação após reconexão'
     `);
     this.logger.log('✅ Tabela ai_websocket_state criada/verificada');
-    
+
     // 🔄 Remover constraint UNIQUE de user_id se existir (para permitir múltiplas sessões)
     const indexesResult = await this.dataSource.query(`
       SELECT INDEX_NAME, NON_UNIQUE
@@ -4287,19 +4287,19 @@ export class AiService implements OnModuleInit {
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_id'
     `);
-    
+
     if (indexesResult.length > 0 && indexesResult[0].NON_UNIQUE === 0) {
       this.logger.warn('🔄 Removendo constraint UNIQUE de idx_user_id para permitir múltiplas sessões...');
-      
+
       // Remover índice UNIQUE
       await this.dataSource.query(`ALTER TABLE ai_user_config DROP INDEX idx_user_id`);
-      
+
       // Recriar como índice normal
       await this.dataSource.query(`ALTER TABLE ai_user_config ADD INDEX idx_user_id (user_id)`);
-      
+
       this.logger.log('✅ Índice idx_user_id convertido de UNIQUE para normal');
     }
-    
+
     // Adicionar índice composto se não existir
     const compositeIndexResult = await this.dataSource.query(`
       SELECT INDEX_NAME
@@ -4308,7 +4308,7 @@ export class AiService implements OnModuleInit {
       AND TABLE_NAME = 'ai_user_config'
       AND INDEX_NAME = 'idx_user_active'
     `);
-    
+
     if (compositeIndexResult.length === 0) {
       await this.dataSource.query(`
         ALTER TABLE ai_user_config 
@@ -4316,7 +4316,7 @@ export class AiService implements OnModuleInit {
       `);
       this.logger.log('✅ Índice composto idx_user_active adicionado');
     }
-    
+
     // Verificar e migrar tabela ai_trades também
     const aiTradesUserIdColumn = await this.dataSource.query(`
       SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
@@ -4325,20 +4325,20 @@ export class AiService implements OnModuleInit {
       AND TABLE_NAME = 'ai_trades'
       AND COLUMN_NAME = 'user_id'
     `);
-    
+
     // Se user_id em ai_trades for INT, migrar para VARCHAR
     if (aiTradesUserIdColumn.length > 0 && aiTradesUserIdColumn[0].DATA_TYPE !== 'varchar') {
       this.logger.warn('🔄 Migrando user_id na tabela ai_trades de INT para VARCHAR(36)...');
-      
+
       // Alterar tipo da coluna em ai_trades
       await this.dataSource.query(`
         ALTER TABLE ai_trades 
         MODIFY COLUMN user_id VARCHAR(36) NOT NULL COMMENT 'UUID do usuário'
       `);
-      
+
       this.logger.log('✅ Migração concluída: ai_trades.user_id agora é VARCHAR(36)');
     }
-    
+
     this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
   }
 
@@ -4355,8 +4355,11 @@ export class AiService implements OnModuleInit {
     entryValue?: number, // ✅ Valor de entrada por operação (opcional)
     stopLossBlindado?: boolean, // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false/null = desativado)
   ): Promise<void> {
+    // ✅ Normalizar moeda (DEMO não é uma moeda válida para a Deriv, usar USD como padrão para contas virtuais)
+    const normalizedCurrency = (currency === 'DEMO' || !currency) ? 'USD' : currency;
+
     this.logger.log(
-      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
+      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency} (original: ${currency}) | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
     );
 
     // 🗑️ PRIMEIRA AÇÃO: DELETAR TODOS OS LOGS DO USUÁRIO ANTES DE INICIAR NOVA SESSÃO
@@ -4384,36 +4387,36 @@ export class AiService implements OnModuleInit {
        WHERE user_id = ? AND is_active = TRUE`,
       [userId],
     );
-    
+
     this.logger.log(
       `[ActivateAI] 🔄 Sessões anteriores desativadas para userId=${userId}`,
     );
-    
+
     // ✅ Para modo veloz com Orion, definir next_trade_at como NULL para permitir processamento imediato
     // O Orion processa em tempo real via ticks, não depende de next_trade_at
     // Para outros modos, usar 1 minuto no futuro
     const nextTradeAt = (mode || '').toLowerCase() === 'veloz' && (strategy || 'orion').toLowerCase() === 'orion'
       ? null // Orion processa em tempo real, não precisa de agendamento
       : new Date(Date.now() + 60000); // Outros modos: 1 minuto a partir de agora
-    
+
     // 2. Criar nova sessão (sempre INSERT)
     // ✅ ZENIX v2.0: Stop-Loss Blindado - se ativado, usar 50% (padrão da documentação)
     const stopBlindadoPercent = stopLossBlindado === true ? 50.00 : null; // null = desativado, 50.00 = ativado
-    
+
     // ✅ Adicionar entry_value e stop_blindado_percent se as colunas existirem
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
          VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+        [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
       if (error.code === 'ER_BAD_FIELD_ERROR') {
         const missingField = error.sqlMessage?.match(/Unknown column '([^']+)'/)?.[1];
         this.logger.warn(`[ActivateAI] Campo '${missingField}' não existe, tentando inserir sem ele`);
-        
+
         // Tentar inserir sem stop_blindado_percent
         if (missingField === 'stop_blindado_percent') {
           try {
@@ -4421,7 +4424,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || 0.35, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
             );
           } catch (error2: any) {
             // Se entry_value também não existir
@@ -4430,7 +4433,7 @@ export class AiService implements OnModuleInit {
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                  VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
@@ -4452,7 +4455,7 @@ export class AiService implements OnModuleInit {
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                  VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
@@ -4467,7 +4470,7 @@ export class AiService implements OnModuleInit {
     }
 
     this.logger.log(
-      `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${currency}`,
+      `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency}`,
     );
 
     if ((mode || '').toLowerCase() === 'veloz') {
@@ -4514,7 +4517,7 @@ export class AiService implements OnModuleInit {
       this.removeModeradoUserState(userId);
       this.removePrecisoUserState(userId);
     }
-    
+
     // ✅ Usar StrategyManager para ativar usuário na estratégia correta
     if (this.strategyManager) {
       try {
@@ -4524,19 +4527,19 @@ export class AiService implements OnModuleInit {
           stakeAmount, // Capital total da conta
           entryValue: entryValue || 0.35, // ✅ Valor de entrada por operação (padrão: 0.35)
           derivToken,
-          currency,
+          currency: normalizedCurrency,
           modoMartingale: modoMartingale || 'conservador',
           profitTarget: profitTarget || null,
           lossLimit: lossLimit || null,
         });
         this.logger.log(`[ActivateAI] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
-        
+
         // ✅ Se for Trinity, sincronizar imediatamente para garantir que está carregado
         if (strategy && strategy.toLowerCase() === 'trinity') {
           this.logger.log(`[ActivateAI] 🔄 Sincronizando Trinity imediatamente após ativação...`);
           await this.syncTrinityUsersFromDb();
         }
-        
+
         if (strategy && strategy.toLowerCase() === 'atlas') {
           this.logger.log(`[ActivateAI] 🔄 Sincronizando Atlas imediatamente após ativação...`);
           // ✅ ATLAS: Usa R_10 ou R_25, que já são processados pelo sistema de ticks
@@ -4569,7 +4572,7 @@ export class AiService implements OnModuleInit {
     );
 
     this.logger.log(`IA desativada para usuário ${userId}`);
-    
+
     // ✅ Usar StrategyManager para desativar usuário de todas as estratégias
     if (this.strategyManager) {
       await this.strategyManager.deactivateUser(userId);
@@ -4778,9 +4781,9 @@ export class AiService implements OnModuleInit {
    */
   async processFastModeUsers(): Promise<void> {
     try {
-        this.logger.debug('🔍 [Fast Mode] Buscando usuários ativos...');
-        const fastModeUsers = await this.dataSource.query(
-            `SELECT 
+      this.logger.debug('🔍 [Fast Mode] Buscando usuários ativos...');
+      const fastModeUsers = await this.dataSource.query(
+        `SELECT 
                 user_id as userId,
                 stake_amount as stakeAmount,
                 deriv_token as derivToken,
@@ -4789,27 +4792,27 @@ export class AiService implements OnModuleInit {
              FROM ai_user_config 
              WHERE is_active = TRUE 
              AND LOWER(mode) = 'fast'`
-        );
+      );
 
-        this.logger.debug(`[Fast Mode] Encontrados ${fastModeUsers.length} usuários ativos`);
+      this.logger.debug(`[Fast Mode] Encontrados ${fastModeUsers.length} usuários ativos`);
 
-        if (fastModeUsers.length > 0) {
-            for (const user of fastModeUsers) {
-                try {
-                    this.logger.debug(`[Fast Mode] Processando usuário ${user.userId}...`);
-                    await this.processFastMode(user);
-                } catch (error) {
-                    this.logger.error(
-                        `[Fast Mode] Erro ao processar usuário ${user.userId}:`,
-                        error,
-                    );
-                }
-            }
-        } else {
-            this.logger.debug('[Fast Mode] Nenhum usuário ativo encontrado');
+      if (fastModeUsers.length > 0) {
+        for (const user of fastModeUsers) {
+          try {
+            this.logger.debug(`[Fast Mode] Processando usuário ${user.userId}...`);
+            await this.processFastMode(user);
+          } catch (error) {
+            this.logger.error(
+              `[Fast Mode] Erro ao processar usuário ${user.userId}:`,
+              error,
+            );
+          }
         }
+      } else {
+        this.logger.debug('[Fast Mode] Nenhum usuário ativo encontrado');
+      }
     } catch (error) {
-        this.logger.error('[Fast Mode] Erro no processamento:', error);
+      this.logger.error('[Fast Mode] Erro no processamento:', error);
     }
   }
 
@@ -4819,15 +4822,15 @@ export class AiService implements OnModuleInit {
    */
   async processBackgroundAIs(): Promise<void> {
     try {
-        // Sincronizar usuários dos modos em tempo real
-        await this.syncVelozUsersFromDb();
-        await this.syncModeradoUsersFromDb();
-        await this.syncPrecisoUsersFromDb();
-        await this.syncTrinityUsersFromDb();
+      // Sincronizar usuários dos modos em tempo real
+      await this.syncVelozUsersFromDb();
+      await this.syncModeradoUsersFromDb();
+      await this.syncPrecisoUsersFromDb();
+      await this.syncTrinityUsersFromDb();
 
-        // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
-        const usersToProcess = await this.dataSource.query(
-            `SELECT 
+      // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
+      const usersToProcess = await this.dataSource.query(
+        `SELECT 
                 user_id as userId,
                 stake_amount as stakeAmount,
                 deriv_token as derivToken,
@@ -4839,612 +4842,612 @@ export class AiService implements OnModuleInit {
              AND LOWER(mode) != 'fast'
              AND (next_trade_at IS NULL OR next_trade_at <= NOW())
              LIMIT 10`
+      );
+
+      if (usersToProcess.length > 0) {
+        this.logger.log(
+          `[Background AI] Processando ${usersToProcess.length} usuários agendados`
         );
 
-        if (usersToProcess.length > 0) {
-            this.logger.log(
-                `[Background AI] Processando ${usersToProcess.length} usuários agendados`
+        for (const user of usersToProcess) {
+          try {
+            await this.processUserAI(user);
+          } catch (error) {
+            this.logger.error(
+              `[Background AI] Erro ao processar usuário ${user.userId}:`,
+              error,
             );
-
-            for (const user of usersToProcess) {
-                try {
-                    await this.processUserAI(user);
-                } catch (error) {
-                    this.logger.error(
-                        `[Background AI] Erro ao processar usuário ${user.userId}:`,
-                        error,
-                    );
-                }
-            }
+          }
         }
+      }
     } catch (error) {
-        this.logger.error('[Background AI] Erro no processamento:', error);
+      this.logger.error('[Background AI] Erro no processamento:', error);
     }
-}
+  }
   /**
    * Processa a IA de um único usuário
    */
- private async processUserAI(user: any): Promise<void> {
+  private async processUserAI(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency, mode } = user;
     const normalizedMode = (mode || 'moderate').toLowerCase();
-    
+
     this.logger.log(
-        `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
+      `[Background AI] Processando usuário ${userId} (modo: ${normalizedMode})`,
     );
 
     if (normalizedMode === 'veloz') {
-        await this.prepareVelozUser(user);
-        return;
+      await this.prepareVelozUser(user);
+      return;
     }
 
     if (normalizedMode === 'fast') {
-        await this.processFastMode(user);
-        return;
+      await this.processFastMode(user);
+      return;
     }
 
     this.logger.warn(
-        `[Background AI] Modo ${normalizedMode} não suportado`,
+      `[Background AI] Modo ${normalizedMode} não suportado`,
     );
 
     await this.dataSource.query(
-        'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
-        [userId],
+      'UPDATE ai_user_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE user_id = ?',
+      [userId],
     );
-}
-private async processFastMode(user: any): Promise<void> {
+  }
+  private async processFastMode(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency } = user;
-    
-    try {
-        this.logger.debug(`[Fast][${userId}] Iniciando processamento...`);
-        this.logger.debug(`[Fast][${userId}] WebSocket conectado: ${this.isConnected}, Ticks disponíveis: ${this.ticks.length}`);
-        
-        // Garantir que temos dados suficientes
-        await this.ensureTickStreamReady(FAST_MODE_CONFIG.window);
-        
-        this.logger.debug(`[Fast][${userId}] Ticks após ensureTickStreamReady: ${this.ticks.length}`);
-        
-        // Obter os últimos ticks
-        const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
-        
-        // Verificar se temos ticks suficientes
-        if (windowTicks.length < FAST_MODE_CONFIG.window) {
-            this.logger.warn(`[Fast][${userId}] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
-            return;
-        }
-        
-        // Contar pares e ímpares na janela
-        const evenCount = windowTicks.filter(t => t.parity === 'PAR').length;
-        const oddCount = FAST_MODE_CONFIG.window - evenCount;
-        
-        // Determinar operação proposta baseada na maioria
-        let proposedOperation: DigitParity | null = null;
-        
-        // Se há mais pares, propõe ímpar e vice-versa
-        if (evenCount > oddCount) {
-            proposedOperation = 'IMPAR';
-        } else if (oddCount > evenCount) {
-            proposedOperation = 'PAR';
-        }
-        
-        // Se estiver equilibrado, não faz nada
-        if (!proposedOperation) {
-            this.logger.debug(`[Fast] Janela equilibrada: ${windowTicks.map(t => t.parity).join('-')} - aguardando desequilíbrio`);
-            return;
-        }
-        
-        // Calcular DVX
-        const dvx = this.calculateDVX(this.ticks);
-        if (dvx > FAST_MODE_CONFIG.dvxMax) {
-            this.logger.warn(`[Fast] DVX alto (${dvx}) - operação bloqueada`);
-            return;
-        }
-        
-        // Executar operação
-        this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx} | Janela: ${windowTicks.map(t => t.parity).join('-')}`);
-        
-        // Calcular valor da aposta: usar stakeAmount diretamente ou calcular percentual, garantindo mínimo
-        let betAmount = Number(stakeAmount);
-        
-        // Se stakeAmount parece ser capital (valor alto), calcular percentual
-        if (betAmount > 10) {
-            betAmount = betAmount * FAST_MODE_CONFIG.betPercent;
-        }
-        
-        // Garantir valor mínimo da Deriv
-        if (betAmount < FAST_MODE_CONFIG.minStake) {
-            betAmount = FAST_MODE_CONFIG.minStake;
-            this.logger.warn(`[Fast] Valor da aposta ajustado para o mínimo: ${betAmount}`);
-        }
-        
-        const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
-        
-        const result = await this.executeTrade(userId, {
-            contract_type: contractType,
-            amount: betAmount,
-            symbol: 'R_10',
-            duration: 1,
-            duration_unit: 't',
-            currency: currency || 'USD',
-            token: derivToken
-        });
-        
-        if (!result.success) {
-            this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
-            return;
-        }
 
-        this.logger.log(`[Fast] Operação executada com sucesso: ${result.tradeId}`);
+    try {
+      this.logger.debug(`[Fast][${userId}] Iniciando processamento...`);
+      this.logger.debug(`[Fast][${userId}] WebSocket conectado: ${this.isConnected}, Ticks disponíveis: ${this.ticks.length}`);
+
+      // Garantir que temos dados suficientes
+      await this.ensureTickStreamReady(FAST_MODE_CONFIG.window);
+
+      this.logger.debug(`[Fast][${userId}] Ticks após ensureTickStreamReady: ${this.ticks.length}`);
+
+      // Obter os últimos ticks
+      const windowTicks = this.ticks.slice(-FAST_MODE_CONFIG.window);
+
+      // Verificar se temos ticks suficientes
+      if (windowTicks.length < FAST_MODE_CONFIG.window) {
+        this.logger.warn(`[Fast][${userId}] Aguardando mais ticks (${windowTicks.length}/${FAST_MODE_CONFIG.window})`);
+        return;
+      }
+
+      // Contar pares e ímpares na janela
+      const evenCount = windowTicks.filter(t => t.parity === 'PAR').length;
+      const oddCount = FAST_MODE_CONFIG.window - evenCount;
+
+      // Determinar operação proposta baseada na maioria
+      let proposedOperation: DigitParity | null = null;
+
+      // Se há mais pares, propõe ímpar e vice-versa
+      if (evenCount > oddCount) {
+        proposedOperation = 'IMPAR';
+      } else if (oddCount > evenCount) {
+        proposedOperation = 'PAR';
+      }
+
+      // Se estiver equilibrado, não faz nada
+      if (!proposedOperation) {
+        this.logger.debug(`[Fast] Janela equilibrada: ${windowTicks.map(t => t.parity).join('-')} - aguardando desequilíbrio`);
+        return;
+      }
+
+      // Calcular DVX
+      const dvx = this.calculateDVX(this.ticks);
+      if (dvx > FAST_MODE_CONFIG.dvxMax) {
+        this.logger.warn(`[Fast] DVX alto (${dvx}) - operação bloqueada`);
+        return;
+      }
+
+      // Executar operação
+      this.logger.log(`[Fast] Executando operação: ${proposedOperation} | DVX: ${dvx} | Janela: ${windowTicks.map(t => t.parity).join('-')}`);
+
+      // Calcular valor da aposta: usar stakeAmount diretamente ou calcular percentual, garantindo mínimo
+      let betAmount = Number(stakeAmount);
+
+      // Se stakeAmount parece ser capital (valor alto), calcular percentual
+      if (betAmount > 10) {
+        betAmount = betAmount * FAST_MODE_CONFIG.betPercent;
+      }
+
+      // Garantir valor mínimo da Deriv
+      if (betAmount < FAST_MODE_CONFIG.minStake) {
+        betAmount = FAST_MODE_CONFIG.minStake;
+        this.logger.warn(`[Fast] Valor da aposta ajustado para o mínimo: ${betAmount}`);
+      }
+
+      const contractType = proposedOperation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+
+      const result = await this.executeTrade(userId, {
+        contract_type: contractType,
+        amount: betAmount,
+        symbol: 'R_10',
+        duration: 1,
+        duration_unit: 't',
+        currency: currency || 'USD',
+        token: derivToken
+      });
+
+      if (!result.success) {
+        this.logger.error(`[Fast] Falha ao executar trade: ${result.error}`);
+        return;
+      }
+
+      this.logger.log(`[Fast] Operação executada com sucesso: ${result.tradeId}`);
     } catch (error) {
-        this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
+      this.logger.error(`[Fast] Erro ao processar modo rápido: ${error.message}`, error.stack);
     } finally {
-        // Removido o atraso para processamento contínuo
-        await this.dataSource.query(
-            `UPDATE ai_user_config 
+      // Removido o atraso para processamento contínuo
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
              SET next_trade_at = NOW(), updated_at = CURRENT_TIMESTAMP
              WHERE user_id = ?`,
-            [userId],
-        );
+        [userId],
+      );
     }
-}
+  }
 
-private async executeTrade(userId: string, params: any): Promise<{success: boolean; tradeId?: string; error?: string}> {
+  private async executeTrade(userId: string, params: any): Promise<{ success: boolean; tradeId?: string; error?: string }> {
     const tradeStartTime = Date.now();
     const tradeId = `trade_${userId}_${tradeStartTime}`;
-    
+
     try {
-        this.logger.log(`[${tradeId}] Iniciando execução de trade`, {
-            userId,
-            contractType: params.contract_type,
-            amount: params.amount,
-            symbol: params.symbol,
-            timestamp: new Date().toISOString()
+      this.logger.log(`[${tradeId}] Iniciando execução de trade`, {
+        userId,
+        contractType: params.contract_type,
+        amount: params.amount,
+        symbol: params.symbol,
+        timestamp: new Date().toISOString()
+      });
+
+      // Use WebSocket to execute the trade
+      const result = await this.executeTradeViaWebSocket(params.token, {
+        price: params.amount,
+        currency: params.currency || 'USD',
+        symbol: params.symbol,
+        contract_type: params.contract_type,
+        duration: params.duration || 1,
+        duration_unit: params.duration_unit || 't',
+      }, tradeId);
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      // Registrar a operação no banco de dados
+      const tradeRecordId = await this.recordTrade({
+        userId,
+        contractType: params.contract_type,
+        amount: params.amount,
+        symbol: params.symbol,
+        status: 'PENDING',
+        entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
+        duration: params.duration || 1,
+        durationUnit: params.duration_unit || 't',
+        contractId: result.contract_id
+      });
+
+      // Iniciar monitoramento do contrato
+      if (result.contract_id && tradeRecordId) {
+        this.monitorContract(result.contract_id, tradeRecordId, params.token).catch(error => {
+          this.logger.error(`[${tradeId}] Erro ao iniciar monitoramento do contrato: ${error.message}`);
         });
+      }
 
-        // Use WebSocket to execute the trade
-        const result = await this.executeTradeViaWebSocket(params.token, {
-            price: params.amount,
-            currency: params.currency || 'USD',
-            symbol: params.symbol,
-            contract_type: params.contract_type,
-            duration: params.duration || 1,
-            duration_unit: params.duration_unit || 't',
-        }, tradeId);
-
-        if (result.error) {
-            throw new Error(result.error);
-        }
-
-        // Registrar a operação no banco de dados
-        const tradeRecordId = await this.recordTrade({
-            userId,
-            contractType: params.contract_type,
-            amount: params.amount,
-            symbol: params.symbol,
-            status: 'PENDING',
-            entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
-            duration: params.duration || 1,
-            durationUnit: params.duration_unit || 't',
-            contractId: result.contract_id
-        });
-
-        // Iniciar monitoramento do contrato
-        if (result.contract_id && tradeRecordId) {
-            this.monitorContract(result.contract_id, tradeRecordId, params.token).catch(error => {
-                this.logger.error(`[${tradeId}] Erro ao iniciar monitoramento do contrato: ${error.message}`);
-            });
-        }
-
-        return { 
-            success: true,
-            tradeId: result.contract_id || tradeId 
-        };
+      return {
+        success: true,
+        tradeId: result.contract_id || tradeId
+      };
     } catch (error) {
-        const errorMessage = error.message || 'Erro desconhecido';
-        this.logger.error(`[${tradeId}] Falha na execução do trade: ${errorMessage}`, error.stack);
+      const errorMessage = error.message || 'Erro desconhecido';
+      this.logger.error(`[${tradeId}] Falha na execução do trade: ${errorMessage}`, error.stack);
 
-        try {
-            await this.recordTrade({
-                userId,
-                contractType: params.contract_type,
-                amount: params.amount,
-                symbol: params.symbol,
-                status: 'ERROR',
-                entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
-                error: errorMessage.substring(0, 255),
-                duration: params.duration || 1,
-                durationUnit: params.duration_unit || 't'
-            });
-        } catch (dbError) {
-            this.logger.error(`[${tradeId}] Falha ao registrar erro no banco de dados: ${dbError.message}`);
-        }
-
-        return { 
-            success: false,
-            error: errorMessage
-        };
-    }
-}
-
-private async executeTradeViaWebSocket(token: string, contractParams: any, tradeId: string): Promise<{contract_id?: string; error?: string}> {
-    return new Promise((resolve, reject) => {
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-        const ws = new WebSocket.WebSocket(endpoint, {
-            headers: {
-                Origin: 'https://app.deriv.com',
-            },
+      try {
+        await this.recordTrade({
+          userId,
+          contractType: params.contract_type,
+          amount: params.amount,
+          symbol: params.symbol,
+          status: 'ERROR',
+          entryPrice: this.ticks[this.ticks.length - 1]?.value || 0,
+          error: errorMessage.substring(0, 255),
+          duration: params.duration || 1,
+          durationUnit: params.duration_unit || 't'
         });
+      } catch (dbError) {
+        this.logger.error(`[${tradeId}] Falha ao registrar erro no banco de dados: ${dbError.message}`);
+      }
 
-        let authorized = false;
-        let proposalReceived = false;
-        let proposalId: string | null = null;
-        let proposalPrice: number | null = null;
-        let proposalSubscriptionId: string | null = null;
-        
-        const timeout = setTimeout(() => {
-            if (proposalSubscriptionId) {
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+
+  private async executeTradeViaWebSocket(token: string, contractParams: any, tradeId: string): Promise<{ contract_id?: string; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket.WebSocket(endpoint, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
+
+      let authorized = false;
+      let proposalReceived = false;
+      let proposalId: string | null = null;
+      let proposalPrice: number | null = null;
+      let proposalSubscriptionId: string | null = null;
+
+      const timeout = setTimeout(() => {
+        if (proposalSubscriptionId) {
+          try {
+            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+          } catch (e) {
+            // Ignore
+          }
+        }
+        ws.close();
+        reject(new Error('Timeout ao executar trade'));
+      }, 30000); // 30 seconds timeout
+
+      ws.on('open', () => {
+        this.logger.debug(`[${tradeId}] WebSocket conectado, autorizando...`);
+        ws.send(JSON.stringify({ authorize: token }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.authorize) {
+            if (msg.authorize.error) {
+              clearTimeout(timeout);
+              ws.close();
+              reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
+              return;
+            }
+            authorized = true;
+            this.logger.debug(`[${tradeId}] Autorizado, subscrevendo proposta...`);
+
+            // Subscribe to proposal
+            const proposalPayload = {
+              proposal: 1,
+              amount: contractParams.price,
+              basis: 'stake',
+              contract_type: contractParams.contract_type,
+              currency: contractParams.currency || 'USD',
+              duration: contractParams.duration || 1,
+              duration_unit: contractParams.duration_unit || 't',
+              symbol: contractParams.symbol,
+              subscribe: 1,
+            };
+
+            ws.send(JSON.stringify(proposalPayload));
+            return;
+          }
+
+          if (msg.proposal) {
+            const proposal = msg.proposal;
+            if (proposal.error) {
+              clearTimeout(timeout);
+              if (proposalSubscriptionId) {
                 try {
-                    ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+                  ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
                 } catch (e) {
-                    // Ignore
+                  // Ignore
                 }
+              }
+              ws.close();
+              reject(new Error(proposal.error.message || 'Erro ao obter proposta'));
+              return;
+            }
+
+            proposalId = proposal.id;
+            proposalPrice = Number(proposal.ask_price);
+            proposalReceived = true;
+
+            if (msg.subscription?.id) {
+              proposalSubscriptionId = msg.subscription.id;
+            }
+
+            this.logger.debug(`[${tradeId}] Proposta recebida`, {
+              proposal_id: proposalId,
+              price: proposalPrice
+            });
+
+            // Now send buy request
+            const buyPayload = {
+              buy: proposalId,
+              price: proposalPrice,
+            };
+
+            this.logger.debug(`[${tradeId}] Enviando buy request...`);
+            ws.send(JSON.stringify(buyPayload));
+            return;
+          }
+
+          if (msg.buy) {
+            clearTimeout(timeout);
+
+            // Unsubscribe from proposal
+            if (proposalSubscriptionId) {
+              try {
+                ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+              } catch (e) {
+                // Ignore
+              }
+            }
+
+            ws.close();
+
+            if (msg.buy.error) {
+              reject(new Error(msg.buy.error.message || 'Erro ao executar trade'));
+              return;
+            }
+
+            this.logger.debug(`[${tradeId}] Trade executado com sucesso`, {
+              contract_id: msg.buy.contract_id,
+              buy_price: msg.buy.buy_price
+            });
+
+            resolve({ contract_id: msg.buy.contract_id });
+            return;
+          }
+
+          if (msg.error) {
+            clearTimeout(timeout);
+            if (proposalSubscriptionId) {
+              try {
+                ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
+              } catch (e) {
+                // Ignore
+              }
             }
             ws.close();
-            reject(new Error('Timeout ao executar trade'));
-        }, 30000); // 30 seconds timeout
+            reject(new Error(msg.error.message || 'Erro desconhecido'));
+            return;
+          }
+        } catch (error) {
+          this.logger.error(`[${tradeId}] Erro ao processar mensagem: ${error.message}`);
+        }
+      });
 
-        ws.on('open', () => {
-            this.logger.debug(`[${tradeId}] WebSocket conectado, autorizando...`);
-            ws.send(JSON.stringify({ authorize: token }));
-        });
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        this.logger.error(`[${tradeId}] Erro no WebSocket: ${error.message}`);
+        reject(new Error(`Erro de conexão: ${error.message}`));
+      });
 
-        ws.on('message', (data: Buffer) => {
-            try {
-                const msg = JSON.parse(data.toString());
-                
-                if (msg.authorize) {
-                    if (msg.authorize.error) {
-                        clearTimeout(timeout);
-                        ws.close();
-                        reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
-                        return;
-                    }
-                    authorized = true;
-                    this.logger.debug(`[${tradeId}] Autorizado, subscrevendo proposta...`);
-                    
-                    // Subscribe to proposal
-                    const proposalPayload = {
-                        proposal: 1,
-                        amount: contractParams.price,
-                        basis: 'stake',
-                        contract_type: contractParams.contract_type,
-                        currency: contractParams.currency || 'USD',
-                        duration: contractParams.duration || 1,
-                        duration_unit: contractParams.duration_unit || 't',
-                        symbol: contractParams.symbol,
-                        subscribe: 1,
-                    };
-                    
-                    ws.send(JSON.stringify(proposalPayload));
-                    return;
-                }
-
-                if (msg.proposal) {
-                    const proposal = msg.proposal;
-                    if (proposal.error) {
-                        clearTimeout(timeout);
-                        if (proposalSubscriptionId) {
-                            try {
-                                ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
-                            } catch (e) {
-                                // Ignore
-                            }
-                        }
-                        ws.close();
-                        reject(new Error(proposal.error.message || 'Erro ao obter proposta'));
-                        return;
-                    }
-                    
-                    proposalId = proposal.id;
-                    proposalPrice = Number(proposal.ask_price);
-                    proposalReceived = true;
-                    
-                    if (msg.subscription?.id) {
-                        proposalSubscriptionId = msg.subscription.id;
-                    }
-                    
-                    this.logger.debug(`[${tradeId}] Proposta recebida`, {
-                        proposal_id: proposalId,
-                        price: proposalPrice
-                    });
-                    
-                    // Now send buy request
-                    const buyPayload = {
-                        buy: proposalId,
-                        price: proposalPrice,
-                    };
-                    
-                    this.logger.debug(`[${tradeId}] Enviando buy request...`);
-                    ws.send(JSON.stringify(buyPayload));
-                    return;
-                }
-
-                if (msg.buy) {
-                    clearTimeout(timeout);
-                    
-                    // Unsubscribe from proposal
-                    if (proposalSubscriptionId) {
-                        try {
-                            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
-                        } catch (e) {
-                            // Ignore
-                        }
-                    }
-                    
-                    ws.close();
-                    
-                    if (msg.buy.error) {
-                        reject(new Error(msg.buy.error.message || 'Erro ao executar trade'));
-                        return;
-                    }
-                    
-                    this.logger.debug(`[${tradeId}] Trade executado com sucesso`, {
-                        contract_id: msg.buy.contract_id,
-                        buy_price: msg.buy.buy_price
-                    });
-                    
-                    resolve({ contract_id: msg.buy.contract_id });
-                    return;
-                }
-
-                if (msg.error) {
-                    clearTimeout(timeout);
-                    if (proposalSubscriptionId) {
-                        try {
-                            ws.send(JSON.stringify({ forget: proposalSubscriptionId }));
-                        } catch (e) {
-                            // Ignore
-                        }
-                    }
-                    ws.close();
-                    reject(new Error(msg.error.message || 'Erro desconhecido'));
-                    return;
-                }
-            } catch (error) {
-                this.logger.error(`[${tradeId}] Erro ao processar mensagem: ${error.message}`);
-            }
-        });
-
-        ws.on('error', (error) => {
-            clearTimeout(timeout);
-            this.logger.error(`[${tradeId}] Erro no WebSocket: ${error.message}`);
-            reject(new Error(`Erro de conexão: ${error.message}`));
-        });
-
-        ws.on('close', () => {
-            clearTimeout(timeout);
-            if (!authorized) {
-                reject(new Error('Conexão fechada antes da autorização'));
-            }
-        });
+      ws.on('close', () => {
+        clearTimeout(timeout);
+        if (!authorized) {
+          reject(new Error('Conexão fechada antes da autorização'));
+        }
+      });
     });
-}
+  }
 
-private async recordTrade(trade: any): Promise<number | null> {
+  private async recordTrade(trade: any): Promise<number | null> {
     // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
     let insertResult: any;
     try {
       insertResult = await this.dataSource.query(
-          `INSERT INTO ai_trades 
+        `INSERT INTO ai_trades 
            (user_id, gemini_signal, entry_price, stake_amount, status, 
             gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-          [
-              trade.userId,
-              trade.contractType,
-              trade.entryPrice,
-              trade.amount,
-              trade.status,
-              trade.duration || 1,
-              trade.contractType,
-              trade.contractId || null,
-              JSON.stringify({ 
-                  mode: 'fast',
-                  timestamp: new Date().toISOString(),
-                  dvx: this.calculateDVX(this.ticks),
-                  duration_unit: trade.durationUnit || 't',
-                  ...(trade.error && { error: trade.error })
-              }),
-              this.symbol,
-          ]
+        [
+          trade.userId,
+          trade.contractType,
+          trade.entryPrice,
+          trade.amount,
+          trade.status,
+          trade.duration || 1,
+          trade.contractType,
+          trade.contractId || null,
+          JSON.stringify({
+            mode: 'fast',
+            timestamp: new Date().toISOString(),
+            dvx: this.calculateDVX(this.ticks),
+            duration_unit: trade.durationUnit || 't',
+            ...(trade.error && { error: trade.error })
+          }),
+          this.symbol,
+        ]
       );
     } catch (error: any) {
       // Se o campo symbol não existir, inserir sem ele
       if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
         this.logger.warn(`[RecordTrade] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
         insertResult = await this.dataSource.query(
-            `INSERT INTO ai_trades 
+          `INSERT INTO ai_trades 
              (user_id, gemini_signal, entry_price, stake_amount, status, 
               gemini_duration, contract_type, contract_id, created_at, analysis_data)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
-            [
-                trade.userId,
-                trade.contractType,
-                trade.entryPrice,
-                trade.amount,
-                trade.status,
-                trade.duration || 1,
-                trade.contractType,
-                trade.contractId || null,
-                JSON.stringify({ 
-                    mode: 'fast',
-                    timestamp: new Date().toISOString(),
-                    dvx: this.calculateDVX(this.ticks),
-                    duration_unit: trade.durationUnit || 't',
-                    ...(trade.error && { error: trade.error })
-                }),
-            ]
+          [
+            trade.userId,
+            trade.contractType,
+            trade.entryPrice,
+            trade.amount,
+            trade.status,
+            trade.duration || 1,
+            trade.contractType,
+            trade.contractId || null,
+            JSON.stringify({
+              mode: 'fast',
+              timestamp: new Date().toISOString(),
+              dvx: this.calculateDVX(this.ticks),
+              duration_unit: trade.durationUnit || 't',
+              ...(trade.error && { error: trade.error })
+            }),
+          ]
         );
       } else {
         throw error;
       }
     }
-    
+
     // TypeORM pode retornar array ou objeto direto
     const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
     return result?.insertId || null;
-}
+  }
 
-private async monitorContract(contractId: string, tradeId: number, token: string): Promise<void> {
+  private async monitorContract(contractId: string, tradeId: number, token: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-        const ws = new WebSocket.WebSocket(endpoint, {
-            headers: {
-                Origin: 'https://app.deriv.com',
-            },
-        });
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket.WebSocket(endpoint, {
+        headers: {
+          Origin: 'https://app.deriv.com',
+        },
+      });
 
-        let authorized = false;
-        let contractSubscriptionId: string | null = null;
-        const timeout = setTimeout(() => {
-            if (contractSubscriptionId) {
-                try {
-                    ws.send(JSON.stringify({ forget: contractSubscriptionId }));
-                } catch (e) {
-                    // Ignore
-                }
+      let authorized = false;
+      let contractSubscriptionId: string | null = null;
+      const timeout = setTimeout(() => {
+        if (contractSubscriptionId) {
+          try {
+            ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+          } catch (e) {
+            // Ignore
+          }
+        }
+        ws.close();
+        reject(new Error('Timeout ao monitorar contrato'));
+      }, 120000); // 2 minutes timeout (contratos de 1 tick duram pouco)
+
+      ws.on('open', () => {
+        this.logger.debug(`[Monitor] Conectando para monitorar contrato ${contractId}...`);
+        ws.send(JSON.stringify({ authorize: token }));
+      });
+
+      ws.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.authorize) {
+            if (msg.authorize.error) {
+              clearTimeout(timeout);
+              ws.close();
+              reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
+              return;
             }
-            ws.close();
-            reject(new Error('Timeout ao monitorar contrato'));
-        }, 120000); // 2 minutes timeout (contratos de 1 tick duram pouco)
+            authorized = true;
+            this.logger.debug(`[Monitor] Autorizado, subscrevendo contrato ${contractId}...`);
 
-        ws.on('open', () => {
-            this.logger.debug(`[Monitor] Conectando para monitorar contrato ${contractId}...`);
-            ws.send(JSON.stringify({ authorize: token }));
-        });
+            // Subscribe to contract
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            }));
+            return;
+          }
 
-        ws.on('message', async (data: Buffer) => {
-            try {
-                const msg = JSON.parse(data.toString());
-                
-                if (msg.authorize) {
-                    if (msg.authorize.error) {
-                        clearTimeout(timeout);
-                        ws.close();
-                        reject(new Error(`Autorização falhou: ${msg.authorize.error.message || 'Erro desconhecido'}`));
-                        return;
-                    }
-                    authorized = true;
-                    this.logger.debug(`[Monitor] Autorizado, subscrevendo contrato ${contractId}...`);
-                    
-                    // Subscribe to contract
-                    ws.send(JSON.stringify({
-                        proposal_open_contract: 1,
-                        contract_id: contractId,
-                        subscribe: 1,
-                    }));
-                    return;
-                }
+          if (msg.proposal_open_contract) {
+            const contract = msg.proposal_open_contract;
 
-                if (msg.proposal_open_contract) {
-                    const contract = msg.proposal_open_contract;
-                    
-                    if (msg.subscription?.id) {
-                        contractSubscriptionId = msg.subscription.id;
-                    }
-                    
-                    // Check if contract is sold
-                    if (contract.is_sold === 1) {
-                        clearTimeout(timeout);
-                        
-                        const profit = Number(contract.profit || 0);
-                        const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
-                        const status = profit >= 0 ? 'WON' : 'LOST';
-                        
-                        this.logger.log(`[Monitor] Contrato ${contractId} fechado | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`);
-                        
-                        // Update database
-                        await this.dataSource.query(
-                            `UPDATE ai_trades
+            if (msg.subscription?.id) {
+              contractSubscriptionId = msg.subscription.id;
+            }
+
+            // Check if contract is sold
+            if (contract.is_sold === 1) {
+              clearTimeout(timeout);
+
+              const profit = Number(contract.profit || 0);
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              const status = profit >= 0 ? 'WON' : 'LOST';
+
+              this.logger.log(`[Monitor] Contrato ${contractId} fechado | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`);
+
+              // Update database
+              await this.dataSource.query(
+                `UPDATE ai_trades
                              SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
                              WHERE id = ?`,
-                            [exitPrice, profit, status, tradeId],
-                        );
-                        
-                        this.logger.log(`[Monitor] ✅ exit_price atualizado no banco | tradeId=${tradeId} | exitPrice=${exitPrice}`);
-                        
-                        // Buscar dados da operação para replicação
-                        const tradeData = await this.dataSource.query(
-                            `SELECT user_id, contract_type, stake_amount, created_at 
+                [exitPrice, profit, status, tradeId],
+              );
+
+              this.logger.log(`[Monitor] ✅ exit_price atualizado no banco | tradeId=${tradeId} | exitPrice=${exitPrice}`);
+
+              // Buscar dados da operação para replicação
+              const tradeData = await this.dataSource.query(
+                `SELECT user_id, contract_type, stake_amount, created_at 
                              FROM ai_trades WHERE id = ?`,
-                            [tradeId],
-                        );
+                [tradeId],
+              );
 
-                        // Replicar operação para copiadores (assíncrono, não bloqueia)
-                        if (tradeData && tradeData.length > 0 && this.copyTradingService) {
-                            const trade = tradeData[0];
-                            this.copyTradingService.replicateTradeToFollowers(
-                                trade.user_id,
-                                {
-                                    operationType: trade.contract_type,
-                                    stakeAmount: parseFloat(trade.stake_amount) || 0,
-                                    result: status === 'WON' ? 'win' : 'loss',
-                                    profit: profit,
-                                    executedAt: trade.created_at,
-                                    closedAt: new Date(),
-                                    traderOperationId: tradeId.toString(),
-                                },
-                            ).catch((error: any) => {
-                                this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
-                            });
-                        }
-                        
-                        // Unsubscribe
-                        if (contractSubscriptionId) {
-                            try {
-                                ws.send(JSON.stringify({ forget: contractSubscriptionId }));
-                            } catch (e) {
-                                // Ignore
-                            }
-                        }
-                        
-                        ws.close();
-                        resolve();
-                        return;
-                    }
+              // Replicar operação para copiadores (assíncrono, não bloqueia)
+              if (tradeData && tradeData.length > 0 && this.copyTradingService) {
+                const trade = tradeData[0];
+                this.copyTradingService.replicateTradeToFollowers(
+                  trade.user_id,
+                  {
+                    operationType: trade.contract_type,
+                    stakeAmount: parseFloat(trade.stake_amount) || 0,
+                    result: status === 'WON' ? 'win' : 'loss',
+                    profit: profit,
+                    executedAt: trade.created_at,
+                    closedAt: new Date(),
+                    traderOperationId: tradeId.toString(),
+                  },
+                ).catch((error: any) => {
+                  this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
+                });
+              }
+
+              // Unsubscribe
+              if (contractSubscriptionId) {
+                try {
+                  ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+                } catch (e) {
+                  // Ignore
                 }
+              }
 
-                if (msg.error) {
-                    clearTimeout(timeout);
-                    if (contractSubscriptionId) {
-                        try {
-                            ws.send(JSON.stringify({ forget: contractSubscriptionId }));
-                        } catch (e) {
-                            // Ignore
-                        }
-                    }
-                    ws.close();
-                    reject(new Error(msg.error.message || 'Erro desconhecido'));
-                    return;
-                }
-            } catch (error) {
-                this.logger.error(`[Monitor] Erro ao processar mensagem: ${error.message}`);
+              ws.close();
+              resolve();
+              return;
             }
-        });
+          }
 
-        ws.on('error', (error) => {
+          if (msg.error) {
             clearTimeout(timeout);
-            this.logger.error(`[Monitor] Erro no WebSocket: ${error.message}`);
-            reject(new Error(`Erro de conexão: ${error.message}`));
-        });
-
-        ws.on('close', () => {
-            clearTimeout(timeout);
-            if (!authorized) {
-                reject(new Error('Conexão fechada antes da autorização'));
+            if (contractSubscriptionId) {
+              try {
+                ws.send(JSON.stringify({ forget: contractSubscriptionId }));
+              } catch (e) {
+                // Ignore
+              }
             }
-        });
+            ws.close();
+            reject(new Error(msg.error.message || 'Erro desconhecido'));
+            return;
+          }
+        } catch (error) {
+          this.logger.error(`[Monitor] Erro ao processar mensagem: ${error.message}`);
+        }
+      });
+
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        this.logger.error(`[Monitor] Erro no WebSocket: ${error.message}`);
+        reject(new Error(`Erro de conexão: ${error.message}`));
+      });
+
+      ws.on('close', () => {
+        clearTimeout(timeout);
+        if (!authorized) {
+          reject(new Error('Conexão fechada antes da autorização'));
+        }
+      });
     });
-}
+  }
 
   private async prepareVelozUser(user: any): Promise<void> {
     const { userId, stakeAmount, derivToken, currency } = user;
@@ -5487,7 +5490,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     try {
       // Tentar buscar da API externa primeiro
       const externalStats = await this.statsIAsService.fetchStats();
-      
+
       if (externalStats) {
         return {
           source: 'external',
@@ -5499,14 +5502,14 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       const localStats = await this.statsIAsService.getLocalAggregatedStats(
         this.dataSource,
       );
-      
+
       return {
         source: 'local',
         data: localStats,
       };
     } catch (error) {
       this.logger.error('Erro ao buscar estatísticas do StatsIAs:', error);
-      
+
       // Último recurso: estatísticas locais
       try {
         const localStats = await this.statsIAsService.getLocalAggregatedStats(
@@ -5612,7 +5615,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       mode: config.mode || 'veloz',
       profitTarget: config.profitTarget,
       lossLimit: config.lossLimit,
-      
+
       // Estatísticas do dia
       today: {
         trades: sessionStats.totalTrades,
@@ -5620,7 +5623,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         wins: sessionStats.wins,
         losses: sessionStats.losses,
       },
-      
+
       // Estatísticas totais
       total: {
         trades: parseInt(stats.totalTrades) || 0,
@@ -5636,7 +5639,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    */
   async getUserSessions(userId: string, limit: number = 10): Promise<any[]> {
     this.logger.log(`[GetUserSessions] 📊 Buscando histórico de sessões para userId=${userId}`);
-    
+
     // Buscar todas as sessões (ativas e inativas)
     const sessions = await this.dataSource.query(
       `SELECT 
@@ -5698,8 +5701,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
         // Calcular duração da sessão
         const startTime = new Date(session.createdAt);
-        const endTime = session.deactivatedAt 
-          ? new Date(session.deactivatedAt) 
+        const endTime = session.deactivatedAt
+          ? new Date(session.deactivatedAt)
           : new Date();
         const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
 
@@ -5713,7 +5716,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           mode: session.mode,
           profitTarget: session.profitTarget ? parseFloat(session.profitTarget) : null,
           lossLimit: session.lossLimit ? parseFloat(session.lossLimit) : null,
-          
+
           // Estatísticas
           stats: {
             totalTrades,
@@ -5723,12 +5726,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
             volume,
             winrate: parseFloat(winrate.toFixed(2)),
           },
-          
+
           // Datas
           createdAt: session.createdAt,
           deactivatedAt: session.deactivatedAt,
           durationMinutes,
-          
+
           // Motivo de desativação
           deactivationReason: session.deactivationReason,
         };
@@ -5736,7 +5739,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     );
 
     this.logger.log(`[GetUserSessions] ✅ ${sessionsWithStats.length} sessões processadas`);
-    
+
     return sessionsWithStats;
   }
 
@@ -5751,7 +5754,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }> {
     try {
       const stats = await this.statsIAsService.fetchStats();
-      
+
       if (!stats || !stats.winRate) {
         // Retornar valores padrão se não houver estatísticas
         return {
@@ -5812,7 +5815,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     if (this.moderadoUsers.size === 0) {
       return;
     }
-    
+
     // ✅ DEBUG: Logar quantos usuários estão sendo processados
     this.logger.debug(`[Moderado] Processando ${this.moderadoUsers.size} usuário(s) ativo(s)`);
 
@@ -5855,7 +5858,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         this.logger.log(
           `[Moderado][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
         );
-        
+
         await this.executeModeradoOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
         continue;
       }
@@ -5879,20 +5882,20 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // ✅ ZENIX v2.0: Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.ticks, MODERADO_CONFIG, 'MODERADO');
-      
+
       if (!sinal || !sinal.sinal) {
         continue; // Sem sinal válido
       }
-      
+
       this.logger.log(
         `[Moderado][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
         `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
         `  └─ ${sinal.motivo}`,
       );
-      
+
       // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
       await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
-      
+
       // Formatar distribuição
       const deseq = sinal.detalhes?.desequilibrio;
       if (deseq) {
@@ -5901,14 +5904,14 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
         await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
       }
-      
-      
+
+
       // ANÁLISE 1: Desequilíbrio Base
       await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
       await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
       await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
-      
-      
+
+
       // ANÁLISE 2: Sequências Repetidas
       const seqInfo = sinal.detalhes?.sequencias;
       const bonusSeq = seqInfo?.bonus || 0;
@@ -5920,8 +5923,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
-      
-      
+
+
       // ANÁLISE 3: Micro-Tendências
       const microInfo = sinal.detalhes?.microTendencias;
       const bonusMicro = microInfo?.bonus || 0;
@@ -5933,8 +5936,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
-      
-      
+
+
       // ANÁLISE 4: Força do Desequilíbrio
       const forcaInfo = sinal.detalhes?.forca;
       const bonusForca = forcaInfo?.bonus || 0;
@@ -5946,13 +5949,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
         await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
       }
-      
+
       await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
       await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
-      
+
       await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
       await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
-      
+
       // Executar operação
       await this.executeModeradoOperation(state, sinal.sinal, 1);
     }
@@ -5993,8 +5996,8 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // 3. Verificar homogeneidade (todos PAR ou todos ÍMPAR)
     const parCount = recentTicks.filter(t => t.parity === 'PAR').length;
     const imparCount = recentTicks.filter(t => t.parity === 'IMPAR').length;
-    if (parCount >= MODERADO_CONFIG.anomalyHomogeneityMin || 
-        imparCount >= MODERADO_CONFIG.anomalyHomogeneityMin) {
+    if (parCount >= MODERADO_CONFIG.anomalyHomogeneityMin ||
+      imparCount >= MODERADO_CONFIG.anomalyHomogeneityMin) {
       this.logger.warn(`[Moderado][Anomalia] Homogeneidade detectada: PAR=${parCount}, IMPAR=${imparCount}`);
       return true;
     }
@@ -6063,7 +6066,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       );
       return false;
     }
-    
+
     // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
     try {
       const configResult = await this.dataSource.query(
@@ -6079,7 +6082,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
          LIMIT 1`,
         [state.userId],
       );
-      
+
       if (!configResult || configResult.length === 0) {
         // Não há sessão ativa
         this.logger.warn(
@@ -6087,9 +6090,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         );
         return false;
       }
-      
+
       const config = configResult[0];
-      
+
       // Verificar se já foi parada
       if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
         this.logger.warn(
@@ -6097,12 +6100,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         );
         return false;
       }
-      
+
       // ✅ VERIFICAR LIMITES ANTES DE OPERAR
       const sessionBalance = parseFloat(config.sessionBalance) || 0;
       const profitTarget = parseFloat(config.profit_target) || null;
       const lossLimit = parseFloat(config.loss_limit) || null;
-      
+
       // Se atingiu take profit (stop win)
       if (profitTarget && sessionBalance >= profitTarget) {
         this.logger.warn(
@@ -6112,7 +6115,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.checkAndEnforceLimits(state.userId);
         return false;
       }
-      
+
       // Se atingiu stop loss
       if (lossLimit && sessionBalance <= -lossLimit) {
         this.logger.warn(
@@ -6122,12 +6125,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.checkAndEnforceLimits(state.userId);
         return false;
       }
-      
+
     } catch (error) {
       this.logger.error(`[Moderado][${state.userId}] Erro ao verificar status da sessão:`, error);
       return false;
     }
-    
+
     return true;
   }
 
@@ -6235,7 +6238,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     } else {
       // ✅ Verificar se é Soros ou Martingale ANTES de fazer os logs
       const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
-      
+
       if (isSoros) {
         // 📋 LOG: Operação Soros
         await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
@@ -6406,12 +6409,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // ✅ VITÓRIA
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
-      
+
       // ✅ VALIDAÇÃO: Verificar se recuperou toda a perda acumulada (se estava em martingale)
       if (entry > 1 && state.perdaAcumulada > 0) {
         const recuperacaoEsperada = state.perdaAcumulada;
         const recuperacaoReal = result.profitLoss;
-        
+
         if (recuperacaoReal < recuperacaoEsperada) {
           this.logger.warn(
             `[Moderado][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
@@ -6422,13 +6425,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           );
         }
       }
-      
+
       // ✅ ZENIX v2.0: ESTRATÉGIA SOROS CORRIGIDA
       // Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
       // Entrada 1: vitoriasConsecutivas = 0 → após vitória, vira 1
       // Entrada 2: vitoriasConsecutivas = 1 (Soros nível 1) → após vitória, vira 2
       // Entrada 3: vitoriasConsecutivas = 2 (Soros nível 2) → após vitória, reinicia tudo
-      
+
       if (entry <= 3 && state.perdaAcumulada === 0) {
         // Está no Soros (entradas 1, 2 ou 3 sem perda acumulada)
         if (entry === 1) {
@@ -6462,7 +6465,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         state.ultimoLucro = 0;
         this.logger.log(`[Moderado][Soros] 🔄 Resetado (vitória em martingale não conta para Soros)`);
       }
-      
+
       this.logger.log(
         `[Moderado][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
         `Ganho: $${result.profitLoss.toFixed(2)} | ` +
@@ -6471,7 +6474,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         `Capital: $${state.virtualCapital.toFixed(2)} | ` +
         `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
       );
-      
+
       // 📋 LOG: Resultado - VITÓRIA
       await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
       await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
@@ -6480,12 +6483,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
       await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
       await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
-      
+
       if (entry > 1) {
         await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
         await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
-      
+
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
       // Se completou Soros nível 2, reiniciar tudo
       if (entry === 3 && state.vitoriasConsecutivas === 2) {
@@ -6500,7 +6503,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
         return;
       }
-      
+
       // Se ainda está no Soros, calcular próxima aposta
       if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
         const proximaApostaComSoros = calcularApostaComSoros(
@@ -6514,9 +6517,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       } else {
         await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
       }
-      
+
       await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
-      
+
       // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
       state.martingaleStep = 0;
@@ -6559,7 +6562,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
       `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
-    
+
     // 📋 LOG: Resultado - DERROTA
     await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
     await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
@@ -6576,7 +6579,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-      
+
       try {
         payoutCliente = await this.consultarPayoutCliente(
           state.derivToken,
@@ -6594,7 +6597,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         state.modoMartingale,
         payoutCliente,
       );
-      
+
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
       // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
       try {
@@ -6608,36 +6611,36 @@ private async monitorContract(contractId: string, tradeId: number, token: string
            LIMIT 1`,
           [state.userId],
         );
-        
+
         if (limitsResult && limitsResult.length > 0) {
           const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
           const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
           const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
-          
+
           if (lossLimit > 0) {
             // Capital disponível = capital inicial + saldo da sessão
             const capitalDisponivel = initialCapital + sessionBalance;
-            
+
             // Stop-loss disponível = quanto ainda pode perder
             const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
-            
+
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
               this.logger.warn(
                 `[Moderado][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
                 `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
               );
-              
+
               // Reduzir para valor inicial
               proximaAposta = state.capital;
-              
+
               // Resetar martingale (mas continuar operando)
               state.isOperationActive = false;
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
-              
+
               this.logger.log(
                 `[Moderado][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
               );
@@ -6648,24 +6651,24 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       } catch (error) {
         this.logger.error(`[Moderado][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
-      
+
       // Calcular lucro esperado baseado no modo
-      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
-                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
+        state.modoMartingale === 'moderado' ? 0.25 : 0.50;
       const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
-      
+
       this.logger.log(
         `[Moderado][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
       );
-      
+
       // 📋 LOG: Martingale ativado
       await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
       await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
       await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
-      
+
       // Executar próxima entrada
       await this.executeModeradoOperation(state, proposal, entry + 1);
       return;
@@ -6673,13 +6676,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
     // 🛑 STOP-LOSS DE MARTINGALE (CONSERVADOR: máx 5 entradas)
     const prejuizoAceito = state.perdaAcumulada;
-    
+
     this.logger.warn(
       `[Moderado][${state.modoMartingale.toUpperCase()}] 🛑 Limite de entradas atingido: ${entry}/${config.maxEntradas} | ` +
       `Perda total: -$${prejuizoAceito.toFixed(2)} | ` +
       `Resetando para valor inicial`,
     );
-    
+
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
       await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
@@ -6692,7 +6695,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
       await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
     }
-    
+
     // Resetar martingale
     state.isOperationActive = false;
     state.martingaleStep = 0;
@@ -6710,7 +6713,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins' : 'total_losses';
-    
+
     // Buscar saldo atual da sessão
     const currentBalanceResult = await this.dataSource.query(
       `SELECT COALESCE(session_balance, 0) as currentBalance
@@ -6719,10 +6722,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
        LIMIT 1`,
       [userId],
     );
-    
+
     const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
     const newBalance = currentBalance + profitLoss;
-    
+
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
@@ -6733,12 +6736,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
        WHERE user_id = ? AND is_active = TRUE`,
       [newBalance, userId],
     );
-    
+
     this.logger.debug(`[IncrementModeradoStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
-    
+
     // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
     await this.checkStopBlindado(userId);
   }
@@ -6750,7 +6753,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   private async calculateModeradoStake(state: ModeradoUserState, proposal?: DigitParity): Promise<number> {
     // ✅ ZENIX v2.0: Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
     const entry = state.martingaleStep || 1;
-    
+
     if (entry === 1) {
       // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
@@ -6758,7 +6761,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
       return Math.max(MODERADO_CONFIG.minStake, state.apostaBase);
     }
-    
+
     if (entry === 2) {
       // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
       if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -6767,13 +6770,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           state.ultimoLucro,
           1, // Soros nível 1
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
         }
       }
     }
-    
+
     if (entry === 3) {
       // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
       if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -6782,7 +6785,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           state.ultimoLucro,
           2, // Soros nível 2
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(MODERADO_CONFIG.minStake, apostaComSoros);
         }
@@ -6793,7 +6796,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // Consultar payout via API antes de calcular
     const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-    
+
     try {
       payoutCliente = await this.consultarPayoutCliente(
         state.derivToken,
@@ -6811,7 +6814,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.modoMartingale,
       payoutCliente,
     );
-    
+
     this.logger.debug(
       `[Moderado][Martingale ${state.modoMartingale.toUpperCase()}] ` +
       `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
@@ -6883,7 +6886,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
     const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
-    
+
     this.logger.log(
       `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
     );
@@ -6933,7 +6936,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         lastOperationTimestamp: null, // ✅ ZENIX v2.0: Inicializar controle de intervalo
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
-      ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+        ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
@@ -6995,7 +6998,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         this.logger.log(
           `[Preciso][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
         );
-        
+
         await this.executePrecisoOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
         continue;
       }
@@ -7008,17 +7011,17 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // ✅ ZENIX v2.0: Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.ticks, PRECISO_CONFIG, 'PRECISO');
-      
+
       if (!sinal || !sinal.sinal) {
         continue; // Sem sinal válido
       }
-      
+
       this.logger.log(
         `[Preciso][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
         `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
         `  └─ ${sinal.motivo}`,
       );
-      
+
       // Executar operação
       await this.executePrecisoOperation(state, sinal.sinal, 1);
     }
@@ -7047,7 +7050,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       );
       return false;
     }
-    
+
     // ✅ ZENIX v2.0: Verificar limites ANTES de executar operação
     try {
       const configResult = await this.dataSource.query(
@@ -7063,7 +7066,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
          LIMIT 1`,
         [state.userId],
       );
-      
+
       if (!configResult || configResult.length === 0) {
         // Não há sessão ativa
         this.logger.warn(
@@ -7071,9 +7074,9 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         );
         return false;
       }
-      
+
       const config = configResult[0];
-      
+
       // Verificar se já foi parada
       if (config.session_status === 'stopped_profit' || config.session_status === 'stopped_loss' || config.session_status === 'stopped_blindado') {
         this.logger.warn(
@@ -7081,12 +7084,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         );
         return false;
       }
-      
+
       // ✅ VERIFICAR LIMITES ANTES DE OPERAR
       const sessionBalance = parseFloat(config.sessionBalance) || 0;
       const profitTarget = parseFloat(config.profit_target) || null;
       const lossLimit = parseFloat(config.loss_limit) || null;
-      
+
       // Se atingiu take profit (stop win)
       if (profitTarget && sessionBalance >= profitTarget) {
         this.logger.warn(
@@ -7096,7 +7099,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.checkAndEnforceLimits(state.userId);
         return false;
       }
-      
+
       // Se atingiu stop loss
       if (lossLimit && sessionBalance <= -lossLimit) {
         this.logger.warn(
@@ -7106,12 +7109,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         await this.checkAndEnforceLimits(state.userId);
         return false;
       }
-      
+
     } catch (error) {
       this.logger.error(`[Preciso][${state.userId}] Erro ao verificar status da sessão:`, error);
       return false;
     }
-    
+
     return true;
   }
 
@@ -7350,7 +7353,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // ✅ VITÓRIA
       state.virtualCapital += result.profitLoss;
       const lucroLiquido = result.profitLoss - state.perdaAcumulada;
-      
+
       this.logger.log(
         `[Preciso][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
         `Ganho: $${result.profitLoss.toFixed(2)} | ` +
@@ -7358,7 +7361,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
         `Capital: $${state.virtualCapital.toFixed(2)}`,
       );
-      
+
       // Resetar martingale
       state.isOperationActive = false;
       state.martingaleStep = 0;
@@ -7384,7 +7387,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       // Consultar payout via API antes de calcular
       const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
       let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-      
+
       try {
         payoutCliente = await this.consultarPayoutCliente(
           state.derivToken,
@@ -7402,7 +7405,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         state.modoMartingale,
         payoutCliente,
       );
-      
+
       // ✅ STOP-LOSS NORMAL - ZENIX v2.0
       // Protege durante martingale: evita que próxima aposta ultrapasse limite disponível
       try {
@@ -7416,36 +7419,36 @@ private async monitorContract(contractId: string, tradeId: number, token: string
            LIMIT 1`,
           [state.userId],
         );
-        
+
         if (limitsResult && limitsResult.length > 0) {
           const initialCapital = parseFloat(limitsResult[0].initialCapital) || 0;
           const sessionBalance = parseFloat(limitsResult[0].sessionBalance) || 0;
           const lossLimit = parseFloat(limitsResult[0].lossLimit) || 0;
-          
+
           if (lossLimit > 0) {
             // Capital disponível = capital inicial + saldo da sessão
             const capitalDisponivel = initialCapital + sessionBalance;
-            
+
             // Stop-loss disponível = quanto ainda pode perder
             const stopLossDisponivel = capitalDisponivel - (initialCapital - lossLimit);
-            
+
             // Se próxima aposta + perda acumulada ultrapassar limite disponível
             if (state.perdaAcumulada + proximaAposta > stopLossDisponivel) {
               this.logger.warn(
                 `[Preciso][StopNormal][${state.userId}] ⚠️ Próxima aposta ($${proximaAposta.toFixed(2)}) ultrapassaria stop-loss! ` +
                 `Reduzindo para valor inicial ($${state.capital.toFixed(2)}) e resetando martingale.`,
               );
-              
+
               // Reduzir para valor inicial
               proximaAposta = state.capital;
-              
+
               // Resetar martingale (mas continuar operando)
               state.isOperationActive = false;
               state.martingaleStep = 0;
               state.perdaAcumulada = 0;
               state.apostaInicial = 0;
               state.ultimaDirecaoMartingale = null; // ✅ CORREÇÃO: Limpar direção do martingale
-              
+
               this.logger.log(
                 `[Preciso][StopNormal][${state.userId}] 🔄 Martingale resetado. Continuando com valor inicial.`,
               );
@@ -7456,19 +7459,19 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       } catch (error) {
         this.logger.error(`[Preciso][StopNormal][${state.userId}] Erro ao verificar stop-loss normal:`, error);
       }
-      
+
       // Calcular lucro esperado baseado no modo
-      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
-                                  state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
+        state.modoMartingale === 'moderado' ? 0.25 : 0.50;
       const lucroEsperado = state.perdaAcumulada * multiplicadorLucro;
-      
+
       this.logger.log(
         `[Preciso][${state.modoMartingale.toUpperCase()}] 🔁 Próxima entrada: $${proximaAposta.toFixed(2)} | ` +
         (lucroEsperado > 0
           ? `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + Lucro $${lucroEsperado.toFixed(2)}`
           : `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} (break-even)`),
       );
-      
+
       // Executar próxima entrada
       await this.executePrecisoOperation(state, proposal, entry + 1);
       return;
@@ -7479,7 +7482,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       `[Preciso][${state.modoMartingale.toUpperCase()}] 🛑 Stop-loss: ${entry} entradas | ` +
       `Perda total: -$${state.perdaAcumulada.toFixed(2)}`,
     );
-    
+
     // Resetar martingale
     state.isOperationActive = false;
     state.martingaleStep = 0;
@@ -7497,7 +7500,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     profitLoss: number,
   ): Promise<void> {
     const column = won ? 'total_wins' : 'total_losses';
-    
+
     // Buscar saldo atual da sessão
     const currentBalanceResult = await this.dataSource.query(
       `SELECT COALESCE(session_balance, 0) as currentBalance
@@ -7506,10 +7509,10 @@ private async monitorContract(contractId: string, tradeId: number, token: string
        LIMIT 1`,
       [userId],
     );
-    
+
     const currentBalance = parseFloat(currentBalanceResult[0]?.currentBalance) || 0;
     const newBalance = currentBalance + profitLoss;
-    
+
     await this.dataSource.query(
       `UPDATE ai_user_config
        SET total_trades = total_trades + 1,
@@ -7520,12 +7523,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
        WHERE user_id = ? AND is_active = TRUE`,
       [newBalance, userId],
     );
-    
+
     this.logger.debug(`[IncrementPrecisoStats][${userId}] Saldo atualizado: $${currentBalance.toFixed(2)} + $${profitLoss.toFixed(2)} = $${newBalance.toFixed(2)}`);
 
     // Verificar e enforçar limites após cada trade
     await this.checkAndEnforceLimits(userId);
-    
+
     // ✅ ZENIX v2.0: Verificar Stop Blindado (proteção de lucros)
     await this.checkStopBlindado(userId);
   }
@@ -7537,7 +7540,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   private async calculatePrecisoStake(state: PrecisoUserState, proposal?: DigitParity): Promise<number> {
     // ✅ ZENIX v2.0: Soros funciona apenas até a entrada 3 (níveis 0, 1, 2)
     const entry = state.martingaleStep || 1;
-    
+
     if (entry === 1) {
       // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
@@ -7545,7 +7548,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       }
       return Math.max(PRECISO_CONFIG.minStake, state.apostaBase);
     }
-    
+
     if (entry === 2) {
       // Entrada 2: Soros Nível 1 (se entrada 1 foi vitoriosa)
       if (state.vitoriasConsecutivas === 1 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -7554,13 +7557,13 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           state.ultimoLucro,
           1, // Soros nível 1
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
         }
       }
     }
-    
+
     if (entry === 3) {
       // Entrada 3: Soros Nível 2 (se entrada 2 foi vitoriosa)
       if (state.vitoriasConsecutivas === 2 && state.ultimoLucro > 0 && state.perdaAcumulada === 0) {
@@ -7569,7 +7572,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
           state.ultimoLucro,
           2, // Soros nível 2
         );
-        
+
         if (apostaComSoros !== null) {
           return Math.max(PRECISO_CONFIG.minStake, apostaComSoros);
         }
@@ -7580,7 +7583,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // Consultar payout via API antes de calcular
     const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     let payoutCliente = 92; // Valor padrão caso falhe a consulta (95 - 3)
-    
+
     try {
       payoutCliente = await this.consultarPayoutCliente(
         state.derivToken,
@@ -7598,12 +7601,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       state.modoMartingale,
       payoutCliente,
     );
-    
+
     // Calcular lucro esperado baseado no modo
-    const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 : 
-                                state.modoMartingale === 'moderado' ? 0.25 : 0.50;
+    const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
+      state.modoMartingale === 'moderado' ? 0.25 : 0.50;
     const lucroDesejado = state.perdaAcumulada * multiplicadorLucro;
-    
+
     this.logger.debug(
       `[Preciso][Martingale ${state.modoMartingale.toUpperCase()}] ` +
       `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
@@ -7676,7 +7679,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
     const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
-    
+
     this.logger.log(
       `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
     );
@@ -7698,7 +7701,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
       if (existing.virtualCapital <= 0) {
         existing.virtualCapital = params.stakeAmount;
       }
-      
+
       // ✅ ZENIX v2.0: Atualizar apostaBase e apostaInicial se entryValue foi fornecido
       if (params.entryValue !== undefined) {
         existing.apostaBase = apostaInicial;
@@ -7726,7 +7729,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
         perdaAcumulada: 0,
         apostaInicial: apostaInicial, // ✅ Valor de entrada por operação
         vitoriasConsecutivas: 0, // ✅ ZENIX v2.0: Estratégia Soros - inicializar contador
-      ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
+        ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
       });
@@ -7757,11 +7760,11 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     modoMartingale?: ModoMartingale;
   }): void {
     const { userId, stakeAmount, derivToken, currency, mode, modoMartingale = 'conservador' } = params;
-    
+
     this.logger.log(
       `[TRINITY][UpsertState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
     );
-    
+
     const existing = this.trinityUsers.get(userId);
 
     if (existing) {
@@ -7871,7 +7874,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     // Processar cada usuário TRINITY
     for (const [userId, state] of this.trinityUsers.entries()) {
       const asset = state.assets[symbol];
-      
+
       // Incrementar contador de ticks desde última operação
       if (asset.ticksDesdeUltimaOp !== undefined && asset.ticksDesdeUltimaOp >= 0) {
         asset.ticksDesdeUltimaOp += 1;
@@ -7884,17 +7887,17 @@ private async monitorContract(contractId: string, tradeId: number, token: string
 
       // Gerar sinal usando análise completa
       const sinal = gerarSinalZenix(this.trinityTicks[symbol], modeConfig, state.mode.toUpperCase());
-      
+
       if (!sinal || !sinal.sinal) {
         continue; // Sem sinal válido
       }
-      
+
       this.logger.log(
         `[TRINITY][${symbol}] 🎯 SINAL GERADO | User: ${userId} | ` +
         `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
         `  └─ ${sinal.motivo}`,
       );
-      
+
       // Executar operação TRINITY
       await this.executeTrinityOperation(state, symbol, sinal.sinal, 1);
     }
@@ -7905,7 +7908,7 @@ private async monitorContract(contractId: string, tradeId: number, token: string
    */
   private canProcessTrinityAsset(state: TrinityUserState, symbol: 'R_10' | 'R_25' | 'R_50'): boolean {
     const asset = state.assets[symbol];
-    
+
     // Não pode processar se já há operação ativa neste ativo
     if (asset.isOperationActive) {
       return false;
@@ -7959,12 +7962,12 @@ private async monitorContract(contractId: string, tradeId: number, token: string
     entry: number = 1,
   ): Promise<void> {
     const asset = state.assets[symbol];
-    
+
     // Por enquanto, apenas log (implementação completa será feita depois)
     this.logger.log(
       `[TRINITY][${symbol}] Executando operação ${operation} para usuário ${state.userId} | Entry: ${entry}`,
     );
-    
+
     // TODO: Implementar lógica completa de execução de operação
     // - Calcular stake (considerar martingale isolado do ativo)
     // - Enviar proposta para Deriv
