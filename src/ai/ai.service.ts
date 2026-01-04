@@ -925,6 +925,11 @@ export class AiService implements OnModuleInit {
       this.logger.debug(`[TRINITY][${symbol}] 📥 Mensagem sem msg_type: ${JSON.stringify(msg).substring(0, 100)}...`);
     }
 
+    // ✅ DEBUG: Logar tudo de R_10 para diagnosticar "travamento"
+    if (symbol === 'R_10') {
+      this.logger.debug(`[TRINITY][R_10] 📥 MSG: ${msg.msg_type} | ${JSON.stringify(msg).substring(0, 200)}`);
+    }
+
     switch (msg.msg_type) {
       case 'history':
       case 'ticks_history':
@@ -1043,9 +1048,9 @@ export class AiService implements OnModuleInit {
         const lastTick = this.trinityLastTickReceived[symbol];
         const isConnected = this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN;
 
-        // Se passaram mais de 45 segundos sem tick e o WS está "aberto", algo está errado
-        if (isConnected && lastTick > 0 && now - lastTick > 45000) {
-          this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Sem ticks por 45s. Tentando re-inscrever...`);
+        // Se passaram mais de 15 segundos sem tick e o WS está "aberto", algo está errado
+        if (isConnected && lastTick > 0 && now - lastTick > 15000) {
+          this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Sem ticks por 15s. Tentando re-inscrever...`);
           this.subscribeToTrinityTicks(symbol);
           this.trinityLastTickReceived[symbol] = now; // Resetar timestamp para evitar loops imediatos
         } else if (!isConnected || lastTick === 0) {
