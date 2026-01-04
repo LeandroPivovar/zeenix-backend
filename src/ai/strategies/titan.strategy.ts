@@ -160,6 +160,7 @@ interface TitanUserState {
     ticksColetados: number;
     sorosActive: boolean;
     sorosStake: number;
+    capitalInicial: number;
 }
 
 @Injectable()
@@ -295,7 +296,8 @@ export class TitanStrategy implements IStrategy {
             mode: titanMode, originalMode: titanMode,
             lastDirection: null, isOperationActive: false,
             vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0,
-            sorosActive: false, sorosStake: 0
+            sorosActive: false, sorosStake: 0,
+            capitalInicial: stakeAmount
         });
 
         this.riskManagers.set(userId, new RiskManager(
@@ -340,8 +342,8 @@ export class TitanStrategy implements IStrategy {
 
         if (stake <= 0) {
             const blindadoMsg = riskManager.blindadoActive
-                ? `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
-                : `🛑 [STOP LOSS] Limite de perda atingido.\n• Sessão Encerrada para proteção do capital.`;
+                ? `🛑 [STOP BLINDADO (LUCRO GARANTIDO)] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
+                : `🛑 [STOP LOSS ATINGIDO] Limite de perda atingido.\n• Sessão Encerrada para proteção do capital.`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
 
@@ -376,6 +378,33 @@ export class TitanStrategy implements IStrategy {
                 const profitTarget = parseFloat(config.profit_target) || 0;
                 const capitalSessao = capitalInicial + sessionBalance;
                 const lucroAtual = sessionBalance;
+
+                // ✅ VERIFICAR STOP WIN (profit target)
+                if (profitTarget > 0 && lucroAtual >= profitTarget) {
+                    this.logger.log(`[TITAN][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - BLOQUEANDO OPERAÇÃO`);
+
+                    this.saveTitanLog(state.userId, this.symbol, 'info',
+                        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
+
+                    // Desativar a IA
+                    await this.dataSource.query(
+                        `UPDATE ai_user_config 
+                         SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+                         WHERE user_id = ? AND is_active = 1`,
+                        [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId]
+                    );
+
+                    // Emitir evento para o frontend
+                    this.tradeEvents.emit({
+                        userId: state.userId,
+                        type: 'stopped_profit',
+                        strategy: 'titan',
+                        profitLoss: lucroAtual
+                    });
+
+                    await this.deactivateUser(state.userId);
+                    return; // NÃO EXECUTAR OPERAÇÃO
+                }
 
                 // Update profit peak if current profit is higher
                 let profitPeak = parseFloat(config.profit_peak) || 0;
@@ -429,7 +458,7 @@ export class TitanStrategy implements IStrategy {
                             );
 
                             this.saveTitanLog(state.userId, this.symbol, 'alerta',
-                                `🛑 [STOP BLINDADO] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${lucroProtegido.toFixed(2)}.`);
+                                `🛑 [STOP BLINDADO (LUCRO GARANTIDO)] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${lucroProtegido.toFixed(2)}.`);
 
                             const deactivationReason =
                                 `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
@@ -499,6 +528,14 @@ export class TitanStrategy implements IStrategy {
                 riskManager.updateResult(result.profit, stake);
                 state.capital += result.profit;
                 state.ultimoLucro = result.profit;
+
+                // ✅ Atualizar session_balance no banco de dados para sincronia com o frontend e RiskManager
+                const lucroSessao = state.capital - state.capitalInicial;
+                await this.dataSource.query(
+                    `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
+                    [lucroSessao, state.userId]
+                ).catch(err => this.logger.error(`[TITAN] Erro ao atualizar session_balance:`, err));
+
                 const status = result.profit >= 0 ? 'WON' : 'LOST';
                 const previousWins = state.vitoriasConsecutivas;
 
