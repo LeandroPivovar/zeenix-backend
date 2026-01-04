@@ -9,7 +9,7 @@ import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_L
 function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
-  payoutCliente: number = 0.95,
+  payoutCliente: number = 0.63,
 ): number {
   let aposta = 0;
 
@@ -280,9 +280,9 @@ export class AtlasStrategy implements IStrategy {
       }
 
       // ✅ ATLAS: Verificar gatilho e análise ultrarrápida
-      const canTrade = this.checkAtlasTriggers(state, modeConfig);
+      const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
       if (canTrade) {
-        await this.executeAtlasOperation(state, symbol, 'OVER');
+        await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
       }
     }
   }
@@ -290,40 +290,53 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Verifica gatilhos ultrarrápidos
    */
-  private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): boolean {
+  private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): { canTrade: boolean; analysis: string } {
     // Mapeamento de loss virtual por modo
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
     const requiredLossCount = requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
 
+    let analysis = `🔍 [ANÁLISE ATLAS ${state.mode.toUpperCase()}]\n`;
+    analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
+
     if (state.virtualLossCount < requiredLossCount) {
-      return false; // Ainda não atingiu o gatilho de loss virtual
+      return { canTrade: false, analysis }; // Ainda não atingiu o gatilho de loss virtual
     }
 
     const lastDigits = state.digitBuffer.slice(-modeConfig.amostraInicial);
+    analysis += ` • Últimos Dígitos: [${lastDigits.join(', ')}]\n`;
 
     // ✅ ATLAS VELOZ: Análise mínima - apenas verificar sequência imediata
     if (state.mode === 'veloz') {
       // Se os últimos 3 dígitos foram todos Over (> 3), evitar entrada
       const last3 = state.digitBuffer.slice(-3);
       if (last3.length === 3 && last3.every(d => d > 3)) {
-        return false; // Evita entrar no pico de sequência
+        analysis += ` • Filtro de Pico (>3): ${last3.filter(d => d > 3).length}/3 (Saturado) ❌\n`;
+        return { canTrade: false, analysis }; // Evita entrar no pico de sequência
       }
-      return true; // ✅ Pode operar (gatilho = 0)
+      analysis += ` • Filtro de Pico (>3): ${last3.filter(d => d > 3).length}/3 (OK) ✅\n`;
+      analysis += `🌊 [DECISÃO] Critérios atendidos. Entrada: OVER`;
+      return { canTrade: true, analysis }; // ✅ Pode operar (gatilho = 0)
     }
 
     // ✅ ATLAS NORMAL/LENTO: Análise de desequilíbrio
     if (state.mode === 'normal' || state.mode === 'lento') {
       const over3Count = lastDigits.filter(d => d > 3).length;
       const over3Ratio = over3Count / lastDigits.length;
+      const over3Percent = Math.round(over3Ratio * 100);
+      const metaPercent = Math.round(modeConfig.desequilibrioMin * 100);
+
+      analysis += ` • Frequência Over (>3): ${over3Percent}% (Meta ≤ ${metaPercent}%) ${over3Ratio <= modeConfig.desequilibrioMin ? '✅' : '❌'}\n`;
 
       // Se a frequência de Over está muito alta, aguardar
       if (over3Ratio > modeConfig.desequilibrioMin) {
-        return false;
+        return { canTrade: false, analysis };
       }
-      return true;
+
+      analysis += `🌊 [DECISÃO] Critérios atendidos. Entrada: OVER`;
+      return { canTrade: true, analysis };
     }
 
-    return false;
+    return { canTrade: false, analysis };
   }
 
   /**
@@ -371,6 +384,7 @@ export class AtlasStrategy implements IStrategy {
     state: AtlasUserState,
     symbol: 'R_10' | 'R_25',
     operation: 'OVER' | 'UNDER',
+    analysis?: string,
   ): Promise<void> {
     // ✅ Verificações pré-entrada: meta, stop-loss e stop-blindado
     // ✅ Calcular stake
@@ -530,6 +544,10 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
     */
+
+    if (analysis) {
+      this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
+    }
 
     const contractType = operation === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER';
 

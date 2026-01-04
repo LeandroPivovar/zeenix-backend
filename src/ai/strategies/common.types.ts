@@ -89,7 +89,7 @@ export const ATLAS_VELOZ_CONFIG: ModeConfig = {
   desequilibrioMin: 0.0, // Sem filtro de desequilíbrio mínimo (análise simplificada)
   confianciaMin: 0.0, // Sem filtro de confiança mínimo
   taxaAcertoEsperada: 0.55, // 55-60% (compensado pelo volume)
-  payout: 0.95,
+  payout: 0.63,
   minStake: 0.35,
   betPercent: 0.005,
 };
@@ -102,7 +102,7 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
   desequilibrioMin: 0.8, // Filtro: se >80% Over (>3), aguarda
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.60, // 60-65%
-  payout: 0.95,
+  payout: 0.63,
   minStake: 0.35,
   betPercent: 0.0075,
 };
@@ -115,7 +115,7 @@ export const ATLAS_LENTO_CONFIG: ModeConfig = {
   desequilibrioMin: 0.7, // Filtro: se >70% Over, aguarda
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.62, // 62-67%
-  payout: 0.95,
+  payout: 0.63,
   minStake: 0.35,
   betPercent: 0.01,
 };
