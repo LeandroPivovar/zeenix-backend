@@ -432,6 +432,97 @@ export class AtlasStrategy implements IStrategy {
     analysis?: string,
   ): Promise<void> {
     // ✅ Verificações pré-entrada: meta, stop-loss e stop-blindado
+
+    // =================================================================================
+    // ✅ VERIFICAÇÕES DE RISCO (ANTES DE CALCULAR STAKE)
+    // =================================================================================
+    // Copiado da OrionStrategy para garantir compatibilidade com o frontend
+    const lucroAtualRisco = state.capital - state.capitalInicial; // Usar nome diferente para evitar conflito
+    const profitTarget = state.profitTarget || 0;
+    const lossLimit = state.stopLoss ? Math.abs(state.stopLoss) : 0;
+    const capitalSessao = state.capital;
+
+    // 1. Verificar Trade Events (High Water Mark para Stop Blindado)
+    if (state.capital > state.maxBalance) {
+      state.maxBalance = state.capital;
+    }
+    const profitPeak = state.maxBalance - state.capitalInicial;
+
+    // 2. Verificar Gatilho do Stop Blindado (40% da Meta)
+    const activationTrigger = profitTarget * 0.40;
+    if (state.stopLossBlindado && !state.blindadoActive && profitTarget > 0 && profitPeak >= activationTrigger) {
+      state.blindadoActive = true;
+      const pisoGarantido = state.capitalInicial + (profitPeak * 0.5);
+      const protectedAmount = profitPeak * 0.5;
+      // Log de ativação
+      this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
+        `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) | Stop: $${pisoGarantido.toFixed(2)}`
+      );
+    }
+
+    // 3. META DE LUCRO
+    if (profitTarget > 0 && lucroAtualRisco >= profitTarget) {
+      this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
+        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtualRisco.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
+      );
+
+      await this.dataSource.query(
+        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+        [`Meta atingida: +$${lucroAtualRisco.toFixed(2)}`, state.userId]
+      );
+
+      this.atlasUsers.delete(state.userId);
+      state.isStopped = true;
+      return;
+    }
+
+    // 4. STOP-LOSS BLINDADO
+    if (state.stopLossBlindado && state.blindadoActive) {
+      const stopBlindado = state.capitalInicial + (profitPeak * 0.5); // 50% do pico
+      const lucroProtegido = profitPeak * 0.5;
+
+      if (capitalSessao <= stopBlindado) {
+        this.saveAtlasLog(state.userId, 'SISTEMA', 'alerta',
+          `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
+        );
+
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+          [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId]
+        );
+
+        this.atlasUsers.delete(state.userId);
+        state.isStopped = true;
+        return;
+      }
+    }
+
+    // 5. STOP LOSS NORMAL
+    // Só verifica se NÃO estiver no blindado (blindado tem prioridade)
+    if (!state.blindadoActive && lossLimit > 0) {
+      // Perda atual é o inverso do lucro atual (se lucro negativo)
+      const perdaAtual = -lucroAtualRisco;
+
+      if (perdaAtual >= lossLimit) {
+        this.saveAtlasLog(state.userId, 'SISTEMA', 'alerta',
+          `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`
+        );
+
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+          [`Stop Loss: -$${perdaAtual.toFixed(2)}`, state.userId]
+        );
+
+        this.atlasUsers.delete(state.userId);
+        state.isStopped = true;
+        return;
+      }
+    }
+
+    // =================================================================================
+    // FIM DAS VERIFICAÇÕES DE RISCO
+    // =================================================================================
+
     // ✅ Calcular stake
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) {
@@ -474,42 +565,19 @@ export class AtlasStrategy implements IStrategy {
 
 
     // =================================================================================
-    // ✅ GESTÃO DE RISCO AVANÇADA (High Water Mark + Stop Blindado + Precision Clamping)
+    // ✅ GESTÃO DE RISCO AVANÇADA - PRECISÃO (Stake Clamping)
     // =================================================================================
 
-    // 1. Atualizar Pico de Saldo (High Water Mark)
-    if (state.capital > state.maxBalance) {
-      state.maxBalance = state.capital;
-    }
-
-    const lucroAtual = state.capital - state.capitalInicial;
-    const profitAccumulatedAtPeak = state.maxBalance - state.capitalInicial;
-
-    // 2. Verificar Gatilho do Stop Blindado (40% da Meta)
-    // Só ativa se o usuário ativou a opção E atingiu 40% da meta no pico
-    const activationTrigger = (state.profitTarget || 0) * 0.40;
-
-    if (state.stopLossBlindado && !state.blindadoActive && state.profitTarget && profitAccumulatedAtPeak >= activationTrigger) {
-      state.blindadoActive = true;
-      const pisoGarantido = state.capitalInicial + (profitAccumulatedAtPeak * 0.5);
-      this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
-        `🛡️ [STOP-LOSS BLINDADO ATIVADO]! Pico: +$${profitAccumulatedAtPeak.toFixed(2)} | Novo Piso: $${pisoGarantido.toFixed(2)}`);
-    }
-
-    // 3. Definir Piso (Limite Inferior)
+    // Definir Piso (Limite Inferior) para Clamping
     let minAllowedBalance = 0.0;
     let limitType = '';
 
     if (state.blindadoActive) {
       // MODO BLINDADO: Garante 50% do lucro máximo atingido
-      const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
+      // Usando 'profitPeak' que já foi calculado no topo
+      const guaranteedProfit = profitPeak * 0.5;
       minAllowedBalance = state.capitalInicial + guaranteedProfit;
       limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
-
-      // Log informativo se atualizou o pico
-      if (state.capital === state.maxBalance) {
-        // Opcional: Logar atualização de pico se desejar, ou manter silencioso para não spammar
-      }
     } else {
       // MODO NORMAL: Stop Loss configurado
       const stopLossLimit = state.stopLoss ? Math.abs(state.stopLoss) : 0;
@@ -519,20 +587,6 @@ export class AtlasStrategy implements IStrategy {
       } else {
         minAllowedBalance = -Infinity; // Sem stop loss
       }
-    }
-
-    // 4. Verificar Meta de Lucro (Antes de operar)
-    if (state.profitTarget && lucroAtual >= state.profitTarget) {
-      this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
-        `🏆 META DE LUCRO ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | Parando...`);
-
-      await this.dataSource.query(
-        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
-        [`Meta atingida: +$${lucroAtual.toFixed(2)}`, state.userId],
-      );
-      this.atlasUsers.delete(state.userId);
-      state.isStopped = true;
-      return;
     }
 
     // 5. STAKE CLAMPING (Ajuste de Precisão)
