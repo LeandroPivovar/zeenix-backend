@@ -469,7 +469,7 @@ export class AtlasStrategy implements IStrategy {
       state.blindadoActive = true;
       const pisoGarantido = state.capitalInicial + (profitAccumulatedAtPeak * 0.5);
       this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
-        `🛡️ [STOP BLINDADO] Ativado! Pico: +$${profitAccumulatedAtPeak.toFixed(2)} | Novo Piso: $${pisoGarantido.toFixed(2)}`);
+        `🛡️ [STOP-LOSS BLINDADO ATIVADO]! Pico: +$${profitAccumulatedAtPeak.toFixed(2)} | Novo Piso: $${pisoGarantido.toFixed(2)}`);
     }
 
     // 3. Definir Piso (Limite Inferior)
@@ -500,7 +500,7 @@ export class AtlasStrategy implements IStrategy {
     // 4. Verificar Meta de Lucro (Antes de operar)
     if (state.profitTarget && lucroAtual >= state.profitTarget) {
       this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
-        `META DIÁRIA ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | Parando...`);
+        `🏆 META DE LUCRO ATINGIDA! 🎉 | Meta: +$${state.profitTarget.toFixed(2)} | Lucro atual: +$${lucroAtual.toFixed(2)} | Parando...`);
 
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
@@ -525,9 +525,11 @@ export class AtlasStrategy implements IStrategy {
         const reason = state.blindadoActive ? 'Meta Parcial (Blindado)' : 'Stop Loss Atingido';
         const icon = state.blindadoActive ? '🏆' : '🚨';
         const status = state.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
+        const logMsg = state.blindadoActive
+          ? `🛡️ [STOP-LOSS BLINDADO ATIVADO]! ${limitType} atingido. Lucro no bolso! | Capital Final: $${state.capital.toFixed(2)}`
+          : `🛑 STOP LOSS ATINGIDO! ${limitType} atingido. Parando operações. | Capital Final: $${state.capital.toFixed(2)}`;
 
-        this.saveAtlasLog(state.userId, 'SISTEMA', state.blindadoActive ? 'info' : 'alerta',
-          `${icon} ${limitType} atingido. Parando operações. | Capital Final: $${state.capital.toFixed(2)}`);
+        this.saveAtlasLog(state.userId, 'SISTEMA', state.blindadoActive ? 'info' : 'alerta', logMsg);
 
         await this.dataSource.query(
           `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
