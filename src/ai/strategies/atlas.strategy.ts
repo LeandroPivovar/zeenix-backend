@@ -600,14 +600,23 @@ export class AtlasStrategy implements IStrategy {
 
       if (adjustedStake < 0.35) {
         // Não há margem nem para a aposta mínima. STOP!
-        const reason = state.blindadoActive ? 'Meta Parcial (Blindado)' : 'Stop Loss Atingido';
-        const icon = state.blindadoActive ? '🏆' : '🚨';
-        const status = state.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
-        const logMsg = state.blindadoActive
-          ? `🛡️ [STOP-LOSS BLINDADO ATIVADO]! ${limitType} atingido. Lucro no bolso! | Capital Final: $${state.capital.toFixed(2)}`
-          : `🛑 STOP LOSS ATINGIDO! ${limitType} atingido. Parando operações. | Capital Final: $${state.capital.toFixed(2)}`;
 
-        this.saveAtlasLog(state.userId, 'SISTEMA', state.blindadoActive ? 'info' : 'alerta', logMsg);
+        let logMsg = '';
+        const status = state.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
+        const reason = state.blindadoActive ? 'Meta Parcial (Blindado)' : 'Stop Loss Atingido';
+
+        if (state.blindadoActive) {
+          const lucroProtegido = state.capital - state.capitalInicial;
+          logMsg = `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`;
+        } else {
+          // Calcular perda atual para exibição (simulando que atingiu o limite, já que não pode mais operar)
+          const perdaAtual = state.capitalInicial - state.capital;
+          const stopLimit = state.stopLoss ? Math.abs(state.stopLoss) : 0;
+          logMsg = `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${stopLimit.toFixed(2)} - IA DESATIVADA`;
+        }
+
+        // ✅ Usar 'symbol' em vez de 'SISTEMA' para consistência (frontend pode filtrar)
+        this.saveAtlasLog(state.userId, symbol, state.blindadoActive ? 'alerta' : 'alerta', logMsg);
 
         await this.dataSource.query(
           `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
