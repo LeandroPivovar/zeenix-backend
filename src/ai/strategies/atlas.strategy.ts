@@ -78,6 +78,7 @@ export interface AtlasUserState {
   totalProfitLoss: number;
 
   // Controle de cooldown
+  tickCounter?: number; // ✅ ATLAS: Contador para log de "pulso"
   creationCooldownUntil?: number;
 
   // Buffer de dígitos (análise ultrarrápida)
@@ -126,10 +127,11 @@ export class AtlasStrategy implements IStrategy {
       lastLatency: number; // ✅ ATLAS: Rastrear latência
     }
   > = new Map();
+  private lastActivationLog: Map<string, number> = new Map();
 
   constructor(
-    private dataSource: DataSource,
-    private tradeEvents: TradeEventsService,
+    private readonly dataSource: DataSource,
+    private readonly tradeEvents: TradeEventsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -177,6 +179,13 @@ export class AtlasStrategy implements IStrategy {
         state.digitBuffer.shift();
       }
 
+      // ✅ Log de Pulso: Feedback visual periódico
+      state.tickCounter = (state.tickCounter || 0) + 1;
+      if (state.tickCounter >= 100) {
+        state.tickCounter = 0;
+        this.saveAtlasLog(state.userId, assetSymbol, 'info', `💓 IA Atlas operando | Analisando mercado ${assetSymbol}...`);
+      }
+
       await this.processAtlasStrategies(tick, state);
     }
   }
@@ -202,11 +211,19 @@ export class AtlasStrategy implements IStrategy {
     if (symbol && ['R_10', 'R_25'].includes(symbol)) {
       atlasSymbol = symbol as 'R_10' | 'R_25';
     } else if (selectedMarket) {
-      // Mapear mercado para símbolo ATLAS
-      if (selectedMarket.toLowerCase().includes('vol10') || selectedMarket.toLowerCase().includes('r_10')) {
+      const marketLower = selectedMarket.toLowerCase();
+      // Mapeamento preciso: evitar que 'vol100' combine com 'vol10'
+      if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
         atlasSymbol = 'R_10';
-      } else if (selectedMarket.toLowerCase().includes('vol25') || selectedMarket.toLowerCase().includes('r_25')) {
+      } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
+      } else {
+        // Fallback robusto se for apenas substring mas não exato
+        if ((marketLower.includes('vol10') && !marketLower.includes('vol100')) || marketLower.includes('r_10')) {
+          atlasSymbol = 'R_10';
+        } else if (marketLower.includes('vol25') || marketLower.includes('r_25')) {
+          atlasSymbol = 'R_25';
+        }
       }
     }
 
@@ -230,9 +247,10 @@ export class AtlasStrategy implements IStrategy {
       symbol: atlasSymbol,
     });
 
-    this.logger.log(`[ATLAS][${userId}] 📍 Símbolo final: ${atlasSymbol} | Modo: ${mode || 'veloz'} | State Symbol: ${this.atlasUsers.get(userId)?.symbol}`);
+    const now = Date.now();
+    const lastLogTime = this.lastActivationLog.get(userId) || 0;
 
-    if (isNew || hasConfigChanges) {
+    if (isNew || (hasConfigChanges && (now - lastLogTime > 5000))) {
       const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
       this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
 
@@ -242,6 +260,12 @@ export class AtlasStrategy implements IStrategy {
         `Meta: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'} | ` +
         `Stop-loss: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'} | ` +
         `Stop blindado: ${stopLossBlindado ? 'Ativo' : 'Inativo'}`);
+
+      this.lastActivationLog.set(userId, now);
+
+      // Limpar suppressors para dar feedback fresco
+      this.coletaLogsEnviados.delete(userId);
+      this.intervaloLogsEnviados.delete(`${atlasSymbol}_${userId}_intervalo`);
     }
   }
 

@@ -997,6 +997,9 @@ export class AiService implements OnModuleInit {
     const value = Number(rawQuote);
     const epoch = Number(rawEpoch);
 
+    // ✅ Atualizar timestamp para o watchdog
+    this.trinityLastTickReceived[symbol] = Date.now();
+
     if (!isFinite(value) || value <= 0 || !isFinite(epoch) || epoch <= 0) {
       return;
     }
