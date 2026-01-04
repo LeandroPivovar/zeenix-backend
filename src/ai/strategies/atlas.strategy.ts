@@ -1024,10 +1024,17 @@ export class AtlasStrategy implements IStrategy {
   private async checkAtlasLimits(state: AtlasUserState): Promise<void> {
     const stopLossValue = state.stopLoss != null ? -Math.abs(state.stopLoss) : null;
     const lucroAtual = state.capital - state.capitalInicial;
+    const symbol = state.symbol || 'SISTEMA';
 
-    // Meta diária
+    // 1. Meta de Lucro (Profit Target)
     if (state.profitTarget && lucroAtual >= state.profitTarget) {
       state.isStopped = true;
+
+      // ✅ Log padronizado para o Frontend
+      this.saveAtlasLog(state.userId, symbol, 'info',
+        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${state.profitTarget.toFixed(2)} - IA DESATIVADA`
+      );
+
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
          WHERE user_id = ? AND is_active = 1`,
@@ -1037,38 +1044,41 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
 
-    // Stop-loss normal
-    if (stopLossValue !== null && lucroAtual < 0 && lucroAtual <= stopLossValue) {
-      state.isStopped = true;
-      await this.dataSource.query(
-        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? AND is_active = 1`,
-        [`Stop loss atingido: -$${Math.abs(lucroAtual).toFixed(2)}`, state.userId],
-      );
-      this.atlasUsers.delete(state.userId);
-      return;
-    }
-
-    // Stop-loss blindado
+    // 2. Stop-loss blindado (Prioridade sobre Stop Loss Normal)
     if (state.stopLossBlindado && lucroAtual > 0) {
       try {
         const configResult = await this.dataSource.query(
-          `SELECT COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent
+          `SELECT COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent, COALESCE(profit_peak, 0) as profitPeak
            FROM ai_user_config WHERE user_id = ? AND is_active = 1 LIMIT 1`,
           [state.userId],
         );
+
+        let profitPeak = parseFloat(configResult[0]?.profitPeak || 0);
+        // Atualizar pico se necessário (auto-healing em memória)
+        if (lucroAtual > profitPeak) profitPeak = lucroAtual;
+
         const stopBlindadoPercent = configResult && configResult.length > 0
           ? parseFloat(configResult[0].stopBlindadoPercent) || 50.0
           : 50.0;
-        const fatorProtecao = stopBlindadoPercent / 100;
-        const stopBlindado = state.capitalInicial + (lucroAtual * fatorProtecao);
 
+        const fatorProtecao = stopBlindadoPercent / 100;
+        const protectedAmount = profitPeak * fatorProtecao;
+        const stopBlindado = state.capitalInicial + protectedAmount;
+
+        // Se o capital caiu abaixo do stop blindado
         if (state.capital <= stopBlindado) {
           state.isStopped = true;
+          const lucroProtegido = state.capital - state.capitalInicial;
+
+          // ✅ Log padronizado para o Frontend
+          this.saveAtlasLog(state.userId, symbol, 'alerta',
+            `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
+          );
+
           await this.dataSource.query(
             `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [`Stop loss blindado ativado`, state.userId],
+            [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId],
           );
           this.atlasUsers.delete(state.userId);
           return;
@@ -1076,6 +1086,26 @@ export class AtlasStrategy implements IStrategy {
       } catch (error) {
         this.logger.error(`[ATLAS] Erro ao verificar stop-loss blindado:`, error);
       }
+    }
+
+    // 3. Stop-loss normal (Apenas se não caiu no blindado)
+    if (stopLossValue !== null && lucroAtual < 0 && lucroAtual <= stopLossValue) {
+      state.isStopped = true;
+      const perdaAtual = Math.abs(lucroAtual); // Formato positivo para exibição
+      const limitVal = Math.abs(stopLossValue);
+
+      // ✅ Log padronizado para o Frontend
+      this.saveAtlasLog(state.userId, symbol, 'alerta',
+        `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${limitVal.toFixed(2)} - IA DESATIVADA`
+      );
+
+      await this.dataSource.query(
+        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+         WHERE user_id = ? AND is_active = 1`,
+        [`Stop loss atingido: -$${perdaAtual.toFixed(2)}`, state.userId],
+      );
+      this.atlasUsers.delete(state.userId);
+      return;
     }
   }
 
