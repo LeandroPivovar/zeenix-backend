@@ -642,6 +642,11 @@ export class AiService implements OnModuleInit {
         try {
           await this.initializeTrinityWebSockets();
           this.logger.log('✅ WebSockets da TRINITY inicializados (R_10, R_25, R_50)');
+
+          // ✅ Sincronizar usuários ativos
+          this.logger.log('🔄 Sincronizando usuários ativos...');
+          await this.syncTrinityUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Trinity:', e));
+          await this.syncAtlasUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Atlas:', e));
         } catch (err) {
           this.logger.error('❌ Erro global ao inicializar WebSockets da TRINITY:', err instanceof Error ? err.message : err);
         }
@@ -3442,6 +3447,90 @@ export class AiService implements OnModuleInit {
     }
   }
 
+  /**
+   * ✅ ATLAS: Sincroniza usuários da Atlas do banco de dados
+   */
+  private async syncAtlasUsersFromDb(): Promise<void> {
+    this.logger.debug(`[SyncAtlas] 🔍 Buscando usuários Atlas no banco...`);
+
+    let configs: any[];
+    try {
+      configs = await this.dataSource.query(
+        `SELECT 
+          user_id as userId,
+          stake_amount as stakeAmount,
+          entry_value as entryValue,
+          deriv_token as derivToken,
+          currency,
+          modo_martingale as modoMartingale,
+          mode,
+          profit_target as profitTarget,
+          loss_limit as lossLimit
+         FROM ai_user_config
+         WHERE is_active = TRUE
+           AND LOWER(strategy) = 'atlas'`,
+      );
+    } catch (error: any) {
+      this.logger.error(`[SyncAtlas] Erro ao buscar usuários no banco:`, error);
+      return;
+    }
+
+    if (configs.length > 0) {
+      this.logger.log(
+        `[SyncAtlas] Sincronizando ${configs.length} usuário(s) Atlas do banco`,
+      );
+    }
+
+    const activeIds = new Set<string>();
+
+    if (this.strategyManager) {
+      for (const config of configs) {
+        activeIds.add(config.userId);
+        this.logger.debug(
+          `[SyncAtlas] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | mode=${config.mode}`,
+        );
+
+        try {
+          await this.strategyManager.activateUser(config.userId, 'atlas', {
+            mode: config.mode || 'veloz',
+            stakeAmount: Number(config.stakeAmount) || 0,
+            entryValue: Number(config.entryValue) || 0.35,
+            derivToken: config.derivToken,
+            currency: config.currency || 'USD',
+            modoMartingale: config.modoMartingale || 'conservador',
+            profitTarget: config.profitTarget || null,
+            lossLimit: config.lossLimit || null,
+          });
+        } catch (error) {
+          this.logger.error(`[SyncAtlas] Erro ao ativar usuário ${config.userId}:`, error);
+        }
+      }
+
+      // Remover usuários que não estão mais ativos na estratégia
+      const atlasStrategy = this.strategyManager.getAtlasStrategy() as any;
+      if (atlasStrategy && typeof atlasStrategy.getUsers === 'function') {
+        const currentUsers = atlasStrategy.getUsers();
+        for (const userId of currentUsers.keys()) {
+          if (!activeIds.has(userId)) {
+            this.logger.log(`[SyncAtlas] Desativando usuário ${userId} (não mais ativo no banco)`);
+            await atlasStrategy.deactivateUser(userId);
+          }
+        }
+      }
+    }
+
+    // Garantir que WebSockets da Trinity/Atlas estão ativos se houver usuários
+    if (configs.length > 0) {
+      const needsInit = !this.trinityConnected['R_10'] || !this.trinityConnected['R_25'];
+      if (needsInit) {
+        this.logger.log(`[SyncAtlas] 🔌 Inicializando WebSockets para ${configs.length} usuário(s) Atlas ativo(s)`);
+        await this.initializeTrinityWebSockets().catch(error => {
+          this.logger.error(`[SyncAtlas] Erro ao inicializar WebSockets:`, error);
+        });
+      }
+    }
+  }
+
   private upsertVelozUserState(params: {
     userId: string;
     stakeAmount: number;
@@ -4433,12 +4522,13 @@ export class AiService implements OnModuleInit {
     strategy: string = 'orion',
     entryValue?: number, // ✅ Valor de entrada por operação (opcional)
     stopLossBlindado?: boolean, // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false/null = desativado)
+    symbol?: string, // ✅ ZENIX v2.0: Símbolo/Ativo (opcional)
   ): Promise<void> {
     // ✅ Normalizar moeda (DEMO não é uma moeda válida para a Deriv, usar USD como padrão para contas virtuais)
     const normalizedCurrency = (currency === 'DEMO' || !currency) ? 'USD' : currency;
 
     this.logger.log(
-      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency} (original: ${currency}) | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy}`,
+      `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency} (original: ${currency}) | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy} | symbol=${symbol}`,
     );
 
     // 🗑️ PRIMEIRA AÇÃO: DELETAR TODOS OS LOGS DO USUÁRIO ANTES DE INICIAR NOVA SESSÃO
@@ -4611,6 +4701,7 @@ export class AiService implements OnModuleInit {
           profitTarget: profitTarget || null,
           lossLimit: lossLimit || null,
           stopLossBlindado: stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
+          symbol: symbol, // ✅ ZENIX v2.0: Passar símbolo
         });
         this.logger.log(`[ActivateAI] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
 
@@ -4622,8 +4713,7 @@ export class AiService implements OnModuleInit {
 
         if (strategy && strategy.toLowerCase() === 'atlas') {
           this.logger.log(`[ActivateAI] 🔄 Sincronizando Atlas imediatamente após ativação...`);
-          // ✅ ATLAS: Usa R_10 ou R_25, que já são processados pelo sistema de ticks
-          // Não precisa de WebSockets específicos (usa os mesmos do sistema)
+          await this.syncAtlasUsersFromDb();
         }
       } catch (error) {
         this.logger.error(`[ActivateAI] Erro ao ativar usuário na estratégia ${strategy}:`, error);
@@ -4907,6 +4997,7 @@ export class AiService implements OnModuleInit {
       await this.syncModeradoUsersFromDb();
       await this.syncPrecisoUsersFromDb();
       await this.syncTrinityUsersFromDb();
+      await this.syncAtlasUsersFromDb();
 
       // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
       const usersToProcess = await this.dataSource.query(

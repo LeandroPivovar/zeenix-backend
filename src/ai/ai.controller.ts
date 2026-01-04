@@ -1,14 +1,14 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
+import {
+  Controller,
+  Get,
+  Post,
   Delete,
   Body,
   Param,
   Query,
   Req,
   UseGuards,
-  HttpException, 
+  HttpException,
   HttpStatus,
   Logger,
   Sse,
@@ -22,11 +22,11 @@ import { Observable } from 'rxjs';
 @Controller('ai')
 export class AiController {
   private readonly logger = new Logger(AiController.name);
-  
+
   constructor(
     private readonly aiService: AiService,
     private readonly tradeEventsService: TradeEventsService,
-  ) {}
+  ) { }
 
   @Post('start')
   async startMonitoring() {
@@ -93,7 +93,7 @@ export class AiController {
 
     // Priorizar 'count' se fornecido, senão usar 'limit' (compatibilidade)
     const limitValue = count || limit;
-    
+
     // Se um limite foi especificado, retornar apenas os últimos N ticks
     if (limitValue) {
       const limitNum = parseInt(limitValue, 10);
@@ -124,7 +124,7 @@ export class AiController {
   @Get('current-price')
   getCurrentPrice() {
     const currentPrice = this.aiService.getCurrentPrice();
-    
+
     if (currentPrice === null) {
       throw new HttpException(
         {
@@ -166,8 +166,8 @@ export class AiController {
 
   @Post('execute-trade')
   async executeTrade(
-    @Body() body: { 
-      userId: string; 
+    @Body() body: {
+      userId: string;
       operation?: DigitParity | 'DIGITEVEN' | 'DIGITODD' | 'even' | 'odd';
       signal?: { signal?: string; operation?: string };
     }
@@ -237,14 +237,14 @@ export class AiController {
       this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
       const history = await this.aiService.getTradeHistory(userId);
       this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
-      
+
       // ✅ DEBUG: Logar primeiros 3 trades com preços
       if (history.length > 0) {
         history.slice(0, 3).forEach((trade: any, index: number) => {
           this.logger.debug(`[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`);
         });
       }
-      
+
       return {
         success: true,
         data: history,
@@ -306,11 +306,13 @@ export class AiController {
       modoMartingale?: 'conservador' | 'moderado' | 'agressivo';
       strategy?: string;
       stopLossBlindado?: boolean; // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false = desativado)
+      symbol?: string; // ✅ ZENIX v2.0: Símbolo/Ativo (opcional)
+      selectedMarket?: string; // ✅ ZENIX v2.0: Mercado (opcional)
     },
   ) {
     try {
-      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}`);
-      
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}, symbol=${body.symbol || body.selectedMarket}`);
+
       await this.aiService.activateUserAI(
         body.userId,
         body.stakeAmount, // Capital total da conta
@@ -323,6 +325,7 @@ export class AiController {
         body.strategy || 'orion',
         body.entryValue, // ✅ Valor de entrada por operação (opcional)
         body.stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
+        body.symbol || body.selectedMarket, // ✅ ZENIX v2.0: Símbolo
       );
       return {
         success: true,
@@ -381,7 +384,7 @@ export class AiController {
           }
         }
       }
-      
+
       const logs = await this.aiService.getUserLogs(userId, limitNum);
       return {
         success: true,

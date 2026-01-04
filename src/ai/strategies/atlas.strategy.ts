@@ -155,7 +155,19 @@ export class AtlasStrategy implements IStrategy {
     }
 
     // Processar para cada usuário deste ativo
-    const activeUsers = Array.from(this.atlasUsers.values()).filter(u => u.symbol === assetSymbol && !u.isStopped);
+    const allAtlasUsers = Array.from(this.atlasUsers.values());
+    const activeUsers = allAtlasUsers.filter(u => u.symbol === assetSymbol && !u.isStopped);
+
+    // ✅ DIAGNÓSTICO: Se há usuários mas nenhum fatiado por este ativo
+    if (activeUsers.length === 0 && allAtlasUsers.length > 0) {
+      this.logger.debug(`[ATLAS][${assetSymbol}] ⚠️ ${allAtlasUsers.length} usuários Atlas totais, mas nenhum ativo para este símbolo.`);
+      // Logar símbolos dos usuários para depuração
+      allAtlasUsers.forEach(u => {
+        this.logger.debug(`[ATLAS][DEBUG] Usuário ${u.userId}: symbol=${u.symbol}, isStopped=${u.isStopped}`);
+      });
+      return;
+    }
+
     if (activeUsers.length === 0) return;
 
     for (const state of activeUsers) {
@@ -378,9 +390,12 @@ export class AtlasStrategy implements IStrategy {
   private getModeConfig(mode: string): ModeConfig | null {
     const modeLower = (mode || 'veloz').toLowerCase();
     if (modeLower === 'veloz') return ATLAS_VELOZ_CONFIG;
-    if (modeLower === 'normal') return ATLAS_NORMAL_CONFIG;
-    if (modeLower === 'lento') return ATLAS_LENTO_CONFIG;
-    return null;
+    if (modeLower === 'normal' || modeLower === 'moderado') return ATLAS_NORMAL_CONFIG;
+    if (modeLower === 'lento' || modeLower === 'preciso' || modeLower === 'lenta') return ATLAS_LENTO_CONFIG;
+
+    // Fallback padrão se não reconhecido
+    this.logger.warn(`[ATLAS] Modo '${mode}' não mapeado, usando VELOZ por padrão.`);
+    return ATLAS_VELOZ_CONFIG;
   }
 
   /**
@@ -1597,5 +1612,8 @@ export class AtlasStrategy implements IStrategy {
   getUsers(): Map<string, AtlasUserState> {
     return this.atlasUsers;
   }
-}
 
+  getActiveUsers(): AtlasUserState[] {
+    return Array.from(this.atlasUsers.values()).filter((u) => !u.isStopped);
+  }
+}
