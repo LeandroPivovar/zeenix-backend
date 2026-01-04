@@ -604,6 +604,18 @@ export class AiService implements OnModuleInit {
       R_50: false,
     };
 
+  private trinityLastTickReceived: {
+    R_10: number;
+    R_25: number;
+    R_50: number;
+  } = {
+      R_10: Date.now(),
+      R_25: Date.now(),
+      R_50: Date.now(),
+    };
+
+  private trinityWatchdogInterval: NodeJS.Timeout | null = null;
+
   constructor(
     @InjectDataSource() private dataSource: DataSource,
     private readonly statsIAsService: StatsIAsService,
@@ -631,7 +643,7 @@ export class AiService implements OnModuleInit {
           await this.initializeTrinityWebSockets();
           this.logger.log('✅ WebSockets da TRINITY inicializados (R_10, R_25, R_50)');
         } catch (err) {
-          this.logger.error('❌ Erro ao inicializar WebSockets da TRINITY:', err instanceof Error ? err.message : err);
+          this.logger.error('❌ Erro global ao inicializar WebSockets da TRINITY:', err instanceof Error ? err.message : err);
         }
       } catch (error) {
         this.logger.error('❌ Erro ao inicializar WebSocket:', error.message);
@@ -772,12 +784,19 @@ export class AiService implements OnModuleInit {
     const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
 
     for (const symbol of symbols) {
-      if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
-        this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
-        continue;
+      try {
+        if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
+          this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
+          continue;
+        }
+        this.logger.log(`[TRINITY][${symbol}] 🚀 Iniciando inicialização...`);
+        await this.initializeTrinityWebSocket(symbol);
+        this.logger.log(`[TRINITY][${symbol}] ✅ Inicialização concluída. Aguardando 3 segundos antes do próximo...`);
+        // Pequeno atraso entre inicializações para evitar sobrecarga/rejeição da Deriv
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      } catch (err) {
+        this.logger.error(`[TRINITY][${symbol}] ❌ Falha na inicialização:`, err instanceof Error ? err.message : err);
       }
-
-      await this.initializeTrinityWebSocket(symbol);
     }
   }
 
@@ -806,7 +825,8 @@ export class AiService implements OnModuleInit {
           const msg = JSON.parse(data.toString());
           this.handleTrinityMessage(symbol, msg);
         } catch (error) {
-          this.logger.error(`[TRINITY][${symbol}] Erro ao processar mensagem:`, error);
+          this.logger.error(`[TRINITY][${symbol}] Erro ao processar mensagem JSON:`, error);
+          this.logger.debug(`[TRINITY][${symbol}] Conteúdo bruto da mensagem: ${data.toString().substring(0, 100)}...`);
         }
       });
 
@@ -892,13 +912,18 @@ export class AiService implements OnModuleInit {
    */
   private handleTrinityMessage(symbol: 'R_10' | 'R_25' | 'R_50', msg: any): void {
     if (msg.error) {
-      this.logger.error(`[TRINITY][${symbol}] Erro da API:`, msg.error.message);
+      this.logger.error(`[TRINITY][${symbol}] ❌ Erro da API: ${msg.error.message || JSON.stringify(msg.error)}`);
       return;
+    }
+
+    if (!msg.msg_type) {
+      this.logger.debug(`[TRINITY][${symbol}] 📥 Mensagem sem msg_type: ${JSON.stringify(msg).substring(0, 100)}...`);
     }
 
     switch (msg.msg_type) {
       case 'history':
       case 'ticks_history':
+        this.logger.log(`[TRINITY][${symbol}] 📊 Histórico recebido: ${msg.history?.prices?.length || msg.ticks_history?.prices?.length || 0} preços`);
         const historyData = msg.history || msg.ticks_history;
         if (historyData?.prices) {
           this.processTrinityHistory(symbol, historyData.prices, msg.subscription?.id);
@@ -909,6 +934,14 @@ export class AiService implements OnModuleInit {
         if (msg.tick) {
           this.processTrinityTick(symbol, msg.tick);
         }
+        break;
+
+      case 'ping':
+        this.logger.debug(`[TRINITY][${symbol}] 📥 Pong recebido`);
+        break;
+
+      default:
+        this.logger.debug(`[TRINITY][${symbol}] 📥 Mensagem desconhecida: ${msg.msg_type}`);
         break;
     }
   }
@@ -985,6 +1018,48 @@ export class AiService implements OnModuleInit {
       this.strategyManager.processTick(tick, symbol).catch((error) => {
         this.logger.error(`[TRINITY][${symbol}] Erro ao processar tick via StrategyManager:`, error);
       });
+    }
+  }
+
+  /**
+   * ✅ TRINITY: Inicia watchdog para monitorar fluxos de ticks
+   */
+  private startTrinityWatchdog(): void {
+    if (this.trinityWatchdogInterval) return;
+
+    this.trinityWatchdogInterval = setInterval(() => {
+      const now = Date.now();
+      const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
+
+      symbols.forEach((symbol) => {
+        const lastTick = this.trinityLastTickReceived[symbol];
+        const isConnected = this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN;
+
+        // Se passaram mais de 45 segundos sem tick e o WS está "aberto", algo está errado
+        if (isConnected && lastTick > 0 && now - lastTick > 45000) {
+          this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Sem ticks por 45s. Tentando re-inscrever...`);
+          this.subscribeToTrinityTicks(symbol);
+          this.trinityLastTickReceived[symbol] = now; // Resetar timestamp para evitar loops imediatos
+        } else if (!isConnected || lastTick === 0) {
+          // Se não está conectado ou nunca recebeu tick, recriar WS via inicialização padrão
+          // Mas apenas se já passou algum tempo desde o boot (evitar rush de logs)
+          if (now - this.trinityLastTickReceived[symbol] > 60000 && lastTick === 0) {
+            this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Stream parece morto. Reinicializando...`);
+            this.initializeTrinityWebSocket(symbol).catch(() => { });
+            this.trinityLastTickReceived[symbol] = now;
+          }
+        }
+      });
+    }, 30000); // Checar a cada 30 segundos
+  }
+
+  /**
+   * ✅ TRINITY: Para watchdog
+   */
+  private stopTrinityWatchdog(): void {
+    if (this.trinityWatchdogInterval) {
+      clearInterval(this.trinityWatchdogInterval);
+      this.trinityWatchdogInterval = null;
     }
   }
 

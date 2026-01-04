@@ -144,26 +144,28 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
 
-    this.logger.debug(`[ATLAS][${symbol}] 📥 Tick recebido: ${tick.value} (díquito: ${tick.digit})`);
+    const assetSymbol = symbol as 'R_10' | 'R_25';
+    this.logger.debug(`[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`);
 
     // Atualizar ticks globais
-    const assetSymbol = symbol as 'R_10' | 'R_25';
-    this.atlasTicks[assetSymbol].push(tick);
-    if (this.atlasTicks[assetSymbol].length > 200) {
-      this.atlasTicks[assetSymbol].shift();
+    const assetTicks = this.atlasTicks[assetSymbol];
+    assetTicks.push(tick);
+    if (assetTicks.length > 200) {
+      assetTicks.shift();
     }
 
-    // Processar para cada usuário
-    for (const state of Array.from(this.atlasUsers.values())) {
-      if (state.symbol !== symbol) continue;
+    // Processar para cada usuário deste ativo
+    const activeUsers = Array.from(this.atlasUsers.values()).filter(u => u.symbol === assetSymbol && !u.isStopped);
+    if (activeUsers.length === 0) return;
 
+    for (const state of activeUsers) {
       // Adicionar ao buffer do usuário
       state.digitBuffer.push(tick.digit);
       if (state.digitBuffer.length > 100) {
         state.digitBuffer.shift();
       }
 
-      await this.processAtlasStrategies(tick, assetSymbol);
+      await this.processAtlasStrategies(tick, state);
     }
   }
 
@@ -216,9 +218,11 @@ export class AtlasStrategy implements IStrategy {
       symbol: atlasSymbol,
     });
 
+    this.logger.log(`[ATLAS][${userId}] 📍 Símbolo final: ${atlasSymbol} | Modo: ${mode || 'veloz'} | State Symbol: ${this.atlasUsers.get(userId)?.symbol}`);
+
     if (isNew || hasConfigChanges) {
       const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
-      this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Total de usuários: ${this.atlasUsers.size}`);
+      this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
 
       this.saveAtlasLog(userId, 'SISTEMA', 'info',
         `${logPrefix} | Modo: ${mode || 'veloz'} | Ativo: ${atlasSymbol} | Capital: $${stakeAmountNum.toFixed(2)} | ` +
@@ -239,57 +243,53 @@ export class AtlasStrategy implements IStrategy {
   }
 
   /**
-   * ✅ ATLAS: Processa estratégias para um ativo
+   * ✅ ATLAS: Processa estratégias para um usuário específico
    */
-  private async processAtlasStrategies(tick: Tick, symbol: 'R_10' | 'R_25'): Promise<void> {
-    // Apenas se houver usuários ativos
-    if (this.atlasUsers.size === 0) return;
+  private async processAtlasStrategies(tick: Tick, state: AtlasUserState): Promise<void> {
+    const symbol = state.symbol;
+    this.logger.debug(`[ATLAS][${symbol}][${state.userId}] 🔄 Analisando... Buffer: ${state.digitBuffer.length} dígitos`);
 
-    for (const state of Array.from(this.atlasUsers.values())) {
-      if (state.isStopped) continue;
-      if (state.symbol !== symbol) continue; // Processar apenas o ativo configurado
+    // Verificar se pode processar
+    if (!this.canProcessAtlasAsset(state)) {
+      return;
+    }
 
-      this.logger.debug(`[ATLAS][${symbol}][${state.userId}] 🔄 Processando estratégias...`);
+    // ✅ ATLAS: Verificar resultado do contrato pendente primeiro
+    if (state.pendingContractId && state.isOperationActive) {
+      // Aguardar resultado (vem no próximo tick)
+      return;
+    }
 
-      // Verificar se pode processar
-      if (!this.canProcessAtlasAsset(state)) {
-        continue;
+    const modeConfig = this.getModeConfig(state.mode);
+    if (!modeConfig) {
+      this.logger.error(`[ATLAS][${symbol}][${state.userId}] ❌ Erro: Configuração do modo '${state.mode}' não encontrada.`);
+      return;
+    }
+
+    // ✅ ATLAS: Verificar amostra mínima
+    if (state.digitBuffer.length < modeConfig.amostraInicial) {
+      const keyUser = state.userId;
+      const set = this.coletaLogsEnviados.get(keyUser) || new Set<string>();
+      if (!set.has(symbol)) {
+        this.saveAtlasLog(state.userId, symbol, 'info',
+          `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial}`);
+        set.add(symbol);
+        this.coletaLogsEnviados.set(keyUser, set);
       }
+      return;
+    }
 
-      // ✅ ATLAS: Verificar resultado do contrato pendente primeiro
-      if (state.pendingContractId && state.isOperationActive) {
-        // Aguardar resultado (vem no próximo tick)
-        continue;
-      }
+    // ✅ ATLAS: Lógica de Recuperação/Soros Imediata
+    if (state.isInRecovery || state.isInSoros) {
+      // Recuperação imediata: executar no próximo tick disponível
+      await this.executeAtlasOperation(state, symbol, 'OVER');
+      return;
+    }
 
-      const modeConfig = this.getModeConfig(state.mode);
-      if (!modeConfig) continue;
-
-      // ✅ ATLAS: Verificar amostra mínima
-      if (state.digitBuffer.length < modeConfig.amostraInicial) {
-        const keyUser = state.userId;
-        const set = this.coletaLogsEnviados.get(keyUser) || new Set<string>();
-        if (!set.has(symbol)) {
-          this.saveAtlasLog(state.userId, symbol, 'info',
-            `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial}`);
-          set.add(symbol);
-          this.coletaLogsEnviados.set(keyUser, set);
-        }
-        continue;
-      }
-
-      // ✅ ATLAS: Lógica de Recuperação/Soros Imediata
-      if (state.isInRecovery || state.isInSoros) {
-        // Recuperação imediata: executar no próximo tick disponível
-        await this.executeAtlasOperation(state, symbol, 'OVER');
-        continue;
-      }
-
-      // ✅ ATLAS: Verificar gatilho e análise ultrarrápida
-      const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
-      if (canTrade) {
-        await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
-      }
+    // ✅ ATLAS: Verificar gatilho e análise ultrarrápida
+    const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
+    if (canTrade) {
+      await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
     }
   }
 
