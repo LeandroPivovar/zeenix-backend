@@ -1054,35 +1054,81 @@ export class AtlasStrategy implements IStrategy {
         );
 
         let profitPeak = parseFloat(configResult[0]?.profitPeak || 0);
-        // Atualizar pico se necessário (auto-healing em memória)
-        if (lucroAtual > profitPeak) profitPeak = lucroAtual;
+        let updatedPeak = false;
+
+        // Auto-healing / Update Peak
+        if (lucroAtual > profitPeak) {
+          const profitPeakAnterior = profitPeak;
+          profitPeak = lucroAtual;
+          updatedPeak = true;
+
+          // ✅ Log quando profit peak aumenta significativamente (apenas se já estiver próximo ou acima da ativação)
+          // Para evitar flood, logar apenas se o novo pico for relevante (>= 40% da meta)
+          if (state.profitTarget && profitPeak >= state.profitTarget * 0.40) {
+            const stopBlindadoPercent = parseFloat(configResult[0]?.stopBlindadoPercent || 50.0);
+            const fatorProtecao = stopBlindadoPercent / 100;
+            const protectedAmount = profitPeak * fatorProtecao;
+
+            this.saveAtlasLog(
+              state.userId,
+              symbol,
+              'info',
+              `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
+            );
+          }
+
+          // Update DB
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+            [profitPeak, state.userId]
+          );
+        }
 
         const stopBlindadoPercent = configResult && configResult.length > 0
           ? parseFloat(configResult[0].stopBlindadoPercent) || 50.0
           : 50.0;
-
         const fatorProtecao = stopBlindadoPercent / 100;
-        const protectedAmount = profitPeak * fatorProtecao;
-        const stopBlindado = state.capitalInicial + protectedAmount;
 
-        // Se o capital caiu abaixo do stop blindado
-        if (state.capital <= stopBlindado) {
-          state.isStopped = true;
-          const lucroProtegido = state.capital - state.capitalInicial;
+        // Verificar ativação (40% da meta)
+        const activationTrigger = (state.profitTarget || 0) * 0.40;
 
-          // ✅ Log padronizado para o Frontend
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
-          );
+        if (state.profitTarget && profitPeak >= activationTrigger) {
+          // Ativo
+          const protectedAmount = profitPeak * fatorProtecao;
+          const stopBlindado = state.capitalInicial + protectedAmount;
 
-          await this.dataSource.query(
-            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = 1`,
-            [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId],
-          );
-          this.atlasUsers.delete(state.userId);
-          return;
+          // Se o capital caiu abaixo do stop blindado
+          if (state.capital <= stopBlindado) {
+            state.isStopped = true;
+            const lucroProtegido = state.capital - state.capitalInicial;
+
+            // ✅ Log padronizado para o Frontend
+            this.saveAtlasLog(state.userId, symbol, 'alerta',
+              `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
+            );
+
+            await this.dataSource.query(
+              `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                WHERE user_id = ? AND is_active = 1`,
+              [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId],
+            );
+            this.atlasUsers.delete(state.userId);
+            return;
+          }
+        } else if (state.profitTarget && lucroAtual > 0) {
+          // Ainda não ativou, mas mostrar progresso se tiver lucro relevante
+          // Evitar flood: mostrar apenas se atualizou o pico ou em intervalos específicos (opcional, deixaremos simples por enquanto)
+          if (updatedPeak) {
+            const percentualAteAtivacao = (lucroAtual / activationTrigger) * 100;
+            this.saveAtlasLog(
+              state.userId,
+              symbol,
+              'info',
+              `🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualAteAtivacao.toFixed(1)}%)`
+            );
+          }
         }
+
       } catch (error) {
         this.logger.error(`[ATLAS] Erro ao verificar stop-loss blindado:`, error);
       }
