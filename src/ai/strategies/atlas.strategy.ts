@@ -144,15 +144,26 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
 
+    this.logger.debug(`[ATLAS][${symbol}] 📥 Tick recebido: ${tick.value} (díquito: ${tick.digit})`);
+
+    // Atualizar ticks globais
     const assetSymbol = symbol as 'R_10' | 'R_25';
     this.atlasTicks[assetSymbol].push(tick);
-    if (this.atlasTicks[assetSymbol].length > this.maxTicks) {
+    if (this.atlasTicks[assetSymbol].length > 200) {
       this.atlasTicks[assetSymbol].shift();
     }
 
-    // Processar estratégias ATLAS para este ativo
-    if (this.atlasUsers.size > 0) {
-      await this.processAtlasStrategies(assetSymbol, tick);
+    // Processar para cada usuário
+    for (const state of Array.from(this.atlasUsers.values())) {
+      if (state.symbol !== symbol) continue;
+
+      // Adicionar ao buffer do usuário
+      state.digitBuffer.push(tick.digit);
+      if (state.digitBuffer.length > 100) {
+        state.digitBuffer.shift();
+      }
+
+      await this.processAtlasStrategies(tick, assetSymbol);
     }
   }
 
@@ -230,20 +241,15 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Processa estratégias para um ativo
    */
-  private async processAtlasStrategies(symbol: 'R_10' | 'R_25', latestTick: Tick): Promise<void> {
+  private async processAtlasStrategies(tick: Tick, symbol: 'R_10' | 'R_25'): Promise<void> {
+    // Apenas se houver usuários ativos
     if (this.atlasUsers.size === 0) return;
 
-    for (const [userId, state] of this.atlasUsers.entries()) {
+    for (const state of Array.from(this.atlasUsers.values())) {
       if (state.isStopped) continue;
       if (state.symbol !== symbol) continue; // Processar apenas o ativo configurado
 
-      const asset = this.atlasTicks[symbol];
-
-      // Atualizar buffer de dígitos
-      state.digitBuffer.push(latestTick.digit);
-      if (state.digitBuffer.length > 15) {
-        state.digitBuffer.shift(); // Manter buffer de no máximo 15 dígitos
-      }
+      this.logger.debug(`[ATLAS][${symbol}][${state.userId}] 🔄 Processando estratégias...`);
 
       // Verificar se pode processar
       if (!this.canProcessAtlasAsset(state)) {
@@ -261,10 +267,10 @@ export class AtlasStrategy implements IStrategy {
 
       // ✅ ATLAS: Verificar amostra mínima
       if (state.digitBuffer.length < modeConfig.amostraInicial) {
-        const keyUser = userId;
+        const keyUser = state.userId;
         const set = this.coletaLogsEnviados.get(keyUser) || new Set<string>();
         if (!set.has(symbol)) {
-          this.saveAtlasLog(userId, symbol, 'info',
+          this.saveAtlasLog(state.userId, symbol, 'info',
             `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial}`);
           set.add(symbol);
           this.coletaLogsEnviados.set(keyUser, set);

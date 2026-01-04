@@ -898,8 +898,10 @@ export class AiService implements OnModuleInit {
 
     switch (msg.msg_type) {
       case 'history':
-        if (msg.history?.prices) {
-          this.processTrinityHistory(symbol, msg.history.prices, msg.subscription?.id);
+      case 'ticks_history':
+        const historyData = msg.history || msg.ticks_history;
+        if (historyData?.prices) {
+          this.processTrinityHistory(symbol, historyData.prices, msg.subscription?.id);
         }
         break;
 
@@ -974,6 +976,8 @@ export class AiService implements OnModuleInit {
     if (this.trinityTicks[symbol].length > this.maxTicks) {
       this.trinityTicks[symbol].shift();
     }
+
+    this.logger.debug(`[TRINITY][${symbol}] 🔄 Tick processado - Enviando para StrategyManager`);
 
     // ✅ Enviar tick para StrategyManager (que passa para TrinityStrategy)
     // Arquitetura igual à Orion: AIService gerencia WebSockets, Strategy processa sinais
