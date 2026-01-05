@@ -455,27 +455,30 @@ export class AutonomousAgentService implements OnModuleInit {
           sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
         });
 
-        // ✅ REATIVADO: Ativar usuário na estratégia apropriada (Sentinel/Falcon)
-        if (this.agentManager) {
-          const strategy = this.agentManager.getAgent(agentType);
-          if (strategy) {
-            try {
-              await strategy.activateUser(agent.user_id.toString(), {
-                userId: agent.user_id.toString(),
-                initialStake: parseFloat(agent.initial_stake),
-                dailyProfitTarget: parseFloat(agent.daily_profit_target),
-                dailyLossLimit: parseFloat(agent.daily_loss_limit),
-                derivToken: agent.deriv_token,
-                currency: agent.currency,
-                symbol: agent.symbol || SENTINEL_CONFIG.symbol,
-                tradingMode: agent.trading_mode || 'normal',
-              });
-              this.logger.debug(`[SyncAgents] ✅ Usuário ${agent.user_id} ativado na estratégia ${agentType}`);
-            } catch (error) {
-              this.logger.error(`[SyncAgents] Erro ao ativar usuário ${agent.user_id} na estratégia ${agentType}:`, error);
-            }
-          }
-        }
+        // ✅ CORREÇÃO: Não chamar activateUser aqui para evitar loop infinito
+        // O activateUser chama activateAgent que chama syncActiveAgentsFromDb novamente
+        // O estado já está sincronizado via upsertAgentState acima
+        // As estratégias serão ativadas quando necessário pelo processamento normal
+        // if (this.agentManager) {
+        //   const strategy = this.agentManager.getAgent(agentType);
+        //   if (strategy) {
+        //     try {
+        //       await strategy.activateUser(agent.user_id.toString(), {
+        //         userId: agent.user_id.toString(),
+        //         initialStake: parseFloat(agent.initial_stake),
+        //         dailyProfitTarget: parseFloat(agent.daily_profit_target),
+        //         dailyLossLimit: parseFloat(agent.daily_loss_limit),
+        //         derivToken: agent.deriv_token,
+        //         currency: agent.currency,
+        //         symbol: agent.symbol || SENTINEL_CONFIG.symbol,
+        //         tradingMode: agent.trading_mode || 'normal',
+        //       });
+        //       this.logger.debug(`[SyncAgents] ✅ Usuário ${agent.user_id} ativado na estratégia ${agentType}`);
+        //     } catch (error) {
+        //       this.logger.error(`[SyncAgents] Erro ao ativar usuário ${agent.user_id} na estratégia ${agentType}:`, error);
+        //     }
+        //   }
+        // }
       }
     } catch (error) {
       this.logger.error('[SyncAgents] Erro ao sincronizar agentes:', error);
@@ -552,6 +555,9 @@ export class AutonomousAgentService implements OnModuleInit {
   // ATIVAÇÃO/DESATIVAÇÃO
   // ============================================
 
+  // ✅ CORREÇÃO: Flag para evitar loops infinitos durante ativação
+  private activatingUsers = new Set<string>();
+
   async activateAgent(
     userId: string,
     config: {
@@ -569,6 +575,14 @@ export class AutonomousAgentService implements OnModuleInit {
       agentType?: string; // ✅ Novo: Tipo de agente (sentinel ou falcon)
     },
   ): Promise<void> {
+    // ✅ CORREÇÃO: Evitar loop infinito - se já está ativando, retornar
+    if (this.activatingUsers.has(userId)) {
+      this.logger.debug(`[ActivateAgent] ⏳ Usuário ${userId} já está sendo ativado, ignorando requisição duplicada`);
+      return;
+    }
+
+    this.activatingUsers.add(userId);
+    
     try {
       // Obter token correto baseado na conta configurada pelo usuário (demo/real)
       // Isso garante que usamos a conta correta (demo ou real) conforme configurado
@@ -682,8 +696,60 @@ export class AutonomousAgentService implements OnModuleInit {
         );
       }
 
-      // Sincronizar estado em memória
-      await this.syncActiveAgentsFromDb();
+      // ✅ CORREÇÃO: Não chamar syncActiveAgentsFromDb aqui para evitar loop infinito
+      // O estado já foi atualizado no banco e será sincronizado pelo scheduler
+      // await this.syncActiveAgentsFromDb(); // REMOVIDO - causa loop infinito
+
+      // Atualizar estado em memória diretamente (sem sincronizar do banco)
+      this.upsertAgentState({
+        userId,
+        initialStake: config.initialStake,
+        dailyProfitTarget: config.dailyProfitTarget,
+        dailyLossLimit: config.dailyLossLimit,
+        initialBalance: initialBalance,
+        derivToken: correctToken,
+        currency: config.currency || 'USD',
+        symbol: symbol,
+        tradingMode: tradingMode,
+        managementMode: riskLevel,
+        stopLossType: stopLossType,
+        martingaleLevel: 'M0' as MartingaleLevel,
+        martingaleCount: 0,
+        lastLossAmount: 0,
+        sorosLevel: 0,
+        sorosStake: 0,
+        sorosProfit: 0,
+        operationsSincePause: 0,
+        lastTradeAt: null,
+        nextTradeAt: new Date(Date.now() + this.getRandomInterval() * 1000),
+        dailyProfit: 0,
+        dailyLoss: 0,
+        profitPeak: 0,
+        sessionDate: new Date(),
+      });
+
+      // ✅ CORREÇÃO: Ativar estratégia diretamente (sem chamar syncActiveAgentsFromDb para evitar loop)
+      if (this.agentManager) {
+        const strategy = this.agentManager.getAgent(agentType);
+        if (strategy) {
+          try {
+            await strategy.activateUser(userId, {
+              userId,
+              initialStake: config.initialStake,
+              dailyProfitTarget: config.dailyProfitTarget,
+              dailyLossLimit: config.dailyLossLimit,
+              derivToken: correctToken,
+              currency: config.currency || 'USD',
+              symbol: symbol,
+              tradingMode: tradingMode,
+              initialBalance: initialBalance,
+            });
+            this.logger.debug(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${agentType}`);
+          } catch (error) {
+            this.logger.error(`[ActivateAgent] Erro ao ativar usuário ${userId} na estratégia ${agentType}:`, error);
+          }
+        }
+      }
 
       // ✅ OTIMIZAÇÃO CRÍTICA: Desabilitar conexões WebSocket individuais por usuário
       // Isso causa 100% de CPU com múltiplos usuários
@@ -737,6 +803,9 @@ export class AutonomousAgentService implements OnModuleInit {
       this.saveLog(userId, 'ERROR', 'CORE', `Falha ao ativar agente. erro=${error.message}`);
       this.logger.error(`[ActivateAgent] ❌ Erro ao ativar agente:`, error);
       throw error;
+    } finally {
+      // ✅ CORREÇÃO: Remover flag de ativação para permitir novas ativações
+      this.activatingUsers.delete(userId);
     }
   }
 
