@@ -3658,15 +3658,18 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId, todayStr],
     );
 
-    // Buscar capital inicial da configuração do agente
+    // Buscar capital inicial e valores diários da configuração do agente
     const config = await this.dataSource.query(
-      `SELECT initial_stake, initial_balance 
+      `SELECT initial_stake, initial_balance, daily_profit, daily_loss
        FROM autonomous_agent_config 
        WHERE user_id = ?`,
       [userId],
     );
 
     const initialBalance = config && config.length > 0 ? parseFloat(config[0].initial_balance) || 0 : 0;
+    // ✅ Usar daily_profit e daily_loss da configuração (atualizados em tempo real)
+    const dailyProfit = config && config.length > 0 ? parseFloat(config[0].daily_profit) || 0 : 0;
+    const dailyLoss = config && config.length > 0 ? parseFloat(config[0].daily_loss) || 0 : 0;
     // Usar initialBalance como valor total da conta configurada (sempre usar este valor quando disponível)
     // Se initialBalance for 0, tentar buscar o saldo atual da conta Deriv como fallback
     let totalCapital = initialBalance > 0 ? initialBalance : 0;
@@ -3728,15 +3731,16 @@ export class AutonomousAgentService implements OnModuleInit {
     // Para estatísticas (wins/losses), usar apenas trades finalizados
     const autonomousTrades = stats && stats.length > 0 ? parseInt(stats[0].total_trades) || 0 : 0;
 
+    // ✅ Mesmo sem trades finalizados, usar valores da configuração se disponíveis
     if (!stats || stats.length === 0) {
       return {
         totalTrades: totalTradesToday,
         wins: 0,
         losses: 0,
         winRate: 0,
-        totalProfit: 0,
-        totalLoss: 0,
-        netProfit: 0,
+        totalProfit: dailyProfit, // ✅ Usar daily_profit da configuração
+        totalLoss: dailyLoss, // ✅ Usar daily_loss da configuração
+        netProfit: dailyProfit - dailyLoss, // ✅ Calcular netProfit usando valores da configuração
         totalCapital,
         operationsToday: totalTradesToday,
       };
@@ -3745,12 +3749,15 @@ export class AutonomousAgentService implements OnModuleInit {
     const s = stats[0];
     const wins = parseInt(s.wins) || 0;
     const losses = parseInt(s.losses) || 0;
-    const totalProfit = parseFloat(s.total_profit) || 0;
-    const totalLoss = parseFloat(s.total_loss) || 0;
-    const netProfit = totalProfit - totalLoss;
+    
+    // ✅ Priorizar daily_profit e daily_loss da configuração (mais confiável e atualizado em tempo real)
+    // Se não estiverem disponíveis, usar valores calculados dos trades
+    const totalProfit = dailyProfit > 0 ? dailyProfit : (parseFloat(s.total_profit) || 0);
+    const totalLoss = dailyLoss > 0 ? dailyLoss : (parseFloat(s.total_loss) || 0);
+    const netProfit = dailyProfit - dailyLoss; // ✅ Usar valores da configuração para cálculo mais preciso
 
     this.logger.log(
-      `[GetSessionStats][${userId}] Operações hoje: autonomous=${autonomousTradesAll}, total=${totalTradesToday}`,
+      `[GetSessionStats][${userId}] Operações hoje: autonomous=${autonomousTradesAll}, total=${totalTradesToday}, daily_profit=${dailyProfit}, daily_loss=${dailyLoss}, netProfit=${netProfit}`,
     );
 
     return {
