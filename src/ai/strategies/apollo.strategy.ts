@@ -189,6 +189,9 @@ export class ApolloStrategy implements IStrategy {
   // ✅ Rastreamento de logs de stop blindado (para evitar logs duplicados)
   private stopBlindadoLogsEnviados = new Map<string, boolean>(); // userId -> se já logou ativação
 
+  // ✅ Rastreamento de último Loss Virtual logado (para evitar spam de logs)
+  private ultimoLossVirtualLogado = new Map<string, number>(); // userId -> último loss virtual logado
+
   // Pool de conexões WebSocket por token (reutilização)
   private wsConnections: Map<
     string,
@@ -223,16 +226,52 @@ export class ApolloStrategy implements IStrategy {
     const digit = tick.digit;
 
     for (const [userId, state] of this.apolloUsers.entries()) {
+      const virtualLossAntes = state.virtualLoss;
       const shouldTrade = ApolloLogic.processTick(state, digit);
 
-      // Log de TICK somente com debounce ou se houver mudança relevante no loss virtual para não spammar
-      // Mas o requisito pede "📉 TICK: {digit} | Loss Virtual: {vl}"
-      // Para não inundar o banco/front, vamos logar apenas quando loss virtual mudar ou for > 0
-      // Ou melhor, logar somente para usuário ativo na sessão e talvez filtrar no front
-      // Mas aqui vou logar sempre que o Loss Virtual > 0 ou quando zera, para ter rastro
+      // ✅ Calcular threshold baseado no modo
+      const threshold = state.mode === 'veloz' ? 0 : state.mode === 'balanceado' ? 3 : 5;
+      const ultimoLogado = this.ultimoLossVirtualLogado.get(userId) ?? -1;
 
-      if (state.virtualLoss > 0 || shouldTrade) {
-        // Opcional: Logar no console apenas
+      // ✅ Log de TICK quando Loss Virtual muda significativamente
+      // Logar quando:
+      // 1. Loss Virtual mudou (aumentou ou zerou) - mas não logar se já logou esse valor
+      // 2. Está próximo do threshold (1 tick antes) - sempre logar
+      // 3. Atingiu o threshold (vai entrar) - sempre logar
+      const mudouSignificativamente = virtualLossAntes !== state.virtualLoss && state.virtualLoss !== ultimoLogado;
+      const proximoDoThreshold = state.virtualLoss > 0 && state.virtualLoss === threshold - 1;
+      const atingiuThreshold = state.virtualLoss >= threshold;
+
+      if (mudouSignificativamente || proximoDoThreshold || atingiuThreshold) {
+        const statusLossVirtual = state.virtualLoss === 0 
+          ? '✅ Resetado' 
+          : state.virtualLoss < threshold 
+            ? `⏳ Acumulando (${state.virtualLoss}/${threshold})`
+            : `🎯 PRONTO (${state.virtualLoss}/${threshold})`;
+
+        this.saveApolloLog(
+          state.userId,
+          'tick',
+          `📊 TICK: ${digit} | Loss Virtual: ${state.virtualLoss} | ${statusLossVirtual} | Modo: ${state.mode.toUpperCase()}`
+        );
+
+        // Atualizar último valor logado
+        this.ultimoLossVirtualLogado.set(userId, state.virtualLoss);
+      }
+
+      // ✅ Log de ANÁLISE quando está próximo ou atingiu o threshold
+      if ((proximoDoThreshold || atingiuThreshold) && !state.isOperationActive) {
+        const stakeAtual = state.currentBarrier === 3 ? state.apostaInicial : state.currentStake;
+        const analiseMessage = `🔍 [ANÁLISE ${state.mode.toUpperCase()}]\n` +
+          ` • Dígito Atual: ${digit}\n` +
+          ` • Loss Virtual: ${state.virtualLoss}/${threshold} ${atingiuThreshold ? '✅' : '⏳'}\n` +
+          ` • Barreira: Over ${state.currentBarrier}\n` +
+          ` • Stake: $${stakeAtual.toFixed(2)}\n` +
+          ` • Martingale Level: ${state.martingaleLevel}\n` +
+          `${atingiuThreshold ? '🌊 [DECISÃO] Critérios atendidos. Entrada: Over ' + state.currentBarrier : '⏳ Aguardando threshold...'}`;
+
+        this.saveApolloLog(state.userId, 'analise', analiseMessage);
+        this.logger.log(`[APOLLO][${state.userId}] ${analiseMessage.replace(/\n/g, ' | ')}`);
       }
 
       if (shouldTrade && !state.isOperationActive) {
@@ -278,8 +317,9 @@ export class ApolloStrategy implements IStrategy {
 
   async deactivateUser(userId: string): Promise<void> {
     this.apolloUsers.delete(userId);
-    // ✅ Limpar flag de log de stop blindado
+    // ✅ Limpar flags de log
     this.stopBlindadoLogsEnviados.delete(`stop_blindado_ativado_${userId}`);
+    this.ultimoLossVirtualLogado.delete(userId);
     this.saveApolloLog(userId, 'info', '☀️ Usuário DESATIVADO');
   }
 
