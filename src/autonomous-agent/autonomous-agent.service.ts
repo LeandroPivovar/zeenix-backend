@@ -127,13 +127,12 @@ export class AutonomousAgentService {
 
       // Salvar log
       if (this.logQueueService) {
-        this.logQueueService.addLog({
+        this.logQueueService.saveLogAsync({
           userId,
-          timestamp: new Date(),
-          logLevel: 'INFO',
+          level: 'INFO',
           module: 'CORE',
           message: 'Agente autônomo ativado (modo simplificado - sem processamento)',
-          metadata: null,
+          tableName: 'autonomous_agent_logs',
         });
       }
 
@@ -167,13 +166,12 @@ export class AutonomousAgentService {
 
       // Salvar log
       if (this.logQueueService) {
-        this.logQueueService.addLog({
+        this.logQueueService.saveLogAsync({
           userId,
-          timestamp: new Date(),
-          logLevel: 'INFO',
+          level: 'INFO',
           module: 'CORE',
           message: 'Agente parado manualmente pelo usuário (modo simplificado)',
-          metadata: null,
+          tableName: 'autonomous_agent_logs',
         });
       }
 
