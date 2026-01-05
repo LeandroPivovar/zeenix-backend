@@ -79,8 +79,6 @@ interface PrecisoUserState {
   apostaBase: number; // ✅ ZENIX v2.0: Valor base da aposta (para Soros)
   ultimoLucro: number; // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
-}
-
   totalProfitLoss: number; // Lucro/prejuízo total acumulado
 }
 
@@ -2948,16 +2946,8 @@ export class AiService implements OnModuleInit {
       }
     }
 
-    // Garantir que WebSockets da Trinity/Atlas estão ativos se houver usuários
-    if (configs.length > 0) {
-      const needsInit = !this.trinityConnected['R_10'] || !this.trinityConnected['R_25'];
-      if (needsInit) {
-        this.logger.log(`[SyncAtlas] 🔌 Inicializando WebSockets para ${configs.length} usuário(s) Atlas ativo(s)`);
-        await this.initializeTrinityWebSockets().catch(error => {
-          this.logger.error(`[SyncAtlas] Erro ao inicializar WebSockets:`, error);
-        });
-      }
-    }
+    // TRINITY REMOVIDO: WebSockets da Trinity não são mais necessários
+    // O Atlas agora gerencia seus próprios WebSockets se necessário
   }
 
   private upsertVelozUserState(params: {
@@ -7328,6 +7318,7 @@ export class AiService implements OnModuleInit {
         ultimoLucro: 0, // ✅ ZENIX v2.0: Lucro da última entrada (para calcular Soros)
         apostaBase: apostaInicial, // ✅ ZENIX v2.0: Inicializar aposta base com entryValue
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
+        totalProfitLoss: 0, // Lucro/prejuízo total acumulado
       });
     }
   }
