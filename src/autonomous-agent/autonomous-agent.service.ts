@@ -192,6 +192,14 @@ export class AutonomousAgentService implements OnModuleInit {
   }> = [];
   private isProcessingTradeResults = false;
 
+  // ✅ OTIMIZAÇÃO: Cache de tokens para evitar múltiplas chamadas bloqueantes ao getBalance
+  private tokenCache = new Map<string, {
+    token: string;
+    timestamp: number;
+  }>();
+  private readonly TOKEN_CACHE_TTL = 30000; // 30 segundos
+  private tokenCacheLocks = new Map<string, Promise<string>>(); // Evitar requisições simultâneas
+
   // ✅ REFATORAÇÃO: Cache compartilhado de MarketAnalysis (calculado uma vez por símbolo)
   private sharedMarketAnalysisCache = new Map<string, {
     marketAnalysis: {
@@ -236,6 +244,7 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * Obtém o token correto baseado na conta configurada pelo usuário (demo/real)
    * Segue a mesma lógica da IA e do broker controller
+   * ✅ OTIMIZADO: Cache para evitar múltiplas chamadas bloqueantes ao getBalance
    */
   private async getCorrectTokenForUser(userId: string, providedToken?: string): Promise<string> {
     try {
@@ -248,72 +257,115 @@ export class AutonomousAgentService implements OnModuleInit {
         return providedToken;
       }
 
-      // Obter configurações do usuário (tradeCurrency: USD, BTC, ou DEMO)
-      const settings = await this.settingsService.getSettings(userId);
-      const tradeCurrency = settings.tradeCurrency || 'USD';
-
-      // Obter informações da Deriv (contas e tokens)
-      const derivInfo: any = await this.derivService.connectAndGetAccount(providedToken || '', parseInt(this.appId), tradeCurrency === 'DEMO' ? 'USD' : tradeCurrency);
-
-      if (!derivInfo) {
-        this.logger.warn(`[GetCorrectToken] DerivInfo não disponível, usando token fornecido`);
-        if (!providedToken) {
-          throw new Error('Token não fornecido e DerivInfo não disponível');
-        }
-        return providedToken;
+      // ✅ OTIMIZAÇÃO: Verificar cache primeiro
+      const cacheKey = `${userId}_${providedToken || 'default'}`;
+      const cached = this.tokenCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < this.TOKEN_CACHE_TTL) {
+        this.logger.debug(`[GetCorrectToken] ✅ Cache hit para usuário ${userId}`);
+        return cached.token;
       }
 
-      // Acessar raw se disponível (pode não estar no tipo, mas existe em runtime)
-      const raw = derivInfo.raw || {};
-      const tokensByLoginId = raw.tokensByLoginId || {};
-      let targetLoginid: string | undefined;
+      // ✅ OTIMIZAÇÃO: Evitar requisições simultâneas para o mesmo usuário
+      const existingLock = this.tokenCacheLocks.get(cacheKey);
+      if (existingLock) {
+        this.logger.debug(`[GetCorrectToken] ⏳ Aguardando requisição em andamento para usuário ${userId}`);
+        return await existingLock;
+      }
 
-      // Se for DEMO, buscar conta demo
-      if (tradeCurrency === 'DEMO') {
-        type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
-        const accountsByCurrency = raw.accountsByCurrency || derivInfo.accountsByCurrency || {};
-        const allAccounts: AccountEntry[] = Object.values(accountsByCurrency).flat() as AccountEntry[];
-        const usdDemoAccounts: AccountEntry[] = ((accountsByCurrency['USD'] || []) as AccountEntry[]).filter((acc) => acc.isDemo === true);
+      // Criar lock para esta requisição
+      const tokenPromise = (async () => {
+        try {
+          // Obter configurações do usuário (tradeCurrency: USD, BTC, ou DEMO)
+          const settings = await this.settingsService.getSettings(userId);
+          const tradeCurrency = settings.tradeCurrency || 'USD';
 
-        if (usdDemoAccounts.length > 0) {
-          targetLoginid = usdDemoAccounts[0].loginid;
-          this.logger.log(`[GetCorrectToken] ✅ Usando conta demo USD: ${targetLoginid}`);
-        } else {
-          // Buscar qualquer conta demo
-          const demoAccounts: AccountEntry[] = allAccounts.filter((acc) => acc.isDemo === true);
-          if (demoAccounts.length > 0) {
-            targetLoginid = demoAccounts[0].loginid;
-            this.logger.log(`[GetCorrectToken] ✅ Usando conta demo (qualquer moeda): ${targetLoginid}`);
-          } else {
-            this.logger.warn(`[GetCorrectToken] ⚠️ Nenhuma conta demo encontrada, usando loginid padrão`);
-            targetLoginid = derivInfo.loginid || undefined;
+          // Obter informações da Deriv (contas e tokens)
+          const derivInfo: any = await this.derivService.connectAndGetAccount(providedToken || '', parseInt(this.appId), tradeCurrency === 'DEMO' ? 'USD' : tradeCurrency);
+
+          if (!derivInfo) {
+            this.logger.warn(`[GetCorrectToken] DerivInfo não disponível, usando token fornecido`);
+            if (!providedToken) {
+              throw new Error('Token não fornecido e DerivInfo não disponível');
+            }
+            return providedToken;
           }
+
+          // Acessar raw se disponível (pode não estar no tipo, mas existe em runtime)
+          const raw = derivInfo.raw || {};
+          const tokensByLoginId = raw.tokensByLoginId || {};
+          let targetLoginid: string | undefined;
+
+          // Se for DEMO, buscar conta demo
+          if (tradeCurrency === 'DEMO') {
+            type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
+            const accountsByCurrency = raw.accountsByCurrency || derivInfo.accountsByCurrency || {};
+            const allAccounts: AccountEntry[] = Object.values(accountsByCurrency).flat() as AccountEntry[];
+            const usdDemoAccounts: AccountEntry[] = ((accountsByCurrency['USD'] || []) as AccountEntry[]).filter((acc) => acc.isDemo === true);
+
+            if (usdDemoAccounts.length > 0) {
+              targetLoginid = usdDemoAccounts[0].loginid;
+              this.logger.log(`[GetCorrectToken] ✅ Usando conta demo USD: ${targetLoginid}`);
+            } else {
+              // Buscar qualquer conta demo
+              const demoAccounts: AccountEntry[] = allAccounts.filter((acc) => acc.isDemo === true);
+              if (demoAccounts.length > 0) {
+                targetLoginid = demoAccounts[0].loginid;
+                this.logger.log(`[GetCorrectToken] ✅ Usando conta demo (qualquer moeda): ${targetLoginid}`);
+              } else {
+                this.logger.warn(`[GetCorrectToken] ⚠️ Nenhuma conta demo encontrada, usando loginid padrão`);
+                targetLoginid = derivInfo.loginid || undefined;
+              }
+            }
+          } else {
+            // Para moedas reais, usar o loginid da conta selecionada
+            targetLoginid = derivInfo.loginid || undefined;
+            this.logger.log(`[GetCorrectToken] Usando conta real: ${targetLoginid}`);
+          }
+
+          // Buscar token do loginid específico
+          let token = (targetLoginid && tokensByLoginId[targetLoginid]) || null;
+
+          if (!token) {
+            // Fallback: usar o primeiro token disponível ou o token fornecido
+            const loginIds = Object.keys(tokensByLoginId);
+            if (loginIds.length > 0) {
+              token = tokensByLoginId[loginIds[0]];
+              this.logger.warn(`[GetCorrectToken] Token não encontrado para loginid ${targetLoginid}, usando primeiro disponível: ${loginIds[0]}`);
+            } else if (providedToken) {
+              token = providedToken;
+              this.logger.warn(`[GetCorrectToken] Nenhum token em tokensByLoginId, usando token fornecido`);
+            } else {
+              throw new Error(`Token não encontrado para loginid ${targetLoginid} e nenhum token fornecido`);
+            }
+          }
+
+          this.logger.log(`[GetCorrectToken] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'}`);
+          
+          // ✅ OTIMIZAÇÃO: Salvar no cache
+          this.tokenCache.set(cacheKey, {
+            token,
+            timestamp: Date.now(),
+          });
+          
+          return token;
+        } catch (error) {
+          this.logger.error(`[GetCorrectToken] Erro ao obter token correto:`, error);
+          // Fallback: usar token fornecido se disponível
+          if (providedToken) {
+            this.logger.warn(`[GetCorrectToken] Usando token fornecido como fallback`);
+            return providedToken;
+          }
+          throw error;
+        } finally {
+          // Remover lock após conclusão
+          this.tokenCacheLocks.delete(cacheKey);
         }
-      } else {
-        // Para moedas reais, usar o loginid da conta selecionada
-        targetLoginid = derivInfo.loginid || undefined;
-        this.logger.log(`[GetCorrectToken] Usando conta real: ${targetLoginid}`);
-      }
+      })();
 
-      // Buscar token do loginid específico
-      let token = (targetLoginid && tokensByLoginId[targetLoginid]) || null;
-
-      if (!token) {
-        // Fallback: usar o primeiro token disponível ou o token fornecido
-        const loginIds = Object.keys(tokensByLoginId);
-        if (loginIds.length > 0) {
-          token = tokensByLoginId[loginIds[0]];
-          this.logger.warn(`[GetCorrectToken] Token não encontrado para loginid ${targetLoginid}, usando primeiro disponível: ${loginIds[0]}`);
-        } else if (providedToken) {
-          token = providedToken;
-          this.logger.warn(`[GetCorrectToken] Nenhum token em tokensByLoginId, usando token fornecido`);
-        } else {
-          throw new Error(`Token não encontrado para loginid ${targetLoginid} e nenhum token fornecido`);
-        }
-      }
-
-      this.logger.log(`[GetCorrectToken] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'}`);
-      return token;
+      // Armazenar lock
+      this.tokenCacheLocks.set(cacheKey, tokenPromise);
+      
+      return await tokenPromise;
     } catch (error) {
       this.logger.error(`[GetCorrectToken] Erro ao obter token correto:`, error);
       // Fallback: usar token fornecido se disponível
