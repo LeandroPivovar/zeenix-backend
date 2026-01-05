@@ -80,7 +80,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // Este método pode ser usado para notificações adicionais se necessário
   }
 
-  async getUserState(userId: string): AutonomousAgentState | null {
+  async getUserState(userId: string): Promise<AutonomousAgentState | null> {
     // Obter estado do serviço principal
     const config = await this.agentService.getAgentConfig(userId);
     if (!config) return null;

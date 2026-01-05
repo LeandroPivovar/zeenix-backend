@@ -53,7 +53,7 @@ export interface IAutonomousAgentStrategy {
   deactivateUser(userId: string): Promise<void>;
   processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision>;
   onContractFinish(userId: string, result: { win: boolean; profit: number; contractId: string }): Promise<void>;
-  getUserState(userId: string): AutonomousAgentState | null;
+  getUserState(userId: string): Promise<AutonomousAgentState | null>;
   resetDailySession(userId: string): Promise<void>;
 }
 

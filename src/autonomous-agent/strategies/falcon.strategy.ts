@@ -285,7 +285,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     await this.updateUserStateInDb(userId, state);
   }
 
-  async getUserState(userId: string): AutonomousAgentState | null {
+  async getUserState(userId: string): Promise<AutonomousAgentState | null> {
     const state = this.userStates.get(userId);
     if (!state) return null;
 
