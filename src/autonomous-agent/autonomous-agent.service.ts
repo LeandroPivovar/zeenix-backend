@@ -83,9 +83,9 @@ const SENTINEL_CONFIG = {
   contractDurationMax: 10, // Duração máxima em ticks
   // Trading Mode configurations
   tradingModes: {
-    veloz: { ticksRequired: 10, minConfidenceScore: 65 },
-    normal: { ticksRequired: 20, minConfidenceScore: 50 },
-    lento: { ticksRequired: 50, minConfidenceScore: 80 },
+    veloz: { ticksRequired: 20, minConfidenceScore: 60 },
+    normal: { ticksRequired: 50, minConfidenceScore: 50 },
+    lento: { ticksRequired: 100, minConfidenceScore: 80 },
   },
   // Management Mode multipliers
   managementMultipliers: {
@@ -112,6 +112,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly priceHistory = new Map<string, PriceTick[]>();
   private readonly maxHistorySize = 100;
   private wsConnections = new Map<string, WebSocket>();
+  // ✅ Keep-alive intervals por usuário (para manter conexões WebSocket ativas)
+  private keepAliveIntervals = new Map<string, NodeJS.Timeout>();
   // ✅ Controle de execução simultânea do updateTradesWithMissingPrices
   private updateInProgress = new Set<string>();
   private readonly appId = process.env.DERIV_APP_ID || '1089';
@@ -380,6 +382,7 @@ export class AutonomousAgentService implements OnModuleInit {
       tradingMode?: string;
       stopLossType?: string;
       initialBalance?: number;
+      agentType?: string; // ✅ Novo: Tipo de agente (sentinel ou falcon)
     },
   ): Promise<void> {
     try {
@@ -405,6 +408,7 @@ export class AutonomousAgentService implements OnModuleInit {
       const tradingMode = config.tradingMode || 'normal';
       const stopLossType = config.stopLossType || 'normal';
       const initialBalance = config.initialBalance || 0;
+      const agentType = config.agentType || 'sentinel'; // ✅ Padrão: sentinel
 
       if (existing && existing.length > 0) {
         // Atualizar existente
@@ -418,6 +422,7 @@ export class AutonomousAgentService implements OnModuleInit {
             deriv_token = ?,
             currency = ?,
             symbol = ?,
+            agent_type = ?,
             strategy = ?,
             risk_level = ?,
             trading_mode = ?,
@@ -443,6 +448,7 @@ export class AutonomousAgentService implements OnModuleInit {
           correctToken, // Usar token correto baseado na conta configurada
           config.currency || 'USD',
           symbol,
+          agentType, // ✅ Novo: Tipo de agente
           strategy,
           riskLevel,
           tradingMode,
@@ -470,9 +476,9 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config (
             user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit, initial_balance,
-            deriv_token, currency, symbol, strategy, risk_level, trading_mode, stop_loss_type,
+            deriv_token, currency, symbol, agent_type, strategy, risk_level, trading_mode, stop_loss_type,
             session_date, session_status, next_trade_at, created_at, updated_at
-          ) VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'active', DATE_ADD(NOW(), INTERVAL ? SECOND), NOW(), NOW())`,
+          ) VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'active', DATE_ADD(NOW(), INTERVAL ? SECOND), NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -482,6 +488,7 @@ export class AutonomousAgentService implements OnModuleInit {
             correctToken, // Usar token correto baseado na conta configurada
             config.currency || 'USD',
             symbol,
+            agentType, // ✅ Novo: Tipo de agente
             strategy,
             riskLevel,
             tradingMode,
@@ -583,6 +590,8 @@ export class AutonomousAgentService implements OnModuleInit {
           this.logger.warn(`[DeactivateAgent] Erro ao fechar WebSocket:`, wsError);
         }
         this.wsConnections.delete(userId);
+        // ✅ Parar keep-alive ao desativar agente
+        this.stopKeepAlive(userId);
         await this.saveLog(userId, 'INFO', 'API', 'WebSocket desconectado.');
       }
 
@@ -1465,7 +1474,10 @@ export class AutonomousAgentService implements OnModuleInit {
   ): Promise<{ entryPrice: number; exitPrice: number; profit: number; status: string } | null> {
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      // ✅ Adicionar header Origin para melhor compatibilidade
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
 
       const timeout = setTimeout(() => {
         ws.close();
@@ -1614,7 +1626,10 @@ export class AutonomousAgentService implements OnModuleInit {
 
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      // ✅ Adicionar header Origin para melhor compatibilidade
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
 
       let contractId: string | null = null;
       let isCompleted = false;
@@ -2234,7 +2249,10 @@ export class AutonomousAgentService implements OnModuleInit {
   private async calculateMartingaleStake(state: AutonomousAgentState, contractType: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      // ✅ Adicionar header Origin para melhor compatibilidade
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
       let isCompleted = false;
 
       const timeout = setTimeout(() => {
@@ -3101,7 +3119,10 @@ export class AutonomousAgentService implements OnModuleInit {
 
     try {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket(endpoint);
+      // ✅ Adicionar header Origin (como nas estratégias da IA) para melhor compatibilidade
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
 
       let isAuthorized = false;
       let subscriptionId: string | null = null;
@@ -3133,6 +3154,9 @@ export class AutonomousAgentService implements OnModuleInit {
             isAuthorized = true;
             this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
             this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`).catch(() => { });
+
+            // ✅ Iniciar keep-alive para manter conexão ativa (evita expiração após 2 min)
+            this.startKeepAlive(userId, ws);
 
             // Subscribir aos ticks
             ws.send(JSON.stringify({
@@ -3195,6 +3219,8 @@ export class AutonomousAgentService implements OnModuleInit {
       ws.on('close', () => {
         this.logger.warn(`[WebSocket][${userId}] 🔌 Conexão WebSocket fechada`);
         this.wsConnections.delete(userId);
+        // ✅ Parar keep-alive quando conexão fechar
+        this.stopKeepAlive(userId);
         this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.').catch(() => { });
 
         // Tentar reconectar se o agente ainda estiver ativo
@@ -3215,6 +3241,49 @@ export class AutonomousAgentService implements OnModuleInit {
       setTimeout(() => {
         this.establishWebSocketConnection(userId);
       }, 10000);
+    }
+  }
+
+  // ============================================
+  // KEEP-ALIVE (MANTER CONEXÕES ATIVAS)
+  // ============================================
+
+  /**
+   * ✅ Inicia keep-alive para uma conexão WebSocket (envia ping a cada 90s)
+   * Evita que a Deriv feche a conexão após 2 minutos de inatividade
+   */
+  private startKeepAlive(userId: string, ws: WebSocket): void {
+    // Parar keep-alive anterior se existir
+    this.stopKeepAlive(userId);
+
+    const interval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug(`[KeepAlive][${userId}] Ping enviado para manter conexão ativa`);
+        } catch (error) {
+          this.logger.error(`[KeepAlive][${userId}] Erro ao enviar ping:`, error);
+          this.stopKeepAlive(userId);
+        }
+      } else {
+        this.logger.warn(`[KeepAlive][${userId}] WebSocket não está aberto, parando keep-alive`);
+        this.stopKeepAlive(userId);
+      }
+    }, 90000); // 90 segundos (menos de 2 minutos de timeout da Deriv)
+
+    this.keepAliveIntervals.set(userId, interval);
+    this.logger.log(`[KeepAlive][${userId}] ✅ Keep-alive iniciado (ping a cada 90s)`);
+  }
+
+  /**
+   * ✅ Para o keep-alive de um usuário
+   */
+  private stopKeepAlive(userId: string): void {
+    const interval = this.keepAliveIntervals.get(userId);
+    if (interval) {
+      clearInterval(interval);
+      this.keepAliveIntervals.delete(userId);
+      this.logger.debug(`[KeepAlive][${userId}] Keep-alive parado`);
     }
   }
 
