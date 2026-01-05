@@ -1095,9 +1095,9 @@ export class AutonomousAgentService implements OnModuleInit {
             'RISK',
             `STOP LOSS BLINDADO ATINGIDO! Saldo atual (${currentBalance.toFixed(2)}) abaixo do saldo blindado (${blindBalance.toFixed(2)}). Pico=${profitPeak.toFixed(2)}, Protegido=${protectedProfit.toFixed(2)}.`,
           );
-          // ✅ CORREÇÃO: Usar 'loss' ao invés de 'stopped_loss' para evitar erro de truncamento
+          // ✅ CORREÇÃO: Usar 'stopped_loss' (valor válido do ENUM)
           await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET session_status = 'loss' WHERE user_id = ?`,
+            `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
             [state.userId],
           );
           return false;
@@ -3325,7 +3325,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ CORREÇÃO: Usar 'profit' ao invés de 'stopped_profit' para evitar erro de truncamento
     await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = 'profit' WHERE user_id = ?`,
+      `UPDATE autonomous_agent_config SET session_status = 'stopped_profit' WHERE user_id = ?`,
       [userId],
     );
 
@@ -3348,7 +3348,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ CORREÇÃO: Usar 'loss' ao invés de 'stopped_loss' para evitar erro de truncamento
     await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = 'loss' WHERE user_id = ?`,
+      `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
       [userId],
     );
 
