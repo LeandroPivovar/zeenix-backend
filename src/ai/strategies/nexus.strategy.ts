@@ -101,26 +101,69 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.30;
+        
+        // ✅ NEXUS: Payout varia conforme a barreira (conforme documentação)
+        // -0.15: ~30% payout | -0.25: ~25% payout | -0.35: ~20% payout | -0.45: ~15% payout
+        let payoutRate = 0.30; // Entrada Normal (-0.15)
+        if (this.consecutiveLosses === 1) {
+            payoutRate = 0.25; // Recuperação M1 (-0.25)
+        } else if (this.consecutiveLosses === 2) {
+            payoutRate = 0.20; // Recuperação M2 (-0.35)
+        } else if (this.consecutiveLosses >= 3) {
+            payoutRate = 0.15; // Recuperação M3+ (-0.45)
+        }
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
+                    // ✅ Conservador: Recuperar apenas o valor perdido (break-even)
+                    nextStake = this.totalLossAccumulated / payoutRate;
+                    if (logger && userId && symbol && logCallback) {
+                        logger.log(
+                            `[NEXUS][${userId}] 🔄 MARTINGALE (CONSERVADOR) | ` +
+                            `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
+                            `Payout: ${(payoutRate * 100).toFixed(0)}% | Stake calculado: $${nextStake.toFixed(2)}`
+                        );
+                    }
                 } else {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
+                    if (logger && userId && symbol && logCallback) {
+                        logger.log(`[NEXUS][${userId}] 🛑 Limite de 5 martingales atingido. Resetando para aposta base.`);
+                    }
                 }
             } else if (this.riskMode === 'MODERADO') {
+                // ✅ Moderado: Recuperar 100% das perdas + 25% de lucro
                 const targetRecovery = this.totalLossAccumulated + (baseStake * 0.25);
-                nextStake = targetRecovery / PAYOUT_RATE;
+                nextStake = targetRecovery / payoutRate;
+                if (logger && userId && symbol && logCallback) {
+                    logger.log(
+                        `[NEXUS][${userId}] 🔄 MARTINGALE (MODERADO) | ` +
+                        `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
+                        `Meta recuperação: $${targetRecovery.toFixed(2)} | Payout: ${(payoutRate * 100).toFixed(0)}% | Stake: $${nextStake.toFixed(2)}`
+                    );
+                }
             } else if (this.riskMode === 'AGRESSIVO') {
+                // ✅ Agressivo: Recuperar 100% das perdas + 50% de lucro
                 const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
-                nextStake = targetRecovery / PAYOUT_RATE;
+                nextStake = targetRecovery / payoutRate;
+                if (logger && userId && symbol && logCallback) {
+                    logger.log(
+                        `[NEXUS][${userId}] 🔄 MARTINGALE (AGRESSIVO) | ` +
+                        `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
+                        `Meta recuperação: $${targetRecovery.toFixed(2)} | Payout: ${(payoutRate * 100).toFixed(0)}% | Stake: $${nextStake.toFixed(2)}`
+                    );
+                }
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {
+            // ✅ Soros: Reinvestir lucro da última vitória (apenas 1 nível)
             nextStake = baseStake + lastProfit;
+            if (logger && userId && symbol && logCallback) {
+                logger.log(
+                    `[NEXUS][${userId}] 💰 SOROS | Base: $${baseStake.toFixed(2)} + Lucro: $${lastProfit.toFixed(2)} = Stake: $${nextStake.toFixed(2)}`
+                );
+            }
         }
 
         nextStake = Math.round(nextStake * 100) / 100;
