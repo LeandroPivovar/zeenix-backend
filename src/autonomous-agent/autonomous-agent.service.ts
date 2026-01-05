@@ -2198,9 +2198,133 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
+  /**
+   * Verifica se a coluna soros_profit existe no banco de dados
+   * Retorna true se existir, false caso contrário
+   */
+  private async hasSorosProfitColumn(): Promise<boolean> {
+    try {
+      const result = await this.dataSource.query(
+        `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'autonomous_agent_config' 
+         AND COLUMN_NAME = 'soros_profit'`
+      );
+      return result && result.length > 0 && result[0].count > 0;
+    } catch (error) {
+      this.logger.warn(`[HasSorosProfitColumn] Erro ao verificar coluna: ${error.message}`);
+      return false;
+    }
+  }
+
+  // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
+  private async checkStopLossAfterStake(
+    state: AutonomousAgentState,
+    calculatedStake: number,
+  ): Promise<{ canProceed: boolean; message?: string }> {
+    try {
+      // Obter configuração do Stop Loss
+      const config = await this.dataSource.query(
+        `SELECT stop_loss_type, daily_loss_limit, daily_loss, daily_profit_target, profit_peak, initial_balance, daily_profit FROM autonomous_agent_config WHERE user_id = ?`,
+        [state.userId],
+      );
+
+      if (config && config.length > 0) {
+        const cfg = config[0];
+
+        // Se for Stop Loss Blindado
+        if (cfg.stop_loss_type === 'blindado') {
+          // Calcular limite blindado
+          const profitTarget = parseFloat(cfg.daily_profit_target) || 0;
+          const profitPeak = parseFloat(cfg.profit_peak) || 0;
+
+          // Só verificar se já tiver ativado (atingido 25% da meta)
+          if (profitPeak >= profitTarget * 0.25) {
+            const protectedProfit = profitPeak * 0.50; // Protege 50% do pico
+            const initialBalance = parseFloat(cfg.initial_balance) || 0;
+            const blindBalance = initialBalance + protectedProfit;
+            const currentBalance = initialBalance + parseFloat(cfg.daily_profit) - parseFloat(cfg.daily_loss);
+
+            // Quanto ainda podemos perder até bater no blindBalance?
+            const allowedLoss = currentBalance - blindBalance;
+
+            if (calculatedStake > allowedLoss) {
+              if (allowedLoss <= 0) {
+                return {
+                  canProceed: false,
+                  message: `Stop Loss Blindado atingido. Saldo protegido: ${blindBalance.toFixed(2)}`,
+                };
+              }
+
+              return {
+                canProceed: false,
+                message: `Stake (${calculatedStake.toFixed(2)}) ultrapassa limite do Stop Blindado. Máximo permitido: ${allowedLoss.toFixed(2)}`,
+              };
+            }
+          }
+
+          return { canProceed: true };
+        }
+
+        // Para Stop Loss Normal: verificar se o stake calculado ultrapassaria o limite
+        const currentLoss = parseFloat(cfg.daily_loss) || 0;
+        const lossLimit = parseFloat(cfg.daily_loss_limit) || 0;
+
+        if (currentLoss >= lossLimit) {
+          return {
+            canProceed: false,
+            message: `Limite de perda diária atingido (${currentLoss.toFixed(2)} >= ${lossLimit.toFixed(2)})`,
+          };
+        }
+
+        // Verificar se a próxima perda potencial (stake calculado) ultrapassaria o limite
+        const potentialLoss = currentLoss + calculatedStake;
+        if (potentialLoss > lossLimit) {
+          return {
+            canProceed: false,
+            message: `Stake calculado (${calculatedStake.toFixed(2)}) ultrapassaria limite. perda_atual=${currentLoss.toFixed(2)}, limite=${lossLimit.toFixed(2)}, potencial=${potentialLoss.toFixed(2)}`,
+          };
+        }
+      }
+
+      return { canProceed: true };
+    } catch (error) {
+      this.logger.error(`[CheckStopLossAfterStake][${state.userId}] Erro:`, error);
+      return { canProceed: true }; // Em caso de erro, permitir prosseguir
+    }
+  }
+
+  // Método auxiliar para consultar payout e calcular stake de Martingale
+  private async calculateMartingaleStake(state: AutonomousAgentState, contractType: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
+      let isCompleted = false;
+
+      const timeout = setTimeout(() => {
+        if (!isCompleted) {
+          isCompleted = true;
+          ws.close();
+          reject(new Error('Timeout ao consultar payout'));
+        }
+      }, 10000);
+
+      const finalize = (error?: Error, result?: number) => {
+        if (!isCompleted) {
+          isCompleted = true;
+          clearTimeout(timeout);
+          ws.close();
+          if (error) {
+            reject(error);
+          } else if (result !== undefined) {
+            resolve(result);
+          }
+        }
+      };
+
       ws.on('open', () => {
-        this.logger.log(`[ExecuteTrade] WS conectado para trade ${tradeId}`);
-        this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida.');
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
 
@@ -2208,11 +2332,6 @@ export class AutonomousAgentService implements OnModuleInit {
         try {
           const msg = JSON.parse(data.toString());
 
-          // Log de debug: todas as mensagens recebidas
-          this.logger.debug(`[ExecuteTrade] Mensagem recebida. msg_type=${msg.msg_type || 'unknown'}, trade_id=${tradeId}`);
-          this.logger.debug(`[ExecuteTrade] Mensagem completa:`, JSON.stringify(msg, null, 2));
-
-          // Verificar erros (pode estar em msg.error ou em msg.echo_req com error)
           if (msg.error) {
             const errorMessage = msg.error.message || msg.error.code || JSON.stringify(msg.error);
             const errorDetails = JSON.stringify(msg.error);
