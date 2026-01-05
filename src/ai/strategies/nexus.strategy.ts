@@ -207,26 +207,31 @@ export class NexusStrategy implements IStrategy {
         this.ticks.push(tick);
         if (this.ticks.length > 100) this.ticks.shift();
 
+        // ✅ Log de debug: verificar se está recebendo ticks
+        if (this.users.size > 0 && this.ticks.length % 10 === 0) {
+            this.logger.debug(`[NEXUS] 📥 Tick recebido | Valor: ${tick.value.toFixed(2)} | Dígito: ${tick.digit} | Usuários ativos: ${this.users.size} | Buffer: ${this.ticks.length}`);
+        }
+
         for (const state of this.users.values()) {
             state.ticksColetados++;
             
             // ✅ Log de coleta de ticks (similar à Orion)
             const requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
+            const ticksAtuais = state.ticksColetados;
+            const ticksFaltando = requiredTicks - ticksAtuais;
+            const key = `nexus_${state.userId}`;
             
-            if (state.ticksColetados < requiredTicks) {
-                const ticksAtuais = state.ticksColetados;
-                const ticksFaltando = requiredTicks - ticksAtuais;
-                
+            if (ticksAtuais < requiredTicks) {
                 // ✅ Logar apenas uma vez quando começar a coletar
-                const key = `nexus_${state.userId}`;
                 if (!this.coletaLogsEnviados.has(key)) {
                     this.coletaLogsEnviados.set(key, new Set());
                     this.saveNexusLog(state.userId, this.symbol, 'info', 
                         `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Coleta inicial iniciada.`);
                 }
                 
-                // ✅ Logar progresso a cada 10% ou no final
-                if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(requiredTicks / 10)) === 0) {
+                // ✅ Logar progresso: a cada tick para VELOZ (10 ticks), a cada 2 para BALANCEADO (20 ticks), a cada 5 para PRECISO (50 ticks)
+                const intervaloLog = state.mode === 'VELOZ' ? 1 : state.mode === 'BALANCEADO' ? 2 : 5;
+                if (ticksAtuais % intervaloLog === 0 || ticksAtuais === requiredTicks) {
                     this.logger.debug(`[NEXUS][${state.userId}] Coletando amostra (${ticksAtuais}/${requiredTicks})`);
                     this.saveNexusLog(state.userId, this.symbol, 'info', 
                         `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Ticks coletados: ${ticksAtuais}/${requiredTicks} | Faltam: ${ticksFaltando}`);
@@ -236,8 +241,7 @@ export class NexusStrategy implements IStrategy {
             }
             
             // ✅ Logar quando completar a coleta (apenas uma vez)
-            if (state.ticksColetados === requiredTicks) {
-                const key = `nexus_${state.userId}`;
+            if (ticksAtuais === requiredTicks) {
                 if (this.coletaLogsEnviados.has(key)) {
                     const marcosLogados = this.coletaLogsEnviados.get(key)!;
                     if (!marcosLogados.has(100)) {
@@ -249,7 +253,7 @@ export class NexusStrategy implements IStrategy {
             }
             
             // ✅ Log de tick quando já coletou dados suficientes (a cada 10 ticks para não spammar)
-            if (state.ticksColetados >= requiredTicks && state.ticksColetados % 10 === 0) {
+            if (ticksAtuais >= requiredTicks && ticksAtuais % 10 === 0) {
                 const ultimoTick = this.ticks[this.ticks.length - 1];
                 const digit = ultimoTick.digit;
                 const paridade = digit % 2 === 0 ? 'PAR' : 'IMPAR';
