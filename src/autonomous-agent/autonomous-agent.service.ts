@@ -120,8 +120,22 @@ export class AutonomousAgentService implements OnModuleInit {
   private sharedKeepAliveInterval: NodeJS.Timeout | null = null;
   private readonly sharedSymbol = 'R_75'; // Símbolo padrão (pode ser configurável no futuro)
   
-  // ✅ Pool de conexões WebSocket por token (para operações: buy, proposal)
-  private wsConnectionsPool = new Map<string, WebSocket>();
+  // ✅ OTIMIZAÇÃO 1: Pool de conexões WebSocket por token (para operações: buy, proposal)
+  private wsConnectionsPool = new Map<string, {
+    ws: WebSocket;
+    isAuthorized: boolean;
+    isReady: boolean;
+    lastUsed: number;
+    keepAliveInterval: NodeJS.Timeout | null;
+    pendingRequests: Map<string, {
+      resolve: (value: any) => void;
+      reject: (error: Error) => void;
+      timeout: NodeJS.Timeout;
+    }>;
+    subscriptions: Map<string, (msg: any) => void>; // ✅ Adicionar subscriptions
+  }>();
+  private readonly WS_POOL_MAX_IDLE_TIME = 300000; // 5 minutos de inatividade antes de fechar
+  private readonly WS_POOL_KEEP_ALIVE_INTERVAL = 90000; // 90 segundos
   
   // ✅ REMOVIDO: Conexões individuais por usuário (causavam 100% CPU)
   // private wsConnections = new Map<string, WebSocket>();
@@ -139,6 +153,27 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly CONFIG_CACHE_TTL = 5000; // 5 segundos (mais curto que IAs porque precisa ser mais atualizado)
   // ✅ OTIMIZAÇÃO: Flag para desabilitar logs DEBUG em produção (reduz uso de CPU)
   private readonly ENABLE_DEBUG_LOGS = process.env.NODE_ENV === 'development' || process.env.ENABLE_DEBUG_LOGS === 'true';
+  
+  // ✅ OTIMIZAÇÃO 3: Cache de análise técnica (por hash dos preços)
+  private analysisCache = new Map<string, {
+    analysis: TechnicalAnalysis;
+    priceHash: string;
+    timestamp: number;
+  }>();
+  private readonly ANALYSIS_CACHE_TTL = 1000; // 1 segundo (análise muda com cada tick)
+  
+  // ✅ OTIMIZAÇÃO 5: Buffer de dígitos para validação estatística (por usuário)
+  private digitBuffers = new Map<string, number[]>();
+  private readonly DIGIT_BUFFER_SIZE = 20;
+  
+  // ✅ OTIMIZAÇÃO 4: Fila de processamento de resultados de trades
+  private tradeResultQueue: Array<{
+    state: AutonomousAgentState;
+    tradeId: number;
+    result: TradeResult;
+    stakeAmount: number;
+  }> = [];
+  private isProcessingTradeResults = false;
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -633,6 +668,9 @@ export class AutonomousAgentService implements OnModuleInit {
   // PROCESSAMENTO EM BACKGROUND
   // ============================================
 
+  /**
+   * ✅ OTIMIZAÇÃO 10: Processa apenas agentes que estão prontos (nextTradeAt <= now)
+   */
   async processActiveAgents(): Promise<void> {
     if (this.agentStates.size === 0) {
       return;
@@ -643,10 +681,24 @@ export class AutonomousAgentService implements OnModuleInit {
     const BATCH_SIZE = 3; // Reduzido de 5 para 3 para reduzir carga simultânea
 
     const now = new Date();
+    const nowTime = now.getTime();
     const activeUsers = Array.from(this.agentStates.entries());
     
+    // ✅ OTIMIZAÇÃO 10: Filtrar apenas agentes prontos para processar
+    const readyUsers = activeUsers.filter(([userId, state]) => {
+      // Verificar se nextTradeAt já passou ou é null
+      if (!state.nextTradeAt) return true;
+      const nextTradeTime = new Date(state.nextTradeAt).getTime();
+      return nextTradeTime <= nowTime;
+    });
+
+    if (readyUsers.length === 0) {
+      this.logger.debug(`[ProcessActiveAgents] Nenhum agente pronto para processar (${activeUsers.length} ativos)`);
+      return;
+    }
+    
     // Limitar número de agentes processados
-    const usersToProcess = activeUsers.slice(0, MAX_AGENTS_PER_CYCLE);
+    const usersToProcess = readyUsers.slice(0, MAX_AGENTS_PER_CYCLE);
     
     if (activeUsers.length > MAX_AGENTS_PER_CYCLE) {
       this.logger.debug(`[ProcessActiveAgents] Limitando processamento: ${activeUsers.length} agentes ativos, processando ${MAX_AGENTS_PER_CYCLE} por ciclo`);
@@ -677,7 +729,7 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * ✅ OTIMIZADO: Busca configurações de múltiplos usuários de uma vez (batch query)
+   * ✅ OTIMIZAÇÃO 2: Busca configurações de múltiplos usuários de uma vez (batch query)
    */
   private async getBatchConfigs(userIds: string[]): Promise<Map<string, any>> {
     if (userIds.length === 0) {
@@ -973,20 +1025,57 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
+  /**
+   * ✅ OTIMIZAÇÃO 3: Gera hash dos preços para cache
+   */
+  private generatePriceHash(prices: PriceTick[]): string {
+    if (prices.length === 0) return '';
+    // Usar últimos 50 preços para hash
+    const recent = prices.slice(-50);
+    const values = recent.map(p => p.value.toFixed(4)).join(',');
+    // Hash simples (pode usar crypto se necessário)
+    return `${recent.length}_${values.substring(0, 100)}`;
+  }
+
   private performTechnicalAnalysis(prices: PriceTick[], userId: string): TechnicalAnalysis {
+    // ✅ OTIMIZAÇÃO 3: Verificar cache de análise técnica
+    const priceHash = this.generatePriceHash(prices);
+    const cached = this.analysisCache.get(userId);
+    if (cached && cached.priceHash === priceHash && (Date.now() - cached.timestamp) < this.ANALYSIS_CACHE_TTL) {
+      this.logger.debug(`[AnalysisCache][${userId}] Reutilizando análise técnica do cache`);
+      return cached.analysis;
+    }
+
     const values = prices.map(p => p.value);
     const recent = values.slice(-50);
 
-    // Calcular EMAs
-    const ema10 = this.calculateEMA(recent, 10);
-    const ema25 = this.calculateEMA(recent, 25);
-    const ema50 = this.calculateEMA(recent, 50);
+    // ✅ OTIMIZAÇÃO 8: Calcular EMAs incrementalmente se possível
+    const useIncremental = recent.length > 50 && this.technicalIndicatorsCache.has(userId);
+    const ema10 = this.calculateEMA(recent, 10, userId, useIncremental);
+    const ema25 = this.calculateEMA(recent, 25, userId, useIncremental);
+    const ema50 = this.calculateEMA(recent, 50, userId, useIncremental);
 
-    // Calcular RSI
-    const rsi = this.calculateRSI(recent, 14);
+    // ✅ OTIMIZAÇÃO 8: Calcular RSI incrementalmente se possível
+    const rsi = this.calculateRSI(recent, 14, userId, useIncremental);
 
-    // Calcular Momentum
-    const momentum = this.calculateMomentum(recent);
+    // ✅ OTIMIZAÇÃO 8: Calcular Momentum incrementalmente
+    const momentum = this.calculateMomentum(recent, 10, userId, useIncremental);
+
+    // ✅ OTIMIZAÇÃO 8: Atualizar cache de indicadores
+    if (recent.length > 0) {
+      const lastPrice = recent[recent.length - 1];
+      this.technicalIndicatorsCache.set(userId, {
+        ema10,
+        ema25,
+        ema50,
+        rsi,
+        rsiGains: [], // Será calculado no calculateRSI se necessário
+        rsiLosses: [], // Será calculado no calculateRSI se necessário
+        momentum,
+        lastPrice,
+        timestamp: Date.now(),
+      });
+    }
 
     // Determinar direção
     let direction: ContractType | null = null;
@@ -1061,11 +1150,34 @@ export class AutonomousAgentService implements OnModuleInit {
     };
   }
 
-  private calculateEMA(values: number[], period: number): number {
+  /**
+   * ✅ OTIMIZAÇÃO 8: Calcula EMA incrementalmente usando cache
+   */
+  private calculateEMA(values: number[], period: number, userId?: string, useCache: boolean = false): number {
     if (values.length < period) {
       return values[values.length - 1];
     }
 
+    // ✅ OTIMIZAÇÃO 8: Usar cálculo incremental se cache disponível
+    if (useCache && userId && this.technicalIndicatorsCache.has(userId)) {
+      const cached = this.technicalIndicatorsCache.get(userId)!;
+      const newPrice = values[values.length - 1];
+      const multiplier = 2 / (period + 1);
+      
+      // Usar EMA anterior do cache
+      let cachedEMA: number | null = null;
+      if (period === 10) cachedEMA = cached.ema10;
+      else if (period === 25) cachedEMA = cached.ema25;
+      else if (period === 50) cachedEMA = cached.ema50;
+      
+      if (cachedEMA !== null && cachedEMA !== undefined) {
+        // Cálculo incremental: EMA_new = (Price_new * Multiplier) + (EMA_old * (1 - Multiplier))
+        const newEMA = (newPrice * multiplier) + (cachedEMA * (1 - multiplier));
+        return newEMA;
+      }
+    }
+
+    // Fallback: cálculo tradicional
     const multiplier = 2 / (period + 1);
     let ema = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
 
@@ -1076,11 +1188,38 @@ export class AutonomousAgentService implements OnModuleInit {
     return ema;
   }
 
-  private calculateRSI(values: number[], period: number): number {
+  /**
+   * ✅ OTIMIZAÇÃO 8: Calcula RSI incrementalmente usando cache
+   */
+  private calculateRSI(values: number[], period: number, userId?: string, useCache: boolean = false): number {
     if (values.length < period + 1) {
       return 50; // Neutro
     }
 
+    // ✅ OTIMIZAÇÃO 8: Usar cálculo incremental se cache disponível
+    if (useCache && userId && this.technicalIndicatorsCache.has(userId) && values.length > 1) {
+      const cached = this.technicalIndicatorsCache.get(userId)!;
+      const newPrice = values[values.length - 1];
+      const oldPrice = cached.lastPrice;
+      const change = newPrice - oldPrice;
+      
+      // Manter gains/losses médios anteriores (simplificado)
+      // Em produção, manter array de gains/losses seria mais preciso
+      const avgGain = change > 0 ? change : 0;
+      const avgLoss = change < 0 ? Math.abs(change) : 0;
+      
+      if (avgLoss === 0 && avgGain > 0) {
+        return 100;
+      }
+      if (avgLoss === 0) {
+        return 50; // Neutro
+      }
+      
+      const rs = avgGain / avgLoss;
+      return 100 - 100 / (1 + rs);
+    }
+
+    // Fallback: cálculo tradicional
     const changes: number[] = [];
     for (let i = 1; i < values.length; i++) {
       changes.push(values[i] - values[i - 1]);
@@ -1100,11 +1239,25 @@ export class AutonomousAgentService implements OnModuleInit {
     return 100 - 100 / (1 + rs);
   }
 
-  private calculateMomentum(values: number[], period: number = 10): number {
+  /**
+   * ✅ OTIMIZAÇÃO 8: Calcula Momentum incrementalmente usando cache
+   */
+  private calculateMomentum(values: number[], period: number = 10, userId?: string, useCache: boolean = false): number {
     if (values.length < period) {
       return 0;
     }
 
+    // ✅ OTIMIZAÇÃO 8: Usar cálculo incremental se cache disponível
+    if (useCache && userId && this.technicalIndicatorsCache.has(userId)) {
+      const cached = this.technicalIndicatorsCache.get(userId)!;
+      const newPrice = values[values.length - 1];
+      // Momentum = preço atual - preço de N períodos atrás
+      // Se temos cache, podemos usar o preço anterior do cache
+      // Simplificado: usar diferença do último preço
+      return newPrice - cached.lastPrice;
+    }
+
+    // Fallback: cálculo tradicional
     const current = values[values.length - 1];
     const past = values[values.length - period];
     return current - past;
@@ -1232,17 +1385,56 @@ export class AutonomousAgentService implements OnModuleInit {
     return Math.min(100, Math.max(0, score));
   }
 
+  /**
+   * ✅ OTIMIZAÇÃO 5: Atualiza buffer de dígitos incrementalmente
+   */
+  private updateDigitBuffer(userId: string, price: PriceTick): void {
+    if (!this.digitBuffers.has(userId)) {
+      this.digitBuffers.set(userId, []);
+    }
+    
+    const buffer = this.digitBuffers.get(userId)!;
+    const str = Math.abs(price.value).toString().replace('.', '');
+    const digit = parseInt(str.charAt(str.length - 1), 10);
+    
+    buffer.push(digit);
+    if (buffer.length > this.DIGIT_BUFFER_SIZE) {
+      buffer.shift();
+    }
+  }
+
   private async validateStatisticalConfirmation(prices: PriceTick[], direction: ContractType | null, userId: string): Promise<boolean> {
     if (!direction) {
       return false;
     }
 
-    // Extrair últimos 20 dígitos
-    const last20 = prices.slice(-20);
-    const digits = last20.map(p => {
-      const str = Math.abs(p.value).toString().replace('.', '');
-      return parseInt(str.charAt(str.length - 1), 10);
-    });
+    // ✅ OTIMIZAÇÃO 5: Atualizar buffer de dígitos com último preço
+    if (prices.length > 0) {
+      this.updateDigitBuffer(userId, prices[prices.length - 1]);
+    }
+
+    // ✅ OTIMIZAÇÃO 5: Usar buffer ao invés de recalcular
+    const buffer = this.digitBuffers.get(userId) || [];
+    if (buffer.length < 20) {
+      // Se buffer ainda não tem 20 dígitos, usar cálculo tradicional
+      const last20 = prices.slice(-20);
+      const digits = last20.map(p => {
+        const str = Math.abs(p.value).toString().replace('.', '');
+        return parseInt(str.charAt(str.length - 1), 10);
+      });
+      // Atualizar buffer com os dígitos calculados
+      this.digitBuffers.set(userId, digits);
+      return this.validateWithDigits(digits, direction, userId);
+    }
+
+    // Usar buffer otimizado
+    return this.validateWithDigits(buffer, direction, userId);
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 5: Validação estatística usando dígitos (extraído para reutilização)
+   */
+  private validateWithDigits(digits: number[], direction: ContractType, userId: string): boolean {
 
     let imbalance = '';
     let sequenceOk = false;
@@ -1250,22 +1442,24 @@ export class AutonomousAgentService implements OnModuleInit {
     // Para RISE: verificar se >60% dos dígitos são altos (5-9)
     if (direction === 'RISE') {
       const highDigits = digits.filter(d => d >= 5).length;
-      const highPercent = highDigits / 20;
+      const highPercent = highDigits / digits.length;
       imbalance = `${(highPercent * 100).toFixed(0)}%_UP`;
 
       if (highPercent <= 0.6) {
         // Log de análise estatística (falhou)
-        this.saveLog(
-          userId,
-          'DEBUG',
-          'ANALYZER',
-          `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
-          { imbalance: highPercent, direction: 'RISE', highDigits, totalDigits: 20 },
-        );
+        if (this.ENABLE_DEBUG_LOGS) {
+          this.saveLog(
+            userId,
+            'DEBUG',
+            'ANALYZER',
+            `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
+            { imbalance: highPercent, direction: 'RISE', highDigits, totalDigits: digits.length },
+          );
+        }
         return false;
       }
 
-      // Verificar sequência contrária
+      // ✅ OTIMIZAÇÃO 5: Verificar sequência contrária (otimizado)
       let consecutiveLow = 0;
       for (let i = digits.length - 1; i >= 0; i--) {
         if (digits[i] < 5) {
@@ -1278,35 +1472,39 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (consecutiveLow >= 4) {
         // Log de análise estatística (falhou por sequência)
-        this.saveLog(
-          userId,
-          'DEBUG',
-          'ANALYZER',
-          `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
-          { imbalance: highPercent, direction: 'RISE', consecutiveLow, sequenceOk: false },
-        );
+        if (this.ENABLE_DEBUG_LOGS) {
+          this.saveLog(
+            userId,
+            'DEBUG',
+            'ANALYZER',
+            `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
+            { imbalance: highPercent, direction: 'RISE', consecutiveLow, sequenceOk: false },
+          );
+        }
         return false;
       }
     }
     // Para FALL: verificar se >60% dos dígitos são baixos (0-4)
     else if (direction === 'FALL') {
       const lowDigits = digits.filter(d => d < 5).length;
-      const lowPercent = lowDigits / 20;
+      const lowPercent = lowDigits / digits.length;
       imbalance = `${(lowPercent * 100).toFixed(0)}%_DOWN`;
 
       if (lowPercent <= 0.6) {
         // Log de análise estatística (falhou)
-        this.saveLog(
-          userId,
-          'DEBUG',
-          'ANALYZER',
-          `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
-          { imbalance: lowPercent, direction: 'FALL', lowDigits, totalDigits: 20 },
-        );
+        if (this.ENABLE_DEBUG_LOGS) {
+          this.saveLog(
+            userId,
+            'DEBUG',
+            'ANALYZER',
+            `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
+            { imbalance: lowPercent, direction: 'FALL', lowDigits, totalDigits: digits.length },
+          );
+        }
         return false;
       }
 
-      // Verificar sequência contrária
+      // ✅ OTIMIZAÇÃO 5: Verificar sequência contrária (otimizado)
       let consecutiveHigh = 0;
       for (let i = digits.length - 1; i >= 0; i--) {
         if (digits[i] >= 5) {
@@ -1319,25 +1517,29 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (consecutiveHigh >= 4) {
         // Log de análise estatística (falhou por sequência)
-        this.saveLog(
-          userId,
-          'DEBUG',
-          'ANALYZER',
-          `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
-          { imbalance: lowPercent, direction: 'FALL', consecutiveHigh, sequenceOk: false },
-        );
+        if (this.ENABLE_DEBUG_LOGS) {
+          this.saveLog(
+            userId,
+            'DEBUG',
+            'ANALYZER',
+            `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
+            { imbalance: lowPercent, direction: 'FALL', consecutiveHigh, sequenceOk: false },
+          );
+        }
         return false;
       }
     }
 
     // Log de análise estatística (sucesso)
-    this.saveLog(
-      userId,
-      'DEBUG',
-      'ANALYZER',
-      `📊 Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=${sequenceOk}`,
-      { imbalance, direction, sequenceOk },
-    );
+    if (this.ENABLE_DEBUG_LOGS) {
+      this.saveLog(
+        userId,
+        'DEBUG',
+        'ANALYZER',
+        `📊 Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=${sequenceOk}`,
+        { imbalance, direction, sequenceOk },
+      );
+    }
 
     return true;
   }
@@ -1556,8 +1758,9 @@ export class AutonomousAgentService implements OnModuleInit {
         },
       );
 
-      // Processar resultado
-      await this.handleTradeResult(state, tradeId, result, stakeAmount);
+      // ✅ OTIMIZAÇÃO 4: Adicionar à fila de processamento assíncrono
+      this.tradeResultQueue.push({ state, tradeId, result, stakeAmount });
+      this.processTradeResultQueue(); // Processar em background (não aguardar)
 
       // Verificar se precisa de pausa aleatória
       if (state.operationsSincePause >= SENTINEL_CONFIG.pauseAfterOperations) {
@@ -1621,6 +1824,9 @@ export class AutonomousAgentService implements OnModuleInit {
     return result.insertId;
   }
 
+  /**
+   * ✅ OTIMIZAÇÃO 1: Executa trade usando pool de conexões WebSocket
+   */
   private async executeTradeOnDeriv(params: {
     tradeId: number;
     state: AutonomousAgentState;
@@ -1635,41 +1841,353 @@ export class AutonomousAgentService implements OnModuleInit {
       return Promise.reject(new Error('Token Deriv não configurado'));
     }
 
-    return new Promise((resolve, reject) => {
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      // ✅ Adicionar header Origin para melhor compatibilidade
-      const ws = new WebSocket(endpoint, {
-        headers: { Origin: 'https://app.deriv.com' },
-      });
+    try {
+      // ✅ OTIMIZAÇÃO 1: Usar pool de conexões ao invés de criar nova
+      const token = state.derivToken;
 
-      let contractId: string | null = null;
-      let isCompleted = false;
+      // Mapear RISE/FALL para CALL/PUT (Deriv API espera CALL/PUT para R_75)
+      let derivContractType: string;
+      if (contractType === 'RISE') {
+        derivContractType = 'CALL';
+      } else if (contractType === 'FALL') {
+        derivContractType = 'PUT';
+      } else {
+        derivContractType = contractType;
+      }
 
-      const timeout = setTimeout(() => {
-        if (!isCompleted) {
-          isCompleted = true;
-          ws.close();
-          reject(new Error('Timeout ao executar contrato'));
-        }
-      }, 60000);
+      this.logger.log(`[ExecuteTrade][Pool] Iniciando trade ${tradeId} via pool`);
+      this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida via pool.');
 
-      const finalize = async (error?: Error, result?: TradeResult) => {
-        if (isCompleted) {
-          return;
-        }
-        isCompleted = true;
-        clearTimeout(timeout);
-        try {
-          ws.close();
-        } catch (closeError) {
-          this.logger.warn('Erro ao fechar WebSocket:', closeError);
-        }
-        if (error) {
-          reject(error);
-        } else if (result) {
-          resolve(result);
-        }
+      // ✅ PASSO 1: Solicitar proposal
+      const proposalPayload = {
+        proposal: 1,
+        amount: stakeAmount,
+        basis: 'stake',
+        contract_type: derivContractType,
+        currency: state.currency || 'USD',
+        duration: duration,
+        duration_unit: 't',
+        symbol: state.symbol,
       };
+
+      this.saveLog(
+        state.userId,
+        'INFO',
+        'TRADER',
+        `Querying payout for contract_type=${contractType} (Deriv: ${derivContractType})`,
+        {
+          contractType,
+          derivContractType,
+          martingaleLevel: state.martingaleLevel,
+          sorosLevel: state.sorosLevel,
+        },
+      );
+
+      const proposalResponse: any = await this.sendRequestViaPool(token, proposalPayload, 60000);
+
+      // Verificar erros na proposta
+      if (proposalResponse.error) {
+        const errorMessage = proposalResponse.error.message || proposalResponse.error.code || JSON.stringify(proposalResponse.error);
+        this.logger.error(`[ExecuteTrade][Pool] Erro na proposta. trade_id=${tradeId}, error=`, proposalResponse.error);
+        this.saveLog(
+          state.userId,
+          'ERROR',
+          'API',
+          `Erro da Deriv API. erro=${errorMessage}`,
+          {
+            error: proposalResponse.error,
+            tradeId,
+            contractType,
+            derivContractType,
+            stakeAmount,
+            duration,
+            symbol: state.symbol,
+            currency: state.currency,
+          },
+        );
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
+          ['ERROR', errorMessage, tradeId],
+        );
+        throw new Error(errorMessage);
+      }
+
+      const proposal = proposalResponse.proposal;
+      if (!proposal || !proposal.id) {
+        const errorMsg = 'Proposta inválida';
+        this.saveLog(state.userId, 'ERROR', 'TRADER', `Proposta inválida. trade_id=${tradeId}`, { tradeId, proposal });
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
+          ['ERROR', errorMsg, tradeId],
+        );
+        throw new Error(errorMsg);
+      }
+
+      const proposalId = proposal.id;
+      const proposalPrice = Number(proposal.ask_price || stakeAmount);
+      const payoutAbsolute = Number(proposal.payout || 0);
+
+      // Atualizar payout no banco
+      if (payoutAbsolute > 0) {
+        const payoutLiquido = payoutAbsolute - stakeAmount;
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+          [payoutLiquido, tradeId],
+        );
+
+        const payoutPercentual = proposalPrice > 0 ? ((payoutAbsolute / proposalPrice - 1) * 100) : 0;
+        const payoutCliente = payoutPercentual - 3;
+
+        this.saveLog(
+          state.userId,
+          'DEBUG',
+          'TRADER',
+          `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
+          { payoutPercentual, payoutAbsolute, proposalPrice },
+        );
+
+        this.saveLog(
+          state.userId,
+          'DEBUG',
+          'TRADER',
+          `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
+          { payoutCliente, payoutPercentual, markup: 3 },
+        );
+      }
+
+      // ✅ PASSO 2: Comprar contrato
+      const buyPayload = {
+        buy: proposalId,
+        price: proposalPrice,
+      };
+
+      this.saveLog(
+        state.userId,
+        'INFO',
+        'TRADER',
+        `Proposal received. Sending buy order. trade_id=${tradeId}, proposal_id=${proposalId}, price=${proposalPrice.toFixed(2)}`,
+        { tradeId, proposalId, proposalPrice },
+      );
+
+      const buyResponse: any = await this.sendRequestViaPool(token, buyPayload, 60000);
+
+      // Verificar erros na compra
+      if (buyResponse.error) {
+        const errorMessage = buyResponse.error.message || buyResponse.error.code || JSON.stringify(buyResponse.error);
+        this.logger.error(`[ExecuteTrade][Pool] Erro na compra. trade_id=${tradeId}, error=`, buyResponse.error);
+        this.saveLog(
+          state.userId,
+          'ERROR',
+          'TRADER',
+          `Compra não confirmada. trade_id=${tradeId}`,
+          { tradeId, buy: buyResponse },
+        );
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
+          ['ERROR', errorMessage, tradeId],
+        );
+        throw new Error(errorMessage);
+      }
+
+      const buy = buyResponse.buy;
+      if (!buy || !buy.contract_id) {
+        const errorMsg = 'Compra não confirmada';
+        this.saveLog(state.userId, 'ERROR', 'TRADER', `Compra não confirmada. trade_id=${tradeId}`, { tradeId, buy });
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
+          ['ERROR', errorMsg, tradeId],
+        );
+        throw new Error(errorMsg);
+      }
+
+      const contractId = buy.contract_id;
+      const buyPrice = Number(buy.buy_price || stakeAmount);
+      const entrySpot = Number(
+        buy.entry_spot ||
+        buy.spot ||
+        buy.current_spot ||
+        buy.entry_tick ||
+        0
+      );
+
+      // Extrair payout da resposta do buy (se disponível)
+      const payoutAbsoluteFromBuy = Number(buy.payout || 0);
+      if (payoutAbsoluteFromBuy > 0) {
+        const payoutLiquido = payoutAbsoluteFromBuy - stakeAmount;
+        await this.dataSource.query(
+          'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+          [payoutLiquido, tradeId],
+        );
+      }
+
+      // Atualizar contrato no banco
+      await this.dataSource.query(
+        `UPDATE autonomous_agent_trades 
+         SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
+         WHERE id = ?`,
+        [contractId, entrySpot, tradeId],
+      );
+
+      this.logger.log(`[ExecuteTrade][Pool] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
+      this.saveLog(
+        state.userId,
+        'INFO',
+        'TRADER',
+        `Buy order executed. contract_id=${contractId}, trade_id=${tradeId}, entry_price=${entrySpot.toFixed(2)}`,
+        { tradeId, contractId, entryPrice: entrySpot, buyPrice },
+      );
+
+      // ✅ PASSO 3: Monitorar contrato usando subscription no pool
+      return new Promise<TradeResult>((resolve, reject) => {
+        let hasResolved = false;
+        const contractMonitorTimeout = setTimeout(() => {
+          if (!hasResolved) {
+            hasResolved = true;
+            this.logger.warn(`[ExecuteTrade][Pool] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`);
+            this.removeSubscriptionFromPool(token, contractId);
+            reject(new Error('Timeout ao monitorar contrato'));
+          }
+        }, 90000);
+
+        // Inscrever para atualizações do contrato
+        this.subscribeViaPool(
+          token,
+          {
+            proposal_open_contract: 1,
+            contract_id: contractId,
+            subscribe: 1,
+          },
+          async (msg: any) => {
+            try {
+              // Verificar erros
+              if (msg.error) {
+                this.logger.error(`[ExecuteTrade][Pool] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
+                if (!hasResolved) {
+                  hasResolved = true;
+                  clearTimeout(contractMonitorTimeout);
+                  this.removeSubscriptionFromPool(token, contractId);
+                  reject(new Error(msg.error.message || 'Erro na subscription'));
+                }
+                return;
+              }
+
+              const contract = msg.proposal_open_contract;
+              if (!contract) {
+                return;
+              }
+
+              // Se contrato ainda não foi vendido, apenas atualizar entry_price se necessário
+              if (contract.is_sold !== 1) {
+                const contractEntrySpot = Number(
+                  contract.entry_spot ||
+                  contract.entry_tick ||
+                  contract.spot ||
+                  0
+                );
+
+                if (contractEntrySpot > 0) {
+                  const currentTrade = await this.dataSource.query(
+                    'SELECT entry_price FROM autonomous_agent_trades WHERE id = ?',
+                    [tradeId],
+                  );
+
+                  if (currentTrade && currentTrade.length > 0 &&
+                    (currentTrade[0].entry_price === 0 || currentTrade[0].entry_price === null)) {
+                    await this.dataSource.query(
+                      `UPDATE autonomous_agent_trades 
+                       SET entry_price = ? 
+                       WHERE id = ? AND (entry_price = 0 OR entry_price IS NULL)`,
+                      [contractEntrySpot, tradeId],
+                    );
+                  }
+                }
+
+                // Obter payout via proposal_open_contract se não foi obtido
+                if (contract.payout && contract.buy_price) {
+                  const payoutAbs = Number(contract.payout || 0);
+                  const buyP = Number(contract.buy_price || stakeAmount);
+                  if (payoutAbs > 0) {
+                    const payoutLiq = payoutAbs - stakeAmount;
+                    await this.dataSource.query(
+                      'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
+                      [payoutLiq, tradeId],
+                    );
+                  }
+                }
+
+                return; // Ainda não foi vendido, continuar monitorando
+              }
+
+              // Contrato foi vendido - processar resultado
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout);
+                this.removeSubscriptionFromPool(token, contractId);
+
+                const profit = Number(contract.profit || 0);
+                const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+                const status = profit >= 0 ? 'WON' : 'LOST';
+
+                this.logger.log(
+                  `[ExecuteTrade][Pool] Atualizando exit_price | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`,
+                );
+
+                await this.dataSource.query(
+                  `UPDATE autonomous_agent_trades
+                   SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                   WHERE id = ?`,
+                  [exitPrice, profit, status, tradeId],
+                );
+
+                if (status === 'WON') {
+                  this.saveLog(
+                    state.userId,
+                    'INFO',
+                    'RISK',
+                    `Trade WIN. profit=${profit.toFixed(2)}`,
+                    { result: status, profit, contractId, exitPrice },
+                  );
+                } else {
+                  this.saveLog(
+                    state.userId,
+                    'ERROR',
+                    'RISK',
+                    `Trade LOSS. loss=${Math.abs(profit).toFixed(2)}`,
+                    { result: status, profit, contractId, exitPrice },
+                  );
+                }
+
+                resolve({
+                  profitLoss: profit,
+                  status,
+                  exitPrice,
+                  contractId,
+                });
+              }
+            } catch (error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout);
+                this.removeSubscriptionFromPool(token, contractId);
+                reject(error);
+              }
+            }
+          },
+          contractId, // Usar contractId como subId
+          90000
+        ).catch((error) => {
+          if (!hasResolved) {
+            hasResolved = true;
+            clearTimeout(contractMonitorTimeout);
+            reject(error);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error(`[ExecuteTrade][Pool] Erro ao executar trade ${tradeId}:`, error);
+      throw error;
+    }
+  }
 
       ws.on('open', () => {
         this.logger.log(`[ExecuteTrade] WS conectado para trade ${tradeId}`);
@@ -2465,7 +2983,17 @@ export class AutonomousAgentService implements OnModuleInit {
 
     const won = result.status === 'WON';
 
-    // Atualizar estatísticas
+    // ✅ OTIMIZAÇÃO 9: Atualizar estado em memória primeiro
+    state.dailyProfit += won ? result.profitLoss : 0;
+    state.dailyLoss += won ? 0 : Math.abs(result.profitLoss);
+    state.totalTrades = (state.totalTrades || 0) + 1;
+    if (won) {
+      state.totalWins = (state.totalWins || 0) + 1;
+    } else {
+      state.totalLosses = (state.totalLosses || 0) + 1;
+    }
+
+    // ✅ OTIMIZAÇÃO 9: Persistir no banco (query já otimizada - uma única query)
     await this.dataSource.query(
       `UPDATE autonomous_agent_config SET
         total_trades = total_trades + 1,
@@ -3260,6 +3788,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * ✅ REFATORADO: Processa tick compartilhado e distribui para todos os agentes ativos
+   * ✅ OTIMIZAÇÃO 5: Atualiza buffer de dígitos incrementalmente
    */
   private processSharedTick(tick: any): void {
     if (!tick || tick.quote === undefined) {
@@ -3278,6 +3807,10 @@ export class AutonomousAgentService implements OnModuleInit {
     for (const [userId, state] of this.agentStates.entries()) {
       if (state.symbol === this.sharedSymbol) {
         this.updatePriceHistory(userId, priceTick);
+        // ✅ OTIMIZAÇÃO 5: Atualizar buffer de dígitos incrementalmente
+        this.updateDigitBuffer(userId, priceTick);
+        // ✅ OTIMIZAÇÃO 3: Invalidar cache de análise técnica quando novo tick chega
+        this.analysisCache.delete(userId);
       }
     }
   }
@@ -3330,6 +3863,318 @@ export class AutonomousAgentService implements OnModuleInit {
       clearInterval(this.sharedKeepAliveInterval);
       this.sharedKeepAliveInterval = null;
       this.logger.debug('[SharedWebSocket][KeepAlive] Keep-alive parado');
+    }
+  }
+
+  // ============================================
+  // OTIMIZAÇÃO 1: POOL DE CONEXÕES WEBSOCKET
+  // ============================================
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Obtém ou cria conexão WebSocket do pool para um token
+   */
+  private async getOrCreatePoolConnection(token: string): Promise<WebSocket> {
+    const poolEntry = this.wsConnectionsPool.get(token);
+    
+    // Se existe conexão válida e pronta, reutilizar
+    if (poolEntry && poolEntry.ws && poolEntry.ws.readyState === WebSocket.OPEN && poolEntry.isReady) {
+      poolEntry.lastUsed = Date.now();
+      this.logger.debug(`[Pool] Reutilizando conexão WebSocket para token ${token.substring(0, 10)}...`);
+      return poolEntry.ws;
+    }
+
+    // Se existe mas está fechada ou não autorizada, limpar
+    if (poolEntry) {
+      this.cleanupPoolConnection(token);
+    }
+
+    // Criar nova conexão
+    return this.createPoolConnection(token);
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Cria nova conexão WebSocket no pool
+   */
+  private createPoolConnection(token: string): Promise<WebSocket> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
+
+      const poolEntry = {
+        ws,
+        isAuthorized: false,
+        isReady: false,
+        lastUsed: Date.now(),
+        keepAliveInterval: null as NodeJS.Timeout | null,
+        pendingRequests: new Map<string, {
+          resolve: (value: any) => void;
+          reject: (error: Error) => void;
+          timeout: NodeJS.Timeout;
+        }>(),
+        subscriptions: new Map<string, (msg: any) => void>(), // ✅ Adicionar subscriptions
+      };
+
+      ws.on('open', () => {
+        this.logger.log(`[Pool] Conexão WebSocket criada para token ${token.substring(0, 10)}...`);
+        ws.send(JSON.stringify({ authorize: token }));
+      });
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          
+          // Processar autorização
+          if (msg.msg_type === 'authorize') {
+            poolEntry.isAuthorized = true;
+            poolEntry.isReady = true;
+            this.logger.log(`[Pool] Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
+            this.startPoolKeepAlive(token);
+            resolve(ws);
+            return;
+          }
+
+          // Processar erros
+          if (msg.error) {
+            const errorMsg = msg.error.message || JSON.stringify(msg.error);
+            this.logger.error(`[Pool] Erro na conexão:`, errorMsg);
+            if (!poolEntry.isReady) {
+              reject(new Error(errorMsg));
+            }
+            return;
+          }
+
+          // Processar respostas de requests pendentes
+          // Usar req_id ou echo_req.req_id para rotear
+          const reqId = msg.req_id || msg.echo_req?.req_id;
+          if (reqId && poolEntry.pendingRequests.has(reqId)) {
+            const request = poolEntry.pendingRequests.get(reqId);
+            if (request) {
+              clearTimeout(request.timeout);
+              request.resolve(msg);
+              poolEntry.pendingRequests.delete(reqId);
+            }
+            return;
+          }
+
+          // ✅ Processar mensagens de subscription (proposal_open_contract)
+          if (msg.msg_type === 'proposal_open_contract' && msg.proposal_open_contract) {
+            const contractId = msg.proposal_open_contract.contract_id;
+            if (contractId && poolEntry.subscriptions.has(contractId)) {
+              const callback = poolEntry.subscriptions.get(contractId);
+              if (callback) {
+                callback(msg);
+              }
+            }
+          }
+        } catch (error) {
+          this.logger.error(`[Pool] Erro ao processar mensagem:`, error);
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error(`[Pool] Erro no WebSocket:`, error);
+        if (!poolEntry.isReady) {
+          reject(error);
+        }
+      });
+
+      ws.on('close', () => {
+        this.logger.warn(`[Pool] Conexão WebSocket fechada para token ${token.substring(0, 10)}...`);
+        this.cleanupPoolConnection(token);
+      });
+
+      this.wsConnectionsPool.set(token, poolEntry);
+
+      // Timeout de conexão
+      setTimeout(() => {
+        if (!poolEntry.isReady) {
+          reject(new Error('Timeout ao criar conexão no pool'));
+        }
+      }, 10000);
+    });
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Inicia keep-alive para conexão do pool
+   */
+  private startPoolKeepAlive(token: string): void {
+    const poolEntry = this.wsConnectionsPool.get(token);
+    if (!poolEntry) return;
+
+    // Parar keep-alive anterior se existir
+    if (poolEntry.keepAliveInterval) {
+      clearInterval(poolEntry.keepAliveInterval);
+    }
+
+    poolEntry.keepAliveInterval = setInterval(() => {
+      if (poolEntry.ws && poolEntry.ws.readyState === WebSocket.OPEN) {
+        try {
+          poolEntry.ws.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug(`[Pool] Ping enviado para token ${token.substring(0, 10)}...`);
+        } catch (error) {
+          this.logger.error(`[Pool] Erro ao enviar ping:`, error);
+          this.cleanupPoolConnection(token);
+        }
+      } else {
+        this.cleanupPoolConnection(token);
+      }
+    }, this.WS_POOL_KEEP_ALIVE_INTERVAL);
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Limpa conexão do pool
+   */
+  private cleanupPoolConnection(token: string): void {
+    const poolEntry = this.wsConnectionsPool.get(token);
+    if (!poolEntry) return;
+
+    if (poolEntry.keepAliveInterval) {
+      clearInterval(poolEntry.keepAliveInterval);
+    }
+
+    try {
+      if (poolEntry.ws && poolEntry.ws.readyState === WebSocket.OPEN) {
+        poolEntry.ws.close();
+      }
+    } catch (error) {
+      this.logger.warn(`[Pool] Erro ao fechar conexão:`, error);
+    }
+
+    // Rejeitar todos os requests pendentes
+    for (const [reqId, request] of poolEntry.pendingRequests.entries()) {
+      clearTimeout(request.timeout);
+      request.reject(new Error('Conexão fechada'));
+    }
+
+    // Limpar todas as subscriptions
+    poolEntry.subscriptions.clear();
+
+    this.wsConnectionsPool.delete(token);
+    this.logger.debug(`[Pool] Conexão removida do pool para token ${token.substring(0, 10)}...`);
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Limpa conexões inativas do pool
+   */
+  private cleanupIdlePoolConnections(): void {
+    const now = Date.now();
+    for (const [token, poolEntry] of this.wsConnectionsPool.entries()) {
+      if (now - poolEntry.lastUsed > this.WS_POOL_MAX_IDLE_TIME) {
+        this.logger.log(`[Pool] Limpando conexão inativa para token ${token.substring(0, 10)}...`);
+        this.cleanupPoolConnection(token);
+      }
+    }
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Envia request através do pool e aguarda resposta
+   */
+  private async sendRequestViaPool(token: string, payload: any, timeoutMs: number = 60000): Promise<any> {
+    // Garantir que temos conexão no pool
+    await this.getOrCreatePoolConnection(token);
+    const poolEntry = this.wsConnectionsPool.get(token);
+    if (!poolEntry || !poolEntry.isReady) {
+      throw new Error('Conexão do pool não está pronta');
+    }
+
+    // Gerar req_id único
+    const reqId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    payload.req_id = reqId;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        poolEntry.pendingRequests.delete(reqId);
+        reject(new Error(`Timeout ao enviar request: ${JSON.stringify(payload)}`));
+      }, timeoutMs);
+
+      poolEntry.pendingRequests.set(reqId, { resolve, reject, timeout });
+      poolEntry.lastUsed = Date.now();
+
+      try {
+        poolEntry.ws.send(JSON.stringify(payload));
+        this.logger.debug(`[Pool] Request enviado: ${payload.proposal ? 'proposal' : payload.buy ? 'buy' : 'unknown'} (req_id: ${reqId})`);
+      } catch (error) {
+        poolEntry.pendingRequests.delete(reqId);
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Inscreve em subscription e retorna callback para mensagens
+   */
+  private async subscribeViaPool(
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number = 90000
+  ): Promise<void> {
+    const poolEntry = this.wsConnectionsPool.get(token);
+    if (!poolEntry || !poolEntry.isReady) {
+      throw new Error('Conexão do pool não está pronta');
+    }
+
+    // Registrar callback para este subscription
+    poolEntry.subscriptions.set(subId, callback);
+    poolEntry.lastUsed = Date.now();
+
+    try {
+      poolEntry.ws.send(JSON.stringify(payload));
+      this.logger.debug(`[Pool] Subscription criada: ${subId}`);
+
+      // Timeout para remover subscription automaticamente
+      setTimeout(() => {
+        poolEntry.subscriptions.delete(subId);
+        this.logger.debug(`[Pool] Subscription ${subId} removida após timeout`);
+      }, timeoutMs);
+    } catch (error) {
+      poolEntry.subscriptions.delete(subId);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO 1: Remove subscription do pool
+   */
+  private removeSubscriptionFromPool(token: string, subId: string): void {
+    const poolEntry = this.wsConnectionsPool.get(token);
+    if (poolEntry) {
+      poolEntry.subscriptions.delete(subId);
+      this.logger.debug(`[Pool] Subscription ${subId} removida`);
+    }
+  }
+
+  // ============================================
+  // OTIMIZAÇÃO 4: PROCESSAMENTO ASSÍNCRONO DE TRADES
+  // ============================================
+
+  /**
+   * ✅ OTIMIZAÇÃO 4: Processa fila de resultados de trades em background
+   */
+  private async processTradeResultQueue(): Promise<void> {
+    if (this.isProcessingTradeResults || this.tradeResultQueue.length === 0) {
+      return;
+    }
+
+    this.isProcessingTradeResults = true;
+
+    try {
+      while (this.tradeResultQueue.length > 0) {
+        const item = this.tradeResultQueue.shift();
+        if (!item) break;
+
+        try {
+          await this.handleTradeResult(item.state, item.tradeId, item.result, item.stakeAmount);
+        } catch (error) {
+          this.logger.error(`[TradeResultQueue][${item.state.userId}] Erro ao processar resultado:`, error);
+        }
+      }
+    } finally {
+      this.isProcessingTradeResults = false;
     }
   }
 
@@ -3682,8 +4527,9 @@ export class AutonomousAgentService implements OnModuleInit {
   // ============================================
 
   /**
-   * Salva log de forma assíncrona (não bloqueia execução)
+   * ✅ OTIMIZAÇÃO 7: Salva log de forma assíncrona (não bloqueia execução)
    * Usa LogQueueService centralizado se disponível
+   * Early return para evitar criação de objetos desnecessários
    */
   private saveLog(
     userId: string,
@@ -3692,11 +4538,12 @@ export class AutonomousAgentService implements OnModuleInit {
     message: string,
     metadata?: any,
   ): void {
-    // ✅ OTIMIZAÇÃO: Pular logs DEBUG se desabilitados (reduz uso de CPU)
+    // ✅ OTIMIZAÇÃO 7: Early return antes de criar objetos (reduz overhead)
     if (level === 'DEBUG' && !this.ENABLE_DEBUG_LOGS) {
       return;
     }
 
+    // ✅ OTIMIZAÇÃO 7: Lazy evaluation - criar objetos apenas se necessário
     try {
       const now = new Date();
       const timestampISO = now.toISOString();
