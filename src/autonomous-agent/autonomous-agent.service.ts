@@ -445,6 +445,9 @@ export class AutonomousAgentService implements OnModuleInit {
         dailyLoss: config.dailyLoss,
         profitPeak: config.profitPeak,
         sessionDate: config.sessionDate,
+        totalTrades: 0,
+        totalWins: 0,
+        totalLosses: 0,
       });
     }
   }
@@ -1078,8 +1081,8 @@ export class AutonomousAgentService implements OnModuleInit {
     const momentum = this.calculateMomentum(recent, 10, userId, useIncremental);
 
     // ✅ OTIMIZAÇÃO 8: Atualizar cache de indicadores
-    if (recent.length > 0) {
-      const lastPrice = recent[recent.length - 1];
+    if (prices.length > 0) {
+      const lastPrice = prices[prices.length - 1];
       this.technicalIndicatorsCache.set(userId, {
         ema10,
         ema25,
@@ -1225,7 +1228,7 @@ export class AutonomousAgentService implements OnModuleInit {
     if (useCache && userId && this.technicalIndicatorsCache.has(userId) && values.length > 1) {
       const cached = this.technicalIndicatorsCache.get(userId)!;
       const newPrice = values[values.length - 1];
-      const oldPrice = cached.lastPrice;
+      const oldPrice = cached.lastPrice.value;
       const change = newPrice - oldPrice;
       
       // Manter gains/losses médios anteriores (simplificado)
@@ -1279,7 +1282,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Momentum = preço atual - preço de N períodos atrás
       // Se temos cache, podemos usar o preço anterior do cache
       // Simplificado: usar diferença do último preço
-      return newPrice - cached.lastPrice;
+      return newPrice - cached.lastPrice.value;
     }
 
     // Fallback: cálculo tradicional
