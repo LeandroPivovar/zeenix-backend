@@ -52,17 +52,20 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),
-        // ✅ OTIMIZAÇÃO: Configurar pool de conexões para melhor performance
+        // ✅ OTIMIZAÇÃO: Configurar pool de conexões para melhor performance e resiliência
         extra: {
-          connectionLimit: 10,        // Máximo de conexões no pool
-          max: 10,                     // Alias para connectionLimit
-          min: 2,                      // Mínimo de conexões mantidas vivas
-          acquireTimeoutMillis: 30000, // Timeout ao adquirir conexão (30s)
-          idleTimeoutMillis: 30000,    // Timeout para conexões ociosas (30s)
+          connectionLimit: 30,        // Máximo de conexões no pool (aumentado de 10 para 30)
+          max: 30,                     // Alias para connectionLimit
+          min: 5,                      // Mínimo de conexões mantidas vivas (aumentado de 2 para 5)
+          acquireTimeoutMillis: 60000, // Timeout ao adquirir conexão (60s - aumentado de 30s)
+          idleTimeoutMillis: 60000,    // Timeout para conexões ociosas (60s - aumentado de 30s)
           reconnect: true,             // Reconectar automaticamente em caso de falha
+          queueLimit: 0,              // Sem limite de fila (0 = ilimitado)
+          enableKeepAlive: true,       // Manter conexões vivas
+          keepAliveInitialDelay: 0,     // Iniciar keep-alive imediatamente
         },
         // Alternativa: poolSize (se extra não funcionar)
-        poolSize: 10,                  // Tamanho do pool de conexões
+        poolSize: 30,                  // Tamanho do pool de conexões (aumentado de 10 para 30)
       }),
       inject: [ConfigService],
     }),
