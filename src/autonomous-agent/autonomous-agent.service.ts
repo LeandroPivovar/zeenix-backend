@@ -112,15 +112,23 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly agentStates = new Map<string, AutonomousAgentState>();
   private readonly priceHistory = new Map<string, PriceTick[]>();
   private readonly maxHistorySize = 100;
-  private wsConnections = new Map<string, WebSocket>();
-  // ✅ Keep-alive intervals por usuário (para manter conexões WebSocket ativas)
-  private keepAliveIntervals = new Map<string, NodeJS.Timeout>();
-  // ✅ OTIMIZAÇÃO: Controle de reconexão WebSocket para evitar loops infinitos
-  private wsReconnectAttempts = new Map<string, { count: number; lastAttempt: number }>();
-  private readonly MAX_WS_RECONNECT_ATTEMPTS = 3; // Máximo de 3 tentativas consecutivas
-  private readonly WS_RECONNECT_COOLDOWN = 30000; // 30 segundos de cooldown entre tentativas
-  // ✅ OTIMIZAÇÃO: Controle de conexões em progresso para evitar múltiplas conexões simultâneas
-  private wsConnecting = new Set<string>();
+  
+  // ✅ REFATORADO: Conexão WebSocket compartilhada (como a IA)
+  private sharedWebSocket: WebSocket | null = null;
+  private isWebSocketConnected = false;
+  private sharedSubscriptionId: string | null = null;
+  private sharedKeepAliveInterval: NodeJS.Timeout | null = null;
+  private readonly sharedSymbol = 'R_75'; // Símbolo padrão (pode ser configurável no futuro)
+  
+  // ✅ Pool de conexões WebSocket por token (para operações: buy, proposal)
+  private wsConnectionsPool = new Map<string, WebSocket>();
+  
+  // ✅ REMOVIDO: Conexões individuais por usuário (causavam 100% CPU)
+  // private wsConnections = new Map<string, WebSocket>();
+  // private keepAliveIntervals = new Map<string, NodeJS.Timeout>();
+  // private wsReconnectAttempts = new Map<string, { count: number; lastAttempt: number }>();
+  // private wsConnecting = new Set<string>();
+  
   private readonly appId = process.env.DERIV_APP_ID || '1089';
   
   // ✅ OTIMIZAÇÃO: Cache de configurações para evitar queries N+1
@@ -129,6 +137,8 @@ export class AutonomousAgentService implements OnModuleInit {
     timestamp: number;
   }>();
   private readonly CONFIG_CACHE_TTL = 5000; // 5 segundos (mais curto que IAs porque precisa ser mais atualizado)
+  // ✅ OTIMIZAÇÃO: Flag para desabilitar logs DEBUG em produção (reduz uso de CPU)
+  private readonly ENABLE_DEBUG_LOGS = process.env.NODE_ENV === 'development' || process.env.ENABLE_DEBUG_LOGS === 'true';
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -142,9 +152,14 @@ export class AutonomousAgentService implements OnModuleInit {
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
     await this.syncActiveAgentsFromDb();
     
-    // ✅ OTIMIZAÇÃO: Limpar cache expirado de forma lazy (apenas quando necessário)
-    // Removido setInterval fixo para reduzir uso de CPU
-    // O cache será limpo naturalmente quando expirar (verificação no getBatchConfigs)
+    // ✅ REFATORADO: Inicializar conexão WebSocket compartilhada (como a IA)
+    this.logger.log('🔌 Inicializando conexão WebSocket compartilhada com Deriv API...');
+    try {
+      await this.initializeSharedWebSocket();
+      this.logger.log('✅ Conexão WebSocket compartilhada estabelecida com sucesso');
+    } catch (error) {
+      this.logger.error('❌ Erro ao inicializar WebSocket compartilhado:', error);
+    }
   }
 
   // ============================================
@@ -310,8 +325,10 @@ export class AutonomousAgentService implements OnModuleInit {
           sessionDate: agent.session_date ? new Date(agent.session_date) : new Date(),
         });
 
-        // Estabelecer conexão WebSocket para agentes ativos
-        await this.ensureWebSocketConnection(agent.user_id.toString());
+        // ✅ OTIMIZAÇÃO CRÍTICA: Desabilitar conexões WebSocket individuais por usuário
+        // Isso causa 100% de CPU com múltiplos usuários
+        // Usar apenas processamento via scheduler (como a IA faz)
+        // await this.ensureWebSocketConnection(agent.user_id.toString()); // DESABILITADO
       }
     } catch (error) {
       this.logger.error('[SyncAgents] Erro ao sincronizar agentes:', error);
@@ -518,8 +535,10 @@ export class AutonomousAgentService implements OnModuleInit {
       // Sincronizar estado em memória
       await this.syncActiveAgentsFromDb();
 
-      // Estabelecer conexão WebSocket para receber ticks
-      await this.ensureWebSocketConnection(userId);
+      // ✅ OTIMIZAÇÃO CRÍTICA: Desabilitar conexões WebSocket individuais por usuário
+      // Isso causa 100% de CPU com múltiplos usuários
+      // Usar apenas processamento via scheduler (como a IA faz)
+      // await this.ensureWebSocketConnection(userId); // DESABILITADO
 
       // Logs de validação de modos (formato da documentação)
       const tradingModeName = tradingMode === 'veloz' ? 'Veloz' : tradingMode === 'lento' ? 'Lento' : 'Normal';
@@ -596,22 +615,8 @@ export class AutonomousAgentService implements OnModuleInit {
       // ✅ 3. Limpar histórico de preços
       this.priceHistory.delete(userId);
 
-      // ✅ 4. Fechar conexão WebSocket se existir (IMPORTANTE: para parar processamento em tempo real)
-      const ws = this.wsConnections.get(userId);
-      if (ws) {
-        try {
-          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-            ws.close();
-            this.logger.debug(`[DeactivateAgent] WebSocket fechado para ${userId}`);
-          }
-        } catch (wsError) {
-          this.logger.warn(`[DeactivateAgent] Erro ao fechar WebSocket:`, wsError);
-        }
-        this.wsConnections.delete(userId);
-        // ✅ Parar keep-alive ao desativar agente
-        this.stopKeepAlive(userId);
-        this.saveLog(userId, 'INFO', 'API', 'WebSocket desconectado.');
-      }
+      // ✅ REFATORADO: Não precisa fechar conexão individual (usando conexão compartilhada)
+      // A conexão WebSocket compartilhada continua ativa para outros agentes
 
       // ✅ 5. Log detalhado
       this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
@@ -882,7 +887,7 @@ export class AutonomousAgentService implements OnModuleInit {
         );
         // Atualizar próximo trade com intervalo menor para verificar novamente
         const interval = Math.min(30, this.getRandomInterval());
-        await this.updateNextTradeAt(state.userId, interval);
+        this.updateNextTradeAt(state.userId, interval); // ✅ OTIMIZADO: Não aguardar (não-bloqueante)
         return;
       }
 
@@ -908,13 +913,8 @@ export class AutonomousAgentService implements OnModuleInit {
         );
         // Atualizar próximo trade com intervalo aleatório
         const interval = this.getRandomInterval();
-        await this.updateNextTradeAt(state.userId, interval);
-        this.saveLog(
-          state.userId,
-          'DEBUG',
-          'HUMANIZER',
-          `Novo intervalo aleatório definido. duração_segundos=${interval}`,
-        );
+        this.updateNextTradeAt(state.userId, interval); // ✅ OTIMIZADO: Não aguardar (não-bloqueante)
+        // ✅ OTIMIZADO: Log DEBUG removido (reduz uso de CPU)
         return;
       }
 
@@ -1568,13 +1568,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Atualizar próximo trade com intervalo aleatório
       const interval = this.getRandomInterval();
-      await this.updateNextTradeAt(state.userId, interval);
-      this.saveLog(
-        state.userId,
-        'DEBUG',
-        'HUMANIZER',
-        `New random interval set. duration_seconds=${interval}`,
-      );
+      this.updateNextTradeAt(state.userId, interval); // ✅ OTIMIZADO: Não aguardar (não-bloqueante)
+      // ✅ OTIMIZADO: Log DEBUG removido (reduz uso de CPU)
       state.operationsSincePause++;
     } catch (error) {
       this.logger.error(`[ExecuteTrade][${state.userId}] Erro:`, error);
@@ -2793,7 +2788,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
         // Pausa de 15-30 segundos
         const pauseSeconds = 15 + Math.floor(Math.random() * 16); // 15-30 segundos
-        await this.updateNextTradeAt(state.userId, pauseSeconds);
+        this.updateNextTradeAt(state.userId, pauseSeconds); // ✅ OTIMIZADO: Não aguardar (não-bloqueante)
         this.saveLog(
           state.userId,
           'INFO',
@@ -2913,16 +2908,21 @@ export class AutonomousAgentService implements OnModuleInit {
     );
   }
 
+  // ✅ OTIMIZADO: Atualizar memória primeiro e persistir de forma não-bloqueante
   private async updateNextTradeAt(userId: string, intervalSeconds: number): Promise<void> {
-    await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_id = ?`,
-      [intervalSeconds, userId],
-    );
-
+    // Atualizar memória primeiro (síncrono e rápido)
     const state = this.agentStates.get(userId);
     if (state) {
       state.nextTradeAt = new Date(Date.now() + intervalSeconds * 1000);
     }
+
+    // Persistir no banco de forma não-bloqueante (não aguardar)
+    this.dataSource.query(
+      `UPDATE autonomous_agent_config SET next_trade_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_id = ?`,
+      [intervalSeconds, userId],
+    ).catch(error => {
+      this.logger.warn(`[UpdateNextTradeAt][${userId}] Erro ao atualizar next_trade_at (não crítico):`, error);
+    });
   }
 
   private async handleRandomPause(state: AutonomousAgentState): Promise<void> {
@@ -3082,293 +3082,254 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   // ============================================
-  // CONEXÃO WEBSOCKET PERSISTENTE PARA TICKS
+  // CONEXÃO WEBSOCKET COMPARTILHADA (COMO A IA)
   // ============================================
 
-  private async ensureWebSocketConnection(userId: string): Promise<void> {
-    const state = this.agentStates.get(userId);
-    if (!state) {
+  /**
+   * ✅ REFATORADO: Inicializa conexão WebSocket compartilhada (exatamente como a IA)
+   */
+  private async initializeSharedWebSocket(): Promise<void> {
+    if (this.isWebSocketConnected && this.sharedWebSocket && this.sharedWebSocket.readyState === WebSocket.OPEN) {
+      this.logger.log('✅ Conexão WebSocket compartilhada já está conectada');
       return;
     }
 
-    // ✅ OTIMIZAÇÃO: Verificar se já está tentando conectar para evitar múltiplas tentativas simultâneas
-    if (this.wsConnecting.has(userId)) {
-      this.logger.debug(`[EnsureWebSocket][${userId}] Conexão já está sendo estabelecida, aguardando...`);
-      return;
-    }
+    return new Promise<void>((resolve, reject) => {
+      this.logger.log(`🔌 Inicializando conexão WebSocket compartilhada (app_id: ${this.appId}, symbol: ${this.sharedSymbol})...`);
 
-    // Verificar se já existe conexão ativa
-    const existingWs = this.wsConnections.get(userId);
-    if (existingWs && existingWs.readyState === WebSocket.OPEN) {
-      this.logger.debug(`[EnsureWebSocket][${userId}] Conexão WebSocket já está ativa`);
-      return;
-    }
-
-    // ✅ OTIMIZAÇÃO: Verificar cooldown de reconexão para evitar loops infinitos
-    const reconnectInfo = this.wsReconnectAttempts.get(userId);
-    if (reconnectInfo) {
-      const timeSinceLastAttempt = Date.now() - reconnectInfo.lastAttempt;
-      if (reconnectInfo.count >= this.MAX_WS_RECONNECT_ATTEMPTS && timeSinceLastAttempt < this.WS_RECONNECT_COOLDOWN) {
-        this.logger.warn(`[EnsureWebSocket][${userId}] Muitas tentativas de reconexão (${reconnectInfo.count}). Aguardando cooldown...`);
-        return;
-      }
-      // Resetar contador se passou o cooldown
-      if (timeSinceLastAttempt >= this.WS_RECONNECT_COOLDOWN) {
-        this.wsReconnectAttempts.delete(userId);
-      }
-    }
-
-    // Fechar conexão anterior se existir e estiver aberta
-    if (existingWs) {
-      try {
-        if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
-          existingWs.close();
-          // Aguardar um pouco para garantir que a conexão foi fechada
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        this.wsConnections.delete(userId);
-      } catch (error) {
-        this.logger.warn(`[EnsureWebSocket][${userId}] Erro ao fechar conexão anterior:`, error);
-        this.wsConnections.delete(userId);
-      }
-    }
-
-    // Estabelecer nova conexão
-    await this.establishWebSocketConnection(userId);
-  }
-
-  private async establishWebSocketConnection(userId: string): Promise<void> {
-    const state = this.agentStates.get(userId);
-    if (!state) {
-      return;
-    }
-
-    // ✅ OTIMIZAÇÃO: Marcar como conectando para evitar múltiplas tentativas simultâneas
-    if (this.wsConnecting.has(userId)) {
-      this.logger.debug(`[EstablishWebSocket][${userId}] Conexão já está sendo estabelecida`);
-      return;
-    }
-
-    this.wsConnecting.add(userId);
-
-    try {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      // ✅ Adicionar header Origin (como nas estratégias da IA) para melhor compatibilidade
-      const ws = new WebSocket(endpoint, {
-        headers: { Origin: 'https://app.deriv.com' },
+      this.sharedWebSocket = new WebSocket(endpoint);
+
+      this.sharedWebSocket.on('open', () => {
+        this.logger.log('✅ Conexão WebSocket compartilhada aberta com sucesso');
+        this.isWebSocketConnected = true;
+        this.subscribeToSharedTicks();
+        this.startSharedKeepAlive();
+        resolve();
       });
 
-      let isAuthorized = false;
-      let subscriptionId: string | null = null;
-
-      ws.on('open', () => {
-        this.logger.log(`[WebSocket][${userId}] ✅ Conexão estabelecida`);
-        this.saveLog(userId, 'INFO', 'API', 'Conexão WebSocket aberta.');
-
-        // Autorizar
-        ws.send(JSON.stringify({ authorize: state.derivToken }));
-      });
-
-      ws.on('message', async (data: Buffer) => {
+      this.sharedWebSocket.on('message', (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
-
-          if (msg.error) {
-            this.logger.error(`[WebSocket][${userId}] ❌ Erro:`, msg.error);
-            this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`);
-
-            // ✅ OTIMIZAÇÃO: Registrar tentativa de reconexão e aplicar cooldown
-            this.recordReconnectAttempt(userId);
-            
-            // Tentar reconectar após delay apenas se não excedeu o limite
-            const reconnectInfo = this.wsReconnectAttempts.get(userId);
-            if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
-              setTimeout(() => {
-                this.wsConnecting.delete(userId);
-                this.ensureWebSocketConnection(userId);
-              }, 5000);
-            } else {
-              this.logger.warn(`[WebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown...`);
-              this.wsConnecting.delete(userId);
-            }
-            return;
-          }
-
-          if (msg.msg_type === 'authorize') {
-            isAuthorized = true;
-            this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
-            this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`);
-
-            // ✅ OTIMIZAÇÃO: Resetar contador de reconexão quando conexão é bem-sucedida
-            this.wsReconnectAttempts.delete(userId);
-            this.wsConnecting.delete(userId);
-
-            // ✅ Iniciar keep-alive para manter conexão ativa (evita expiração após 2 min)
-            this.startKeepAlive(userId, ws);
-
-            // Subscribir aos ticks
-            ws.send(JSON.stringify({
-              ticks_history: state.symbol,
-              adjust_start_time: 1,
-              count: 50,
-              end: 'latest',
-              subscribe: 1,
-              style: 'ticks',
-            }));
-            return;
-          }
-
-          if (msg.msg_type === 'history') {
-            const history = msg.history;
-            if (history && history.prices) {
-              subscriptionId = history.id || null;
-
-              // Processar histórico inicial
-              const ticks: PriceTick[] = history.prices.map((price: number, index: number) => ({
-                value: parseFloat(price.toString()),
-                epoch: history.times ? history.times[index] : Math.floor(Date.now() / 1000),
-                timestamp: history.times
-                  ? new Date(history.times[index] * 1000).toISOString()
-                  : new Date().toISOString(),
-              }));
-
-              this.priceHistory.set(userId, ticks);
-              this.logger.log(`[WebSocket][${userId}] 📊 Histórico inicial recebido: ${ticks.length} ticks`);
-              this.saveLog(userId, 'INFO', 'API', `📊 Histórico inicial de preços recebido. ticks=${ticks.length}`);
-            }
-            return;
-          }
-
-          if (msg.msg_type === 'tick') {
-            const tick = msg.tick;
-            if (tick && tick.quote !== undefined) {
-              const priceTick: PriceTick = {
-                value: parseFloat(tick.quote),
-                epoch: tick.epoch || Math.floor(Date.now() / 1000),
-                timestamp: tick.epoch
-                  ? new Date(tick.epoch * 1000).toISOString()
-                  : new Date().toISOString(),
-              };
-
-              await this.updatePriceHistory(userId, priceTick);
-            }
-            return;
-          }
+          this.handleSharedWebSocketMessage(msg);
         } catch (error) {
-          this.logger.error(`[WebSocket][${userId}] Erro ao processar mensagem:`, error);
+          this.logger.error('[SharedWebSocket] Erro ao processar mensagem:', error);
         }
       });
 
-      ws.on('error', (error) => {
-        this.logger.error(`[WebSocket][${userId}] ❌ Erro no WebSocket:`, error);
-        this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${error.message || 'Erro desconhecido'}`);
+      this.sharedWebSocket.on('error', (error) => {
+        this.logger.error('[SharedWebSocket] Erro no WebSocket:', error);
+        this.isWebSocketConnected = false;
+        reject(error);
       });
 
-      ws.on('close', () => {
-        this.logger.warn(`[WebSocket][${userId}] 🔌 Conexão WebSocket fechada`);
-        this.wsConnections.delete(userId);
-        this.wsConnecting.delete(userId);
-        // ✅ Parar keep-alive quando conexão fechar
-        this.stopKeepAlive(userId);
-        this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.');
-
-        // ✅ OTIMIZAÇÃO: Tentar reconectar apenas se o agente ainda estiver ativo e não excedeu limite
-        const currentState = this.agentStates.get(userId);
-        if (currentState) {
-          this.recordReconnectAttempt(userId);
-          const reconnectInfo = this.wsReconnectAttempts.get(userId);
-          if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
-            setTimeout(() => {
-              this.ensureWebSocketConnection(userId);
-            }, 5000);
-          } else {
-            this.logger.warn(`[WebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown de ${this.WS_RECONNECT_COOLDOWN / 1000}s...`);
-          }
-        }
-      });
-
-      this.wsConnections.set(userId, ws);
-    } catch (error) {
-      this.logger.error(`[EstablishWebSocket][${userId}] ❌ Erro ao estabelecer conexão:`, error);
-      this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`);
-      this.wsConnecting.delete(userId);
-
-      // ✅ OTIMIZAÇÃO: Registrar tentativa e aplicar cooldown
-      this.recordReconnectAttempt(userId);
-      const reconnectInfo = this.wsReconnectAttempts.get(userId);
-      if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
+      this.sharedWebSocket.on('close', () => {
+        this.logger.warn('[SharedWebSocket] Conexão WebSocket compartilhada fechada');
+        this.isWebSocketConnected = false;
+        this.stopSharedKeepAlive();
+        this.sharedWebSocket = null;
+        this.sharedSubscriptionId = null;
+        
+        // Tentar reconectar após 5 segundos
         setTimeout(() => {
-          this.ensureWebSocketConnection(userId);
-        }, 10000);
-      } else {
-        this.logger.warn(`[EstablishWebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown...`);
-      }
-    }
+          this.initializeSharedWebSocket().catch(error => {
+            this.logger.error('[SharedWebSocket] Erro ao reconectar:', error);
+          });
+        }, 5000);
+      });
+
+      // Timeout de 10 segundos
+      setTimeout(() => {
+        if (!this.isWebSocketConnected) {
+          reject(new Error('Timeout ao conectar WebSocket compartilhado'));
+        }
+      }, 10000);
+    });
   }
 
   /**
-   * ✅ OTIMIZAÇÃO: Registra tentativa de reconexão para controle de rate limiting
+   * ✅ REFATORADO: Subscreve aos ticks do símbolo compartilhado (como a IA)
    */
-  private recordReconnectAttempt(userId: string): void {
-    const existing = this.wsReconnectAttempts.get(userId);
-    const now = Date.now();
+  private subscribeToSharedTicks(): void {
+    if (!this.sharedWebSocket || this.sharedWebSocket.readyState !== WebSocket.OPEN) {
+      this.logger.warn('[SharedWebSocket] WebSocket não está aberto, não é possível subscrever');
+      return;
+    }
+
+    this.logger.log(`📡 Inscrevendo-se nos ticks de ${this.sharedSymbol}...`);
+    const subscriptionPayload = {
+      ticks_history: this.sharedSymbol,
+      adjust_start_time: 1,
+      count: 100,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    };
     
-    if (existing) {
-      const timeSinceLastAttempt = now - existing.lastAttempt;
-      // Se passou o cooldown, resetar contador
-      if (timeSinceLastAttempt >= this.WS_RECONNECT_COOLDOWN) {
-        this.wsReconnectAttempts.set(userId, { count: 1, lastAttempt: now });
-      } else {
-        // Incrementar contador
-        this.wsReconnectAttempts.set(userId, { count: existing.count + 1, lastAttempt: now });
+    this.sharedWebSocket.send(JSON.stringify(subscriptionPayload));
+    this.logger.log(`✅ Requisição de inscrição enviada para ${this.sharedSymbol}`);
+  }
+
+  /**
+   * ✅ REFATORADO: Processa mensagens do WebSocket compartilhado (como a IA)
+   */
+  private handleSharedWebSocketMessage(msg: any): void {
+    if (msg.error) {
+      const errorMsg = msg.error.message || JSON.stringify(msg.error);
+      this.logger.error('[SharedWebSocket] ❌ Erro da API:', errorMsg);
+      
+      // Se erro genérico, recriar WebSocket
+      if (errorMsg.includes('Sorry, an error occurred') || errorMsg.includes('error occurred while processing')) {
+        this.logger.warn('[SharedWebSocket] ⚠️ Erro genérico detectado - Recriando WebSocket...');
+        if (this.sharedSubscriptionId) {
+          this.cancelSharedSubscription(this.sharedSubscriptionId);
+        }
+        this.initializeSharedWebSocket().catch(error => {
+          this.logger.error('[SharedWebSocket] ❌ Erro ao recriar WebSocket:', error);
+        });
       }
-    } else {
-      // Primeira tentativa
-      this.wsReconnectAttempts.set(userId, { count: 1, lastAttempt: now });
+      return;
+    }
+
+    // Capturar subscription ID
+    if (msg.subscription?.id) {
+      if (this.sharedSubscriptionId !== msg.subscription.id) {
+        this.sharedSubscriptionId = msg.subscription.id;
+        this.logger.log(`[SharedWebSocket] 📋 Subscription ID capturado: ${this.sharedSubscriptionId}`);
+      }
+    }
+
+    switch (msg.msg_type) {
+      case 'history':
+        this.logger.log(`[SharedWebSocket] 📊 Histórico recebido: ${msg.history?.prices?.length || 0} preços`);
+        this.processSharedHistory(msg.history);
+        break;
+
+      case 'ticks_history':
+        const subId = msg.subscription?.id || msg.subscription_id || msg.id;
+        if (subId) {
+          this.sharedSubscriptionId = subId;
+          this.logger.log(`[SharedWebSocket] 📋 Subscription ID capturado: ${this.sharedSubscriptionId}`);
+        }
+        if (msg.history?.prices) {
+          this.processSharedHistory(msg.history);
+        }
+        break;
+
+      case 'tick':
+        if (msg.subscription?.id && this.sharedSubscriptionId !== msg.subscription.id) {
+          this.sharedSubscriptionId = msg.subscription.id;
+        }
+        this.processSharedTick(msg.tick);
+        break;
+
+      default:
+        if (msg.msg_type) {
+          this.logger.debug(`[SharedWebSocket] ⚠️ Mensagem desconhecida: msg_type=${msg.msg_type}`);
+        }
+        break;
     }
   }
 
-  // ============================================
-  // KEEP-ALIVE (MANTER CONEXÕES ATIVAS)
-  // ============================================
+  /**
+   * ✅ REFATORADO: Processa histórico compartilhado e distribui para todos os agentes
+   */
+  private processSharedHistory(history: any): void {
+    if (!history || !history.prices) {
+      this.logger.warn('[SharedWebSocket] ⚠️ Histórico recebido sem dados de preços');
+      return;
+    }
+
+    const ticks: PriceTick[] = history.prices.map((price: number, index: number) => ({
+      value: parseFloat(price.toString()),
+      epoch: history.times ? history.times[index] : Math.floor(Date.now() / 1000),
+      timestamp: history.times
+        ? new Date(history.times[index] * 1000).toISOString()
+        : new Date().toISOString(),
+    }));
+
+    // Distribuir histórico para todos os agentes ativos
+    for (const [userId, state] of this.agentStates.entries()) {
+      if (state.symbol === this.sharedSymbol) {
+        this.priceHistory.set(userId, [...ticks]);
+      }
+    }
+
+    this.logger.log(`[SharedWebSocket] 📊 Histórico processado e distribuído: ${ticks.length} ticks para ${this.agentStates.size} agente(s)`);
+  }
 
   /**
-   * ✅ OTIMIZADO: Inicia keep-alive para uma conexão WebSocket (envia ping a cada 110s)
-   * Evita que a Deriv feche a conexão após 2 minutos de inatividade
-   * Intervalo aumentado de 90s para 110s para reduzir uso de CPU
+   * ✅ REFATORADO: Processa tick compartilhado e distribui para todos os agentes ativos
    */
-  private startKeepAlive(userId: string, ws: WebSocket): void {
-    // Parar keep-alive anterior se existir
-    this.stopKeepAlive(userId);
+  private processSharedTick(tick: any): void {
+    if (!tick || tick.quote === undefined) {
+      return;
+    }
 
-    const interval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+    const priceTick: PriceTick = {
+      value: parseFloat(tick.quote),
+      epoch: tick.epoch || Math.floor(Date.now() / 1000),
+      timestamp: tick.epoch
+        ? new Date(tick.epoch * 1000).toISOString()
+        : new Date().toISOString(),
+    };
+
+    // Distribuir tick para todos os agentes ativos com o símbolo correto
+    for (const [userId, state] of this.agentStates.entries()) {
+      if (state.symbol === this.sharedSymbol) {
+        this.updatePriceHistory(userId, priceTick);
+      }
+    }
+  }
+
+  /**
+   * ✅ REFATORADO: Cancela subscription compartilhada
+   */
+  private cancelSharedSubscription(subscriptionId: string): void {
+    if (!this.sharedWebSocket || this.sharedWebSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      const forgetPayload = { forget: subscriptionId };
+      this.sharedWebSocket.send(JSON.stringify(forgetPayload));
+      this.logger.log(`[SharedWebSocket] ✅ Comando forget enviado para subscription ${subscriptionId}`);
+    } catch (error) {
+      this.logger.error(`[SharedWebSocket] ❌ Erro ao cancelar subscription:`, error);
+    }
+  }
+
+  /**
+   * ✅ REFATORADO: Keep-alive para conexão compartilhada (como a IA)
+   */
+  private startSharedKeepAlive(): void {
+    this.stopSharedKeepAlive();
+
+    this.sharedKeepAliveInterval = setInterval(() => {
+      if (this.sharedWebSocket && this.sharedWebSocket.readyState === WebSocket.OPEN) {
         try {
-          ws.send(JSON.stringify({ ping: 1 }));
-          this.logger.debug(`[KeepAlive][${userId}] Ping enviado para manter conexão ativa`);
+          this.sharedWebSocket.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug('[SharedWebSocket][KeepAlive] Ping enviado');
         } catch (error) {
-          this.logger.error(`[KeepAlive][${userId}] Erro ao enviar ping:`, error);
-          this.stopKeepAlive(userId);
+          this.logger.error('[SharedWebSocket][KeepAlive] Erro ao enviar ping:', error);
         }
       } else {
-        this.logger.warn(`[KeepAlive][${userId}] WebSocket não está aberto, parando keep-alive`);
-        this.stopKeepAlive(userId);
+        this.logger.warn('[SharedWebSocket][KeepAlive] WebSocket não está aberto, parando keep-alive');
+        this.stopSharedKeepAlive();
       }
-    }, 110000); // ✅ OTIMIZADO: 110 segundos (ainda dentro do limite de 2 minutos da Deriv, mas reduz ping frequency)
+    }, 90000); // 90 segundos (como a IA)
 
-    this.keepAliveIntervals.set(userId, interval);
-    this.logger.log(`[KeepAlive][${userId}] ✅ Keep-alive iniciado (ping a cada 110s)`);
+    this.logger.log('[SharedWebSocket] ✅ Keep-alive iniciado (ping a cada 90s)');
   }
 
   /**
-   * ✅ Para o keep-alive de um usuário
+   * ✅ REFATORADO: Para keep-alive compartilhado
    */
-  private stopKeepAlive(userId: string): void {
-    const interval = this.keepAliveIntervals.get(userId);
-    if (interval) {
-      clearInterval(interval);
-      this.keepAliveIntervals.delete(userId);
-      this.logger.debug(`[KeepAlive][${userId}] Keep-alive parado`);
+  private stopSharedKeepAlive(): void {
+    if (this.sharedKeepAliveInterval) {
+      clearInterval(this.sharedKeepAliveInterval);
+      this.sharedKeepAliveInterval = null;
+      this.logger.debug('[SharedWebSocket][KeepAlive] Keep-alive parado');
     }
   }
 
@@ -3731,6 +3692,11 @@ export class AutonomousAgentService implements OnModuleInit {
     message: string,
     metadata?: any,
   ): void {
+    // ✅ OTIMIZAÇÃO: Pular logs DEBUG se desabilitados (reduz uso de CPU)
+    if (level === 'DEBUG' && !this.ENABLE_DEBUG_LOGS) {
+      return;
+    }
+
     try {
       const now = new Date();
       const timestampISO = now.toISOString();
@@ -3747,7 +3713,9 @@ export class AutonomousAgentService implements OnModuleInit {
           this.logger.warn(logMessage);
           break;
         case 'DEBUG':
-          this.logger.debug(logMessage);
+          if (this.ENABLE_DEBUG_LOGS) {
+            this.logger.debug(logMessage);
+          }
           break;
         default:
           this.logger.log(logMessage);
