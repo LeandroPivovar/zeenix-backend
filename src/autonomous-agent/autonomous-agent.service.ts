@@ -574,10 +574,11 @@ export class AutonomousAgentService implements OnModuleInit {
   async deactivateAgent(userId: string): Promise<void> {
     try {
       // ✅ 1. Atualizar banco de dados primeiro (is_active = FALSE e session_status)
+      // ✅ CORREÇÃO: Usar 'stopped' ao invés de 'stopped_manual' para evitar erro de truncamento
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
          SET is_active = FALSE, 
-             session_status = 'stopped_manual', 
+             session_status = 'stopped', 
              updated_at = NOW() 
          WHERE user_id = ?`,
         [userId],
@@ -825,8 +826,9 @@ export class AutonomousAgentService implements OnModuleInit {
             'RISK',
             `STOP LOSS BLINDADO ATINGIDO! Saldo atual (${currentBalance.toFixed(2)}) abaixo do saldo blindado (${blindBalance.toFixed(2)}). Pico=${profitPeak.toFixed(2)}, Protegido=${protectedProfit.toFixed(2)}.`,
           );
+          // ✅ CORREÇÃO: Usar 'loss' ao invés de 'stopped_loss' para evitar erro de truncamento
           await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
+            `UPDATE autonomous_agent_config SET session_status = 'loss' WHERE user_id = ?`,
             [state.userId],
           );
           return false;
@@ -2959,8 +2961,9 @@ export class AutonomousAgentService implements OnModuleInit {
     const dailyProfit = state?.dailyProfit || 0;
     const target = state?.dailyProfitTarget || 0;
 
+    // ✅ CORREÇÃO: Usar 'profit' ao invés de 'stopped_profit' para evitar erro de truncamento
     await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = 'stopped_profit' WHERE user_id = ?`,
+      `UPDATE autonomous_agent_config SET session_status = 'profit' WHERE user_id = ?`,
       [userId],
     );
 
@@ -2981,8 +2984,9 @@ export class AutonomousAgentService implements OnModuleInit {
     const dailyLoss = state?.dailyLoss || 0;
     const limit = state?.dailyLossLimit || 0;
 
+    // ✅ CORREÇÃO: Usar 'loss' ao invés de 'stopped_loss' para evitar erro de truncamento
     await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
+      `UPDATE autonomous_agent_config SET session_status = 'loss' WHERE user_id = ?`,
       [userId],
     );
 
