@@ -203,65 +203,86 @@ export class NexusStrategy implements IStrategy {
     }
 
     async processTick(tick: Tick, symbol?: string): Promise<void> {
-        if (symbol && symbol !== this.symbol) return;
-        this.ticks.push(tick);
-        if (this.ticks.length > 100) this.ticks.shift();
+        try {
+            if (symbol && symbol !== this.symbol) return;
+            this.ticks.push(tick);
+            if (this.ticks.length > 100) this.ticks.shift();
 
-        // ✅ Log de debug: verificar se está recebendo ticks
-        if (this.users.size > 0 && this.ticks.length % 10 === 0) {
-            this.logger.debug(`[NEXUS] 📥 Tick recebido | Valor: ${tick.value.toFixed(2)} | Dígito: ${tick.digit} | Usuários ativos: ${this.users.size} | Buffer: ${this.ticks.length}`);
-        }
+            // ✅ Log de debug: verificar se está recebendo ticks (a cada 5 ticks quando há usuários)
+            if (this.users.size > 0 && this.ticks.length % 5 === 0) {
+                this.logger.debug(`[NEXUS] 📥 Tick #${this.ticks.length} recebido | Valor: ${tick.value.toFixed(2)} | Dígito: ${tick.digit} | Usuários ativos: ${this.users.size}`);
+            }
 
-        for (const state of this.users.values()) {
-            state.ticksColetados++;
+            // ✅ Processar cada usuário de forma independente (não bloquear um pelo outro)
+            const processPromises: Promise<void>[] = [];
             
-            // ✅ Log de coleta de ticks (similar à Orion)
-            const requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
-            const ticksAtuais = state.ticksColetados;
-            const ticksFaltando = requiredTicks - ticksAtuais;
-            const key = `nexus_${state.userId}`;
-            
-            if (ticksAtuais < requiredTicks) {
-                // ✅ Logar apenas uma vez quando começar a coletar
-                if (!this.coletaLogsEnviados.has(key)) {
-                    this.coletaLogsEnviados.set(key, new Set());
-                    this.saveNexusLog(state.userId, this.symbol, 'info', 
-                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Coleta inicial iniciada.`);
-                }
-                
-                // ✅ Logar progresso: a cada tick para VELOZ (10 ticks), a cada 2 para BALANCEADO (20 ticks), a cada 5 para PRECISO (50 ticks)
-                const intervaloLog = state.mode === 'VELOZ' ? 1 : state.mode === 'BALANCEADO' ? 2 : 5;
-                if (ticksAtuais % intervaloLog === 0 || ticksAtuais === requiredTicks) {
-                    this.logger.debug(`[NEXUS][${state.userId}] Coletando amostra (${ticksAtuais}/${requiredTicks})`);
-                    this.saveNexusLog(state.userId, this.symbol, 'info', 
-                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Ticks coletados: ${ticksAtuais}/${requiredTicks} | Faltam: ${ticksFaltando}`);
-                }
-                
-                continue;
+            for (const state of this.users.values()) {
+                processPromises.push(
+                    (async () => {
+                        try {
+                            state.ticksColetados++;
+                            
+                            // ✅ Log de coleta de ticks (similar à Orion)
+                            const requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
+                            const ticksAtuais = state.ticksColetados;
+                            const ticksFaltando = requiredTicks - ticksAtuais;
+                            const key = `nexus_${state.userId}`;
+                            
+                            if (ticksAtuais < requiredTicks) {
+                                // ✅ Logar apenas uma vez quando começar a coletar
+                                if (!this.coletaLogsEnviados.has(key)) {
+                                    this.coletaLogsEnviados.set(key, new Set());
+                                    this.saveNexusLog(state.userId, this.symbol, 'info', 
+                                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Coleta inicial iniciada.`);
+                                }
+                                
+                                // ✅ Logar progresso: a cada tick para VELOZ (10 ticks), a cada 2 para BALANCEADO (20 ticks), a cada 5 para PRECISO (50 ticks)
+                                const intervaloLog = state.mode === 'VELOZ' ? 1 : state.mode === 'BALANCEADO' ? 2 : 5;
+                                if (ticksAtuais % intervaloLog === 0 || ticksAtuais === requiredTicks) {
+                                    this.logger.debug(`[NEXUS][${state.userId}] Coletando amostra (${ticksAtuais}/${requiredTicks})`);
+                                    this.saveNexusLog(state.userId, this.symbol, 'info', 
+                                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Ticks coletados: ${ticksAtuais}/${requiredTicks} | Faltam: ${ticksFaltando}`);
+                                }
+                                
+                                return; // Continuar coletando
+                            }
+                            
+                            // ✅ Logar quando completar a coleta (apenas uma vez)
+                            if (ticksAtuais === requiredTicks) {
+                                if (this.coletaLogsEnviados.has(key)) {
+                                    const marcosLogados = this.coletaLogsEnviados.get(key)!;
+                                    if (!marcosLogados.has(100)) {
+                                        marcosLogados.add(100);
+                                        this.saveNexusLog(state.userId, this.symbol, 'info', 
+                                            `✅ DADOS COLETADOS | Modo: ${state.mode} | Amostra completa: ${requiredTicks} ticks | Iniciando operações...`);
+                                    }
+                                }
+                            }
+                            
+                            // ✅ Log de tick quando já coletou dados suficientes (a cada 10 ticks para não spammar)
+                            if (ticksAtuais >= requiredTicks && ticksAtuais % 10 === 0) {
+                                const ultimoTick = this.ticks[this.ticks.length - 1];
+                                const digit = ultimoTick.digit;
+                                const paridade = digit % 2 === 0 ? 'PAR' : 'IMPAR';
+                                this.saveNexusLog(state.userId, this.symbol, 'tick', 
+                                    `📊 TICK: ${digit} (${paridade}) | Valor: ${ultimoTick.value.toFixed(2)} | Modo: ${state.mode} | Analisando...`);
+                            }
+                            
+                            // ✅ Processar usuário apenas se já coletou ticks suficientes
+                            if (ticksAtuais >= requiredTicks) {
+                                await this.processUser(state);
+                            }
+                        } catch (error) {
+                            this.logger.error(`[NEXUS][${state.userId}] Erro ao processar tick:`, error);
+                        }
+                    })()
+                );
             }
             
-            // ✅ Logar quando completar a coleta (apenas uma vez)
-            if (ticksAtuais === requiredTicks) {
-                if (this.coletaLogsEnviados.has(key)) {
-                    const marcosLogados = this.coletaLogsEnviados.get(key)!;
-                    if (!marcosLogados.has(100)) {
-                        marcosLogados.add(100);
-                        this.saveNexusLog(state.userId, this.symbol, 'info', 
-                            `✅ DADOS COLETADOS | Modo: ${state.mode} | Amostra completa: ${requiredTicks} ticks | Iniciando operações...`);
-                    }
-                }
-            }
-            
-            // ✅ Log de tick quando já coletou dados suficientes (a cada 10 ticks para não spammar)
-            if (ticksAtuais >= requiredTicks && ticksAtuais % 10 === 0) {
-                const ultimoTick = this.ticks[this.ticks.length - 1];
-                const digit = ultimoTick.digit;
-                const paridade = digit % 2 === 0 ? 'PAR' : 'IMPAR';
-                this.saveNexusLog(state.userId, this.symbol, 'tick', 
-                    `📊 TICK: ${digit} (${paridade}) | Valor: ${ultimoTick.value.toFixed(2)} | Modo: ${state.mode} | Analisando...`);
-            }
-            
-            await this.processUser(state);
+            // ✅ Aguardar todos os processamentos em paralelo (não bloquear)
+            await Promise.allSettled(processPromises);
+        } catch (error) {
+            this.logger.error(`[NEXUS] Erro crítico ao processar tick:`, error);
         }
     }
 
