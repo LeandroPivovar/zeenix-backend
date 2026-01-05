@@ -9,17 +9,12 @@ import { BrokerModule } from '../broker/broker.module';
 import { AgentManagerService } from './strategies/agent-manager.service';
 import { SentinelStrategy } from './strategies/sentinel.strategy';
 import { FalconStrategy } from './strategies/falcon.strategy';
-import { OrionAutonomousStrategy } from './strategies/orion.strategy';
-import { AiModule } from '../ai/ai.module';
-import { UtilsModule } from '../utils/utils.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([]),
     SettingsModule,
     BrokerModule,
-    forwardRef(() => AiModule), // ✅ Importar AiModule para ter acesso à OrionStrategy
-    UtilsModule, // ✅ Importar UtilsModule para LogQueueService
   ],
   controllers: [AutonomousAgentController],
   providers: [
@@ -29,7 +24,6 @@ import { UtilsModule } from '../utils/utils.module';
     AgentManagerService,
     SentinelStrategy,
     FalconStrategy,
-    OrionAutonomousStrategy, // ✅ Adicionar Orion Strategy
   ],
   exports: [
     AutonomousAgentService,

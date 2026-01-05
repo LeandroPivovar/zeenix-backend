@@ -12,7 +12,7 @@ export class AutonomousAgentScheduler {
   // ✅ PAUSA TEMPORÁRIA: Flag para pausar o processamento do agente autônomo
   // Altere para 'true' para pausar temporariamente o processamento
   // Não precisa de .env, apenas mude este valor e reinicie o servidor
-  private readonly IS_PAUSED = false; // ✅ ATIVADO - Agente autônomo com IA Orion ativo
+  private readonly IS_PAUSED = false; // ✅ ATIVADO - Agente autônomo ativo
 
   constructor(private readonly agentService: AutonomousAgentService) {
     if (this.IS_PAUSED) {
@@ -22,7 +22,7 @@ export class AutonomousAgentScheduler {
   }
 
   // ✅ OTIMIZADO: Executar a cada 2 minutos para reduzir carga no servidor
-  // Aumentado de 1 minuto para 2 minutos para reduzir uso de CPU
+  // Processa agentes ativos com otimizações (batches, limites)
   @Cron('*/2 * * * *', {
     name: 'process-autonomous-agents',
   })
