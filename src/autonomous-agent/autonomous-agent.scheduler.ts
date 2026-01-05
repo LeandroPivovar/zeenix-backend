@@ -5,6 +5,9 @@ import { AutonomousAgentService } from './autonomous-agent.service';
 @Injectable()
 export class AutonomousAgentScheduler {
   private readonly logger = new Logger(AutonomousAgentScheduler.name);
+  
+  // ✅ OTIMIZAÇÃO: Flag para evitar execuções simultâneas
+  private isProcessing = false;
 
   constructor(private readonly agentService: AutonomousAgentService) {}
 
@@ -14,11 +17,20 @@ export class AutonomousAgentScheduler {
     name: 'process-autonomous-agents',
   })
   async handleProcessAgents() {
+    // ✅ OTIMIZAÇÃO: Evitar execuções simultâneas
+    if (this.isProcessing) {
+      this.logger.debug('[AutonomousAgentScheduler] Processamento já em andamento, pulando...');
+      return;
+    }
+
+    this.isProcessing = true;
     try {
       this.logger.debug('[AutonomousAgentScheduler] Executando processamento de agentes autônomos');
       await this.agentService.processActiveAgents();
     } catch (error) {
       this.logger.error('[Scheduler] Erro ao processar agentes:', error);
+    } finally {
+      this.isProcessing = false;
     }
   }
 
