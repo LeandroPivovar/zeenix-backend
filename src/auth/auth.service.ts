@@ -119,10 +119,13 @@ export class AuthService {
     // Isso evita que o login trave esperando queries ao banco de dados
     if (this.notificationsService) {
       // Executar em background sem bloquear a resposta do login
+      const notificationsService = this.notificationsService; // Capturar referência para evitar problema de escopo
       setImmediate(async () => {
         try {
-          this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
-          await this.notificationsService.getLoginSummary(user.id);
+          if (notificationsService) {
+            this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
+            await notificationsService.getLoginSummary(user.id);
+          }
         } catch (error) {
           this.logger.error(`[Login] Erro ao buscar notificações: ${error.message}`);
           // Não falhar o login se as notificações falharem
