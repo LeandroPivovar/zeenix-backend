@@ -49,28 +49,31 @@ export class AuthController {
     const result = await this.authService.login(body.email, body.password);
     const token = result.token;
     
-    // Criar sessão e log de atividade
-    try {
-      // Buscar usuário pelo email para pegar o ID
-      const user = await this.authService.findUserByEmail(body.email);
-      if (user) {
-        const device = req.headers['user-agent']?.includes('Mobile') ? 'Mobile' : 'Desktop';
-        const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
-        const userAgent = req.headers['user-agent'] || 'unknown';
-        
-        await this.settingsService.createSession(user.id, token, device, userAgent, ipAddress);
-        await this.settingsService.logActivity(
-          user.id,
-          'LOGIN',
-          'Realizou login no sistema',
-          ipAddress,
-          userAgent
-        );
+    // ✅ OTIMIZAÇÃO: Criar sessão e log de atividade de forma não-bloqueante
+    // Isso evita que o login trave esperando operações de banco de dados
+    setImmediate(async () => {
+      try {
+        // Buscar usuário pelo email para pegar o ID
+        const user = await this.authService.findUserByEmail(body.email);
+        if (user) {
+          const device = req.headers['user-agent']?.includes('Mobile') ? 'Mobile' : 'Desktop';
+          const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
+          const userAgent = req.headers['user-agent'] || 'unknown';
+          
+          await this.settingsService.createSession(user.id, token, device, userAgent, ipAddress);
+          await this.settingsService.logActivity(
+            user.id,
+            'LOGIN',
+            'Realizou login no sistema',
+            ipAddress,
+            userAgent
+          );
+        }
+      } catch (err) {
+        console.warn('Erro ao criar sessão:', err);
+        // Não falhar o login se a criação de sessão falhar
       }
-    } catch (err) {
-      console.warn('Erro ao criar sessão:', err);
-      // Não falhar o login se a criação de sessão falhar
-    }
+    });
     
     return { token };
   }

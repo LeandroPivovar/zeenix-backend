@@ -115,15 +115,19 @@ export class AuthService {
     const userRole = userStatus[0].role || 'user';
     const token = await this.signToken(user.id, user.email, user.name, userRole);
 
-    // ✅ Buscar e exibir notificações ao fazer login
+    // ✅ OTIMIZAÇÃO: Buscar notificações de forma não-bloqueante (fire-and-forget)
+    // Isso evita que o login trave esperando queries ao banco de dados
     if (this.notificationsService) {
-      try {
-        this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
-        await this.notificationsService.getLoginSummary(user.id);
-      } catch (error) {
-        this.logger.error(`[Login] Erro ao buscar notificações: ${error.message}`);
-        // Não falhar o login se as notificações falharem
-      }
+      // Executar em background sem bloquear a resposta do login
+      setImmediate(async () => {
+        try {
+          this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
+          await this.notificationsService.getLoginSummary(user.id);
+        } catch (error) {
+          this.logger.error(`[Login] Erro ao buscar notificações: ${error.message}`);
+          // Não falhar o login se as notificações falharem
+        }
+      });
     }
 
     return { token };
