@@ -511,28 +511,28 @@ export class AutonomousAgentService implements OnModuleInit {
       const managementModeName = riskLevel === 'conservative' ? 'Conservador' : riskLevel === 'aggressive' ? 'Agressivo' : 'Moderado';
       const stopLossName = stopLossType === 'blindado' ? 'Blindado' : 'Normal';
 
-      await this.saveLog(
+      this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Modo de Negociação: ${tradingModeName}`,
       );
 
-      await this.saveLog(
+      this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Modo de Gestão: ${managementModeName}`,
       );
 
-      await this.saveLog(
+      this.saveLog(
         userId,
         'INFO',
         'CORE',
         `Tipo de Stop Loss: ${stopLossName}`,
       );
 
-      await this.saveLog(
+      this.saveLog(
         userId,
         'INFO',
         'CORE',
@@ -550,7 +550,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       this.logger.log(`[ActivateAgent] ✅ Agente ativado para usuário ${userId}`);
     } catch (error) {
-      await this.saveLog(userId, 'ERROR', 'CORE', `Falha ao ativar agente. erro=${error.message}`);
+      this.saveLog(userId, 'ERROR', 'CORE', `Falha ao ativar agente. erro=${error.message}`);
       this.logger.error(`[ActivateAgent] ❌ Erro ao ativar agente:`, error);
       throw error;
     }
@@ -598,11 +598,11 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // ✅ 5. Log detalhado
-      await this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
+      this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
 
       this.logger.log(`[DeactivateAgent] ✅ Agente desativado completamente para usuário ${userId}`);
     } catch (error) {
-      await this.saveLog(userId, 'ERROR', 'CORE', `Falha ao desativar agente. erro=${error.message}`);
+      this.saveLog(userId, 'ERROR', 'CORE', `Falha ao desativar agente. erro=${error.message}`);
       this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, error);
       throw error;
     }
@@ -822,7 +822,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // Log de sinal encontrado (formato da documentação)
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'INFO',
         'ANALYZER',
@@ -847,7 +847,7 @@ export class AutonomousAgentService implements OnModuleInit {
       await this.executeTrade(state, analysis);
     } catch (error) {
       this.logger.error(`[ProcessAgent][${state.userId}] Erro:`, error);
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'ERROR',
         'CORE',
@@ -1215,13 +1215,13 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     // Log de análise estatística (sucesso)
-    await this.saveLog(
+    this.saveLog(
       userId,
       'DEBUG',
       'ANALYZER',
       `📊 Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=${sequenceOk}`,
       { imbalance, direction, sequenceOk },
-    ).catch(() => { });
+    );
 
     return true;
   }
@@ -1382,7 +1382,7 @@ export class AutonomousAgentService implements OnModuleInit {
       );
 
       // Log de proposta enviada (formato da documentação)
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'INFO',
         'TRADER',
@@ -1425,7 +1425,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // Log antes de processar resultado
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'DEBUG',
         'RISK',
@@ -1453,7 +1453,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Atualizar próximo trade com intervalo aleatório
       const interval = this.getRandomInterval();
       await this.updateNextTradeAt(state.userId, interval);
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'DEBUG',
         'HUMANIZER',
@@ -2439,7 +2439,7 @@ export class AutonomousAgentService implements OnModuleInit {
     // Log de entrada no handleTradeResult
     this.logger.log(`[HandleTradeResult][${state.userId}] Iniciando processamento. trade_id=${tradeId}, status=${result.status}, profit_loss=${result.profitLoss.toFixed(2)}`);
 
-    await this.saveLog(
+    this.saveLog(
       state.userId,
       'DEBUG',
       'RISK',
@@ -2452,7 +2452,7 @@ export class AutonomousAgentService implements OnModuleInit {
         martingaleLevelBefore: state.martingaleLevel,
         sorosLevelBefore: state.sorosLevel,
       },
-    ).catch(() => { });
+    );
 
     const won = result.status === 'WON';
 
@@ -2652,7 +2652,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       state.isOperationActive = false;
 
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'INFO',
         'TRADER',
@@ -2668,7 +2668,7 @@ export class AutonomousAgentService implements OnModuleInit {
       state.isOperationActive = false;
 
       // Log de perda detectada
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'ERROR',
         'RISK',
@@ -2876,7 +2876,7 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
 
-      await this.saveLog(
+      this.saveLog(
         state.userId,
         'ERROR',
         'TRADER',
@@ -2931,7 +2931,7 @@ export class AutonomousAgentService implements OnModuleInit {
     state.nextTradeAt = new Date(Date.now() + pauseMinutes * 60 * 1000);
 
     // Log de pausa aleatória
-    await this.saveLog(
+    this.saveLog(
       state.userId,
       'INFO',
       'HUMANIZER',
@@ -2953,7 +2953,7 @@ export class AutonomousAgentService implements OnModuleInit {
     );
 
     // Log de Stop Win
-    await this.saveLog(
+    this.saveLog(
       userId,
       'INFO',
       'RISK',
@@ -2975,7 +2975,7 @@ export class AutonomousAgentService implements OnModuleInit {
     );
 
     // Log de Stop Loss
-    await this.saveLog(
+    this.saveLog(
       userId,
       'ERROR',
       'RISK',
