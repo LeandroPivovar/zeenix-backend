@@ -2,7 +2,7 @@
 // TIPOS COMUNS PARA AGENTES AUTÔNOMOS
 // ============================================
 
-export type AutonomousAgentType = 'sentinel' | 'falcon';
+export type AutonomousAgentType = 'sentinel' | 'falcon' | 'orion';
 
 export interface AutonomousAgentConfig {
   userId: string;

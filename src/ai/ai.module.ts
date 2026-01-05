@@ -33,7 +33,7 @@ import { TradeEventsService } from './trade-events.service';
     NexusStrategy,
     TradeEventsService,
   ],
-  exports: [AiService, StrategyManagerService, TradeEventsService],
+  exports: [AiService, StrategyManagerService, TradeEventsService, OrionStrategy], // ✅ Exportar OrionStrategy para uso no agente autônomo
 })
 export class AiModule { }
 

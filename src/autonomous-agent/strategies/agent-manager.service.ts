@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { IAutonomousAgentStrategy } from './common.types';
 import { SentinelStrategy } from './sentinel.strategy';
 import { FalconStrategy } from './falcon.strategy';
+import { OrionAutonomousStrategy } from './orion.strategy';
 
 @Injectable()
 export class AgentManagerService implements OnModuleInit {
@@ -11,20 +12,28 @@ export class AgentManagerService implements OnModuleInit {
   constructor(
     private readonly sentinelStrategy: SentinelStrategy,
     private readonly falconStrategy: FalconStrategy,
+    private readonly orionStrategy: OrionAutonomousStrategy,
   ) {}
 
   async onModuleInit() {
-    // Registrar agentes
-    this.agents.set('sentinel', this.sentinelStrategy);
-    this.agents.set('falcon', this.falconStrategy);
+    // ✅ REGISTRAR APENAS ORION (outras estratégias desativadas)
+    this.agents.set('orion', this.orionStrategy);
+    
+    // ✅ DESATIVADO: Sentinel e Falcon
+    // this.agents.set('sentinel', this.sentinelStrategy);
+    // this.agents.set('falcon', this.falconStrategy);
 
-    // Inicializar agentes
-    await this.sentinelStrategy.initialize();
-    await this.falconStrategy.initialize();
+    // Inicializar apenas Orion
+    await this.orionStrategy.initialize();
+    
+    // ✅ DESATIVADO: Inicializar outras estratégias
+    // await this.sentinelStrategy.initialize();
+    // await this.falconStrategy.initialize();
 
     this.logger.log(
-      `[AgentManager] ✅ ${this.agents.size} agentes autônomos registrados: ${Array.from(this.agents.keys()).join(', ')}`,
+      `[AgentManager] ✅ ${this.agents.size} agente autônomo registrado: ${Array.from(this.agents.keys()).join(', ')}`,
     );
+    this.logger.warn('[AgentManager] ⚠️ Sentinel e Falcon DESATIVADOS - Apenas Orion ativo');
   }
 
   /**
@@ -95,4 +104,5 @@ export class AgentManagerService implements OnModuleInit {
     await agent.onContractFinish(userId, result);
   }
 }
+
 

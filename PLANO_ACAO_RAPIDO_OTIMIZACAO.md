@@ -250,3 +250,4 @@ mysql> SHOW PROCESSLIST;
 *Criado em 2025-01-XX*  
 *Prioridade: MÁXIMA*
 
+

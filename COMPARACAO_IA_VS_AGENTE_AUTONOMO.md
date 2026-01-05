@@ -148,3 +148,4 @@ await this.ensureWebSocketConnection(userId); // Por usuário!
 *Documento criado em 2025-01-XX*  
 *Versão: 1.0 - Análise Comparativa*
 
+

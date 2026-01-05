@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, Optional, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import WebSocket from 'ws';
@@ -6,6 +6,8 @@ import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream
 import { SettingsService } from '../settings/settings.service';
 import { DerivService } from '../broker/deriv.service';
 import { LogQueueService } from '../utils/log-queue.service';
+import { AgentManagerService } from './strategies/agent-manager.service';
+import { Tick, DigitParity } from '../ai/ai.service';
 
 // ============================================
 // INTERFACES E TIPOS
@@ -210,17 +212,12 @@ export class AutonomousAgentService implements OnModuleInit {
     @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
     @Optional() @Inject(DerivService) private readonly derivService?: DerivService,
     @Optional() private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
+    @Optional() @Inject(forwardRef(() => AgentManagerService)) private readonly agentManager?: AgentManagerService, // ✅ AgentManager para usar Orion
   ) { }
 
   async onModuleInit() {
-    // ✅ DESATIVADO: Agente autônomo completamente desabilitado
-    // Para reativar, altere IS_PAUSED para false no autonomous-agent.scheduler.ts
-    this.logger.warn('⚠️ Agente Autônomo IA SENTINEL DESATIVADO - Nenhuma inicialização será executada');
-    this.logger.warn('⚠️ Para reativar, altere IS_PAUSED para false no autonomous-agent.scheduler.ts');
-    return; // ✅ DESATIVADO: Não inicializar nada
-    
-    // Código abaixo não será executado enquanto o agente estiver desativado
-    this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
+    // ✅ ATIVADO: Agente autônomo com IA Orion
+    this.logger.log('🌟 Agente Autônomo com IA ORION inicializado');
     await this.syncActiveAgentsFromDb();
     
     // ✅ REFATORADO: Inicializar conexão WebSocket compartilhada (como a IA)
@@ -853,8 +850,31 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * ✅ OTIMIZADO: Processa um usuário individualmente (para processamento paralelo em batches)
+   * ✅ ORION: Verifica agent_type e usa estratégia apropriada
    */
   private async processAgentUser(state: AutonomousAgentState, now: Date, config: any): Promise<void> {
+    // ✅ ORION: Verificar se é agente Orion
+    const agentType = config?.agent_type || 'sentinel';
+    
+    if (agentType === 'orion' && this.agentManager) {
+      // Usar Orion Strategy
+      const orionStrategy = this.agentManager.getAgent('orion');
+      if (orionStrategy) {
+        // Obter MarketAnalysis para Orion
+        const marketAnalysis = await this.getSharedMarketAnalysis(state.symbol);
+        if (marketAnalysis) {
+          const decision = await orionStrategy.processAgent(state.userId, marketAnalysis);
+          
+          if (decision.action === 'BUY' && decision.contractType && decision.stake) {
+            // Executar trade via Orion
+            await this.executeTradeForOrion(state, decision);
+          }
+        }
+      }
+      return; // Orion Strategy processa de forma diferente
+    }
+
+    // Processamento padrão (Sentinel) para outros tipos
     // Verificar se pode processar (usando config do cache)
     if (!(await this.canProcessAgent(state, config))) {
       return;
@@ -883,8 +903,31 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    // Processar agente
+    // Processar agente (Sentinel)
     await this.processAgent(state);
+  }
+
+  /**
+   * ✅ ORION: Executa trade para Orion Strategy
+   */
+  private async executeTradeForOrion(state: AutonomousAgentState, decision: any): Promise<void> {
+    // Converter contractType para formato do agente autônomo
+    const contractType = decision.contractType === 'RISE' ? 'RISE' : 'FALL';
+    
+    // Criar TechnicalAnalysis simplificado para compatibilidade
+    const analysis: TechnicalAnalysis = {
+      ema10: 0,
+      ema25: 0,
+      ema50: 0,
+      rsi: 50,
+      momentum: 0,
+      confidenceScore: 70, // Valor padrão
+      direction: contractType as ContractType,
+      reasoning: 'Orion Strategy signal',
+    };
+
+    // Executar trade usando método existente
+    await this.executeTrade(state, analysis);
   }
 
   /**
@@ -3476,6 +3519,7 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * ✅ REFATORADO: Processa tick compartilhado e distribui para todos os agentes ativos
    * ✅ OTIMIZAÇÃO 5: Atualiza buffer de dígitos incrementalmente
+   * ✅ ORION: Processa tick na Orion Strategy também
    */
   private processSharedTick(tick: any): void {
     if (!tick || tick.quote === undefined) {
@@ -3489,6 +3533,25 @@ export class AutonomousAgentService implements OnModuleInit {
         ? new Date(tick.epoch * 1000).toISOString()
         : new Date().toISOString(),
     };
+
+    // ✅ ORION: Converter para Tick da Orion e processar
+    const orionTick: Tick = {
+      value: priceTick.value,
+      epoch: priceTick.epoch,
+      timestamp: priceTick.timestamp,
+      digit: Math.floor((priceTick.value % 1) * 10),
+      parity: Math.floor((priceTick.value % 1) * 10) % 2 === 0 ? 'PAR' : 'IMPAR',
+    };
+
+    // ✅ ORION: Processar tick na Orion Strategy (se disponível)
+    if (this.agentManager) {
+      const orionStrategy = this.agentManager.getAgent('orion');
+      if (orionStrategy && typeof (orionStrategy as any).processTick === 'function') {
+        (orionStrategy as any).processTick(orionTick).catch((error: any) => {
+          this.logger.error('[Orion] Erro ao processar tick:', error);
+        });
+      }
+    }
 
     // ✅ REFATORAÇÃO: Invalidar cache de MarketAnalysis compartilhado quando novo tick chegar
     this.sharedMarketAnalysisCache.delete(this.sharedSymbol);

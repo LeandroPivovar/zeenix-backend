@@ -14,3 +14,4 @@ WHERE agent_type IS NULL OR agent_type = '';
 -- Adicionar índice para melhor performance
 CREATE INDEX idx_agent_type ON autonomous_agent_config(agent_type);
 
+
