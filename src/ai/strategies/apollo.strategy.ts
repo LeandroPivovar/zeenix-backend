@@ -62,12 +62,8 @@ const DEFAULT_CONFIG = {
  */
 class RiskManager {
   private config: any;
-  private payouts: Record<number, number> = {
-    0: 0.63, // Normal (Over 3)
-    1: 0.96, // M1 (Over 4)
-    2: 1.44, // M2 (Over 5)
-    3: 2.23, // M3+ (Over 6)
-  };
+  // ✅ Payout fixo de 63% (0.63) para todas as operações Apollo
+  private readonly PAYOUT_APOLLO = 0.63; // 63% - payout padrão das operações Over
 
   constructor(config: any) {
     this.config = config;
@@ -123,14 +119,16 @@ class RiskManager {
     state.martingaleLevel += 1;
 
     // Progressão de Barreiras (Martingale Inteligente)
+    // ✅ Mantém a progressão de barreiras, mas usa payout fixo de 63%
     let barrier = 6;
     if (state.martingaleLevel === 1) barrier = 4;
     else if (state.martingaleLevel === 2) barrier = 5;
     else barrier = 6;
 
-    const payoutRate = this.payouts[Math.min(state.martingaleLevel, 3)] || 2.23;
-
-    // Fatores de Recuperação
+    // ✅ Fatores de Recuperação (igual à Orion)
+    // CONSERVADOR: Recuperar apenas o valor da perda (break-even)
+    // MODERADO: Recuperar 100% das perdas + 25% de lucro
+    // AGRESSIVO: Recuperar 100% das perdas + 50% de lucro
     let factor = 1.0;
     if (state.riskProfile === 'moderado') factor = 1.25;
     else if (state.riskProfile === 'agressivo') factor = 1.50;
@@ -143,10 +141,16 @@ class RiskManager {
       return { stake: this.config.INITIAL_STAKE, barrier: 3 };
     }
 
-    let nextStake = (state.lossAccumulated * factor) / payoutRate;
+    // ✅ Cálculo do martingale usando payout de 63% (0.63)
+    // Fórmula: (perdas_acumuladas × fator) / payout
+    // Exemplo: Se perdeu $1.00 e está em modo conservador:
+    //   nextStake = ($1.00 × 1.0) / 0.63 = $1.59
+    //   Se ganhar: $1.59 × 0.63 = $1.00 de lucro (recupera exatamente o que perdeu)
+    let nextStake = (state.lossAccumulated * factor) / this.PAYOUT_APOLLO;
     nextStake = Math.max(nextStake, 0.35);
+    nextStake = Math.round(nextStake * 100) / 100; // 2 casas decimais
 
-    return { stake: Number(nextStake.toFixed(2)), barrier };
+    return { stake: nextStake, barrier };
   }
 
   registerLoss(state: ApolloUserState, stake: number) {
@@ -681,7 +685,22 @@ export class ApolloStrategy implements IStrategy {
       state.currentStake = params.stake;
       state.currentBarrier = params.barrier;
 
-      this.saveApolloLog(state.userId, 'info', `🚀 [TRADE] Comprando Over ${params.barrier} | Stake: $${params.stake.toFixed(2)} <-- Barreira subiu/ajuste`);
+      // ✅ Log detalhado do cálculo do martingale
+      const modoMartingale = state.riskProfile === 'conservador' ? 'CONSERVADOR' : 
+                            state.riskProfile === 'moderado' ? 'MODERADO' : 'AGRESSIVO';
+      const factor = state.riskProfile === 'conservador' ? 1.0 : 
+                    state.riskProfile === 'moderado' ? 1.25 : 1.50;
+      
+      this.saveApolloLog(
+        state.userId, 
+        'info', 
+        `🔄 MARTINGALE (${modoMartingale}) | Nível: ${state.martingaleLevel} | Perda acumulada: $${state.lossAccumulated.toFixed(2)} | Stake calculado: $${params.stake.toFixed(2)} | Barreira: Over ${params.barrier}`
+      );
+      this.saveApolloLog(
+        state.userId, 
+        'info', 
+        `🚀 [TRADE] Comprando Over ${params.barrier} | Stake: $${params.stake.toFixed(2)} <-- Barreira subiu/ajuste`
+      );
 
       setTimeout(() => {
         this.executeTradeCycle(state);
