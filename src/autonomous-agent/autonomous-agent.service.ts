@@ -818,11 +818,12 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log(`[DeactivateAgent] Iniciando desativação para usuário ${userId}`);
 
       // ✅ 1. Atualizar banco de dados primeiro (is_active = FALSE e session_status)
-      // ✅ CORREÇÃO: Usar 'stopped' ao invés de 'stopped_manual' para evitar erro de truncamento
+      // ✅ CORREÇÃO: Usar 'paused' ao invés de 'stopped' (que não existe no ENUM)
+      // Valores permitidos: 'active', 'stopped_profit', 'stopped_loss', 'paused'
       const updateResult = await this.dataSource.query(
         `UPDATE autonomous_agent_config 
          SET is_active = FALSE, 
-             session_status = 'stopped', 
+             session_status = 'paused', 
              updated_at = NOW() 
          WHERE user_id = ?`,
         [userId],
