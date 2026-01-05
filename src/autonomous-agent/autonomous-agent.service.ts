@@ -118,6 +118,13 @@ export class AutonomousAgentService implements OnModuleInit {
   // ✅ Controle de execução simultânea do updateTradesWithMissingPrices
   private updateInProgress = new Set<string>();
   private readonly appId = process.env.DERIV_APP_ID || '1089';
+  
+  // ✅ OTIMIZAÇÃO: Cache de configurações para evitar queries N+1
+  private configCache = new Map<string, {
+    config: any;
+    timestamp: number;
+  }>();
+  private readonly CONFIG_CACHE_TTL = 5000; // 5 segundos (mais curto que IAs porque precisa ser mais atualizado)
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -130,6 +137,16 @@ export class AutonomousAgentService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
     await this.syncActiveAgentsFromDb();
+    
+    // ✅ OTIMIZAÇÃO: Limpar cache expirado a cada 30 segundos
+    setInterval(() => {
+      const now = Date.now();
+      for (const [userId, cached] of this.configCache.entries()) {
+        if (now - cached.timestamp > this.CONFIG_CACHE_TTL) {
+          this.configCache.delete(userId);
+        }
+      }
+    }, 30000);
   }
 
   // ============================================
@@ -620,69 +637,152 @@ export class AutonomousAgentService implements OnModuleInit {
     this.logger.debug(`[ProcessActiveAgents] Processando ${this.agentStates.size} agente(s) ativo(s)`);
 
     const now = new Date();
+    const activeUsers = Array.from(this.agentStates.entries());
 
-    for (const [userId, state] of this.agentStates.entries()) {
-      try {
-        // Verificar se pode processar
-        if (!(await this.canProcessAgent(state))) {
-          continue;
-        }
+    // ✅ OTIMIZAÇÃO: Buscar todas as configurações de uma vez (batch query)
+    const userIds = activeUsers.map(([userId]) => userId);
+    const allConfigs = await this.getBatchConfigs(userIds);
 
-        // Verificar intervalo
-        if (state.nextTradeAt && state.nextTradeAt > now) {
-          continue;
-        }
-
-        // Verificar se está saindo de uma pausa aleatória
-        const config = await this.dataSource.query(
-          `SELECT last_pause_at, next_trade_at, operations_since_pause
-           FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE`,
-          [userId],
-        );
-
-        if (config && config.length > 0 && config[0].last_pause_at && state.nextTradeAt && state.nextTradeAt <= now) {
-          // Pausa acabou, logar retomada
-          this.saveLog(
-            userId,
-            'INFO',
-            'HUMANIZER',
-            'Pausa aleatória finalizada. Retomando operações.',
-            { pauseEndedAt: now.toISOString() },
-          );
-        }
-
-        // Verificar pausa aleatória
-        if (state.operationsSincePause >= SENTINEL_CONFIG.pauseAfterOperations) {
-          await this.handleRandomPause(state);
-          continue;
-        }
-
-        // Processar agente
-        await this.processAgent(state);
-      } catch (error) {
-        this.logger.error(`[ProcessAgent][${userId}] Erro:`, error);
-      }
+    // ✅ OTIMIZAÇÃO: Processar usuários em batches paralelos (limitado a 5 simultâneos) para reduzir latência
+    for (let i = 0; i < activeUsers.length; i += 5) {
+      const batch = activeUsers.slice(i, i + 5);
+      await Promise.all(
+        batch.map(([userId, state]) =>
+          this.processAgentUser(state, now, allConfigs.get(userId)).catch(error => {
+            this.logger.error(`[ProcessAgent][${userId}] Erro:`, error);
+          })
+        )
+      );
     }
   }
 
-  private async canProcessAgent(state: AutonomousAgentState): Promise<boolean> {
+  /**
+   * ✅ OTIMIZADO: Busca configurações de múltiplos usuários de uma vez (batch query)
+   */
+  private async getBatchConfigs(userIds: string[]): Promise<Map<string, any>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const now = Date.now();
+    const result = new Map<string, any>();
+    const userIdsToFetch: string[] = [];
+
+    // Verificar cache primeiro
+    for (const userId of userIds) {
+      const cached = this.configCache.get(userId);
+      if (cached && (now - cached.timestamp) < this.CONFIG_CACHE_TTL) {
+        result.set(userId, cached.config);
+      } else {
+        userIdsToFetch.push(userId);
+      }
+    }
+
+    // Buscar apenas os que não estão em cache ou expiraram
+    if (userIdsToFetch.length > 0) {
+      const placeholders = userIdsToFetch.map(() => '?').join(',');
+      const configs = await this.dataSource.query(
+        `SELECT 
+          user_id,
+          last_pause_at,
+          next_trade_at,
+          operations_since_pause,
+          session_status,
+          daily_profit,
+          daily_loss,
+          daily_profit_target,
+          daily_loss_limit,
+          stop_loss_type,
+          initial_balance,
+          profit_peak
+         FROM autonomous_agent_config 
+         WHERE user_id IN (${placeholders}) AND is_active = TRUE`,
+        userIdsToFetch,
+      );
+
+      // Armazenar no cache e no resultado
+      for (const config of configs) {
+        const userId = config.user_id.toString();
+        this.configCache.set(userId, {
+          config,
+          timestamp: now,
+        });
+        result.set(userId, config);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * ✅ OTIMIZADO: Processa um usuário individualmente (para processamento paralelo em batches)
+   */
+  private async processAgentUser(state: AutonomousAgentState, now: Date, config: any): Promise<void> {
+    // Verificar se pode processar (usando config do cache)
+    if (!(await this.canProcessAgent(state, config))) {
+      return;
+    }
+
+    // Verificar intervalo
+    if (state.nextTradeAt && state.nextTradeAt > now) {
+      return;
+    }
+
+    // Verificar se está saindo de uma pausa aleatória
+    if (config && config.last_pause_at && state.nextTradeAt && state.nextTradeAt <= now) {
+      // Pausa acabou, logar retomada
+      this.saveLog(
+        state.userId,
+        'INFO',
+        'HUMANIZER',
+        'Pausa aleatória finalizada. Retomando operações.',
+        { pauseEndedAt: now.toISOString() },
+      );
+    }
+
+    // Verificar pausa aleatória
+    if (state.operationsSincePause >= SENTINEL_CONFIG.pauseAfterOperations) {
+      await this.handleRandomPause(state);
+      return;
+    }
+
+    // Processar agente
+    await this.processAgent(state);
+  }
+
+  /**
+   * ✅ OTIMIZADO: Verifica se pode processar agente usando config do cache
+   */
+  private async canProcessAgent(state: AutonomousAgentState, cachedConfig?: any): Promise<boolean> {
     if (state.isOperationActive) {
       return false;
     }
 
-    // Verificar limites diários
-    const config = await this.dataSource.query(
-      `SELECT session_status, daily_profit, daily_loss, daily_profit_target, daily_loss_limit,
-              stop_loss_type, initial_balance, profit_peak
-       FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE`,
-      [state.userId],
-    );
+    // ✅ OTIMIZAÇÃO: Usar config do cache se disponível, senão buscar
+    let cfg: any;
+    if (cachedConfig) {
+      cfg = cachedConfig;
+    } else {
+      // Fallback: buscar do banco se não veio do cache
+      const config = await this.dataSource.query(
+        `SELECT session_status, daily_profit, daily_loss, daily_profit_target, daily_loss_limit,
+                stop_loss_type, initial_balance, profit_peak
+         FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE`,
+        [state.userId],
+      );
 
-    if (!config || config.length === 0) {
-      return false;
+      if (!config || config.length === 0) {
+        return false;
+      }
+
+      cfg = config[0];
+      
+      // Armazenar no cache
+      this.configCache.set(state.userId, {
+        config: cfg,
+        timestamp: Date.now(),
+      });
     }
-
-    const cfg = config[0];
 
     // Verificar stop win
     if (parseFloat(cfg.daily_profit) >= parseFloat(cfg.daily_profit_target)) {
