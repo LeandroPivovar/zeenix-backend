@@ -229,58 +229,77 @@ export class ApolloStrategy implements IStrategy {
 
     const digit = tick.digit;
 
-    for (const [userId, state] of this.apolloUsers.entries()) {
-      const virtualLossAntes = state.virtualLoss;
-      const shouldTrade = ApolloLogic.processTick(state, digit);
+    // ✅ OTIMIZADO: Processar usuários em paralelo para reduzir latência
+    const activeUsers = Array.from(this.apolloUsers.entries());
+    
+    if (activeUsers.length === 0) {
+      return;
+    }
 
-      // ✅ Calcular threshold baseado no modo
-      const threshold = state.mode === 'veloz' ? 0 : state.mode === 'balanceado' ? 3 : 5;
-      const ultimoLogado = this.ultimoLossVirtualLogado.get(userId) ?? -1;
+    // Processar todos os usuários em paralelo
+    await Promise.all(
+      activeUsers.map(([userId, state]) =>
+        this.processApolloUser(state, digit).catch(error => {
+          this.logger.error(`[APOLLO][${userId}] Erro ao processar:`, error);
+        })
+      )
+    );
+  }
 
-      // ✅ Log de TICK quando Loss Virtual muda significativamente
-      // Logar quando:
-      // 1. Loss Virtual mudou (aumentou ou zerou) - mas não logar se já logou esse valor
-      // 2. Está próximo do threshold (1 tick antes) - sempre logar
-      // 3. Atingiu o threshold (vai entrar) - sempre logar
-      const mudouSignificativamente = virtualLossAntes !== state.virtualLoss && state.virtualLoss !== ultimoLogado;
-      const proximoDoThreshold = state.virtualLoss > 0 && state.virtualLoss === threshold - 1;
-      const atingiuThreshold = state.virtualLoss >= threshold;
+  /**
+   * ✅ OTIMIZADO: Processa um usuário Apollo individualmente (para processamento paralelo)
+   */
+  private async processApolloUser(state: ApolloUserState, digit: number): Promise<void> {
+    const virtualLossAntes = state.virtualLoss;
+    const shouldTrade = ApolloLogic.processTick(state, digit);
 
-      if (mudouSignificativamente || proximoDoThreshold || atingiuThreshold) {
-        const statusLossVirtual = state.virtualLoss === 0 
-          ? '✅ Resetado' 
-          : state.virtualLoss < threshold 
-            ? `⏳ Acumulando (${state.virtualLoss}/${threshold})`
-            : `🎯 PRONTO (${state.virtualLoss}/${threshold})`;
+    // ✅ Calcular threshold baseado no modo
+    const threshold = state.mode === 'veloz' ? 0 : state.mode === 'balanceado' ? 3 : 5;
+    const ultimoLogado = this.ultimoLossVirtualLogado.get(state.userId) ?? -1;
 
-        this.saveApolloLog(
-          state.userId,
-          'tick',
-          `📊 TICK: ${digit} | Loss Virtual: ${state.virtualLoss} | ${statusLossVirtual} | Modo: ${state.mode.toUpperCase()}`
-        );
+    // ✅ Log de TICK quando Loss Virtual muda significativamente
+    // Logar quando:
+    // 1. Loss Virtual mudou (aumentou ou zerou) - mas não logar se já logou esse valor
+    // 2. Está próximo do threshold (1 tick antes) - sempre logar
+    // 3. Atingiu o threshold (vai entrar) - sempre logar
+    const mudouSignificativamente = virtualLossAntes !== state.virtualLoss && state.virtualLoss !== ultimoLogado;
+    const proximoDoThreshold = state.virtualLoss > 0 && state.virtualLoss === threshold - 1;
+    const atingiuThreshold = state.virtualLoss >= threshold;
 
-        // Atualizar último valor logado
-        this.ultimoLossVirtualLogado.set(userId, state.virtualLoss);
-      }
+    if (mudouSignificativamente || proximoDoThreshold || atingiuThreshold) {
+      const statusLossVirtual = state.virtualLoss === 0 
+        ? '✅ Resetado' 
+        : state.virtualLoss < threshold 
+          ? `⏳ Acumulando (${state.virtualLoss}/${threshold})`
+          : `🎯 PRONTO (${state.virtualLoss}/${threshold})`;
 
-      // ✅ Log de ANÁLISE quando está próximo ou atingiu o threshold
-      if ((proximoDoThreshold || atingiuThreshold) && !state.isOperationActive) {
-        const stakeAtual = state.currentBarrier === 3 ? state.apostaInicial : state.currentStake;
-        const analiseMessage = `🔍 [ANÁLISE ${state.mode.toUpperCase()}]\n` +
-          ` • Dígito Atual: ${digit}\n` +
-          ` • Loss Virtual: ${state.virtualLoss}/${threshold} ${atingiuThreshold ? '✅' : '⏳'}\n` +
-          ` • Barreira: Over ${state.currentBarrier}\n` +
-          ` • Stake: $${stakeAtual.toFixed(2)}\n` +
-          ` • Martingale Level: ${state.martingaleLevel}\n` +
-          `${atingiuThreshold ? '🌊 [DECISÃO] Critérios atendidos. Entrada: Over ' + state.currentBarrier : '⏳ Aguardando threshold...'}`;
+      this.saveApolloLog(
+        state.userId,
+        'tick',
+        `📊 TICK: ${digit} | Loss Virtual: ${state.virtualLoss} | ${statusLossVirtual} | Modo: ${state.mode.toUpperCase()}`
+      );
 
-        this.saveApolloLog(state.userId, 'analise', analiseMessage);
-        this.logger.log(`[APOLLO][${state.userId}] ${analiseMessage.replace(/\n/g, ' | ')}`);
-      }
+      // Atualizar último valor logado
+      this.ultimoLossVirtualLogado.set(state.userId, state.virtualLoss);
+    }
 
-      if (shouldTrade && !state.isOperationActive) {
-        await this.executeTradeCycle(state);
-      }
+    // ✅ Log de ANÁLISE quando está próximo ou atingiu o threshold
+    if ((proximoDoThreshold || atingiuThreshold) && !state.isOperationActive) {
+      const stakeAtual = state.currentBarrier === 3 ? state.apostaInicial : state.currentStake;
+      const analiseMessage = `🔍 [ANÁLISE ${state.mode.toUpperCase()}]\n` +
+        ` • Dígito Atual: ${digit}\n` +
+        ` • Loss Virtual: ${state.virtualLoss}/${threshold} ${atingiuThreshold ? '✅' : '⏳'}\n` +
+        ` • Barreira: Over ${state.currentBarrier}\n` +
+        ` • Stake: $${stakeAtual.toFixed(2)}\n` +
+        ` • Martingale Level: ${state.martingaleLevel}\n` +
+        `${atingiuThreshold ? '🌊 [DECISÃO] Critérios atendidos. Entrada: Over ' + state.currentBarrier : '⏳ Aguardando threshold...'}`;
+
+      this.saveApolloLog(state.userId, 'analise', analiseMessage);
+      this.logger.log(`[APOLLO][${state.userId}] ${analiseMessage.replace(/\n/g, ' | ')}`);
+    }
+
+    if (shouldTrade && !state.isOperationActive) {
+      await this.executeTradeCycle(state);
     }
   }
 

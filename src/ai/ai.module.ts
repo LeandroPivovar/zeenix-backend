@@ -8,7 +8,6 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 import { BrokerModule } from '../broker/broker.module';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { OrionStrategy } from './strategies/orion.strategy';
-import { TrinityStrategy } from './strategies/trinity.strategy';
 import { AtlasStrategy } from './strategies/atlas.strategy';
 import { ApolloStrategy } from './strategies/apollo.strategy';
 import { TitanStrategy } from './strategies/titan.strategy';
@@ -28,7 +27,6 @@ import { TradeEventsService } from './trade-events.service';
     StatsIAsService,
     StrategyManagerService,
     OrionStrategy,
-    TrinityStrategy,
     AtlasStrategy,
     ApolloStrategy,
     TitanStrategy,

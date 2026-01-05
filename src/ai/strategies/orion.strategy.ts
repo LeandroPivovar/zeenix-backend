@@ -399,7 +399,7 @@ export class OrionStrategy implements IStrategy {
   // ✅ Rastreamento de log de direção inválida do martingale (para evitar logs duplicados)
   private defesaDirecaoInvalidaLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que direção do martingale é inválida
 
-  // ✅ Sistema de logs (similar à Trinity)
+  // ✅ Sistema de logs
   private logQueue: Array<{
     userId: string;
     symbol: string;
@@ -449,11 +449,21 @@ export class OrionStrategy implements IStrategy {
       );
     }
 
-    // Processar cada modo
-    await this.processVelozStrategies(tick);
-    await this.processModeradoStrategies(tick);
-    await this.processPrecisoStrategies(tick);
-    await this.processLentaStrategies(tick);
+    // ✅ OTIMIZADO: Processar modos em paralelo para reduzir latência
+    await Promise.all([
+      this.processVelozStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Veloz] Erro:', error);
+      }),
+      this.processModeradoStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Moderado] Erro:', error);
+      }),
+      this.processPrecisoStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Preciso] Erro:', error);
+      }),
+      this.processLentaStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Lenta] Erro:', error);
+      }),
+    ]);
 
     // ✅ Incrementar ticksColetados para todos os usuários ativos
     for (const state of this.velozUsers.values()) state.ticksColetados++;
@@ -3690,10 +3700,14 @@ export class OrionStrategy implements IStrategy {
         logsByUser.get(log.userId)!.push(log);
       }
 
-      // Salvar logs por usuário
-      for (const [userId, logs] of logsByUser.entries()) {
-        await this.saveOrionLogsBatch(userId, logs);
-      }
+      // Salvar logs por usuário em paralelo (✅ OTIMIZADO: não bloqueia)
+      await Promise.all(
+        Array.from(logsByUser.entries()).map(([userId, logs]) =>
+          this.saveOrionLogsBatch(userId, logs).catch(error => {
+            this.logger.error(`[ORION][SaveLogsBatch][${userId}] Erro:`, error);
+          })
+        )
+      );
     } catch (error) {
       this.logger.error(`[ORION][ProcessLogQueue] Erro ao processar logs:`, error);
     } finally {

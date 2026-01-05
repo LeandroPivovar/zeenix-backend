@@ -4,7 +4,6 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { Tick } from '../ai.service';
 import { IStrategy } from './common.types';
 import { OrionStrategy } from './orion.strategy';
-import { TrinityStrategy } from './trinity.strategy';
 import { AtlasStrategy } from './atlas.strategy';
 import { ApolloStrategy } from './apollo.strategy';
 import { TitanStrategy } from './titan.strategy';
@@ -18,7 +17,6 @@ export class StrategyManagerService implements OnModuleInit {
   constructor(
     @InjectDataSource() private dataSource: DataSource,
     private orionStrategy: OrionStrategy,
-    private trinityStrategy: TrinityStrategy,
     private atlasStrategy: AtlasStrategy,
     private apolloStrategy: ApolloStrategy,
     private titanStrategy: TitanStrategy,
@@ -28,7 +26,6 @@ export class StrategyManagerService implements OnModuleInit {
   async onModuleInit() {
     // Registrar estratégias
     this.strategies.set('orion', this.orionStrategy);
-    this.strategies.set('trinity', this.trinityStrategy);
     this.strategies.set('atlas', this.atlasStrategy);
     this.strategies.set('apollo', this.apolloStrategy);
     this.strategies.set('titan', this.titanStrategy);
@@ -36,7 +33,6 @@ export class StrategyManagerService implements OnModuleInit {
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
-    await this.trinityStrategy.initialize();
     await this.atlasStrategy.initialize();
     await this.apolloStrategy.initialize();
     await this.titanStrategy.initialize();
@@ -47,25 +43,40 @@ export class StrategyManagerService implements OnModuleInit {
 
   /**
    * Processa um tick para todas as estratégias ativas
+   * ✅ OTIMIZADO: Processa estratégias em paralelo para reduzir latência
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
+    const promises: Promise<void>[] = [];
+
     // ORION agora usa R_100 como símbolo padrão
     if (!symbol || symbol === 'R_100') {
-      await this.orionStrategy.processTick(tick, 'R_100');
-      await this.apolloStrategy.processTick(tick, 'R_100');
-      await this.titanStrategy.processTick(tick, 'R_100');
-      await this.nexusStrategy.processTick(tick, 'R_100');
-    }
-
-    // TRINITY processa R_10, R_25, R_50
-    if (symbol && ['R_10', 'R_25', 'R_50'].includes(symbol)) {
-      await this.trinityStrategy.processTick(tick, symbol);
+      promises.push(
+        this.orionStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Orion] Erro:', error);
+        }),
+        this.apolloStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Apollo] Erro:', error);
+        }),
+        this.titanStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Titan] Erro:', error);
+        }),
+        this.nexusStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Nexus] Erro:', error);
+        })
+      );
     }
 
     // ATLAS processa R_10, R_25
     if (symbol && ['R_10', 'R_25'].includes(symbol)) {
-      await this.atlasStrategy.processTick(tick, symbol);
+      promises.push(
+        this.atlasStrategy.processTick(tick, symbol).catch(error => {
+          this.logger.error('[StrategyManager][Atlas] Erro:', error);
+        })
+      );
     }
+
+    // Processar todas as estratégias em paralelo
+    await Promise.all(promises);
   }
 
   /**
@@ -83,11 +94,16 @@ export class StrategyManagerService implements OnModuleInit {
 
   /**
    * Desativa um usuário de todas as estratégias
+   * ✅ OTIMIZADO: Desativa em paralelo
    */
   async deactivateUser(userId: string): Promise<void> {
-    for (const strategy of this.strategies.values()) {
-      await strategy.deactivateUser(userId);
-    }
+    await Promise.all(
+      Array.from(this.strategies.values()).map(strategy =>
+        strategy.deactivateUser(userId).catch(error => {
+          this.logger.error(`[StrategyManager] Erro ao desativar usuário ${userId}:`, error);
+        })
+      )
+    );
     this.logger.log(`[StrategyManager] Usuário ${userId} desativado de todas as estratégias`);
   }
 
@@ -126,10 +142,6 @@ export class StrategyManagerService implements OnModuleInit {
   // Getters para acesso direto às estratégias
   getOrionStrategy(): OrionStrategy {
     return this.orionStrategy;
-  }
-
-  getTrinityStrategy(): TrinityStrategy {
-    return this.trinityStrategy;
   }
 
   getAtlasStrategy(): AtlasStrategy {

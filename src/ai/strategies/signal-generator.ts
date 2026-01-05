@@ -81,7 +81,7 @@ export function analisarMicroTendencias(ticks: Tick[]): {
   curtoPrazoPercPar?: number;
   medioPrazoPercPar?: number;
 } {
-  // Guia TRINITY: comparar curto (50) x médio prazo (100)
+  // Comparar curto (50) x médio prazo (100)
   if (ticks.length < 100) {
     return { aceleracao: 0, bonus: 0 };
   }
@@ -115,7 +115,7 @@ export function analisarForcaDesequilibrio(ticks: Tick[], janela: number): {
   velocidade: number;
   bonus: number;
 } {
-  // Guia TRINITY: contar ticks consecutivos (últimos 10) com desequilíbrio >= 60%
+  // Contar ticks consecutivos (últimos 10) com desequilíbrio >= 60%
   // Usando janela fixa de 20 ticks para calcular o desequilíbrio em cada ponto
   const janelaAnalise = janela || 20;
   

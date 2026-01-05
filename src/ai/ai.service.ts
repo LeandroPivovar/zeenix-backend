@@ -81,36 +81,6 @@ interface PrecisoUserState {
   ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
 }
 
-// ✅ TRINITY: Estado individual por ativo
-interface TrinityAssetState {
-  symbol: 'R_10' | 'R_25' | 'R_50';
-  ticks: Tick[]; // Histórico de ticks deste ativo
-  isOperationActive: boolean; // Se há operação ativa neste ativo
-  martingaleStep: number; // Nível de martingale isolado
-  perdaAcumulada: number; // Perdas acumuladas isoladas
-  apostaInicial: number; // Aposta inicial isolada
-  ticksDesdeUltimaOp: number; // Contador de ticks desde última operação
-  vitoriasConsecutivas: number; // Vitórias consecutivas para Soros
-  apostaBase: number; // Valor base da aposta
-  ultimoLucro: number; // Último lucro obtido
-  lastOperationTimestamp: Date | null; // Timestamp da última operação
-}
-
-// ✅ TRINITY: Estado do usuário (contém 3 ativos)
-interface TrinityUserState {
-  userId: string;
-  derivToken: string;
-  currency: string;
-  capital: number; // Capital global
-  virtualCapital: number; // Capital virtual global
-  modoMartingale: ModoMartingale;
-  mode: string; // Modo de negociação (veloz, moderado, preciso)
-  assets: {
-    R_10: TrinityAssetState;
-    R_25: TrinityAssetState;
-    R_50: TrinityAssetState;
-  };
-  currentAssetIndex: number; // Índice do ativo atual na rotação (0=R_10, 1=R_25, 2=R_50)
   totalProfitLoss: number; // Lucro/prejuízo total acumulado
 }
 
@@ -551,71 +521,7 @@ export class AiService implements OnModuleInit {
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
-  private trinityUsers = new Map<string, TrinityUserState>(); // ✅ TRINITY: Usuários usando estratégia TRINITY
   private userSessionIds = new Map<string, string>(); // Mapeia userId para sessionId único
-
-  // ✅ TRINITY: WebSockets e ticks separados por ativo
-  private trinityWebSockets: {
-    R_10: WebSocket.WebSocket | null;
-    R_25: WebSocket.WebSocket | null;
-    R_50: WebSocket.WebSocket | null;
-  } = {
-      R_10: null,
-      R_25: null,
-      R_50: null,
-    };
-  // ✅ TRINITY: Keep-alive intervals por ativo
-  private trinityKeepAliveIntervals: {
-    R_10: NodeJS.Timeout | null;
-    R_25: NodeJS.Timeout | null;
-    R_50: NodeJS.Timeout | null;
-  } = {
-      R_10: null,
-      R_25: null,
-      R_50: null,
-    };
-
-  private trinityTicks: {
-    R_10: Tick[];
-    R_25: Tick[];
-    R_50: Tick[];
-  } = {
-      R_10: [],
-      R_25: [],
-      R_50: [],
-    };
-
-  private trinitySubscriptions: {
-    R_10: string | null;
-    R_25: string | null;
-    R_50: string | null;
-  } = {
-      R_10: null,
-      R_25: null,
-      R_50: null,
-    };
-
-  private trinityConnected: {
-    R_10: boolean;
-    R_25: boolean;
-    R_50: boolean;
-  } = {
-      R_10: false,
-      R_25: false,
-      R_50: false,
-    };
-
-  private trinityLastTickReceived: {
-    R_10: number;
-    R_25: number;
-    R_50: number;
-  } = {
-      R_10: Date.now(),
-      R_25: Date.now(),
-      R_50: Date.now(),
-    };
-
-  private trinityWatchdogInterval: NodeJS.Timeout | null = null;
 
   constructor(
     @InjectDataSource() private dataSource: DataSource,
@@ -640,18 +546,9 @@ export class AiService implements OnModuleInit {
       try {
         await this.initialize();
         this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
-        // ✅ TRINITY: inicializar streams de ticks para R_10, R_25, R_50
-        try {
-          await this.initializeTrinityWebSockets();
-          this.logger.log('✅ WebSockets da TRINITY inicializados (R_10, R_25, R_50)');
-
-          // ✅ Sincronizar usuários ativos
-          this.logger.log('🔄 Sincronizando usuários ativos...');
-          await this.syncTrinityUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Trinity:', e));
-          await this.syncAtlasUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Atlas:', e));
-        } catch (err) {
-          this.logger.error('❌ Erro global ao inicializar WebSockets da TRINITY:', err instanceof Error ? err.message : err);
-        }
+        // ✅ Sincronizar usuários ativos
+        this.logger.log('🔄 Sincronizando usuários ativos...');
+        await this.syncAtlasUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Atlas:', e));
       } catch (error) {
         this.logger.error('❌ Erro ao inicializar WebSocket:', error.message);
       }
@@ -782,301 +679,7 @@ export class AiService implements OnModuleInit {
     }
   }
 
-  // ======================== TRINITY: Inicialização de WebSockets ========================
-
-  /**
-   * ✅ TRINITY: Inicializa conexões WebSocket para os 3 ativos (R_10, R_25, R_50)
-   */
-  async initializeTrinityWebSockets(): Promise<void> {
-    const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
-
-    for (const symbol of symbols) {
-      try {
-        if (this.trinityConnected[symbol] && this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN) {
-          this.logger.log(`[TRINITY][${symbol}] ✅ Já está conectado`);
-          continue;
-        }
-        this.logger.log(`[TRINITY][${symbol}] 🚀 Iniciando inicialização...`);
-        await this.initializeTrinityWebSocket(symbol);
-        this.logger.log(`[TRINITY][${symbol}] ✅ Inicialização concluída. Aguardando 3 segundos antes do próximo...`);
-        // Pequeno atraso entre inicializações para evitar sobrecarga/rejeição da Deriv
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      } catch (err) {
-        this.logger.error(`[TRINITY][${symbol}] ❌ Falha na inicialização:`, err instanceof Error ? err.message : err);
-      }
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Inicializa conexão WebSocket para um ativo específico
-   */
-  private async initializeTrinityWebSocket(symbol: 'R_10' | 'R_25' | 'R_50'): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this.logger.log(`[TRINITY][${symbol}] 🔌 Inicializando conexão WebSocket...`);
-
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      const ws = new WebSocket.WebSocket(endpoint);
-      this.trinityWebSockets[symbol] = ws;
-
-      ws.on('open', () => {
-        this.logger.log(`[TRINITY][${symbol}] ✅ Conexão WebSocket aberta`);
-        this.trinityConnected[symbol] = true;
-        this.subscribeToTrinityTicks(symbol);
-        // ✅ Iniciar keep-alive para este ativo
-        this.startTrinityKeepAlive(symbol);
-        resolve();
-      });
-
-      ws.on('message', (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          this.handleTrinityMessage(symbol, msg);
-        } catch (error) {
-          this.logger.error(`[TRINITY][${symbol}] Erro ao processar mensagem JSON:`, error);
-          this.logger.debug(`[TRINITY][${symbol}] Conteúdo bruto da mensagem: ${data.toString().substring(0, 100)}...`);
-        }
-      });
-
-      ws.on('error', (error) => {
-        this.logger.error(`[TRINITY][${symbol}] Erro no WebSocket:`, error.message);
-        this.trinityConnected[symbol] = false;
-        reject(error);
-      });
-
-      ws.on('close', () => {
-        this.logger.log(`[TRINITY][${symbol}] Conexão WebSocket fechada`);
-        this.trinityConnected[symbol] = false;
-        this.stopTrinityKeepAlive(symbol);
-        this.trinityWebSockets[symbol] = null;
-      });
-
-      setTimeout(() => {
-        if (!this.trinityConnected[symbol]) {
-          reject(new Error(`Timeout ao conectar ${symbol}`));
-        }
-      }, 10000);
-    });
-  }
-
-  /**
-   * ✅ TRINITY: Inscreve-se nos ticks de um ativo específico
-   */
-  private subscribeToTrinityTicks(symbol: 'R_10' | 'R_25' | 'R_50'): void {
-    this.logger.log(`[TRINITY][${symbol}] 📡 Inscrevendo-se nos ticks...`);
-    const ws = this.trinityWebSockets[symbol];
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      this.logger.warn(`[TRINITY][${symbol}] WebSocket não está aberto`);
-      return;
-    }
-
-    ws.send(JSON.stringify({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: this.maxTicks,
-      end: 'latest',
-      subscribe: 1,
-      style: 'ticks',
-    }));
-  }
-
-  /**
-   * ✅ TRINITY: Inicia keep-alive para um ativo específico
-   */
-  private startTrinityKeepAlive(symbol: 'R_10' | 'R_25' | 'R_50'): void {
-    this.stopTrinityKeepAlive(symbol); // Garantir que não há intervalo duplicado
-
-    this.trinityKeepAliveIntervals[symbol] = setInterval(() => {
-      const ws = this.trinityWebSockets[symbol];
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(JSON.stringify({ ping: 1 }));
-          this.logger.debug(`[TRINITY][${symbol}][KeepAlive] Ping enviado`);
-        } catch (error) {
-          this.logger.error(`[TRINITY][${symbol}][KeepAlive] Erro ao enviar ping:`, error);
-        }
-      } else {
-        this.logger.warn(`[TRINITY][${symbol}][KeepAlive] WebSocket não está aberto, parando keep-alive`);
-        this.stopTrinityKeepAlive(symbol);
-      }
-    }, 90000); // 90 segundos (menos de 2 minutos)
-
-    this.logger.log(`[TRINITY][${symbol}] ✅ Keep-alive iniciado (ping a cada 90s)`);
-  }
-
-  /**
-   * ✅ TRINITY: Para o keep-alive de um ativo específico
-   */
-  private stopTrinityKeepAlive(symbol: 'R_10' | 'R_25' | 'R_50'): void {
-    if (this.trinityKeepAliveIntervals[symbol]) {
-      clearInterval(this.trinityKeepAliveIntervals[symbol]!);
-      this.trinityKeepAliveIntervals[symbol] = null;
-      this.logger.debug(`[TRINITY][${symbol}][KeepAlive] Keep-alive parado`);
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Processa mensagens recebidas dos WebSockets
-   */
-  private handleTrinityMessage(symbol: 'R_10' | 'R_25' | 'R_50', msg: any): void {
-    if (msg.error) {
-      this.logger.error(`[TRINITY][${symbol}] ❌ Erro da API: ${msg.error.message || JSON.stringify(msg.error)}`);
-      return;
-    }
-
-    if (!msg.msg_type) {
-      this.logger.debug(`[TRINITY][${symbol}] 📥 Mensagem sem msg_type: ${JSON.stringify(msg).substring(0, 100)}...`);
-    }
-
-    // ✅ DEBUG: Logar tudo de R_10 para diagnosticar "travamento"
-    if (symbol === 'R_10') {
-      this.logger.debug(`[TRINITY][R_10] 📥 MSG: ${msg.msg_type} | ${JSON.stringify(msg).substring(0, 200)}`);
-    }
-
-    switch (msg.msg_type) {
-      case 'history':
-      case 'ticks_history':
-        this.logger.log(`[TRINITY][${symbol}] 📊 Histórico recebido: ${msg.history?.prices?.length || msg.ticks_history?.prices?.length || 0} preços`);
-        const historyData = msg.history || msg.ticks_history;
-        if (historyData?.prices) {
-          this.processTrinityHistory(symbol, historyData.prices, msg.subscription?.id);
-        }
-        break;
-
-      case 'tick':
-        if (msg.tick) {
-          this.processTrinityTick(symbol, msg.tick);
-        }
-        break;
-
-      case 'ping':
-        this.logger.debug(`[TRINITY][${symbol}] 📥 Pong recebido`);
-        break;
-
-      default:
-        this.logger.debug(`[TRINITY][${symbol}] 📥 Mensagem desconhecida: ${msg.msg_type}`);
-        break;
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Processa histórico de ticks recebido
-   */
-  private processTrinityHistory(symbol: 'R_10' | 'R_25' | 'R_50', prices: any[], subscriptionId?: string): void {
-    if (subscriptionId) {
-      this.trinitySubscriptions[symbol] = subscriptionId;
-    }
-
-    const ticks: Tick[] = prices
-      .map((price: any) => {
-        const value = Number(price.quote || price);
-        if (!isFinite(value) || value <= 0) {
-          return null;
-        }
-        const digit = this.extractLastDigit(value);
-        const epoch = Number(price.epoch || price.time || Date.now() / 1000);
-        if (!isFinite(epoch) || epoch <= 0) {
-          return null;
-        }
-        return {
-          value,
-          epoch,
-          digit,
-          parity: this.getParityFromDigit(digit),
-        };
-      })
-      .filter((t): t is Tick => t !== null);
-
-    this.trinityTicks[symbol] = ticks;
-    this.logger.log(`[TRINITY][${symbol}] ✅ Histórico carregado: ${ticks.length} ticks`);
-  }
-
-  /**
-   * ✅ TRINITY: Processa um novo tick recebido
-   */
-  private processTrinityTick(symbol: 'R_10' | 'R_25' | 'R_50', tickData: any): void {
-    const rawQuote = tickData.quote;
-    const rawEpoch = tickData.epoch;
-
-    if (rawQuote == null || rawQuote === '' || rawEpoch == null || rawEpoch === '') {
-      return;
-    }
-
-    const value = Number(rawQuote);
-    const epoch = Number(rawEpoch);
-
-    // ✅ Atualizar timestamp para o watchdog
-    this.trinityLastTickReceived[symbol] = Date.now();
-
-    if (!isFinite(value) || value <= 0 || !isFinite(epoch) || epoch <= 0) {
-      return;
-    }
-
-    const digit = this.extractLastDigit(value);
-    const tick: Tick = {
-      value,
-      epoch,
-      timestamp: new Date(epoch * 1000).toLocaleTimeString('pt-BR'),
-      digit,
-      parity: this.getParityFromDigit(digit),
-    };
-
-    this.trinityTicks[symbol].push(tick);
-    if (this.trinityTicks[symbol].length > this.maxTicks) {
-      this.trinityTicks[symbol].shift();
-    }
-
-    this.logger.debug(`[TRINITY][${symbol}] 🔄 Tick processado - Enviando para StrategyManager`);
-
-    // ✅ Enviar tick para StrategyManager (que passa para TrinityStrategy)
-    // Arquitetura igual à Orion: AIService gerencia WebSockets, Strategy processa sinais
-    if (this.strategyManager) {
-      this.strategyManager.processTick(tick, symbol).catch((error) => {
-        this.logger.error(`[TRINITY][${symbol}] Erro ao processar tick via StrategyManager:`, error);
-      });
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Inicia watchdog para monitorar fluxos de ticks
-   */
-  private startTrinityWatchdog(): void {
-    if (this.trinityWatchdogInterval) return;
-
-    this.trinityWatchdogInterval = setInterval(() => {
-      const now = Date.now();
-      const symbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
-
-      symbols.forEach((symbol) => {
-        const lastTick = this.trinityLastTickReceived[symbol];
-        const isConnected = this.trinityWebSockets[symbol]?.readyState === WebSocket.OPEN;
-
-        // Se passaram mais de 15 segundos sem tick e o WS está "aberto", algo está errado
-        if (isConnected && lastTick > 0 && now - lastTick > 15000) {
-          this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Sem ticks por 15s. Tentando re-inscrever...`);
-          this.subscribeToTrinityTicks(symbol);
-          this.trinityLastTickReceived[symbol] = now; // Resetar timestamp para evitar loops imediatos
-        } else if (!isConnected || lastTick === 0) {
-          // Se não está conectado ou nunca recebeu tick, recriar WS via inicialização padrão
-          // Mas apenas se já passou algum tempo desde o boot (evitar rush de logs)
-          if (now - this.trinityLastTickReceived[symbol] > 60000 && lastTick === 0) {
-            this.logger.warn(`[TRINITY][${symbol}] ⚠️ Watchdog: Stream parece morto. Reinicializando...`);
-            this.initializeTrinityWebSocket(symbol).catch(() => { });
-            this.trinityLastTickReceived[symbol] = now;
-          }
-        }
-      });
-    }, 30000); // Checar a cada 30 segundos
-  }
-
-  /**
-   * ✅ TRINITY: Para watchdog
-   */
-  private stopTrinityWatchdog(): void {
-    if (this.trinityWatchdogInterval) {
-      clearInterval(this.trinityWatchdogInterval);
-      this.trinityWatchdogInterval = null;
-    }
-  }
+  // ======================== TRINITY REMOVIDO ========================
 
   private handleMessage(msg: any) {
     // ✅ Log de todas as mensagens recebidas para diagnóstico
@@ -2477,13 +2080,13 @@ export class AiService implements OnModuleInit {
       `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
 
-    // 📋 LOG: Resultado - DERROTA
-    await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
-    await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
-    await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
-    await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-    await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
-    await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
+    // 📋 LOG: Resultado - DERROTA (✅ OTIMIZADO: sem await para não bloquear)
+    this.saveLog(state.userId, 'resultado', '❌ DERROTA');
+    this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+    this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
+    this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+    this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
+    this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
     // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
     // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
@@ -3271,138 +2874,7 @@ export class AiService implements OnModuleInit {
     }
   }
 
-  /**
-   * ✅ TRINITY: Sincroniza usuários da Trinity do banco de dados
-   */
-  private async syncTrinityUsersFromDb(): Promise<void> {
-    this.logger.debug(`[SyncTrinity] 🔍 Buscando usuários Trinity no banco...`);
-
-    // ✅ Buscar entry_value se a coluna existir
-    let configs: any[];
-    try {
-      configs = await this.dataSource.query(
-        `SELECT 
-          user_id as userId,
-          stake_amount as stakeAmount,
-          entry_value as entryValue,
-          deriv_token as derivToken,
-          currency,
-          modo_martingale as modoMartingale,
-          mode,
-          profit_target as profitTarget,
-          loss_limit as lossLimit
-         FROM ai_user_config
-         WHERE is_active = TRUE
-           AND LOWER(strategy) = 'trinity'`,
-      );
-    } catch (error: any) {
-      // Se a coluna entry_value não existir, buscar sem ela
-      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('entry_value')) {
-        this.logger.warn(`[SyncTrinity] Campo 'entry_value' não existe, buscando sem ele`);
-        configs = await this.dataSource.query(
-          `SELECT 
-            user_id as userId,
-            stake_amount as stakeAmount,
-            deriv_token as derivToken,
-            currency,
-            modo_martingale as modoMartingale,
-            mode,
-            profit_target as profitTarget,
-            loss_limit as lossLimit
-           FROM ai_user_config
-           WHERE is_active = TRUE
-             AND LOWER(strategy) = 'trinity'`,
-        );
-        // Adicionar entryValue padrão
-        configs = configs.map(config => ({ ...config, entryValue: 0.35 }));
-      } else {
-        throw error;
-      }
-    }
-
-    this.logger.log(
-      `[SyncTrinity] 📊 Encontrados ${configs.length} usuário(s) Trinity no banco`,
-    );
-
-    if (configs.length > 0) {
-      this.logger.log(
-        `[SyncTrinity] Sincronizando ${configs.length} usuários do banco`,
-      );
-    }
-
-    const activeIds = new Set<string>();
-
-    // ✅ Usar StrategyManager para ativar usuários na classe TrinityStrategy
-    if (this.strategyManager) {
-      for (const config of configs) {
-        activeIds.add(config.userId);
-        this.logger.debug(
-          `[SyncTrinity] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | mode=${config.mode} | martingale=${config.modoMartingale}`,
-        );
-
-        try {
-          await this.strategyManager.activateUser(config.userId, 'trinity', {
-            mode: config.mode || 'veloz',
-            stakeAmount: Number(config.stakeAmount) || 0,
-            entryValue: Number(config.entryValue) || 0.35, // ✅ Passar entryValue do banco
-            derivToken: config.derivToken,
-            currency: config.currency || 'USD',
-            modoMartingale: config.modoMartingale || 'conservador',
-            profitTarget: config.profitTarget || null,
-            lossLimit: config.lossLimit || null,
-            stopLossBlindado: config.stopLossBlindado || false,
-          });
-        } catch (error) {
-          this.logger.error(`[SyncTrinity] Erro ao ativar usuário ${config.userId}:`, error);
-        }
-      }
-
-      // Remover usuários que não estão mais ativos
-      const trinityStrategy = this.strategyManager.getTrinityStrategy();
-      if (trinityStrategy) {
-        // Obter lista de usuários ativos da estratégia
-        // Nota: A classe TrinityStrategy não expõe getUsers(), então precisamos verificar de outra forma
-        // Por enquanto, vamos apenas ativar os que estão no banco e deixar a desativação para quando o usuário for desativado manualmente
-      }
-    } else {
-      // Fallback: usar código legado (não recomendado)
-      this.logger.warn(`[SyncTrinity] StrategyManager não disponível, usando código legado`);
-      for (const config of configs) {
-        activeIds.add(config.userId);
-        this.upsertTrinityUserState({
-          userId: config.userId,
-          stakeAmount: Number(config.stakeAmount) || 0,
-          derivToken: config.derivToken,
-          currency: config.currency || 'USD',
-          mode: config.mode || 'veloz',
-          modoMartingale: config.modoMartingale || 'conservador',
-        });
-      }
-
-      // Remover usuários que não estão mais ativos
-      for (const existingId of Array.from(this.trinityUsers.keys())) {
-        if (!activeIds.has(existingId)) {
-          this.removeTrinityUserState(existingId);
-        }
-      }
-    }
-
-    // ✅ CORREÇÃO: Inicializar WebSockets para R_25 e R_50 SEMPRE que houver usuários Trinity ativos
-    // (anteriormente isso só acontecia no bloco else, quando StrategyManager não estava disponível)
-    if (configs.length > 0) {
-      const needsInit = ['R_10', 'R_25', 'R_50'].some(
-        symbol => !this.trinityConnected[symbol as 'R_10' | 'R_25' | 'R_50'] ||
-          this.trinityWebSockets[symbol as 'R_10' | 'R_25' | 'R_50']?.readyState !== WebSocket.OPEN
-      );
-
-      if (needsInit) {
-        this.logger.log(`[SyncTrinity] 🔌 Inicializando WebSockets para ${configs.length} usuário(s) Trinity ativo(s)`);
-        await this.initializeTrinityWebSockets().catch(error => {
-          this.logger.error(`[SyncTrinity] Erro ao inicializar WebSockets:`, error);
-        });
-      }
-    }
-  }
+  // TRINITY REMOVIDO: syncTrinityUsersFromDb
 
   /**
    * ✅ ATLAS: Sincroniza usuários da Atlas do banco de dados
@@ -4663,10 +4135,7 @@ export class AiService implements OnModuleInit {
         this.logger.log(`[ActivateAI] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
 
         // ✅ Se for Trinity, sincronizar imediatamente para garantir que está carregado
-        if (strategy && strategy.toLowerCase() === 'trinity') {
-          this.logger.log(`[ActivateAI] 🔄 Sincronizando Trinity imediatamente após ativação...`);
-          await this.syncTrinityUsersFromDb();
-        }
+        // TRINITY REMOVIDO
 
         if (strategy && strategy.toLowerCase() === 'atlas') {
           this.logger.log(`[ActivateAI] 🔄 Sincronizando Atlas imediatamente após ativação...`);
@@ -4708,7 +4177,7 @@ export class AiService implements OnModuleInit {
       this.removeVelozUserState(userId);
       this.removeModeradoUserState(userId);
       this.removePrecisoUserState(userId);
-      this.removeTrinityUserState(userId);
+      // TRINITY REMOVIDO
     }
   }
 
@@ -4953,7 +4422,6 @@ export class AiService implements OnModuleInit {
       await this.syncVelozUsersFromDb();
       await this.syncModeradoUsersFromDb();
       await this.syncPrecisoUsersFromDb();
-      await this.syncTrinityUsersFromDb();
       await this.syncAtlasUsersFromDb();
 
       // Process other users with trade timing logic (fast/moderado/preciso modes are handled separately)
@@ -6691,13 +6159,13 @@ export class AiService implements OnModuleInit {
       `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
 
-    // 📋 LOG: Resultado - DERROTA
-    await this.saveLog(state.userId, 'resultado', '❌ DERROTA');
-    await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
-    await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
-    await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-    await this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
-    await this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
+    // 📋 LOG: Resultado - DERROTA (✅ OTIMIZADO: sem await para não bloquear)
+    this.saveLog(state.userId, 'resultado', '❌ DERROTA');
+    this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+    this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
+    this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+    this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
+    this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
 
     // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
     // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
@@ -7874,234 +7342,6 @@ export class AiService implements OnModuleInit {
     }
   }
 
-  // ======================== ESTRATÉGIA TRINITY ========================
-
-  /**
-   * ✅ TRINITY: Cria ou atualiza estado do usuário para estratégia TRINITY
-   */
-  private upsertTrinityUserState(params: {
-    userId: string;
-    stakeAmount: number;
-    derivToken: string;
-    currency: string;
-    mode: string;
-    modoMartingale?: ModoMartingale;
-  }): void {
-    const { userId, stakeAmount, derivToken, currency, mode, modoMartingale = 'conservador' } = params;
-
-    this.logger.log(
-      `[TRINITY][UpsertState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | mode=${mode} | martingale=${modoMartingale}`,
-    );
-
-    const existing = this.trinityUsers.get(userId);
-
-    if (existing) {
-      // Atualizar estado existente
-      existing.capital = stakeAmount;
-      existing.derivToken = derivToken;
-      existing.currency = currency;
-      existing.mode = mode;
-      existing.modoMartingale = modoMartingale;
-      if (existing.virtualCapital <= 0) {
-        existing.virtualCapital = stakeAmount;
-      }
-      this.trinityUsers.set(userId, existing);
-      return;
-    }
-
-    // Criar novo estado TRINITY
-    const assetSymbols: Array<'R_10' | 'R_25' | 'R_50'> = ['R_10', 'R_25', 'R_50'];
-    const assets: TrinityUserState['assets'] = {
-      R_10: {
-        symbol: 'R_10',
-        ticks: [],
-        isOperationActive: false,
-        martingaleStep: 0,
-        perdaAcumulada: 0,
-        apostaInicial: stakeAmount,
-        ticksDesdeUltimaOp: 0,
-        vitoriasConsecutivas: 0,
-        apostaBase: stakeAmount,
-        ultimoLucro: 0,
-        lastOperationTimestamp: null,
-      },
-      R_25: {
-        symbol: 'R_25',
-        ticks: [],
-        isOperationActive: false,
-        martingaleStep: 0,
-        perdaAcumulada: 0,
-        apostaInicial: stakeAmount,
-        ticksDesdeUltimaOp: 0,
-        vitoriasConsecutivas: 0,
-        apostaBase: stakeAmount,
-        ultimoLucro: 0,
-        lastOperationTimestamp: null,
-      },
-      R_50: {
-        symbol: 'R_50',
-        ticks: [],
-        isOperationActive: false,
-        martingaleStep: 0,
-        perdaAcumulada: 0,
-        apostaInicial: stakeAmount,
-        ticksDesdeUltimaOp: 0,
-        vitoriasConsecutivas: 0,
-        apostaBase: stakeAmount,
-        ultimoLucro: 0,
-        lastOperationTimestamp: null,
-      },
-    };
-
-    this.trinityUsers.set(userId, {
-      userId,
-      derivToken,
-      currency,
-      capital: stakeAmount,
-      virtualCapital: stakeAmount,
-      modoMartingale,
-      mode,
-      assets,
-      currentAssetIndex: 0, // Começa com R_10
-      totalProfitLoss: 0,
-    });
-
-    this.logger.log(`[TRINITY] Estado criado para usuário ${userId}`);
-  }
-
-  /**
-   * ✅ TRINITY: Remove estado do usuário
-   */
-  private removeTrinityUserState(userId: string): void {
-    if (this.trinityUsers.has(userId)) {
-      this.trinityUsers.delete(userId);
-      this.logger.log(`[TRINITY] Estado removido para usuário ${userId}`);
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Processa estratégias TRINITY quando recebe um tick
-   * Implementa rotação sequencial entre os 3 ativos
-   */
-  private async processTrinityStrategies(symbol: 'R_10' | 'R_25' | 'R_50', latestTick: Tick): Promise<void> {
-    if (this.trinityUsers.size === 0) {
-      return;
-    }
-
-    // Obter configuração baseada no modo
-    const modeConfig = this.getModeConfig('veloz'); // Por enquanto usa veloz como padrão
-    if (!modeConfig) {
-      return;
-    }
-
-    // Verificar amostra mínima para este ativo
-    if (this.trinityTicks[symbol].length < modeConfig.amostraInicial) {
-      return;
-    }
-
-    // Processar cada usuário TRINITY
-    for (const [userId, state] of this.trinityUsers.entries()) {
-      const asset = state.assets[symbol];
-
-      // Incrementar contador de ticks desde última operação
-      if (asset.ticksDesdeUltimaOp !== undefined && asset.ticksDesdeUltimaOp >= 0) {
-        asset.ticksDesdeUltimaOp += 1;
-      }
-
-      // Verificar se pode processar este ativo
-      if (!this.canProcessTrinityAsset(state, symbol)) {
-        continue;
-      }
-
-      // Gerar sinal usando análise completa
-      const sinal = gerarSinalZenix(this.trinityTicks[symbol], modeConfig, state.mode.toUpperCase());
-
-      if (!sinal || !sinal.sinal) {
-        continue; // Sem sinal válido
-      }
-
-      this.logger.log(
-        `[TRINITY][${symbol}] 🎯 SINAL GERADO | User: ${userId} | ` +
-        `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-        `  └─ ${sinal.motivo}`,
-      );
-
-      // Executar operação TRINITY
-      await this.executeTrinityOperation(state, symbol, sinal.sinal, 1);
-    }
-  }
-
-  /**
-   * ✅ TRINITY: Verifica se pode processar um ativo específico
-   */
-  private canProcessTrinityAsset(state: TrinityUserState, symbol: 'R_10' | 'R_25' | 'R_50'): boolean {
-    const asset = state.assets[symbol];
-
-    // Não pode processar se já há operação ativa neste ativo
-    if (asset.isOperationActive) {
-      return false;
-    }
-
-    // Verificar intervalo mínimo baseado no modo
-    const modeConfig = this.getModeConfig(state.mode);
-    if (!modeConfig) {
-      return false;
-    }
-
-    // Verificar intervalo de ticks (modo veloz)
-    if (state.mode === 'veloz' && 'intervaloTicks' in modeConfig && modeConfig.intervaloTicks && asset.ticksDesdeUltimaOp < modeConfig.intervaloTicks) {
-      return false;
-    }
-
-    // Verificar intervalo de tempo (modo moderado)
-    if (state.mode === 'moderado' && asset.lastOperationTimestamp) {
-      const secondsSinceLastOp = (Date.now() - asset.lastOperationTimestamp.getTime()) / 1000;
-      if ('intervaloSegundos' in modeConfig && modeConfig.intervaloSegundos && secondsSinceLastOp < modeConfig.intervaloSegundos) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * ✅ TRINITY: Obtém configuração do modo
-   */
-  private getModeConfig(mode: string): typeof VELOZ_CONFIG | typeof MODERADO_CONFIG | typeof PRECISO_CONFIG | null {
-    const modeLower = (mode || 'veloz').toLowerCase();
-    if (modeLower === 'veloz') {
-      return VELOZ_CONFIG;
-    } else if (modeLower === 'moderado') {
-      return MODERADO_CONFIG;
-    } else if (modeLower === 'preciso') {
-      return PRECISO_CONFIG;
-    }
-    return null;
-  }
-
-  /**
-   * ✅ TRINITY: Executa operação em um ativo específico
-   * Este método será implementado posteriormente com a lógica completa de execução
-   */
-  private async executeTrinityOperation(
-    state: TrinityUserState,
-    symbol: 'R_10' | 'R_25' | 'R_50',
-    operation: DigitParity,
-    entry: number = 1,
-  ): Promise<void> {
-    const asset = state.assets[symbol];
-
-    // Por enquanto, apenas log (implementação completa será feita depois)
-    this.logger.log(
-      `[TRINITY][${symbol}] Executando operação ${operation} para usuário ${state.userId} | Entry: ${entry}`,
-    );
-
-    // TODO: Implementar lógica completa de execução de operação
-    // - Calcular stake (considerar martingale isolado do ativo)
-    // - Enviar proposta para Deriv
-    // - Aguardar resultado
-    // - Atualizar estado do ativo
-    // - Rotacionar para próximo ativo
-  }
+  // ======================== TRINITY REMOVIDO ========================
 }
 

@@ -282,7 +282,7 @@ export class NotificationsService {
     // Notificações da IA de Trading
     if (ai) {
       if (ai.isActive) {
-        const strategyName = ai.strategy === 'trinity' ? 'Trinity' : 'Orion';
+        const strategyName = 'Orion';
         notifications.push({
           type: 'info',
           title: `🧠 IA ${strategyName} Ativa`,
@@ -316,7 +316,7 @@ export class NotificationsService {
         });
       } else if (ai.sessionBalance !== 0) {
         // Tem histórico mas não está ativa
-        const strategyName = ai.strategy === 'trinity' ? 'Trinity' : 'Orion';
+        const strategyName = 'Orion';
         notifications.push({
           type: 'info',
           title: `🧠 IA ${strategyName} Parada`,

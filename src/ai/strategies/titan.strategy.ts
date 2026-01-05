@@ -215,9 +215,21 @@ export class TitanStrategy implements IStrategy {
         this.ticks.push(tick);
         if (this.ticks.length > 100) this.ticks.shift();
 
-        for (const state of this.users.values()) {
-            state.ticksColetados++;
-            await this.processUser(state);
+        // ✅ OTIMIZADO: Processar usuários em paralelo (limitado a 5 simultâneos) para reduzir latência
+        const usersToProcess = Array.from(this.users.values())
+            .filter(state => !state.isOperationActive); // Filtrar apenas os que podem processar
+
+        // Processar em batches de 5 usuários simultaneamente
+        for (let i = 0; i < usersToProcess.length; i += 5) {
+            const batch = usersToProcess.slice(i, i + 5);
+            await Promise.all(
+                batch.map(state => {
+                    state.ticksColetados++;
+                    return this.processUser(state).catch(error => {
+                        this.logger.error(`[TITAN][${state.userId}] Erro:`, error);
+                    });
+                })
+            );
         }
     }
 
@@ -965,9 +977,14 @@ export class TitanStrategy implements IStrategy {
                 logsByUser.get(log.userId)!.push(log);
             }
 
-            for (const [userId, logs] of logsByUser.entries()) {
-                await this.saveTitanLogsBatch(userId, logs);
-            }
+            // ✅ OTIMIZADO: Salvar logs em paralelo
+            await Promise.all(
+                Array.from(logsByUser.entries()).map(([userId, logs]) =>
+                    this.saveTitanLogsBatch(userId, logs).catch(error => {
+                        this.logger.error(`[TITAN][SaveLogsBatch][${userId}] Erro:`, error);
+                    })
+                )
+            );
         } catch (error) {
             this.logger.error(`[TITAN][ProcessLogQueue] Erro ao processar logs:`, error);
         } finally {
