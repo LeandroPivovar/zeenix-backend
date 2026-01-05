@@ -3761,7 +3761,7 @@ export class AutonomousAgentService implements OnModuleInit {
     );
 
     return {
-      totalTrades: autonomousTrades,
+      totalTrades: totalTradesToday, // ✅ Usar totalTradesToday (todos os trades) em vez de autonomousTrades (apenas finalizados)
       wins,
       losses,
       winRate: autonomousTrades > 0 ? (wins / autonomousTrades) * 100 : 0,
