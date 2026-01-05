@@ -16,7 +16,6 @@ import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { AutonomousAgentService } from './autonomous-agent.service';
 import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream.service';
-import { AgentManagerService } from './strategies/agent-manager.service';
 
 @Controller('autonomous-agent')
 export class AutonomousAgentController {
@@ -25,7 +24,6 @@ export class AutonomousAgentController {
   constructor(
     private readonly agentService: AutonomousAgentService,
     private readonly logsStreamService: AutonomousAgentLogsStreamService,
-    private readonly agentManager: AgentManagerService,
   ) {}
 
   @Post('activate')
@@ -45,12 +43,8 @@ export class AutonomousAgentController {
         );
       }
 
-      // ✅ Novo: Suportar seleção de agente (sentinel ou falcon)
-      const agentType = body.agentType || body.agent_type || 'sentinel';
-
-      // Usar AgentManager para ativar o agente correto
-      await this.agentManager.activateUser(agentType, userId, {
-        userId,
+      // ✅ Simplificado: Ativar diretamente no service (sem AgentManager)
+      await this.agentService.activateAgent(userId, {
         initialStake: parseFloat(body.initialStake),
         dailyProfitTarget: parseFloat(body.dailyProfitTarget),
         dailyLossLimit: parseFloat(body.dailyLossLimit),
@@ -58,16 +52,16 @@ export class AutonomousAgentController {
         currency: body.currency || 'USD',
         symbol: body.symbol || 'R_75',
         initialBalance: parseFloat(body.initialBalance) || 0,
-        // Configurações específicas do SENTINEL (se necessário)
         strategy: body.strategy,
         riskLevel: body.riskLevel,
         tradingMode: body.tradingMode || 'normal',
         stopLossType: body.stopLossType || 'normal',
+        agentType: body.agentType || body.agent_type || 'sentinel',
       });
 
       return {
         success: true,
-        message: `Agente autônomo ${agentType.toUpperCase()} ativado com sucesso`,
+        message: 'Agente autônomo ativado com sucesso (modo simplificado - sem processamento)',
       };
     } catch (error) {
       this.logger.error(`[ActivateAgent] Erro:`, error);
@@ -86,10 +80,13 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getAvailableAgents() {
     try {
-      const agents = this.agentManager.getAvailableAgents();
+      // ✅ Simplificado: Retornar lista fixa de agentes (sem AgentManager)
       return {
         success: true,
-        agents,
+        agents: [
+          { id: 'sentinel', name: 'Sentinel', description: 'Agente Sentinel' },
+          { id: 'falcon', name: 'Falcon', description: 'Agente Falcon' },
+        ],
       };
     } catch (error) {
       this.logger.error(`[GetAvailableAgents] Erro:`, error);
