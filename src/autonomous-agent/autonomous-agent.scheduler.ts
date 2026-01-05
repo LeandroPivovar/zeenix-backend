@@ -54,6 +54,12 @@ export class AutonomousAgentScheduler {
   // Verificar e resetar sessões diárias à meia-noite
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleResetDailySessions() {
+    // ✅ DESATIVADO: Verificar se o processamento está pausado
+    if (this.IS_PAUSED) {
+      this.logger.debug('[AutonomousAgentScheduler] ⏸️ Reset de sessões pausado (IS_PAUSED=true)');
+      return;
+    }
+    
     try {
       this.logger.log('[Scheduler] Resetando sessões diárias');
       await this.agentService.resetDailySessions();

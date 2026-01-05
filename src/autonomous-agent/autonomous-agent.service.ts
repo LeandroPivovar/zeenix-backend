@@ -213,6 +213,13 @@ export class AutonomousAgentService implements OnModuleInit {
   ) { }
 
   async onModuleInit() {
+    // ✅ DESATIVADO: Agente autônomo completamente desabilitado
+    // Para reativar, altere IS_PAUSED para false no autonomous-agent.scheduler.ts
+    this.logger.warn('⚠️ Agente Autônomo IA SENTINEL DESATIVADO - Nenhuma inicialização será executada');
+    this.logger.warn('⚠️ Para reativar, altere IS_PAUSED para false no autonomous-agent.scheduler.ts');
+    return; // ✅ DESATIVADO: Não inicializar nada
+    
+    // Código abaixo não será executado enquanto o agente estiver desativado
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
     await this.syncActiveAgentsFromDb();
     
