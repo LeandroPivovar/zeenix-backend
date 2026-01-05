@@ -1786,4 +1786,11 @@ export class AtlasStrategy implements IStrategy {
   getActiveUsers(): AtlasUserState[] {
     return Array.from(this.atlasUsers.values()).filter((u) => !u.isStopped);
   }
+
+  /**
+   * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
+   */
+  hasActiveUsers(): boolean {
+    return this.atlasUsers.size > 0;
+  }
 }

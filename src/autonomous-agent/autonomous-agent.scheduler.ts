@@ -12,7 +12,7 @@ export class AutonomousAgentScheduler {
   // ✅ PAUSA TEMPORÁRIA: Flag para pausar o processamento do agente autônomo
   // Altere para 'true' para pausar temporariamente o processamento
   // Não precisa de .env, apenas mude este valor e reinicie o servidor
-  private readonly IS_PAUSED = false; // ✅ ATIVADO - Agente autônomo ativo
+  private readonly IS_PAUSED = true; // ⚠️ DESATIVADO - Agente autônomo pausado
 
   constructor(private readonly agentService: AutonomousAgentService) {
     if (this.IS_PAUSED) {

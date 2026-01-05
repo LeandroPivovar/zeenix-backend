@@ -563,6 +563,13 @@ export class NexusStrategy implements IStrategy {
 
     getUserState(userId: string) { return this.users.get(userId); }
 
+    /**
+     * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
+     */
+    hasActiveUsers(): boolean {
+        return this.users.size > 0;
+    }
+
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
         const riskManager = this.riskManagers.get(state.userId)!;
         

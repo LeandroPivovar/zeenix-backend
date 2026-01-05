@@ -336,6 +336,13 @@ export class TitanStrategy implements IStrategy {
 
     getUserState(userId: string) { return this.users.get(userId); }
 
+    /**
+     * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
+     */
+    hasActiveUsers(): boolean {
+        return this.users.size > 0;
+    }
+
     private async executeOperation(state: TitanUserState, direction: DigitParity): Promise<void> {
         const riskManager = this.riskManagers.get(state.userId)!;
         const saveTitanLogCallback = (userId: string, symbol: string, type: string, message: string) => {

@@ -350,6 +350,13 @@ export class ApolloStrategy implements IStrategy {
     return this.apolloUsers.get(userId) || null;
   }
 
+  /**
+   * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
+   */
+  hasActiveUsers(): boolean {
+    return this.apolloUsers.size > 0;
+  }
+
   private async executeTradeCycle(state: ApolloUserState): Promise<void> {
     // ✅ VERIFICAR STOP LOSS BLINDADO ANTES DE QUALQUER OPERAÇÃO
     try {

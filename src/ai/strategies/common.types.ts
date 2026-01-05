@@ -33,6 +33,7 @@ export interface IStrategy {
   activateUser(userId: string, config: any): Promise<void>;
   deactivateUser(userId: string): Promise<void>;
   getUserState(userId: string): any;
+  hasActiveUsers?(): boolean; // ✅ OTIMIZAÇÃO: Método opcional para verificar se há usuários ativos
 }
 
 // Configurações exportadas
