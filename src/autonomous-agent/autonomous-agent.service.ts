@@ -115,8 +115,12 @@ export class AutonomousAgentService implements OnModuleInit {
   private wsConnections = new Map<string, WebSocket>();
   // ✅ Keep-alive intervals por usuário (para manter conexões WebSocket ativas)
   private keepAliveIntervals = new Map<string, NodeJS.Timeout>();
-  // ✅ Controle de execução simultânea do updateTradesWithMissingPrices
-  private updateInProgress = new Set<string>();
+  // ✅ OTIMIZAÇÃO: Controle de reconexão WebSocket para evitar loops infinitos
+  private wsReconnectAttempts = new Map<string, { count: number; lastAttempt: number }>();
+  private readonly MAX_WS_RECONNECT_ATTEMPTS = 3; // Máximo de 3 tentativas consecutivas
+  private readonly WS_RECONNECT_COOLDOWN = 30000; // 30 segundos de cooldown entre tentativas
+  // ✅ OTIMIZAÇÃO: Controle de conexões em progresso para evitar múltiplas conexões simultâneas
+  private wsConnecting = new Set<string>();
   private readonly appId = process.env.DERIV_APP_ID || '1089';
   
   // ✅ OTIMIZAÇÃO: Cache de configurações para evitar queries N+1
@@ -138,15 +142,9 @@ export class AutonomousAgentService implements OnModuleInit {
     this.logger.log('🚀 Agente Autônomo IA SENTINEL inicializado');
     await this.syncActiveAgentsFromDb();
     
-    // ✅ OTIMIZAÇÃO: Limpar cache expirado a cada 30 segundos
-    setInterval(() => {
-      const now = Date.now();
-      for (const [userId, cached] of this.configCache.entries()) {
-        if (now - cached.timestamp > this.CONFIG_CACHE_TTL) {
-          this.configCache.delete(userId);
-        }
-      }
-    }, 30000);
+    // ✅ OTIMIZAÇÃO: Limpar cache expirado de forma lazy (apenas quando necessário)
+    // Removido setInterval fixo para reduzir uso de CPU
+    // O cache será limpo naturalmente quando expirar (verificação no getBatchConfigs)
   }
 
   // ============================================
@@ -634,18 +632,29 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    this.logger.debug(`[ProcessActiveAgents] Processando ${this.agentStates.size} agente(s) ativo(s)`);
+    // ✅ OTIMIZAÇÃO: Limitar número máximo de agentes processados por ciclo para evitar sobrecarga
+    const MAX_AGENTS_PER_CYCLE = 20; // Processar no máximo 20 agentes por ciclo
+    const BATCH_SIZE = 3; // Reduzido de 5 para 3 para reduzir carga simultânea
 
     const now = new Date();
     const activeUsers = Array.from(this.agentStates.entries());
+    
+    // Limitar número de agentes processados
+    const usersToProcess = activeUsers.slice(0, MAX_AGENTS_PER_CYCLE);
+    
+    if (activeUsers.length > MAX_AGENTS_PER_CYCLE) {
+      this.logger.debug(`[ProcessActiveAgents] Limitando processamento: ${activeUsers.length} agentes ativos, processando ${MAX_AGENTS_PER_CYCLE} por ciclo`);
+    } else {
+      this.logger.debug(`[ProcessActiveAgents] Processando ${usersToProcess.length} agente(s) ativo(s)`);
+    }
 
     // ✅ OTIMIZAÇÃO: Buscar todas as configurações de uma vez (batch query)
-    const userIds = activeUsers.map(([userId]) => userId);
+    const userIds = usersToProcess.map(([userId]) => userId);
     const allConfigs = await this.getBatchConfigs(userIds);
 
-    // ✅ OTIMIZAÇÃO: Processar usuários em batches paralelos (limitado a 5 simultâneos) para reduzir latência
-    for (let i = 0; i < activeUsers.length; i += 5) {
-      const batch = activeUsers.slice(i, i + 5);
+    // ✅ OTIMIZAÇÃO: Processar usuários em batches paralelos (reduzido para 3 simultâneos) para reduzir carga de CPU
+    for (let i = 0; i < usersToProcess.length; i += BATCH_SIZE) {
+      const batch = usersToProcess.slice(i, i + BATCH_SIZE);
       await Promise.all(
         batch.map(([userId, state]) =>
           this.processAgentUser(state, now, allConfigs.get(userId)).catch(error => {
@@ -653,6 +662,11 @@ export class AutonomousAgentService implements OnModuleInit {
           })
         )
       );
+      
+      // ✅ OTIMIZAÇÃO: Pequeno delay entre batches para evitar sobrecarga de CPU
+      if (i + BATCH_SIZE < usersToProcess.length) {
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms entre batches
+      }
     }
   }
 
@@ -1566,108 +1580,6 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
-  /**
-   * Consulta a API da Deriv para obter detalhes do contrato usando contract_id
-   * Retorna entry_price e exit_price se disponíveis
-   */
-  private async fetchContractDetailsFromDeriv(
-    contractId: string,
-    derivToken: string,
-  ): Promise<{ entryPrice: number; exitPrice: number; profit: number; status: string } | null> {
-    return new Promise((resolve, reject) => {
-      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      // ✅ Adicionar header Origin para melhor compatibilidade
-      const ws = new WebSocket(endpoint, {
-        headers: { Origin: 'https://app.deriv.com' },
-      });
-
-      const timeout = setTimeout(() => {
-        ws.close();
-        reject(new Error('Timeout ao consultar contrato na Deriv'));
-      }, 10000); // 10 segundos de timeout
-
-      ws.on('open', () => {
-        ws.send(JSON.stringify({ authorize: derivToken }));
-      });
-
-      ws.on('message', (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
-
-          if (msg.error) {
-            clearTimeout(timeout);
-            ws.close();
-            reject(new Error(msg.error.message || 'Erro da Deriv'));
-            return;
-          }
-
-          if (msg.msg_type === 'authorize') {
-            // Após autorização, consultar o contrato
-            // ✅ CORREÇÃO: subscribe deve ser 1 ou omitido, não 0
-            ws.send(
-              JSON.stringify({
-                proposal_open_contract: 1,
-                contract_id: contractId,
-                // subscribe omitido = consulta única (não inscrever)
-              }),
-            );
-            return;
-          }
-
-          if (msg.msg_type === 'proposal_open_contract') {
-            const contract = msg.proposal_open_contract;
-            clearTimeout(timeout);
-            ws.close();
-
-            if (!contract) {
-              resolve(null);
-              return;
-            }
-
-            const entryPrice = Number(
-              contract.entry_spot ||
-              contract.entry_tick ||
-              contract.spot ||
-              0,
-            );
-            const exitPrice = Number(
-              contract.exit_spot ||
-              contract.exit_tick ||
-              contract.current_spot ||
-              contract.spot ||
-              0,
-            );
-            const profit = Number(contract.profit || contract.profit_percentage || 0);
-            const status = contract.is_sold === 1 || contract.status === 'sold' ? 'sold' : 'active';
-
-            this.logger.log(
-              `[FetchContractDetails] Contrato ${contractId}: entry=${entryPrice}, exit=${exitPrice}, profit=${profit}, status=${status}`,
-            );
-
-            resolve({
-              entryPrice,
-              exitPrice,
-              profit,
-              status,
-            });
-          }
-        } catch (error) {
-          clearTimeout(timeout);
-          ws.close();
-          reject(error);
-        }
-      });
-
-      ws.on('error', (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-
-      ws.on('close', () => {
-        clearTimeout(timeout);
-      });
-    });
-  }
 
   private async createTradeRecord(
     state: AutonomousAgentState,
@@ -3175,6 +3087,12 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
+    // ✅ OTIMIZAÇÃO: Verificar se já está tentando conectar para evitar múltiplas tentativas simultâneas
+    if (this.wsConnecting.has(userId)) {
+      this.logger.debug(`[EnsureWebSocket][${userId}] Conexão já está sendo estabelecida, aguardando...`);
+      return;
+    }
+
     // Verificar se já existe conexão ativa
     const existingWs = this.wsConnections.get(userId);
     if (existingWs && existingWs.readyState === WebSocket.OPEN) {
@@ -3182,27 +3100,29 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
+    // ✅ OTIMIZAÇÃO: Verificar cooldown de reconexão para evitar loops infinitos
+    const reconnectInfo = this.wsReconnectAttempts.get(userId);
+    if (reconnectInfo) {
+      const timeSinceLastAttempt = Date.now() - reconnectInfo.lastAttempt;
+      if (reconnectInfo.count >= this.MAX_WS_RECONNECT_ATTEMPTS && timeSinceLastAttempt < this.WS_RECONNECT_COOLDOWN) {
+        this.logger.warn(`[EnsureWebSocket][${userId}] Muitas tentativas de reconexão (${reconnectInfo.count}). Aguardando cooldown...`);
+        return;
+      }
+      // Resetar contador se passou o cooldown
+      if (timeSinceLastAttempt >= this.WS_RECONNECT_COOLDOWN) {
+        this.wsReconnectAttempts.delete(userId);
+      }
+    }
+
     // Fechar conexão anterior se existir e estiver aberta
     if (existingWs) {
       try {
-        if (existingWs.readyState === WebSocket.OPEN) {
+        if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
           existingWs.close();
           // Aguardar um pouco para garantir que a conexão foi fechada
           await new Promise(resolve => setTimeout(resolve, 100));
-        } else if (existingWs.readyState === WebSocket.CONNECTING) {
-          // Se ainda estiver conectando, aguardar um pouco e verificar novamente
-          await new Promise(resolve => setTimeout(resolve, 200));
-          if (existingWs.readyState === WebSocket.OPEN) {
-            existingWs.close();
-            await new Promise(resolve => setTimeout(resolve, 100));
-          } else {
-            // Se ainda estiver em CONNECTING, remover do map e deixar que expire naturalmente
-            this.wsConnections.delete(userId);
-          }
-        } else {
-          // Se estiver CLOSING ou CLOSED, apenas remover do map
-          this.wsConnections.delete(userId);
         }
+        this.wsConnections.delete(userId);
       } catch (error) {
         this.logger.warn(`[EnsureWebSocket][${userId}] Erro ao fechar conexão anterior:`, error);
         this.wsConnections.delete(userId);
@@ -3218,6 +3138,14 @@ export class AutonomousAgentService implements OnModuleInit {
     if (!state) {
       return;
     }
+
+    // ✅ OTIMIZAÇÃO: Marcar como conectando para evitar múltiplas tentativas simultâneas
+    if (this.wsConnecting.has(userId)) {
+      this.logger.debug(`[EstablishWebSocket][${userId}] Conexão já está sendo estabelecida`);
+      return;
+    }
+
+    this.wsConnecting.add(userId);
 
     try {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
@@ -3245,10 +3173,20 @@ export class AutonomousAgentService implements OnModuleInit {
             this.logger.error(`[WebSocket][${userId}] ❌ Erro:`, msg.error);
             this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`);
 
-            // Tentar reconectar após delay
-            setTimeout(() => {
-              this.establishWebSocketConnection(userId);
-            }, 5000);
+            // ✅ OTIMIZAÇÃO: Registrar tentativa de reconexão e aplicar cooldown
+            this.recordReconnectAttempt(userId);
+            
+            // Tentar reconectar após delay apenas se não excedeu o limite
+            const reconnectInfo = this.wsReconnectAttempts.get(userId);
+            if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
+              setTimeout(() => {
+                this.wsConnecting.delete(userId);
+                this.ensureWebSocketConnection(userId);
+              }, 5000);
+            } else {
+              this.logger.warn(`[WebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown...`);
+              this.wsConnecting.delete(userId);
+            }
             return;
           }
 
@@ -3256,6 +3194,10 @@ export class AutonomousAgentService implements OnModuleInit {
             isAuthorized = true;
             this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
             this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`);
+
+            // ✅ OTIMIZAÇÃO: Resetar contador de reconexão quando conexão é bem-sucedida
+            this.wsReconnectAttempts.delete(userId);
+            this.wsConnecting.delete(userId);
 
             // ✅ Iniciar keep-alive para manter conexão ativa (evita expiração após 2 min)
             this.startKeepAlive(userId, ws);
@@ -3321,16 +3263,23 @@ export class AutonomousAgentService implements OnModuleInit {
       ws.on('close', () => {
         this.logger.warn(`[WebSocket][${userId}] 🔌 Conexão WebSocket fechada`);
         this.wsConnections.delete(userId);
+        this.wsConnecting.delete(userId);
         // ✅ Parar keep-alive quando conexão fechar
         this.stopKeepAlive(userId);
         this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.');
 
-        // Tentar reconectar se o agente ainda estiver ativo
+        // ✅ OTIMIZAÇÃO: Tentar reconectar apenas se o agente ainda estiver ativo e não excedeu limite
         const currentState = this.agentStates.get(userId);
         if (currentState) {
-          setTimeout(() => {
-            this.ensureWebSocketConnection(userId);
-          }, 5000);
+          this.recordReconnectAttempt(userId);
+          const reconnectInfo = this.wsReconnectAttempts.get(userId);
+          if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
+            setTimeout(() => {
+              this.ensureWebSocketConnection(userId);
+            }, 5000);
+          } else {
+            this.logger.warn(`[WebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown de ${this.WS_RECONNECT_COOLDOWN / 1000}s...`);
+          }
         }
       });
 
@@ -3338,11 +3287,40 @@ export class AutonomousAgentService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`[EstablishWebSocket][${userId}] ❌ Erro ao estabelecer conexão:`, error);
       this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`);
+      this.wsConnecting.delete(userId);
 
-      // Tentar reconectar após delay
-      setTimeout(() => {
-        this.establishWebSocketConnection(userId);
-      }, 10000);
+      // ✅ OTIMIZAÇÃO: Registrar tentativa e aplicar cooldown
+      this.recordReconnectAttempt(userId);
+      const reconnectInfo = this.wsReconnectAttempts.get(userId);
+      if (!reconnectInfo || reconnectInfo.count < this.MAX_WS_RECONNECT_ATTEMPTS) {
+        setTimeout(() => {
+          this.ensureWebSocketConnection(userId);
+        }, 10000);
+      } else {
+        this.logger.warn(`[EstablishWebSocket][${userId}] Limite de tentativas de reconexão atingido. Aguardando cooldown...`);
+      }
+    }
+  }
+
+  /**
+   * ✅ OTIMIZAÇÃO: Registra tentativa de reconexão para controle de rate limiting
+   */
+  private recordReconnectAttempt(userId: string): void {
+    const existing = this.wsReconnectAttempts.get(userId);
+    const now = Date.now();
+    
+    if (existing) {
+      const timeSinceLastAttempt = now - existing.lastAttempt;
+      // Se passou o cooldown, resetar contador
+      if (timeSinceLastAttempt >= this.WS_RECONNECT_COOLDOWN) {
+        this.wsReconnectAttempts.set(userId, { count: 1, lastAttempt: now });
+      } else {
+        // Incrementar contador
+        this.wsReconnectAttempts.set(userId, { count: existing.count + 1, lastAttempt: now });
+      }
+    } else {
+      // Primeira tentativa
+      this.wsReconnectAttempts.set(userId, { count: 1, lastAttempt: now });
     }
   }
 
@@ -3351,8 +3329,9 @@ export class AutonomousAgentService implements OnModuleInit {
   // ============================================
 
   /**
-   * ✅ Inicia keep-alive para uma conexão WebSocket (envia ping a cada 90s)
+   * ✅ OTIMIZADO: Inicia keep-alive para uma conexão WebSocket (envia ping a cada 110s)
    * Evita que a Deriv feche a conexão após 2 minutos de inatividade
+   * Intervalo aumentado de 90s para 110s para reduzir uso de CPU
    */
   private startKeepAlive(userId: string, ws: WebSocket): void {
     // Parar keep-alive anterior se existir
@@ -3371,10 +3350,10 @@ export class AutonomousAgentService implements OnModuleInit {
         this.logger.warn(`[KeepAlive][${userId}] WebSocket não está aberto, parando keep-alive`);
         this.stopKeepAlive(userId);
       }
-    }, 90000); // 90 segundos (menos de 2 minutos de timeout da Deriv)
+    }, 110000); // ✅ OTIMIZADO: 110 segundos (ainda dentro do limite de 2 minutos da Deriv, mas reduz ping frequency)
 
     this.keepAliveIntervals.set(userId, interval);
-    this.logger.log(`[KeepAlive][${userId}] ✅ Keep-alive iniciado (ping a cada 90s)`);
+    this.logger.log(`[KeepAlive][${userId}] ✅ Keep-alive iniciado (ping a cada 110s)`);
   }
 
   /**
@@ -3569,168 +3548,6 @@ export class AutonomousAgentService implements OnModuleInit {
     }));
   }
 
-  /**
-   * Atualiza trades com valores zerados consultando a API da Deriv
-   * Útil para corrigir trades antigos que não tiveram os valores capturados corretamente
-   */
-  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<{ updated: number; errors: number; deleted: number }> {
-    // ✅ CORREÇÃO: Evitar execuções simultâneas para o mesmo userId
-    if (this.updateInProgress.has(userId)) {
-      this.logger.warn(`[UpdateTradesWithMissingPrices] Já existe uma atualização em progresso para userId=${userId}, ignorando...`);
-      return { updated: 0, errors: 0, deleted: 0 };
-    }
-
-    // Marcar como em progresso
-    this.updateInProgress.add(userId);
-
-    try {
-      // ✅ CORREÇÃO: Adicionar controle de retry para evitar loop infinito
-      // Buscar trades com entry_price ou exit_price zerados e que tenham contract_id
-      // Excluir trades que falharam recentemente para evitar loop infinito
-      let tradesToUpdate: any[];
-      try {
-        // Tentar usar coluna last_update_attempt se existir
-        tradesToUpdate = await this.dataSource.query(
-          `SELECT id, contract_id, entry_price, exit_price, status
-         FROM autonomous_agent_trades
-         WHERE user_id = ? 
-           AND contract_id IS NOT NULL 
-           AND contract_id != ''
-           AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
-           AND status IN ('WON', 'LOST', 'ACTIVE')
-           AND (last_update_attempt IS NULL OR last_update_attempt < DATE_SUB(NOW(), INTERVAL 1 HOUR))
-         ORDER BY created_at DESC
-         LIMIT ?`,
-          [userId, limit],
-        );
-      } catch (error) {
-        // Se a coluna não existir, buscar sem filtro de last_update_attempt
-        this.logger.warn(`[UpdateTradesWithMissingPrices] Coluna last_update_attempt não encontrada, usando query sem filtro`);
-        tradesToUpdate = await this.dataSource.query(
-          `SELECT id, contract_id, entry_price, exit_price, status
-         FROM autonomous_agent_trades
-         WHERE user_id = ? 
-           AND contract_id IS NOT NULL 
-           AND contract_id != ''
-           AND (entry_price = 0 OR exit_price = 0 OR entry_price IS NULL OR exit_price IS NULL)
-           AND status IN ('WON', 'LOST', 'ACTIVE')
-         ORDER BY created_at DESC
-         LIMIT ?`,
-          [userId, limit],
-        );
-      }
-
-      if (tradesToUpdate.length === 0) {
-        this.logger.log(`[UpdateTradesWithMissingPrices] Nenhum trade encontrado para atualizar para userId=${userId}`);
-        return { updated: 0, errors: 0, deleted: 0 };
-      }
-
-      // Obter o token do usuário
-      const state = this.agentStates.get(userId);
-      if (!state || !state.derivToken) {
-        this.logger.warn(`[UpdateTradesWithMissingPrices] Token não encontrado para userId=${userId}`);
-        return { updated: 0, errors: tradesToUpdate.length, deleted: 0 };
-      }
-
-      // Type assertion explícita para garantir que TypeScript reconhece que não é null
-      const derivToken: string = state.derivToken as string;
-      let updated = 0;
-      let errors = 0;
-
-      // ✅ Controle de retry: rastrear trades que falharam nesta execução
-      const failedTrades = new Set<number>();
-      let deleted = 0;
-
-      for (const trade of tradesToUpdate) {
-        // ✅ Pular trades que já falharam nesta execução
-        if (failedTrades.has(trade.id)) {
-          continue;
-        }
-
-        try {
-          this.logger.log(`[UpdateTradesWithMissingPrices] Consultando contrato ${trade.contract_id} para trade ${trade.id}`);
-          const contractDetails = await this.fetchContractDetailsFromDeriv(trade.contract_id, derivToken);
-
-          if (contractDetails) {
-            const updates: string[] = [];
-            const values: any[] = [];
-
-            if ((trade.entry_price === 0 || trade.entry_price === null) && contractDetails.entryPrice > 0) {
-              updates.push('entry_price = ?');
-              values.push(contractDetails.entryPrice);
-              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: entry_price atualizado para ${contractDetails.entryPrice}`);
-            }
-
-            if ((trade.exit_price === 0 || trade.exit_price === null) && contractDetails.exitPrice > 0) {
-              updates.push('exit_price = ?');
-              values.push(contractDetails.exitPrice);
-              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id}: exit_price atualizado para ${contractDetails.exitPrice}`);
-            }
-
-            if (updates.length > 0) {
-              values.push(trade.id);
-              try {
-                await this.dataSource.query(
-                  `UPDATE autonomous_agent_trades SET ${updates.join(', ')} WHERE id = ?`,
-                  values,
-                );
-                updated++;
-              } catch (updateError) {
-                this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar banco para trade ${trade.id}:`, updateError);
-                errors++;
-              }
-            }
-          } else {
-            // ✅ Não foi possível obter detalhes do contrato - deletar trade
-            this.logger.warn(`[UpdateTradesWithMissingPrices] Não foi possível obter detalhes do contrato ${trade.contract_id}, deletando trade ${trade.id}`);
-            try {
-              await this.dataSource.query(
-                `DELETE FROM autonomous_agent_trades WHERE id = ?`,
-                [trade.id],
-              );
-              deleted++;
-              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco`);
-            } catch (deleteError) {
-              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
-              errors++;
-            }
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao atualizar trade ${trade.id}:`, errorMessage);
-
-          // ✅ Se for erro de validação ou timeout, deletar o trade
-          if (errorMessage.includes('Input validation failed') || errorMessage.includes('Timeout') || errorMessage.includes('WrongResponse')) {
-            this.logger.warn(`[UpdateTradesWithMissingPrices] Erro ao consultar contrato ${trade.contract_id} (${errorMessage}), deletando trade ${trade.id}`);
-            try {
-              await this.dataSource.query(
-                `DELETE FROM autonomous_agent_trades WHERE id = ?`,
-                [trade.id],
-              );
-              deleted++;
-              this.logger.log(`[UpdateTradesWithMissingPrices] Trade ${trade.id} deletado do banco devido a erro: ${errorMessage}`);
-            } catch (deleteError) {
-              this.logger.error(`[UpdateTradesWithMissingPrices] Erro ao deletar trade ${trade.id}:`, deleteError);
-              errors++;
-            }
-          } else {
-            // Para outros erros, apenas marcar como erro
-            failedTrades.add(trade.id);
-            errors++;
-          }
-        }
-
-        // ✅ Aumentar delay entre requisições para não sobrecarregar a API
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-
-      this.logger.log(`[UpdateTradesWithMissingPrices] Atualização concluída: ${updated} atualizados, ${deleted} deletados, ${errors} erros`);
-      return { updated, errors, deleted };
-    } finally {
-      // ✅ Sempre remover do conjunto de execuções em progresso
-      this.updateInProgress.delete(userId);
-    }
-  }
 
   async getSessionStats(userId: string): Promise<any> {
     // Usar data de hoje no timezone local (Brasil)

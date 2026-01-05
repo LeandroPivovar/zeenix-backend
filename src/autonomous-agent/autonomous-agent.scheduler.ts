@@ -21,9 +21,9 @@ export class AutonomousAgentScheduler {
     }
   }
 
-  // ✅ REATIVADO
-  // Executar a cada 1 minuto para processar agentes ativos (24hrs contínuo, como a IA)
-  @Cron(CronExpression.EVERY_MINUTE, {
+  // ✅ OTIMIZADO: Executar a cada 2 minutos para reduzir carga no servidor
+  // Aumentado de 1 minuto para 2 minutos para reduzir uso de CPU
+  @Cron('*/2 * * * *', {
     name: 'process-autonomous-agents',
   })
   async handleProcessAgents() {
