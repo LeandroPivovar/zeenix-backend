@@ -8,8 +8,18 @@ export class AutonomousAgentScheduler {
   
   // ✅ OTIMIZAÇÃO: Flag para evitar execuções simultâneas
   private isProcessing = false;
+  
+  // ✅ PAUSA TEMPORÁRIA: Flag para pausar o processamento do agente autônomo
+  // Altere para 'true' para pausar temporariamente o processamento
+  // Não precisa de .env, apenas mude este valor e reinicie o servidor
+  private readonly IS_PAUSED = false; // ⬅️ MUDE PARA 'true' PARA PAUSAR
 
-  constructor(private readonly agentService: AutonomousAgentService) {}
+  constructor(private readonly agentService: AutonomousAgentService) {
+    if (this.IS_PAUSED) {
+      this.logger.warn('[AutonomousAgentScheduler] ⚠️ PROCESSAMENTO PAUSADO - Agente autônomo está temporariamente desabilitado');
+      this.logger.warn('[AutonomousAgentScheduler] Para reativar, altere IS_PAUSED para false neste arquivo');
+    }
+  }
 
   // ✅ REATIVADO
   // Executar a cada 1 minuto para processar agentes ativos (24hrs contínuo, como a IA)
@@ -17,6 +27,12 @@ export class AutonomousAgentScheduler {
     name: 'process-autonomous-agents',
   })
   async handleProcessAgents() {
+    // ✅ PAUSA TEMPORÁRIA: Verificar se o processamento está pausado
+    if (this.IS_PAUSED) {
+      this.logger.debug('[AutonomousAgentScheduler] ⏸️ Processamento pausado (IS_PAUSED=true)');
+      return;
+    }
+    
     // ✅ OTIMIZAÇÃO: Evitar execuções simultâneas
     if (this.isProcessing) {
       this.logger.debug('[AutonomousAgentScheduler] Processamento já em andamento, pulando...');
