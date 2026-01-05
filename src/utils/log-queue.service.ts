@@ -5,15 +5,16 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 
 export interface LogEntry {
   userId: string;
-  type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
-  message: string;
-  details?: any;
-  icon?: string;
-  sessionId?: string;
-  // Para autonomous-agent
+  // Para AI logs
+  type?: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+  // Para autonomous-agent logs
   level?: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
   module?: 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER';
+  message: string;
+  details?: any;
   metadata?: any;
+  icon?: string;
+  sessionId?: string;
   tableName?: 'ai_logs' | 'autonomous_agent_logs'; // Tabela de destino
 }
 
@@ -53,7 +54,12 @@ export class LogQueueService implements OnModuleInit {
    */
   saveLogAsync(entry: LogEntry): void {
     // Validar parâmetros
-    if (!entry.userId || !entry.type || !entry.message || entry.message.trim() === '') {
+    if (!entry.userId || !entry.message || entry.message.trim() === '') {
+      return;
+    }
+    
+    // Validar que tem type (AI) ou level (Agent)
+    if (!entry.type && !entry.level) {
       return;
     }
 
@@ -154,7 +160,10 @@ export class LogQueueService implements OnModuleInit {
 
       // Preparar valores para INSERT em batch
       const values = logs.map(log => {
-        const icon = log.icon || this.icons[log.type as keyof typeof this.icons] || 'ℹ️';
+        if (!log.type) {
+          throw new Error(`Log de AI deve ter 'type' definido`);
+        }
+        const icon = log.icon || this.icons[log.type] || 'ℹ️';
         return [
           userId,
           log.type,

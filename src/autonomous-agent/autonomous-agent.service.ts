@@ -901,7 +901,7 @@ export class AutonomousAgentService implements OnModuleInit {
       'ANALYZER',
       `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
-    ).catch(() => { }); // Não bloquear se houver erro
+      ); // Não bloquear se houver erro
 
     // Log adicional quando não há direção definida para debug
     if (!direction) {
@@ -916,7 +916,7 @@ export class AutonomousAgentService implements OnModuleInit {
           fallScore,
           minScoreForDirection,
         },
-      ).catch(() => { });
+      );
     } else {
       // Log quando direção é definida
       this.saveLog(
@@ -930,7 +930,7 @@ export class AutonomousAgentService implements OnModuleInit {
           riseScore,
           fallScore,
         },
-      ).catch(() => { });
+      );
     }
 
     return {
@@ -1145,7 +1145,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: highPercent, direction: 'RISE', highDigits, totalDigits: 20 },
-        ).catch(() => { });
+        );
         return false;
       }
 
@@ -1168,7 +1168,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: highPercent, direction: 'RISE', consecutiveLow, sequenceOk: false },
-        ).catch(() => { });
+        );
         return false;
       }
     }
@@ -1186,7 +1186,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: lowPercent, direction: 'FALL', lowDigits, totalDigits: 20 },
-        ).catch(() => { });
+        );
         return false;
       }
 
@@ -1209,7 +1209,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'ANALYZER',
           `Análise estatística completa. desequilíbrio=${imbalance}, sequência_ok=false`,
           { imbalance: lowPercent, direction: 'FALL', consecutiveHigh, sequenceOk: false },
-        ).catch(() => { });
+        );
         return false;
       }
     }
@@ -1276,7 +1276,7 @@ export class AutonomousAgentService implements OnModuleInit {
             stake: stakeAmount,
             contractType,
           },
-        ).catch(() => { });
+        );
       } else if (state.martingaleLevel === 'M1' || state.martingaleLevel === 'M2') {
         // Recuperação M1 ou M2: Precisa consultar payout primeiro para calcular stake
         if (state.martingaleLevel === 'M1') {
@@ -1295,7 +1295,7 @@ export class AutonomousAgentService implements OnModuleInit {
             martingaleLevel: state.martingaleLevel,
             contractType,
           },
-        ).catch(() => { });
+        );
 
         // Consultar payout e calcular stake de recuperação
         stakeAmount = await this.calculateMartingaleStake(state, contractType);
@@ -1325,7 +1325,7 @@ export class AutonomousAgentService implements OnModuleInit {
             martingaleLevel: state.martingaleLevel,
             calculatedStake: stakeAmount,
           },
-        ).catch(() => { });
+        );
 
         // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
         const stopLossCheck = await this.checkStopLossAfterStake(state, stakeAmount);
@@ -1438,7 +1438,7 @@ export class AutonomousAgentService implements OnModuleInit {
           martingaleLevel: state.martingaleLevel,
           sorosLevel: state.sorosLevel,
         },
-      ).catch(() => { });
+      );
 
       // Processar resultado
       await this.handleTradeResult(state, tradeId, result, stakeAmount);
@@ -1664,7 +1664,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('open', () => {
         this.logger.log(`[ExecuteTrade] WS conectado para trade ${tradeId}`);
-        this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida.').catch(() => { });
+        this.saveLog(state.userId, 'INFO', 'API', 'Conexão WebSocket estabelecida.');
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
 
@@ -1699,7 +1699,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 symbol: state.symbol,
                 currency: state.currency,
               },
-            ).catch(() => { });
+            );
             await this.dataSource.query(
               'UPDATE autonomous_agent_trades SET status = ?, error_message = ? WHERE id = ?',
               ['ERROR', errorMessage, tradeId],
@@ -1715,7 +1715,7 @@ export class AutonomousAgentService implements OnModuleInit {
               'API',
               `Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`,
               { loginid: msg.authorize?.loginid, tradeId },
-            ).catch(() => { });
+            );
 
             // Usar o mesmo fluxo da IA: proposal → buy (conforme padrão da Deriv API)
             // A API da Deriv não aceita compra direta com parameters para RISE/FALL
@@ -1756,7 +1756,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 martingaleLevel: state.martingaleLevel,
                 sorosLevel: state.sorosLevel,
               },
-            ).catch(() => { });
+            );
 
             this.saveLog(
               state.userId,
@@ -1770,7 +1770,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 stake: stakeAmount,
                 duration,
               },
-            ).catch(() => { });
+            );
 
             ws.send(JSON.stringify(proposalPayload));
             return;
@@ -1786,7 +1786,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 'TRADER',
                 `Proposta inválida. trade_id=${tradeId}`,
                 { tradeId, proposal },
-              ).catch(() => { });
+              );
               finalize(new Error('Proposta inválida'));
               return;
             }
@@ -1801,7 +1801,7 @@ export class AutonomousAgentService implements OnModuleInit {
               await this.dataSource.query(
                 'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
                 [payoutLiquido, tradeId],
-              ).catch(() => { });
+              );
 
               // Calcular payout percentual para logs
               const payoutPercentual = proposalPrice > 0
@@ -1820,7 +1820,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutAbsolute,
                   proposalPrice,
                 },
-              ).catch(() => { });
+              );
 
               this.saveLog(
                 state.userId,
@@ -1832,7 +1832,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutPercentual,
                   markup: 3,
                 },
-              ).catch(() => { });
+              );
             }
 
             // Enviar buy com proposal_id (seguindo padrão da IA)
@@ -1851,7 +1851,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 proposalId,
                 proposalPrice,
               },
-            ).catch(() => { });
+            );
 
             ws.send(JSON.stringify(buyPayload));
             return;
@@ -1867,7 +1867,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 'TRADER',
                 `Compra não confirmada. trade_id=${tradeId}`,
                 { tradeId, buy },
-              ).catch(() => { });
+              );
               finalize(new Error('Compra não confirmada'));
               return;
             }
@@ -1910,7 +1910,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutAbsolute,
                   buyPrice,
                 },
-              ).catch(() => { });
+              );
 
               this.saveLog(
                 state.userId,
@@ -1922,7 +1922,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   payoutPercentual,
                   markup: 3,
                 },
-              ).catch(() => { });
+              );
             }
 
             this.logger.log(
@@ -1948,7 +1948,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 tradeId,
                 contractId,
               },
-            ).catch(() => { });
+            );
 
             ws.send(
               JSON.stringify({
@@ -1973,7 +1973,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 entryPrice: entrySpot,
                 buyPrice,
               },
-            ).catch(() => { });
+            );
 
             return;
           }
@@ -2025,7 +2025,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   await this.dataSource.query(
                     'UPDATE autonomous_agent_trades SET payout = ? WHERE id = ?',
                     [payoutLiquido, tradeId],
-                  ).catch(() => { });
+                  );
 
                   // Calcular payout percentual para logs
                   const payoutPercentual = buyPrice > 0
@@ -2044,7 +2044,7 @@ export class AutonomousAgentService implements OnModuleInit {
                       payoutAbsolute,
                       buyPrice,
                     },
-                  ).catch(() => { });
+                  );
 
                   this.saveLog(
                     state.userId,
@@ -2056,7 +2056,7 @@ export class AutonomousAgentService implements OnModuleInit {
                       payoutPercentual,
                       markup: 3,
                     },
-                  ).catch(() => { });
+                  );
                 }
               }
 
@@ -2072,7 +2072,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   isSold: contract.is_sold || 0,
                   status: contract.status || 'active',
                 },
-              ).catch(() => { });
+              );
 
               return;
             }
@@ -2106,7 +2106,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
-              ).catch(() => { });
+              );
             } else {
               this.saveLog(
                 state.userId,
@@ -2119,7 +2119,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   contractId: contract.contract_id || contractId,
                   exitPrice,
                 },
-              ).catch(() => { });
+              );
             }
 
             // Finalizar com resultado
@@ -2310,7 +2310,7 @@ export class AutonomousAgentService implements OnModuleInit {
               'INFO',
               'TRADER',
               `Querying payout for contract_type=${contractType} (Deriv: ${derivContractType})`,
-            ).catch(() => { });
+            );
 
             // Enviar proposal para consultar payout (usar stake mínimo para consulta)
             ws.send(JSON.stringify({
@@ -2350,14 +2350,14 @@ export class AutonomousAgentService implements OnModuleInit {
               'DEBUG',
               'TRADER',
               `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
-            ).catch(() => { });
+            );
 
             this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
               `Payout ZENIX (after 3% markup): ${payoutCliente.toFixed(2)}%`,
-            ).catch(() => { });
+            );
 
             if (payoutCliente <= 0) {
               finalize(new Error('Payout cliente inválido'));
@@ -2399,7 +2399,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 mode: modeName,
                 multiplier,
               },
-            ).catch(() => { });
+            );
 
             this.saveLog(
               state.userId,
@@ -2412,7 +2412,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 recoveryStake,
                 calculation: `(targetProfit * 100) / payoutCliente = (${targetProfit.toFixed(2)} * 100) / ${payoutCliente.toFixed(2)} = ${recoveryStake.toFixed(2)}`,
               },
-            ).catch(() => { });
+            );
 
             finalize(undefined, recoveryStake);
           }
@@ -2679,7 +2679,7 @@ export class AutonomousAgentService implements OnModuleInit {
           martingaleLevel: state.martingaleLevel,
           sorosLevel: state.sorosLevel,
         },
-      ).catch(() => { });
+      );
 
       // Se estava em Soros, entrar em recuperação imediatamente
       if (state.sorosLevel > 0) {
@@ -2697,7 +2697,7 @@ export class AutonomousAgentService implements OnModuleInit {
           'DEBUG',
           'RISK',
           `Soros loss calculation. soros_stake=${sorosStakeBefore.toFixed(2)}, soros_profit=${sorosProfitBefore.toFixed(2)}, stake_lost=${stakeAmount.toFixed(2)}, net_loss=${netLoss.toFixed(2)}`,
-        ).catch(() => { });
+        );
 
         // Resetar Soros
         state.sorosLevel = 0;
@@ -3131,7 +3131,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('open', () => {
         this.logger.log(`[WebSocket][${userId}] ✅ Conexão estabelecida`);
-        this.saveLog(userId, 'INFO', 'API', 'Conexão WebSocket aberta.').catch(() => { });
+        this.saveLog(userId, 'INFO', 'API', 'Conexão WebSocket aberta.');
 
         // Autorizar
         ws.send(JSON.stringify({ authorize: state.derivToken }));
@@ -3143,7 +3143,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
           if (msg.error) {
             this.logger.error(`[WebSocket][${userId}] ❌ Erro:`, msg.error);
-            this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`).catch(() => { });
+            this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${msg.error.message || 'Erro desconhecido'}`);
 
             // Tentar reconectar após delay
             setTimeout(() => {
@@ -3155,7 +3155,7 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'authorize') {
             isAuthorized = true;
             this.logger.log(`[WebSocket][${userId}] ✅ Autorizado: ${msg.authorize?.loginid || 'N/A'}`);
-            this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`).catch(() => { });
+            this.saveLog(userId, 'INFO', 'API', `✅ Autorização bem-sucedida. conta=${msg.authorize?.loginid || 'N/A'}`);
 
             // ✅ Iniciar keep-alive para manter conexão ativa (evita expiração após 2 min)
             this.startKeepAlive(userId, ws);
@@ -3188,7 +3188,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
               this.priceHistory.set(userId, ticks);
               this.logger.log(`[WebSocket][${userId}] 📊 Histórico inicial recebido: ${ticks.length} ticks`);
-              this.saveLog(userId, 'INFO', 'API', `📊 Histórico inicial de preços recebido. ticks=${ticks.length}`).catch(() => { });
+              this.saveLog(userId, 'INFO', 'API', `📊 Histórico inicial de preços recebido. ticks=${ticks.length}`);
             }
             return;
           }
@@ -3215,7 +3215,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       ws.on('error', (error) => {
         this.logger.error(`[WebSocket][${userId}] ❌ Erro no WebSocket:`, error);
-        this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${error.message || 'Erro desconhecido'}`).catch(() => { });
+        this.saveLog(userId, 'ERROR', 'API', `❌ Erro no WebSocket. erro=${error.message || 'Erro desconhecido'}`);
       });
 
       ws.on('close', () => {
@@ -3223,7 +3223,7 @@ export class AutonomousAgentService implements OnModuleInit {
         this.wsConnections.delete(userId);
         // ✅ Parar keep-alive quando conexão fechar
         this.stopKeepAlive(userId);
-        this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.').catch(() => { });
+        this.saveLog(userId, 'WARN', 'API', '🔌 Conexão WebSocket fechada.');
 
         // Tentar reconectar se o agente ainda estiver ativo
         const currentState = this.agentStates.get(userId);
@@ -3237,7 +3237,7 @@ export class AutonomousAgentService implements OnModuleInit {
       this.wsConnections.set(userId, ws);
     } catch (error) {
       this.logger.error(`[EstablishWebSocket][${userId}] ❌ Erro ao estabelecer conexão:`, error);
-      this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`).catch(() => { });
+      this.saveLog(userId, 'ERROR', 'API', `❌ Falha ao estabelecer WebSocket. erro=${error.message}`);
 
       // Tentar reconectar após delay
       setTimeout(() => {
