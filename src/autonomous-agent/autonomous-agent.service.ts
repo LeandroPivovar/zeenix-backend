@@ -1106,7 +1106,7 @@ export class AutonomousAgentService implements OnModuleInit {
       'ANALYZER',
       `EMA(10)=${ema10.toFixed(4)}, EMA(25)=${ema25.toFixed(4)}, EMA(50)=${ema50.toFixed(4)}, RSI(14)=${rsi.toFixed(1)}, Momentum=${momentum.toFixed(4)}`,
       { ema10, ema25, ema50, rsi, momentum },
-      ); // Não bloquear se houver erro
+    );
 
     // Log adicional quando não há direção definida para debug
     if (!direction) {
@@ -1138,7 +1138,7 @@ export class AutonomousAgentService implements OnModuleInit {
       );
     }
 
-    return {
+    const analysis: TechnicalAnalysis = {
       ema10,
       ema25,
       ema50,
@@ -1148,6 +1148,15 @@ export class AutonomousAgentService implements OnModuleInit {
       direction,
       reasoning,
     };
+
+    // ✅ OTIMIZAÇÃO 3: Atualizar cache de análise técnica
+    this.analysisCache.set(userId, {
+      analysis,
+      priceHash,
+      timestamp: Date.now(),
+    });
+
+    return analysis;
   }
 
   /**
