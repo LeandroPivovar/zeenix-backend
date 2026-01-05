@@ -339,9 +339,9 @@ export class NexusStrategy implements IStrategy {
             if (t.length >= 3 && tickRecente > tickMeio && tickMeio > tickAntigo) {
                 signal = 'PAR';
                 analiseMessage += `\n🌊 [DECISÃO] Momentum de ALTA detectado (3 subidas consecutivas)\n` +
-                    `✅ SINAL: CALL (PAR) | Confiança: ALTA`;
+                    `✅ SINAL: Higher (CALL) | Confiança: ALTA`;
                 this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR (CALL) | Momentum de alta confirmado`);
+                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | Momentum de alta confirmado`);
             } else {
                 // ✅ Logar análise mesmo sem sinal (a cada 5 ticks para não spammar)
                 if (state.ticksColetados % 5 === 0) {
@@ -364,27 +364,33 @@ export class NexusStrategy implements IStrategy {
                 ` • Últimos 4 ticks: ${lastTicks.slice(-4).map(t => t.value.toFixed(2)).join(' → ')}\n` +
                 ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
 
+            // ✅ BALANCEADO: Tendência Macro de Alta (SMA > Preço) + 3 ticks consecutivos de queda (Correção) + Entrada na reversão
             if (currentPrice > sma50) {
-                const t = lastTicks.slice(-4);
-                const temPullback = t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value;
+                // Tendência de alta confirmada (preço acima da SMA)
+                const t = lastTicks.slice(-3); // Últimos 3 ticks para verificar correção
+                // ✅ Verificar 3 ticks consecutivos de queda: t[2] < t[1] < t[0] (mais recente < meio < antigo)
+                const temCorrecao = t.length >= 3 && t[2].value < t[1].value && t[1].value < t[0].value;
                 
-                if (temPullback) {
+                if (temCorrecao) {
+                    // ✅ Correção detectada, entrada na reversão (expectativa de volta a subir)
                     signal = 'PAR';
                     analiseMessage += `\n🌊 [DECISÃO] Pullback detectado em Tendência de Alta\n` +
-                        `✅ SINAL: CALL (PAR) | Confiança: MÉDIA`;
+                        ` • Correção: 3 ticks consecutivos de queda\n` +
+                        ` • Entrada: Reversão esperada (Higher)\n` +
+                        `✅ SINAL: Higher (CALL) | Confiança: MÉDIA`;
                     this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                    this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR (CALL) | Pullback em alta confirmado`);
+                    this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | Pullback em alta confirmado`);
                 } else {
                     // ✅ Logar análise mesmo sem sinal
                     if (state.ticksColetados % 10 === 0) {
-                        analiseMessage += `\n⏳ Aguardando pullback em tendência de alta...`;
+                        analiseMessage += `\n⏳ Aguardando pullback (3 ticks consecutivos de queda) em tendência de alta...`;
                         this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
                     }
                 }
             } else {
                 // ✅ Logar quando está abaixo da média
                 if (state.ticksColetados % 10 === 0) {
-                    analiseMessage += `\n⏳ Preço abaixo da média. Aguardando reversão para cima...`;
+                    analiseMessage += `\n⏳ Preço abaixo da média. Aguardando tendência de alta (SMA > Preço)...`;
                     this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
                 }
             }
@@ -407,9 +413,9 @@ export class NexusStrategy implements IStrategy {
             if (rsi < 20) {
                 signal = 'PAR';
                 analiseMessage += `\n🌊 [DECISÃO] RSI em exaustão (${rsi.toFixed(2)}) - Reversão esperada\n` +
-                    `✅ SINAL: CALL (PAR) | Confiança: ALTA`;
+                    `✅ SINAL: Higher (CALL) | Confiança: ALTA`;
                 this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR (CALL) | RSI em exaustão confirmado`);
+                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | RSI em exaustão confirmado`);
             } else {
                 // ✅ Logar análise mesmo sem sinal
                 if (state.ticksColetados % 10 === 0) {
@@ -641,22 +647,50 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier = '-0.15';
-        if (riskManager.consecutiveLosses === 1) barrier = '-0.25';
-        else if (riskManager.consecutiveLosses === 2) barrier = '-0.35';
-
         state.isOperationActive = true;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
-            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
+            
+            // ✅ Calcular barreira dinâmica
+            let barrier = '-0.15';
+            if (riskManager.consecutiveLosses === 1) {
+                barrier = '-0.25';
+            } else if (riskManager.consecutiveLosses === 2) {
+                barrier = '-0.35';
+            } else if (riskManager.consecutiveLosses >= 3) {
+                barrier = '-0.45';
+            }
+            
+            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice, barrier);
 
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: CALL | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+            // ✅ NEXUS usa Higher/Lower com barreira negativa (conforme documentação)
+            // Higher = CALL (direção de alta), Lower = PUT (direção de baixa)
+            // Barreira dinâmica baseada no nível de martingale
+            let barrier = '-0.15'; // Entrada Normal (~30% payout)
+            if (riskManager.consecutiveLosses === 1) {
+                barrier = '-0.25'; // Recuperação M1 (~25% payout)
+            } else if (riskManager.consecutiveLosses === 2) {
+                barrier = '-0.35'; // Recuperação M2 (~20% payout)
+            } else if (riskManager.consecutiveLosses >= 3) {
+                barrier = '-0.45'; // Recuperação M3+ (~15% payout)
+            }
+            
+            // Direction: PAR = Higher (CALL), IMPAR = Lower (PUT)
+            const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
+            const directionDisplay = direction === 'PAR' ? 'Higher (CALL)' : 'Lower (PUT)';
+            
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', 
+                `🎯 ENTRADA CONFIRMADA: ${directionDisplay} | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
 
+            // ✅ Determinar duração baseada no modo (5 ticks padrão, 1 tick para veloz extremo)
+            const duration = state.mode === 'VELOZ' ? 1 : 5;
+            
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
-                contract_type: 'CALL',
+                contract_type: contractType,
                 amount: stake,
                 currency: state.currency,
-                barrier: barrier
+                barrier: barrier,
+                duration: duration
             }, state.userId);
 
             if (result) {
@@ -836,12 +870,15 @@ export class NexusStrategy implements IStrategy {
         await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [reason, state.userId]);
     }
 
-    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
-        const analysisData = { strategy: 'nexus', mode: state.mode, direction };
+    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
+        const analysisData = { strategy: 'nexus', mode: state.mode, direction, barrier };
+        const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
+        // Duração: 5 ticks (padrão) ou 1 tick (veloz extremo) - usando 5 ticks conforme documentação
+        const duration = state.mode === 'VELOZ' ? 1 : 5;
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
-            [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
+             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, ?)`,
+            [state.userId, direction, entryPrice, stake, contractType, JSON.stringify(analysisData), this.symbol, duration]
         );
         return r.insertId || r[0]?.insertId;
     }
@@ -850,17 +887,28 @@ export class NexusStrategy implements IStrategy {
         try {
             const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-            const proposalResponse: any = await connection.sendRequest({
+            // ✅ NEXUS: Duração baseada no modo (5 ticks padrão, 1 tick para veloz extremo)
+            // A duração será determinada pelo modo do usuário passado via params
+            const duration = params.duration || 5; // Padrão 5 ticks conforme documentação
+            
+            const proposalPayload: any = {
                 proposal: 1,
                 amount: params.amount,
                 basis: 'stake',
                 contract_type: params.contract_type,
                 currency: params.currency || 'USD',
-                duration: 5,
+                duration: duration,
                 duration_unit: 't',
                 symbol: this.symbol,
-                barrier: params.barrier
-            }, 60000);
+            };
+            
+            // ✅ Adicionar barreira negativa (offset) para Higher/Lower (CALL/PUT)
+            // A barreira deve ser uma string no formato "-0.15", "-0.25", etc.
+            if (params.barrier) {
+                proposalPayload.barrier = String(params.barrier); // Converter para string
+            }
+            
+            const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
 
             if (proposalResponse.error) {
                 const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
