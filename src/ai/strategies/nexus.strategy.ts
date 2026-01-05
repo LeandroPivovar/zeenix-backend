@@ -656,6 +656,7 @@ export class NexusStrategy implements IStrategy {
         }
 
         state.isOperationActive = true;
+        let tradeId: number | null = null;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             
@@ -669,7 +670,7 @@ export class NexusStrategy implements IStrategy {
                 barrier = '-0.45';
             }
             
-            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice, barrier);
+            tradeId = await this.createTradeRecord(state, direction, stake, currentPrice, barrier);
 
             // ✅ NEXUS usa Higher/Lower com barreira negativa (conforme documentação)
             // Higher = CALL (direção de alta), Lower = PUT (direção de baixa)
@@ -682,8 +683,9 @@ export class NexusStrategy implements IStrategy {
             this.saveNexusLog(state.userId, this.symbol, 'operacao', 
                 `🎯 ENTRADA CONFIRMADA: ${directionDisplay} | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
 
-            // ✅ Determinar duração baseada no modo (5 ticks padrão, 1 tick para veloz extremo)
-            const duration = state.mode === 'VELOZ' ? 1 : 5;
+            // ✅ NEXUS: Para contratos CALL/PUT com barreira, a API Deriv requer mínimo de 5 ticks
+            // A documentação menciona 5 ticks (padrão) ou 1 tick (veloz extremo), mas com barreira só funciona com 5+
+            const duration = 5; // Sempre 5 ticks para contratos com barreira (requisito da API Deriv)
             
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
                 contract_type: contractType,
@@ -713,11 +715,23 @@ export class NexusStrategy implements IStrategy {
                 // ✅ Processar resultado e verificar stop loss blindado após operação
                 await this.processResult(state, result, stake, tradeId);
             } else {
+                // ✅ Erro ao executar trade - atualizar registro e continuar processando
                 await this.dataSource.query(`UPDATE ai_trades SET status = 'ERROR' WHERE id = ?`, [tradeId]);
+                this.saveNexusLog(state.userId, this.symbol, 'erro', `❌ Erro ao executar operação. Continuando análise...`);
             }
         } catch (e) {
-            this.logger.error(`[NEXUS][ERR] ${e.message}`);
+            this.logger.error(`[NEXUS][ERR] Erro ao executar operação:`, e);
+            this.saveNexusLog(state.userId, this.symbol, 'erro', `❌ Erro: ${e.message || 'Erro desconhecido'}. Continuando análise...`);
+            // ✅ Garantir que o trade seja marcado como erro se existir
+            if (tradeId) {
+                try {
+                    await this.dataSource.query(`UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`, [e.message || 'Erro desconhecido', tradeId]);
+                } catch (updateError) {
+                    this.logger.error(`[NEXUS] Erro ao atualizar trade:`, updateError);
+                }
+            }
         } finally {
+            // ✅ Sempre resetar o flag de operação ativa para permitir novas operações
             state.isOperationActive = false;
         }
     }
@@ -873,8 +887,8 @@ export class NexusStrategy implements IStrategy {
     private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction, barrier };
         const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
-        // Duração: 5 ticks (padrão) ou 1 tick (veloz extremo) - usando 5 ticks conforme documentação
-        const duration = state.mode === 'VELOZ' ? 1 : 5;
+        // ✅ NEXUS: Para contratos CALL/PUT com barreira, a API Deriv requer mínimo de 5 ticks
+        const duration = 5; // Sempre 5 ticks para contratos com barreira
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
              VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, ?)`,
