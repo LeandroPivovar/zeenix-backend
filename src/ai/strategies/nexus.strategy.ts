@@ -665,15 +665,7 @@ export class NexusStrategy implements IStrategy {
 
             // ✅ NEXUS usa Higher/Lower com barreira negativa (conforme documentação)
             // Higher = CALL (direção de alta), Lower = PUT (direção de baixa)
-            // Barreira dinâmica baseada no nível de martingale
-            let barrier = '-0.15'; // Entrada Normal (~30% payout)
-            if (riskManager.consecutiveLosses === 1) {
-                barrier = '-0.25'; // Recuperação M1 (~25% payout)
-            } else if (riskManager.consecutiveLosses === 2) {
-                barrier = '-0.35'; // Recuperação M2 (~20% payout)
-            } else if (riskManager.consecutiveLosses >= 3) {
-                barrier = '-0.45'; // Recuperação M3+ (~15% payout)
-            }
+            // Barreira dinâmica já calculada acima
             
             // Direction: PAR = Higher (CALL), IMPAR = Lower (PUT)
             const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
