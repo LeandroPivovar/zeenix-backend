@@ -646,9 +646,15 @@ export class AutonomousAgentService implements OnModuleInit {
 
   async deactivateAgent(userId: string): Promise<void> {
     try {
+      if (!userId) {
+        throw new Error('User ID é obrigatório para desativar agente');
+      }
+
+      this.logger.log(`[DeactivateAgent] Iniciando desativação para usuário ${userId}`);
+
       // ✅ 1. Atualizar banco de dados primeiro (is_active = FALSE e session_status)
       // ✅ CORREÇÃO: Usar 'stopped' ao invés de 'stopped_manual' para evitar erro de truncamento
-      await this.dataSource.query(
+      const updateResult = await this.dataSource.query(
         `UPDATE autonomous_agent_config 
          SET is_active = FALSE, 
              session_status = 'stopped', 
@@ -657,6 +663,8 @@ export class AutonomousAgentService implements OnModuleInit {
         [userId],
       );
 
+      this.logger.debug(`[DeactivateAgent] Query de atualização executada. Resultado:`, updateResult);
+
       // ✅ 2. Remover estado da memória (para parar processamento imediato)
       const state = this.agentStates.get(userId);
       if (state) {
@@ -664,21 +672,39 @@ export class AutonomousAgentService implements OnModuleInit {
         state.isOperationActive = false;
         this.agentStates.delete(userId);
         this.logger.debug(`[DeactivateAgent] Estado removido da memória para ${userId}`);
+      } else {
+        this.logger.debug(`[DeactivateAgent] Nenhum estado encontrado na memória para ${userId}`);
       }
 
       // ✅ 3. Limpar histórico de preços
       this.priceHistory.delete(userId);
 
+      // ✅ 4. Limpar cache de análise técnica
+      this.technicalIndicatorsCache.delete(userId);
+      this.analysisCache.delete(userId);
+
       // ✅ REFATORADO: Não precisa fechar conexão individual (usando conexão compartilhada)
       // A conexão WebSocket compartilhada continua ativa para outros agentes
 
-      // ✅ 5. Log detalhado
-      this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
+      // ✅ 5. Log detalhado (não bloquear se houver erro)
+      try {
+        this.saveLog(userId, 'INFO', 'CORE', 'Agente parado manualmente pelo usuário.');
+      } catch (logError) {
+        this.logger.warn(`[DeactivateAgent] Erro ao salvar log (não crítico):`, logError);
+      }
 
       this.logger.log(`[DeactivateAgent] ✅ Agente desativado completamente para usuário ${userId}`);
     } catch (error) {
-      this.saveLog(userId, 'ERROR', 'CORE', `Falha ao desativar agente. erro=${error.message}`);
-      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente para ${userId}:`, error);
+      
+      // Tentar salvar log de erro (não bloquear se falhar)
+      try {
+        this.saveLog(userId || 'unknown', 'ERROR', 'CORE', `Falha ao desativar agente. erro=${errorMessage}`);
+      } catch (logError) {
+        this.logger.warn(`[DeactivateAgent] Erro ao salvar log de erro (não crítico):`, logError);
+      }
+      
       throw error;
     }
   }

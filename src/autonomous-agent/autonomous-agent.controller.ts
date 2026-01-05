@@ -108,25 +108,45 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async deactivateAgent(@Body() body: any, @Req() req: any) {
     try {
-      const userId = req.user?.userId || body.userId;
+      // Extrair userId de múltiplas fontes possíveis
+      const userId = req.user?.userId || req.user?.id || body.userId || body.user_id;
+
+      this.logger.log(`[DeactivateAgent] Tentando desativar agente. userId=${userId}, req.user=${JSON.stringify(req.user)}`);
 
       if (!userId) {
+        this.logger.error(`[DeactivateAgent] User ID não encontrado. req.user:`, req.user, 'body:', body);
         throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
       }
 
       await this.agentService.deactivateAgent(userId);
+
+      this.logger.log(`[DeactivateAgent] ✅ Agente desativado com sucesso para ${userId}`);
 
       return {
         success: true,
         message: 'Agente autônomo desativado com sucesso',
       };
     } catch (error) {
-      this.logger.error(`[DeactivateAgent] Erro:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, {
+        message: errorMessage,
+        stack: errorStack,
+        body,
+        user: req.user,
+      });
+
+      // Se já for HttpException, re-lançar
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       throw new HttpException(
         {
           success: false,
           message: 'Erro ao desativar agente autônomo',
-          error: error.message,
+          error: errorMessage,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
