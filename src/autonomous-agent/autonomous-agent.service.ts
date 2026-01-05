@@ -191,6 +191,19 @@ export class AutonomousAgentService implements OnModuleInit {
   }> = [];
   private isProcessingTradeResults = false;
 
+  // ✅ REFATORAÇÃO: Cache compartilhado de MarketAnalysis (calculado uma vez por símbolo)
+  private sharedMarketAnalysisCache = new Map<string, {
+    marketAnalysis: {
+      probability: number;
+      signal: 'CALL' | 'PUT' | 'DIGIT' | null;
+      payout: number;
+      confidence: number;
+      details?: any;
+    };
+    timestamp: number;
+  }>();
+  private readonly MARKET_ANALYSIS_CACHE_TTL = 2000; // 2 segundos
+
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @Optional() @Inject(AutonomousAgentLogsStreamService) private readonly logsStreamService?: AutonomousAgentLogsStreamService,
@@ -970,9 +983,18 @@ export class AutonomousAgentService implements OnModuleInit {
       const ticksRequired = tradingConfig.ticksRequired;
       const minConfidenceScore = tradingConfig.minConfidenceScore;
 
-      // Obter histórico de preços
-      const prices = await this.getPriceHistory(state.userId, state.symbol);
+      // ✅ REFATORAÇÃO: Obter MarketAnalysis compartilhado (calculado uma vez por símbolo)
+      const marketAnalysis = await this.getSharedMarketAnalysis(state.symbol);
+      
+      if (!marketAnalysis) {
+        this.logger.debug(`[ProcessAgent][${state.userId}] MarketAnalysis não disponível. Aguardando...`);
+        const interval = Math.min(30, this.getRandomInterval());
+        this.updateNextTradeAt(state.userId, interval);
+        return;
+      }
 
+      // Verificar se há histórico suficiente (para validação estatística)
+      const prices = await this.getPriceHistory(state.userId, state.symbol);
       if (prices.length < ticksRequired) {
         this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/${ticksRequired}). Aguardando mais ticks...`);
         this.saveLog(
@@ -988,11 +1010,18 @@ export class AutonomousAgentService implements OnModuleInit {
         return;
       }
 
-      // Usar apenas os últimos N ticks conforme o Trading Mode
-      const recentPrices = prices.slice(-ticksRequired);
-
-      // Realizar análise técnica
-      const analysis = this.performTechnicalAnalysis(recentPrices, state.userId);
+      // Converter MarketAnalysis de volta para TechnicalAnalysis (para compatibilidade)
+      const analysis: TechnicalAnalysis = {
+        ema10: marketAnalysis.details?.ema10 || 0,
+        ema25: marketAnalysis.details?.ema25 || 0,
+        ema50: marketAnalysis.details?.ema50 || 0,
+        rsi: marketAnalysis.details?.rsi || 50,
+        momentum: marketAnalysis.details?.momentum || 0,
+        confidenceScore: marketAnalysis.confidence,
+        direction: marketAnalysis.signal === 'CALL' ? 'RISE' : 
+                   marketAnalysis.signal === 'PUT' ? 'FALL' : null,
+        reasoning: marketAnalysis.details?.reasoning || '',
+      };
 
       // Log detalhado da análise
       this.logger.debug(
@@ -1000,13 +1029,13 @@ export class AutonomousAgentService implements OnModuleInit {
       );
 
       // Verificar score de confiança (usando mínimo do Trading Mode)
-      if (analysis.confidenceScore < minConfidenceScore) {
+      if (marketAnalysis.confidence < minConfidenceScore) {
         this.saveLog(
           state.userId,
           'DEBUG',
           'DECISION',
-          `Sinal invalidado. motivo="Pontuação de confiança muito baixa", confiança=${analysis.confidenceScore.toFixed(1)}%, mínimo_requerido=${minConfidenceScore}%`,
-          { confidenceScore: analysis.confidenceScore, minRequired: minConfidenceScore, tradingMode: state.tradingMode },
+          `Sinal invalidado. motivo="Pontuação de confiança muito baixa", confiança=${marketAnalysis.confidence.toFixed(1)}%, mínimo_requerido=${minConfidenceScore}%`,
+          { confidence: marketAnalysis.confidence, minRequired: minConfidenceScore, tradingMode: state.tradingMode },
         );
         // Atualizar próximo trade com intervalo aleatório
         const interval = this.getRandomInterval();
@@ -1039,10 +1068,10 @@ export class AutonomousAgentService implements OnModuleInit {
         state.userId,
         'INFO',
         'ANALYZER',
-        `Sinal encontrado. direção=${analysis.direction}, confiança=${analysis.confidenceScore.toFixed(1)}%`,
+        `Sinal encontrado. direção=${analysis.direction}, confiança=${marketAnalysis.confidence.toFixed(1)}%`,
         {
           direction: analysis.direction,
-          confidence: analysis.confidenceScore,
+          confidence: marketAnalysis.confidence,
           ema10: analysis.ema10,
           ema25: analysis.ema25,
           ema50: analysis.ema50,
@@ -1080,6 +1109,87 @@ export class AutonomousAgentService implements OnModuleInit {
     const values = recent.map(p => p.value.toFixed(4)).join(',');
     // Hash simples (pode usar crypto se necessário)
     return `${recent.length}_${values.substring(0, 100)}`;
+  }
+
+  /**
+   * ✅ REFATORAÇÃO: Converte TechnicalAnalysis para MarketAnalysis
+   * Usado para compatibilidade com interface IAutonomousAgentStrategy
+   */
+  private convertToMarketAnalysis(
+    technicalAnalysis: TechnicalAnalysis,
+    payout?: number
+  ): {
+    probability: number;
+    signal: 'CALL' | 'PUT' | 'DIGIT' | null;
+    payout: number;
+    confidence: number;
+    details?: any;
+  } {
+    return {
+      probability: technicalAnalysis.confidenceScore,
+      signal: technicalAnalysis.direction === 'RISE' ? 'CALL' : 
+              technicalAnalysis.direction === 'FALL' ? 'PUT' : null,
+      payout: payout || 0, // Será obtido quando necessário
+      confidence: technicalAnalysis.confidenceScore,
+      details: {
+        ema10: technicalAnalysis.ema10,
+        ema25: technicalAnalysis.ema25,
+        ema50: technicalAnalysis.ema50,
+        rsi: technicalAnalysis.rsi,
+        momentum: technicalAnalysis.momentum,
+        direction: technicalAnalysis.direction,
+        reasoning: technicalAnalysis.reasoning,
+      },
+    };
+  }
+
+  /**
+   * ✅ REFATORAÇÃO: Obtém MarketAnalysis compartilhado para um símbolo
+   * Calcula uma vez e compartilha entre todos os agentes do mesmo símbolo
+   */
+  private async getSharedMarketAnalysis(symbol: string): Promise<{
+    probability: number;
+    signal: 'CALL' | 'PUT' | 'DIGIT' | null;
+    payout: number;
+    confidence: number;
+    details?: any;
+  } | null> {
+    const cacheKey = symbol;
+    const cached = this.sharedMarketAnalysisCache.get(cacheKey);
+    
+    // Verificar se cache é válido
+    if (cached && (Date.now() - cached.timestamp) < this.MARKET_ANALYSIS_CACHE_TTL) {
+      return cached.marketAnalysis;
+    }
+
+    // Buscar histórico de preços (usar primeiro agente ativo do símbolo como referência)
+    const activeAgentForSymbol = Array.from(this.agentStates.values())
+      .find(state => state.symbol === symbol);
+    
+    if (!activeAgentForSymbol) {
+      return null;
+    }
+
+    const prices = await this.getPriceHistory(activeAgentForSymbol.userId, symbol);
+    
+    if (prices.length < 20) {
+      return null; // Histórico insuficiente
+    }
+
+    // Calcular análise técnica (uma vez por símbolo)
+    const recentPrices = prices.slice(-50); // Usar últimos 50 ticks
+    const technicalAnalysis = this.performTechnicalAnalysis(recentPrices, 'shared');
+
+    // Converter para MarketAnalysis
+    const marketAnalysis = this.convertToMarketAnalysis(technicalAnalysis);
+
+    // Armazenar no cache compartilhado
+    this.sharedMarketAnalysisCache.set(cacheKey, {
+      marketAnalysis,
+      timestamp: Date.now(),
+    });
+
+    return marketAnalysis;
   }
 
   private performTechnicalAnalysis(prices: PriceTick[], userId: string): TechnicalAnalysis {
@@ -3372,6 +3482,9 @@ export class AutonomousAgentService implements OnModuleInit {
         ? new Date(tick.epoch * 1000).toISOString()
         : new Date().toISOString(),
     };
+
+    // ✅ REFATORAÇÃO: Invalidar cache de MarketAnalysis compartilhado quando novo tick chegar
+    this.sharedMarketAnalysisCache.delete(this.sharedSymbol);
 
     // Distribuir tick para todos os agentes ativos com o símbolo correto
     for (const [userId, state] of this.agentStates.entries()) {
