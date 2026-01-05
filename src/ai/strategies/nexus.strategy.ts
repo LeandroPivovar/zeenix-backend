@@ -185,6 +185,9 @@ export class NexusStrategy implements IStrategy {
     private logQueue: any[] = [];
     private logProcessing = false;
 
+    // ✅ Rastreamento de logs de coleta de dados (para evitar logs duplicados)
+    private coletaLogsEnviados = new Map<string, Set<number>>(); // userId -> Set de marcos já logados
+
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
@@ -203,18 +206,80 @@ export class NexusStrategy implements IStrategy {
 
         for (const state of this.users.values()) {
             state.ticksColetados++;
+            
+            // ✅ Log de coleta de ticks (similar à Orion)
+            const requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
+            
+            if (state.ticksColetados < requiredTicks) {
+                const ticksAtuais = state.ticksColetados;
+                const ticksFaltando = requiredTicks - ticksAtuais;
+                
+                // ✅ Logar apenas uma vez quando começar a coletar
+                const key = `nexus_${state.userId}`;
+                if (!this.coletaLogsEnviados.has(key)) {
+                    this.coletaLogsEnviados.set(key, new Set());
+                    this.saveNexusLog(state.userId, this.symbol, 'info', 
+                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Coleta inicial iniciada.`);
+                }
+                
+                // ✅ Logar progresso a cada 10% ou no final
+                if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(requiredTicks / 10)) === 0) {
+                    this.logger.debug(`[NEXUS][${state.userId}] Coletando amostra (${ticksAtuais}/${requiredTicks})`);
+                    this.saveNexusLog(state.userId, this.symbol, 'info', 
+                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Ticks coletados: ${ticksAtuais}/${requiredTicks} | Faltam: ${ticksFaltando}`);
+                }
+                
+                continue;
+            }
+            
+            // ✅ Logar quando completar a coleta (apenas uma vez)
+            if (state.ticksColetados === requiredTicks) {
+                const key = `nexus_${state.userId}`;
+                if (this.coletaLogsEnviados.has(key)) {
+                    const marcosLogados = this.coletaLogsEnviados.get(key)!;
+                    if (!marcosLogados.has(100)) {
+                        marcosLogados.add(100);
+                        this.saveNexusLog(state.userId, this.symbol, 'info', 
+                            `✅ DADOS COLETADOS | Modo: ${state.mode} | Amostra completa: ${requiredTicks} ticks | Iniciando operações...`);
+                    }
+                }
+            }
+            
+            // ✅ Log de tick quando já coletou dados suficientes (a cada 10 ticks para não spammar)
+            if (state.ticksColetados >= requiredTicks && state.ticksColetados % 10 === 0) {
+                const ultimoTick = this.ticks[this.ticks.length - 1];
+                const digit = ultimoTick.digit;
+                const paridade = digit % 2 === 0 ? 'PAR' : 'IMPAR';
+                this.saveNexusLog(state.userId, this.symbol, 'tick', 
+                    `📊 TICK: ${digit} (${paridade}) | Valor: ${ultimoTick.value.toFixed(2)} | Modo: ${state.mode} | Analisando...`);
+            }
+            
             await this.processUser(state);
         }
     }
 
     private async processUser(state: NexusUserState): Promise<void> {
-        if (state.isOperationActive) return;
+        if (state.isOperationActive) {
+            this.logger.debug(`[NEXUS][${state.userId}] Operação ativa, pulando`);
+            return;
+        }
+        
         const riskManager = this.riskManagers.get(state.userId);
-        if (!riskManager) return;
+        if (!riskManager) {
+            this.logger.warn(`[NEXUS][${state.userId}] ⚠️ RiskManager não encontrado!`);
+            return;
+        }
 
         const signal = this.check_signal(state, riskManager);
-        if (!signal) return;
+        if (!signal) {
+            // ✅ Log periódico quando não há sinal (a cada 20 ticks para não spammar)
+            if (state.ticksColetados % 20 === 0 && state.ticksColetados >= (state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50)) {
+                this.logger.debug(`[NEXUS][${state.userId}] Aguardando sinal | Ticks coletados: ${state.ticksColetados} | Buffer: ${this.ticks.length}`);
+            }
+            return;
+        }
 
+        this.logger.log(`[NEXUS][${state.userId}] 🎯 SINAL GERADO: ${signal}`);
         await this.executeOperation(state, signal);
     }
 
@@ -222,33 +287,107 @@ export class NexusStrategy implements IStrategy {
         let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
         if (state.ticksColetados < requiredTicks) return null;
 
+        // ✅ Verificar se temos ticks suficientes no buffer global
+        if (this.ticks.length < requiredTicks) {
+            // ✅ Log quando não há ticks suficientes no buffer
+            if (state.ticksColetados % 10 === 0) {
+                this.saveNexusLog(state.userId, this.symbol, 'info', 
+                    `⏳ Aguardando buffer de ticks | Buffer: ${this.ticks.length}/${requiredTicks} | Coletados: ${state.ticksColetados}`);
+            }
+            return null;
+        }
+
         const lastTicks = this.ticks.slice(-requiredTicks);
-        if (lastTicks.length < 5) return null;
+        if (lastTicks.length < requiredTicks) return null;
 
         let signal: DigitParity | null = null;
+        let analiseMessage = '';
 
         if (state.mode === 'VELOZ') {
+            // ✅ Pegar os últimos 3 ticks (mais recentes primeiro)
             const t = lastTicks.slice(-3);
-            if (t[2].value > t[1].value && t[1].value > t[0].value) {
+            const ultimoTick = this.ticks[this.ticks.length - 1];
+            const valorAtual = ultimoTick.value;
+            
+            // ✅ CORREÇÃO: t[0] é o mais antigo, t[1] é o do meio, t[2] é o mais recente
+            // Para momentum de alta: t[2] > t[1] > t[0] (mais recente > meio > antigo)
+            const tickAntigo = t[0]?.value || 0;
+            const tickMeio = t[1]?.value || 0;
+            const tickRecente = t[2]?.value || 0;
+            
+            // ✅ Log de análise mesmo quando não há sinal (para mostrar o que está sendo analisado)
+            analiseMessage = `🔍 [ANÁLISE VELOZ]\n` +
+                ` • Últimos 3 ticks: ${tickAntigo.toFixed(2)} → ${tickMeio.toFixed(2)} → ${tickRecente.toFixed(2)}\n` +
+                ` • Valor atual: ${valorAtual.toFixed(2)}\n` +
+                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
+            
+            // ✅ Verificar momentum: mais recente > meio > antigo
+            if (t.length >= 3 && tickRecente > tickMeio && tickMeio > tickAntigo) {
                 signal = 'PAR';
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (3 subidas consecutivas)`);
+                analiseMessage += `\n🌊 [DECISÃO] Momentum detectado (3 subidas consecutivas). Entrada: PAR`;
+                this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR`);
+            } else {
+                // ✅ Logar análise mesmo sem sinal (a cada 5 ticks para não spammar)
+                if (state.ticksColetados % 5 === 0) {
+                    analiseMessage += `\n⏳ Aguardando momentum (3 subidas consecutivas)...`;
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                }
             }
         } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
             const currentPrice = lastTicks[lastTicks.length - 1].value;
+            const ultimoTick = this.ticks[this.ticks.length - 1];
+            
+            analiseMessage = `🔍 [ANÁLISE BALANCEADO]\n` +
+                ` • Preço atual: ${currentPrice.toFixed(2)}\n` +
+                ` • SMA(50): ${sma50.toFixed(2)}\n` +
+                ` • Posição: ${currentPrice > sma50 ? 'ACIMA da média' : 'ABAIXO da média'}\n` +
+                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
 
             if (currentPrice > sma50) {
                 const t = lastTicks.slice(-4);
                 if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
                     signal = 'PAR';
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE BALANCEADO] Pullback detectado em Tendência de Alta`);
+                    analiseMessage += `\n🌊 [DECISÃO] Pullback detectado em Tendência de Alta. Entrada: PAR`;
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                    this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR`);
+                } else {
+                    // ✅ Logar análise mesmo sem sinal
+                    if (state.ticksColetados % 10 === 0) {
+                        analiseMessage += `\n⏳ Aguardando pullback em tendência de alta...`;
+                        this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                    }
+                }
+            } else {
+                // ✅ Logar quando está abaixo da média
+                if (state.ticksColetados % 10 === 0) {
+                    analiseMessage += `\n⏳ Preço abaixo da média. Aguardando reversão...`;
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
                 }
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
+            const ultimoTick = this.ticks[this.ticks.length - 1];
+            const valorAtual = ultimoTick.value;
+            
+            analiseMessage = `🔍 [ANÁLISE PRECISO]\n` +
+                ` • Valor atual: ${valorAtual.toFixed(2)}\n` +
+                ` • RSI(14): ${rsi.toFixed(2)}\n` +
+                ` • Status: ${rsi < 20 ? 'EXAUSTÃO (Oversold)' : rsi > 80 ? 'SOBRECOMPRA (Overbought)' : 'NEUTRO'}\n` +
+                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
+            
             if (rsi < 20) {
                 signal = 'PAR';
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO] RSI em exaustão (${rsi.toFixed(2)})`);
+                analiseMessage += `\n🌊 [DECISÃO] RSI em exaustão (${rsi.toFixed(2)}). Entrada: PAR`;
+                this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: PAR`);
+            } else {
+                // ✅ Logar análise mesmo sem sinal
+                if (state.ticksColetados % 10 === 0) {
+                    analiseMessage += `\n⏳ Aguardando RSI < 20 (exaustão)...`;
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                }
             }
         }
 
@@ -306,6 +445,8 @@ export class NexusStrategy implements IStrategy {
     async deactivateUser(userId: string): Promise<void> {
         this.users.delete(userId);
         this.riskManagers.delete(userId);
+        // ✅ Limpar flags de log
+        this.coletaLogsEnviados.delete(`nexus_${userId}`);
     }
 
     getUserState(userId: string) { return this.users.get(userId); }
@@ -674,7 +815,7 @@ export class NexusStrategy implements IStrategy {
         if (conn) conn.subscriptions.delete(subId);
     }
 
-    private saveNexusLog(userId: string, symbol: string, type: any, message: string) {
+    private saveNexusLog(userId: string, symbol: string, type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro', message: string) {
         if (!userId || !type || !message) return;
         this.logQueue.push({ userId, symbol, type, message, timestamp: new Date() });
         this.processQueue();
@@ -687,7 +828,14 @@ export class NexusStrategy implements IStrategy {
         try {
             const logs = this.logQueue.splice(0, 50);
             const icons: Record<string, string> = {
-                'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
+                'info': 'ℹ️', 
+                'tick': '📊', 
+                'analise': '🔍', 
+                'sinal': '🎯', 
+                'operacao': '⚡', 
+                'resultado': '💰', 
+                'alerta': '⚠️', 
+                'erro': '❌'
             };
 
             for (const log of logs) {
