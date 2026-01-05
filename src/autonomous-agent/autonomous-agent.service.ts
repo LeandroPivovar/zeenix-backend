@@ -602,9 +602,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       const symbol = config.symbol || SENTINEL_CONFIG.symbol;
       const strategy = config.strategy || 'arion';
-      const riskLevel = config.riskLevel || 'balanced';
-      const tradingMode = config.tradingMode || 'normal';
-      const stopLossType = config.stopLossType || 'normal';
+      const riskLevel = (config.riskLevel || 'balanced') as ManagementMode;
+      const tradingMode = (config.tradingMode || 'normal') as TradingMode;
+      const stopLossType = (config.stopLossType || 'normal') as StopLossType;
       const initialBalance = config.initialBalance || 0;
       const agentType = config.agentType || 'sentinel'; // ✅ Padrão: sentinel
 
