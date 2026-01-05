@@ -20,11 +20,13 @@ import { ExpertsModule } from './experts/experts.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { AutonomousAgentModule } from './autonomous-agent/autonomous-agent.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { UtilsModule } from './utils/utils.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    DatabaseModule, 
+    DatabaseModule,
+    UtilsModule, // Módulo global para utilitários (LogQueueService) 
     UserModule, 
     AuthModule, 
     BrokerModule, 

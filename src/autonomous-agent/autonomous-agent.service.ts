@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import { AutonomousAgentLogsStreamService } from './autonomous-agent-logs-stream.service';
 import { SettingsService } from '../settings/settings.service';
 import { DerivService } from '../broker/deriv.service';
+import { LogQueueService } from '../utils/log-queue.service';
 
 // ============================================
 // INTERFACES E TIPOS
@@ -123,6 +124,7 @@ export class AutonomousAgentService implements OnModuleInit {
     @Optional() @Inject(AutonomousAgentLogsStreamService) private readonly logsStreamService?: AutonomousAgentLogsStreamService,
     @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
     @Optional() @Inject(DerivService) private readonly derivService?: DerivService,
+    @Optional() private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
   ) { }
 
   async onModuleInit() {
@@ -592,7 +594,7 @@ export class AutonomousAgentService implements OnModuleInit {
         this.wsConnections.delete(userId);
         // ✅ Parar keep-alive ao desativar agente
         this.stopKeepAlive(userId);
-        await this.saveLog(userId, 'INFO', 'API', 'WebSocket desconectado.');
+        this.saveLog(userId, 'INFO', 'API', 'WebSocket desconectado.');
       }
 
       // ✅ 5. Log detalhado
@@ -640,7 +642,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
         if (config && config.length > 0 && config[0].last_pause_at && state.nextTradeAt && state.nextTradeAt <= now) {
           // Pausa acabou, logar retomada
-          await this.saveLog(
+          this.saveLog(
             userId,
             'INFO',
             'HUMANIZER',
@@ -703,7 +705,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const currentBalance = initialBalance + parseFloat(cfg.daily_profit) - parseFloat(cfg.daily_loss);
 
         if (currentBalance <= blindBalance) {
-          await this.saveLog(
+          this.saveLog(
             state.userId,
             'WARN',
             'RISK',
@@ -755,7 +757,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (prices.length < ticksRequired) {
         this.logger.debug(`[ProcessAgent][${state.userId}] Histórico insuficiente (${prices.length}/${ticksRequired}). Aguardando mais ticks...`);
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'ANALYZER',
@@ -781,7 +783,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Verificar score de confiança (usando mínimo do Trading Mode)
       if (analysis.confidenceScore < minConfidenceScore) {
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'DECISION',
@@ -791,7 +793,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // Atualizar próximo trade com intervalo aleatório
         const interval = this.getRandomInterval();
         await this.updateNextTradeAt(state.userId, interval);
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'HUMANIZER',
@@ -802,7 +804,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Verificar confirmação estatística (dígitos) - mais flexível
       if (!(await this.validateStatisticalConfirmation(prices, analysis.direction, state.userId))) {
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'DECISION',
@@ -810,7 +812,7 @@ export class AutonomousAgentService implements OnModuleInit {
         );
         const interval = this.getRandomInterval();
         await this.updateNextTradeAt(state.userId, interval);
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'HUMANIZER',
@@ -1137,7 +1139,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (highPercent <= 0.6) {
         // Log de análise estatística (falhou)
-        await this.saveLog(
+        this.saveLog(
           userId,
           'DEBUG',
           'ANALYZER',
@@ -1160,7 +1162,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (consecutiveLow >= 4) {
         // Log de análise estatística (falhou por sequência)
-        await this.saveLog(
+        this.saveLog(
           userId,
           'DEBUG',
           'ANALYZER',
@@ -1178,7 +1180,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (lowPercent <= 0.6) {
         // Log de análise estatística (falhou)
-        await this.saveLog(
+        this.saveLog(
           userId,
           'DEBUG',
           'ANALYZER',
@@ -1201,7 +1203,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (consecutiveHigh >= 4) {
         // Log de análise estatística (falhou por sequência)
-        await this.saveLog(
+        this.saveLog(
           userId,
           'DEBUG',
           'ANALYZER',
@@ -1247,7 +1249,7 @@ export class AutonomousAgentService implements OnModuleInit {
         stakeAmount = state.sorosStake;
 
         // Log de Soros ativo (formato da documentação)
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -1264,7 +1266,7 @@ export class AutonomousAgentService implements OnModuleInit {
         stakeAmount = state.initialStake;
 
         // Log de operação normal
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'RISK',
@@ -1284,7 +1286,7 @@ export class AutonomousAgentService implements OnModuleInit {
         }
 
         // Log antes de calcular stake de Martingale
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -1299,7 +1301,7 @@ export class AutonomousAgentService implements OnModuleInit {
         stakeAmount = await this.calculateMartingaleStake(state, contractType);
 
         if (stakeAmount <= 0 || !isFinite(stakeAmount)) {
-          await this.saveLog(
+          this.saveLog(
             state.userId,
             'ERROR',
             'RISK',
@@ -1314,7 +1316,7 @@ export class AutonomousAgentService implements OnModuleInit {
         }
 
         // Log após calcular stake de Martingale
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -1328,7 +1330,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // Verificar Stop Loss Normal DEPOIS de calcular stake (conforme documentação)
         const stopLossCheck = await this.checkStopLossAfterStake(state, stakeAmount);
         if (!stopLossCheck.canProceed) {
-          await this.saveLog(
+          this.saveLog(
             state.userId,
             'WARN',
             'RISK',
@@ -1351,7 +1353,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
             if (maxAllowedStake > 0 && maxAllowedStake < stakeAmount) {
               stakeAmount = maxAllowedStake;
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'WARN',
                 'RISK',
@@ -1413,7 +1415,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Log de compra executada (formato da documentação)
       if (result.contractId) {
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'TRADER',
@@ -1680,7 +1682,7 @@ export class AutonomousAgentService implements OnModuleInit {
             const errorDetails = JSON.stringify(msg.error);
             this.logger.error(`[ExecuteTrade] Erro recebido da Deriv API. trade_id=${tradeId}, error=`, msg.error);
             this.logger.error(`[ExecuteTrade] Mensagem completa:`, JSON.stringify(msg));
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'ERROR',
               'API',
@@ -1707,7 +1709,7 @@ export class AutonomousAgentService implements OnModuleInit {
           }
 
           if (msg.msg_type === 'authorize') {
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'API',
@@ -1743,7 +1745,7 @@ export class AutonomousAgentService implements OnModuleInit {
             };
 
             this.logger.log(`[ExecuteTrade] Enviando proposal para trade ${tradeId}`, proposalPayload);
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
@@ -1756,7 +1758,7 @@ export class AutonomousAgentService implements OnModuleInit {
               },
             ).catch(() => { });
 
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
@@ -1778,7 +1780,7 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'proposal') {
             const proposal = msg.proposal;
             if (!proposal || !proposal.id) {
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'ERROR',
                 'TRADER',
@@ -1808,7 +1810,7 @@ export class AutonomousAgentService implements OnModuleInit {
               const payoutCliente = payoutPercentual - 3;
 
               // Logs de payout (formato da documentação)
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'DEBUG',
                 'TRADER',
@@ -1820,7 +1822,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 },
               ).catch(() => { });
 
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'DEBUG',
                 'TRADER',
@@ -1839,7 +1841,7 @@ export class AutonomousAgentService implements OnModuleInit {
               price: proposalPrice,
             };
 
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
@@ -1859,7 +1861,7 @@ export class AutonomousAgentService implements OnModuleInit {
           if (msg.msg_type === 'buy') {
             const buy = msg.buy;
             if (!buy || !buy.contract_id) {
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'ERROR',
                 'TRADER',
@@ -1898,7 +1900,7 @@ export class AutonomousAgentService implements OnModuleInit {
               const payoutCliente = payoutPercentual - 3;
 
               // Logs de payout (formato da documentação)
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'DEBUG',
                 'TRADER',
@@ -1910,7 +1912,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 },
               ).catch(() => { });
 
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'DEBUG',
                 'TRADER',
@@ -1937,7 +1939,7 @@ export class AutonomousAgentService implements OnModuleInit {
             this.logger.log(`[ExecuteTrade] ✅ entry_price atualizado no banco | tradeId=${tradeId} | entryPrice=${entrySpot}`);
 
             // Inscrever para monitorar contrato (seguindo padrão do AiService)
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
@@ -1960,7 +1962,7 @@ export class AutonomousAgentService implements OnModuleInit {
               `[ExecuteTrade] Compra confirmada | trade=${tradeId} | contrato=${contractId} | preço=${buyPrice}`,
             );
 
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
@@ -2032,7 +2034,7 @@ export class AutonomousAgentService implements OnModuleInit {
                   const payoutCliente = payoutPercentual - 3;
 
                   // Logs de payout (formato da documentação)
-                  await this.saveLog(
+                  this.saveLog(
                     state.userId,
                     'DEBUG',
                     'TRADER',
@@ -2044,7 +2046,7 @@ export class AutonomousAgentService implements OnModuleInit {
                     },
                   ).catch(() => { });
 
-                  await this.saveLog(
+                  this.saveLog(
                     state.userId,
                     'DEBUG',
                     'TRADER',
@@ -2059,7 +2061,7 @@ export class AutonomousAgentService implements OnModuleInit {
               }
 
               // Log de atualização do contrato (seguindo padrão do AiService)
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'DEBUG',
                 'TRADER',
@@ -2093,7 +2095,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
             // Log de resultado (seguindo padrão do AiService)
             if (status === 'WON') {
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'INFO',
                 'RISK',
@@ -2106,7 +2108,7 @@ export class AutonomousAgentService implements OnModuleInit {
                 },
               ).catch(() => { });
             } else {
-              await this.saveLog(
+              this.saveLog(
                 state.userId,
                 'ERROR',
                 'RISK',
@@ -2303,7 +2305,7 @@ export class AutonomousAgentService implements OnModuleInit {
             }
 
             // Log de consulta de payout (formato da documentação)
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'TRADER',
@@ -2343,14 +2345,14 @@ export class AutonomousAgentService implements OnModuleInit {
             const payoutCliente = payoutPercentual - 3;
 
             // Logs de payout (formato da documentação)
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
               `Payout from Deriv: ${payoutPercentual.toFixed(2)}%`,
             ).catch(() => { });
 
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'DEBUG',
               'TRADER',
@@ -2387,7 +2389,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
             // Log do cálculo (formato da documentação)
             const modeName = mode === 'conservative' ? 'Conservador' : mode === 'aggressive' ? 'Agressivo' : 'Moderado';
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'INFO',
               'RISK',
@@ -2399,7 +2401,7 @@ export class AutonomousAgentService implements OnModuleInit {
               },
             ).catch(() => { });
 
-            await this.saveLog(
+            this.saveLog(
               state.userId,
               'DEBUG',
               'RISK',
@@ -2508,7 +2510,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [nextStake, state.userId],
           );
         }
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -2540,7 +2542,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [state.userId],
           );
         }
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -2570,7 +2572,7 @@ export class AutonomousAgentService implements OnModuleInit {
         );
 
         // Log de reset do Martingale
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -2602,7 +2604,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [sorosStake, state.userId],
           );
         }
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -2634,7 +2636,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [sorosStake, state.userId],
           );
         }
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'RISK',
@@ -2690,7 +2692,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // net_loss = stake - soros_profit
         const netLoss = stakeAmount - state.sorosProfit;
 
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'DEBUG',
           'RISK',
@@ -2716,7 +2718,7 @@ export class AutonomousAgentService implements OnModuleInit {
           );
         }
 
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'WARN',
           'RISK',
@@ -2768,7 +2770,7 @@ export class AutonomousAgentService implements OnModuleInit {
           [state.userId],
         );
 
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'WARN',
           'RISK',
@@ -2778,7 +2780,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // Pausa de 15-30 segundos
         const pauseSeconds = 15 + Math.floor(Math.random() * 16); // 15-30 segundos
         await this.updateNextTradeAt(state.userId, pauseSeconds);
-        await this.saveLog(
+        this.saveLog(
           state.userId,
           'INFO',
           'HUMANIZER',
@@ -2829,7 +2831,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
           const modeName = mode === 'conservative' ? 'Conservador' : mode === 'aggressive' ? 'Agressivo' : 'Moderado';
 
-          await this.saveLog(
+          this.saveLog(
             state.userId,
             'WARN',
             'RISK',
@@ -2861,7 +2863,7 @@ export class AutonomousAgentService implements OnModuleInit {
             [state.userId],
           );
 
-          await this.saveLog(
+          this.saveLog(
             state.userId,
             'DEBUG',
             'RISK',
@@ -3322,7 +3324,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Log de reset diário para cada agente (conforme documentação)
       for (const agent of activeAgentsBefore) {
         const balanceStartDay = (parseFloat(agent.daily_profit) || 0) - (parseFloat(agent.daily_loss) || 0);
-        await this.saveLog(
+        this.saveLog(
           agent.user_id.toString(),
           'INFO',
           'CORE',
@@ -3797,19 +3799,22 @@ export class AutonomousAgentService implements OnModuleInit {
   // SISTEMA DE LOGS DETALHADOS
   // ============================================
 
-  private async saveLog(
+  /**
+   * Salva log de forma assíncrona (não bloqueia execução)
+   * Usa LogQueueService centralizado se disponível
+   */
+  private saveLog(
     userId: string,
     level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
     module: 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER',
     message: string,
     metadata?: any,
-  ): Promise<void> {
+  ): void {
     try {
       const now = new Date();
       const timestampISO = now.toISOString();
 
       // Formato da documentação: [TIMESTAMP] [LOG_LEVEL] [MÓDULO] - MENSAGEM
-      // A mensagem já deve vir formatada, apenas adicionamos o prefixo
       const logMessage = `[${timestampISO}] [${level}] [${module}] - ${message}`;
 
       // Log no console também
@@ -3827,19 +3832,34 @@ export class AutonomousAgentService implements OnModuleInit {
           this.logger.log(logMessage);
       }
 
-      // Converter para formato MySQL: YYYY-MM-DD HH:MM:SS.mmm
+      // ✅ OTIMIZAÇÃO: Usar LogQueueService centralizado (não bloqueia execução)
+      if (this.logQueueService) {
+        this.logQueueService.saveLogAsync({
+          userId,
+          level,
+          module,
+          message,
+          metadata,
+          tableName: 'autonomous_agent_logs',
+        });
+        return;
+      }
+
+      // Fallback: salvar diretamente (compatibilidade)
       const timestampMySQL = now
         .toISOString()
         .replace('T', ' ')
         .replace('Z', '')
-        .slice(0, 23); // YYYY-MM-DD HH:MM:SS.mmm (23 caracteres)
+        .slice(0, 23);
 
-      // Salvar no banco de dados (salvar apenas a mensagem, sem o prefixo, pois será reconstruído no frontend)
-      await this.dataSource.query(
+      // Executar em background para não bloquear
+      this.dataSource.query(
         `INSERT INTO autonomous_agent_logs (user_id, timestamp, log_level, module, message, metadata)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [userId, timestampMySQL, level, module, message, metadata ? JSON.stringify(metadata) : null],
-      );
+      ).catch(error => {
+        this.logger.error(`[SaveLog][${userId}] Erro ao salvar log:`, error);
+      });
     } catch (error) {
       // Não falhar se houver erro ao salvar log
       this.logger.error(`[SaveLog][${userId}] Erro ao salvar log:`, error);

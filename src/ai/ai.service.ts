@@ -5,6 +5,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { StatsIAsService } from './stats-ias.service';
 import { CopyTradingService } from '../copy-trading/copy-trading.service';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
+import { LogQueueService } from '../utils/log-queue.service';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
@@ -623,6 +624,7 @@ export class AiService implements OnModuleInit {
     private readonly copyTradingService?: CopyTradingService,
     @Inject(forwardRef(() => StrategyManagerService))
     private readonly strategyManager?: StrategyManagerService, // ✅ Injetar StrategyManager
+    private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -1943,40 +1945,27 @@ export class AiService implements OnModuleInit {
         `Multiplicador lucro: ${(multiplicadorLucro * 100).toFixed(0)}%`,
       );
 
-      // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
-      // 📋 LOG: Operação sendo executada
-      this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
-      this.saveLogAsync(state.userId, 'operacao', `Ativo: R_10`);
-      this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
-      this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'operacao', `Payout: 0.95 (95%)`);
-      this.saveLogAsync(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
-      // Verificar se está no Soros
-      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0) {
-        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
-      } else {
-        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
-      }
+      // ✅ OTIMIZAÇÃO: Agrupar logs de operação em uma única mensagem (reduz de 6-7 para 1 log)
+      const martingaleInfo = state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0
+        ? `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`
+        : `Martingale: NÃO (operação normal)`;
+      const operacaoMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} | Ativo: R_10 | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Payout: 0.95 (95%) | Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)} | ${martingaleInfo}`;
+      this.saveLogAsync(state.userId, 'operacao', operacaoMsg);
     } else {
       // ✅ Verificar se é Soros ou Martingale
       const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
 
       if (isSoros) {
-        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
-        // 📋 LOG: Operação Soros
-        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
-        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
-        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
-        this.saveLogAsync(state.userId, 'operacao', `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`);
+        // ✅ OTIMIZAÇÃO: Agrupar logs de Soros em uma única mensagem (reduz de 5 para 1 log)
+        const formulaMsg = state.ultimoLucro > 0
+          ? `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`
+          : '';
+        const sorosMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas}) | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Martingale: NÃO${formulaMsg ? ` | ${formulaMsg}` : ''}`;
+        this.saveLogAsync(state.userId, 'operacao', sorosMsg);
       } else {
-        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
-        // 📋 LOG: Operação martingale
-        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
-        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
-        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-        this.saveLogAsync(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
-        this.saveLogAsync(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+        // ✅ OTIMIZAÇÃO: Agrupar logs de Martingale em uma única mensagem (reduz de 5 para 1 log)
+        const martingaleMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE) | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Martingale: SIM (entrada ${entry}) | Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`;
+        this.saveLogAsync(state.userId, 'operacao', martingaleMsg);
       }
     }
 
@@ -2400,31 +2389,31 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 LOG: Resultado - VITÓRIA
-      await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
-      await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
-      await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
-      await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', '🎉 VITÓRIA!');
+      this.saveLogAsync(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+      this.saveLogAsync(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
+      this.saveLogAsync(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
 
       if (entry > 1) {
-        await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
-        await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
+        this.saveLogAsync(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
 
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
       // Se completou Soros nível 2, reiniciar tudo
       if (entry === 3 && state.vitoriasConsecutivas === 2) {
-        await this.saveLog(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
+        this.saveLogAsync(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
         state.isOperationActive = false;
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
         state.vitoriasConsecutivas = 0;
         state.ultimoLucro = 0;
         // Próxima entrada será o valor inicial
-        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
-        await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
         return;
       }
 
@@ -2436,13 +2425,13 @@ export class AiService implements OnModuleInit {
           state.vitoriasConsecutivas,
         );
         if (proximaApostaComSoros !== null) {
-          await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
+          this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
         }
       } else {
-        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
       }
 
-      await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+      this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
 
       // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
@@ -2557,8 +2546,8 @@ export class AiService implements OnModuleInit {
               );
 
               // 📋 LOG: Stop-Loss Normal ativado
-              await this.saveLog(state.userId, 'alerta', `⚠️ STOP-LOSS NORMAL: Próxima aposta ultrapassaria limite`);
-              await this.saveLog(state.userId, 'alerta', `Reduzindo para $${state.capital.toFixed(2)} e resetando martingale`);
+              this.saveLogAsync(state.userId, 'alerta', `⚠️ STOP-LOSS NORMAL: Próxima aposta ultrapassaria limite`);
+              this.saveLogAsync(state.userId, 'alerta', `Reduzindo para $${state.capital.toFixed(2)} e resetando martingale`);
 
               // Reduzir para valor inicial
               proximaAposta = state.capital;
@@ -2594,9 +2583,9 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 LOG: Martingale ativado
-      await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
-      await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
-      await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
+      this.saveLogAsync(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
 
       // Executar próxima entrada
       await this.executeVelozOperation(state, proposal, entry + 1);
@@ -2614,15 +2603,15 @@ export class AiService implements OnModuleInit {
 
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
-      await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
-      await this.saveLog(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
-      await this.saveLog(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
-      await this.saveLog(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
-      await this.saveLog(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
+      this.saveLogAsync(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
+      this.saveLogAsync(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
+      this.saveLogAsync(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
     } else {
       // Outros modos (não deveria chegar aqui pois moderado/agressivo são infinitos)
-      await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
-      await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
+      this.saveLogAsync(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
     }
 
     // Resetar martingale
@@ -2950,6 +2939,7 @@ export class AiService implements OnModuleInit {
 
   /**
    * Salva log de forma assíncrona (não bloqueia execução)
+   * Usa LogQueueService centralizado se disponível, senão usa fila local
    */
   private saveLogAsync(
     userId: string,
@@ -2962,10 +2952,22 @@ export class AiService implements OnModuleInit {
       return;
     }
 
-    // Adicionar à fila
-    this.logQueue.push({ userId, type, message, details });
+    // Usar LogQueueService centralizado se disponível
+    if (this.logQueueService) {
+      const sessionId = this.userSessionIds.get(userId) || userId;
+      this.logQueueService.saveLogAsync({
+        userId,
+        type,
+        message,
+        details,
+        sessionId,
+        tableName: 'ai_logs',
+      });
+      return;
+    }
 
-    // Processar fila em background (não bloqueia)
+    // Fallback: usar fila local (compatibilidade)
+    this.logQueue.push({ userId, type, message, details });
     this.processLogQueue().catch(error => {
       this.logger.error(`[SaveLogAsync] Erro ao processar fila de logs:`, error);
     });
@@ -3072,7 +3074,8 @@ export class AiService implements OnModuleInit {
   }
 
   /**
-   * Salva log de forma síncrona (mantido para compatibilidade)
+   * Salva log de forma síncrona (DEPRECATED - usar saveLogAsync)
+   * Mantido para compatibilidade, mas agora usa fila assíncrona
    */
   private async saveLog(
     userId: string,
@@ -3080,63 +3083,9 @@ export class AiService implements OnModuleInit {
     message: string,
     details?: any,
   ): Promise<void> {
-    try {
-      // ✅ Validar parâmetros
-      if (!userId || !type) {
-        console.error(`[SaveLog] Parâmetros inválidos: userId=${userId}, type=${type}`);
-        return;
-      }
-
-      // ✅ Pular se mensagem estiver vazia (linhas em branco)
-      if (!message || message.trim() === '') {
-        return;
-      }
-
-      const icons = {
-        info: 'ℹ️',
-        tick: '📥',
-        analise: '🔍',
-        sinal: '🎯',
-        operacao: '💰',
-        resultado: '✅',
-        alerta: '⚠️',
-        erro: '🚫',
-      };
-
-      const sessionId = this.userSessionIds.get(userId) || userId;
-      const icon = icons[type] || 'ℹ️';
-
-      // 🕐 TIMESTAMP NO HORÁRIO DE BRASÍLIA (UTC-3)
-      // Usar NOW() do MySQL para garantir que timestamp seja preenchido
-      const result = await this.dataSource.query(
-        `INSERT INTO ai_logs (user_id, type, icon, message, details, session_id, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(3))`,
-        [
-          userId,
-          type,
-          icon,
-          message.substring(0, 5000), // Limitar tamanho da mensagem
-          details ? JSON.stringify(details).substring(0, 10000) : null, // Limitar tamanho dos detalhes
-          sessionId,
-        ],
-      );
-
-      // ✅ DEBUG: Logar apenas em caso de erro ou para rastreamento
-      if (!result || !result.insertId) {
-        this.logger.error(`[SaveLog][${userId}] ⚠️ INSERT não retornou insertId:`, result);
-      } else {
-        this.logger.debug(`[SaveLog][${userId}] ✅ Log salvo | type=${type} | insertId=${result.insertId} | message=${message.substring(0, 50)}`);
-      }
-    } catch (error: any) {
-      // ✅ Logar erro mas não lançar para evitar quebrar o fluxo
-      console.error(`[SaveLog][${userId}] ❌ Erro ao salvar log (${type}):`, {
-        message: error.message,
-        code: error.code,
-        sqlState: error.sqlState,
-        sqlMessage: error.sqlMessage,
-      });
-      // Não lançar erro para não quebrar o fluxo da IA
-    }
+    // ✅ OTIMIZAÇÃO: Usar fila assíncrona em vez de INSERT síncrono
+    // Isso não bloqueia a execução e melhora performance significativamente
+    this.saveLogAsync(userId, type, message, details);
   }
 
   /**
@@ -6073,67 +6022,67 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
-      await this.saveLog(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
+      this.saveLogAsync(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
 
       // Formatar distribuição
       const deseq = sinal.detalhes?.desequilibrio;
       if (deseq) {
         const percPar = (deseq.percentualPar * 100).toFixed(1);
         const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-        await this.saveLog(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-        await this.saveLog(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
+        this.saveLogAsync(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
+        this.saveLogAsync(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
       }
 
 
       // ANÁLISE 1: Desequilíbrio Base
-      await this.saveLog(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
-      await this.saveLog(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
-      await this.saveLog(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
+      this.saveLogAsync(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
+      this.saveLogAsync(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
+      this.saveLogAsync(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
 
 
       // ANÁLISE 2: Sequências Repetidas
       const seqInfo = sinal.detalhes?.sequencias;
       const bonusSeq = seqInfo?.bonus || 0;
-      await this.saveLog(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
+      this.saveLogAsync(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
       if (seqInfo && seqInfo.tamanho >= 5) {
-        await this.saveLog(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
+        this.saveLogAsync(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
       } else {
-        await this.saveLog(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+        this.saveLogAsync(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
       }
 
 
       // ANÁLISE 3: Micro-Tendências
       const microInfo = sinal.detalhes?.microTendencias;
       const bonusMicro = microInfo?.bonus || 0;
-      await this.saveLog(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
+      this.saveLogAsync(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
       if (microInfo && microInfo.aceleracao > 0.10) {
-        await this.saveLog(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
+        this.saveLogAsync(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
       } else {
-        await this.saveLog(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+        this.saveLogAsync(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
       }
 
 
       // ANÁLISE 4: Força do Desequilíbrio
       const forcaInfo = sinal.detalhes?.forca;
       const bonusForca = forcaInfo?.bonus || 0;
-      await this.saveLog(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
+      this.saveLogAsync(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
       if (forcaInfo && forcaInfo.velocidade > 0.05) {
-        await this.saveLog(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
+        this.saveLogAsync(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
       } else {
-        await this.saveLog(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
-        await this.saveLog(userId, 'analise', `└─ Bônus: +0%`);
+        this.saveLogAsync(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
+        this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
       }
 
-      await this.saveLog(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
-      await this.saveLog(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
+      this.saveLogAsync(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
+      this.saveLogAsync(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
 
-      await this.saveLog(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
-      await this.saveLog(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
+      this.saveLogAsync(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
+      this.saveLogAsync(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
 
       // Executar operação
       await this.executeModeradoOperation(state, sinal.sinal, 1);
@@ -6402,17 +6351,17 @@ export class AiService implements OnModuleInit {
 
     // 📋 LOG: Operação sendo executada
     if (entry === 1) {
-      await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
-      await this.saveLog(state.userId, 'operacao', `Ativo: R_10`);
-      await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-      await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'operacao', `Payout: 0.95 (95%)`);
-      await this.saveLog(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry}`);
+      this.saveLogAsync(state.userId, 'operacao', `Ativo: R_10`);
+      this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+      this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'operacao', `Payout: 0.95 (95%)`);
+      this.saveLogAsync(state.userId, 'operacao', `Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)}`);
       // Verificar se está no Soros (pode ter sido ativado na entrada anterior)
       if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0) {
-        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
       } else {
-        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (operação normal)`);
       }
     } else {
       // ✅ Verificar se é Soros ou Martingale ANTES de fazer os logs
@@ -6420,20 +6369,20 @@ export class AiService implements OnModuleInit {
 
       if (isSoros) {
         // 📋 LOG: Operação Soros
-        await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
-        await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-        await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-        await this.saveLog(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
+        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas})`);
+        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`);
         if (state.ultimoLucro > 0) {
-          await this.saveLog(state.userId, 'operacao', `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`);
+          this.saveLogAsync(state.userId, 'operacao', `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`);
         }
       } else {
         // 📋 LOG: Operação martingale
-        await this.saveLog(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
-        await this.saveLog(state.userId, 'operacao', `Direção: ${proposal}`);
-        await this.saveLog(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
-        await this.saveLog(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
-        await this.saveLog(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'operacao', `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE)`);
+        this.saveLogAsync(state.userId, 'operacao', `Direção: ${proposal}`);
+        this.saveLogAsync(state.userId, 'operacao', `Valor: $${stakeAmount.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'operacao', `Martingale: SIM (entrada ${entry})`);
+        this.saveLogAsync(state.userId, 'operacao', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
       }
     }
 
@@ -6655,31 +6604,31 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 LOG: Resultado - VITÓRIA
-      await this.saveLog(state.userId, 'resultado', '🎉 VITÓRIA!');
-      await this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
-      await this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
-      await this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
-      await this.saveLog(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', '🎉 VITÓRIA!');
+      this.saveLogAsync(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
+      this.saveLogAsync(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
+      this.saveLogAsync(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
 
       if (entry > 1) {
-        await this.saveLog(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
-        await this.saveLog(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
+        this.saveLogAsync(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
       }
 
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
       // Se completou Soros nível 2, reiniciar tudo
       if (entry === 3 && state.vitoriasConsecutivas === 2) {
-        await this.saveLog(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
+        this.saveLogAsync(state.userId, 'resultado', `🎉 SOROS CICLO PERFEITO! Reiniciando para entrada inicial`);
         state.isOperationActive = false;
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
         state.vitoriasConsecutivas = 0;
         state.ultimoLucro = 0;
         // Próxima entrada será o valor inicial
-        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
-        await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
         return;
       }
 
@@ -6691,13 +6640,13 @@ export class AiService implements OnModuleInit {
           state.vitoriasConsecutivas,
         );
         if (proximaApostaComSoros !== null) {
-          await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
+          this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
         }
       } else {
-        await this.saveLog(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
       }
 
-      await this.saveLog(state.userId, 'info', '📡 Aguardando próximo sinal...');
+      this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
 
       // Resetar martingale (mas manter apostaBase e vitoriasConsecutivas se ainda no Soros)
       state.isOperationActive = false;
@@ -6844,9 +6793,9 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 LOG: Martingale ativado
-      await this.saveLog(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
-      await this.saveLog(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
-      await this.saveLog(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `🔄 MARTINGALE ATIVADO (${state.modoMartingale.toUpperCase()})`);
+      this.saveLogAsync(state.userId, 'alerta', `Próxima aposta: $${proximaAposta.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`);
 
       // Executar próxima entrada
       await this.executeModeradoOperation(state, proposal, entry + 1);
@@ -6864,15 +6813,15 @@ export class AiService implements OnModuleInit {
 
     // 📋 LOG: Martingale atingiu limite (CONSERVADOR específico)
     if (state.modoMartingale === 'conservador') {
-      await this.saveLog(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
-      await this.saveLog(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
-      await this.saveLog(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
-      await this.saveLog(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
-      await this.saveLog(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
+      this.saveLogAsync(state.userId, 'alerta', `🛑 LIMITE MARTINGALE CONSERVADOR`);
+      this.saveLogAsync(state.userId, 'alerta', `Atingiu ${entry}ª entrada (máximo: 5)`);
+      this.saveLogAsync(state.userId, 'alerta', `Prejuízo aceito: -$${prejuizoAceito.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `Resetando para valor inicial: $${state.capital.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'info', '🔄 Continuando operação com aposta normal...');
     } else {
       // Outros modos (não deveria chegar aqui pois moderado/agressivo são infinitos)
-      await this.saveLog(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
-      await this.saveLog(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'alerta', `🛑 MARTINGALE RESETADO`);
+      this.saveLogAsync(state.userId, 'alerta', `Perda acumulada: -$${prejuizoAceito.toFixed(2)}`);
     }
 
     // Resetar martingale
