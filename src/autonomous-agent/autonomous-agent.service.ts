@@ -275,6 +275,14 @@ export class AutonomousAgentService implements OnModuleInit {
       // Criar lock para esta requisição
       const tokenPromise = (async () => {
         try {
+          // Verificar se os serviços estão disponíveis (já verificado antes, mas TypeScript precisa)
+          if (!this.settingsService || !this.derivService) {
+            if (!providedToken) {
+              throw new Error('Token não fornecido e serviços não disponíveis');
+            }
+            return providedToken;
+          }
+
           // Obter configurações do usuário (tradeCurrency: USD, BTC, ou DEMO)
           const settings = await this.settingsService.getSettings(userId);
           const tradeCurrency = settings.tradeCurrency || 'USD';
