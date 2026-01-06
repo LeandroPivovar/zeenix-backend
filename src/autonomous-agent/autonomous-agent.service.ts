@@ -540,7 +540,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100'),
+            config.symbol || (normalizedAgentType === 'sentinel' || normalizedAgentType === 'falcon' ? 'R_75' : 'R_100'),
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
@@ -567,7 +567,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100'),
+            config.symbol || (normalizedAgentType === 'sentinel' || normalizedAgentType === 'falcon' ? 'R_75' : 'R_100'),
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
@@ -595,7 +595,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // ✅ Determinar símbolo baseado no tipo de agente (usar strategy que já está normalizado)
-      const agentSymbol = config.symbol || (strategy === 'sentinel' ? 'R_75' : 'R_100');
+      const agentSymbol = config.symbol || (strategy === 'sentinel' || strategy === 'falcon' ? 'R_75' : 'R_100');
       
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {

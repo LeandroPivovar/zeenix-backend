@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import {
@@ -8,20 +8,20 @@ import {
   MarketAnalysis,
   TradeDecision,
 } from './common.types';
-import { SettingsService } from '../../settings/settings.service';
-import { DerivService } from '../../broker/deriv.service';
+import { Tick, DigitParity } from '../../ai/ai.service';
+import { LogQueueService } from '../../utils/log-queue.service';
+import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
 
 /**
- * 🦅 FALCON Strategy
+ * 🦅 FALCON Strategy para Agente Autônomo
  * 
- * Agente autônomo de alta precisão projetado para operar no Volatility 75 Index.
- * Prioriza segurança estatística com precisão cirúrgica (>80% normal, >90% recuperação).
- * 
- * Características:
- * - Precisão Cirúrgica: Só entra em operações com probabilidade >80% (normal) ou >90% (recuperação)
- * - Recuperação Inteligente: Ativa "Modo Sniper" imediatamente após qualquer perda
- * - Gestão Blindada: Sistema de travas que impede devolução de lucros (Efeito Catraca)
- * - Soros Nível 1: Alavancagem de lucros após vitórias
+ * Implementação completa do Agente Falcon conforme documentação:
+ * - Precisão Cirúrgica: >80% (Normal) ou >90% (Recuperação)
+ * - Recuperação Inteligente: Modo Sniper imediato após qualquer perda
+ * - Gestão Blindada: Stop Loss Blindado (Efeito Catraca)
+ * - Soros Nível 1: Alavancagem de lucros
+ * - Smart Martingale: Recuperação matemática precisa
+ * - Sistema de logs detalhado
  */
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -30,23 +30,27 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   description = 'Agente de alta precisão com recuperação inteligente e gestão blindada';
 
   private readonly logger = new Logger(FalconStrategy.name);
+  private readonly userConfigs = new Map<string, FalconUserConfig>();
   private readonly userStates = new Map<string, FalconUserState>();
-  private readonly appId = process.env.DERIV_APP_ID || '1089';
+  private readonly ticks = new Map<string, Tick[]>();
+  private readonly maxTicks = 200;
   private readonly comissaoPlataforma = 0.03; // 3%
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-    @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
-    @Optional() @Inject(DerivService) private readonly derivService?: DerivService,
+    @Inject(forwardRef(() => DerivWebSocketPoolService))
+    private readonly derivPool: DerivWebSocketPoolService,
+    @Inject(forwardRef(() => LogQueueService))
+    private readonly logQueueService?: LogQueueService,
   ) {}
 
   async onModuleInit() {
     this.logger.log('🦅 FALCON Strategy inicializado');
-    await this.syncActiveUsersFromDb();
+    await this.initialize();
   }
 
   async initialize(): Promise<void> {
-    // Inicialização adicional se necessário
+    await this.syncActiveUsersFromDb();
   }
 
   /**
@@ -62,25 +66,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       );
 
       for (const user of activeUsers) {
-        this.userStates.set(user.user_id.toString(), {
-          userId: user.user_id.toString(),
-          isActive: true,
-          saldoInicial: parseFloat(user.initial_balance) || 0,
-          lucroAtual: parseFloat(user.daily_profit) || 0,
-          picoLucro: parseFloat(user.profit_peak) || 0,
-          consecutiveLosses: 0,
-          consecutiveWins: 0,
-          opsCount: 0,
-          mode: 'PRECISO', // 'PRECISO' ou 'ALTA_PRECISAO'
-          stopBlindadoAtivo: false,
-          pisoBlindado: 0,
-          lastProfit: 0,
-          config: {
-            stakeInicial: parseFloat(user.initial_stake),
-            metaLucro: parseFloat(user.daily_profit_target),
-            limitePerda: parseFloat(user.daily_loss_limit),
-          },
-        });
+        const userId = user.user_id.toString();
+        const config: FalconUserConfig = {
+          userId: userId,
+          initialStake: parseFloat(user.initial_stake),
+          dailyProfitTarget: parseFloat(user.daily_profit_target),
+          dailyLossLimit: parseFloat(user.daily_loss_limit),
+          derivToken: user.deriv_token,
+          currency: user.currency,
+          symbol: user.symbol || 'R_75',
+          initialBalance: parseFloat(user.initial_balance) || 0,
+        };
+
+        this.userConfigs.set(userId, config);
+        this.initializeUserState(userId, config);
       }
 
       this.logger.log(`[Falcon] Sincronizados ${activeUsers.length} usuários ativos`);
@@ -89,65 +88,381 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
   }
 
-  async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
-    // Implementação será feita integrando com o serviço principal
-    // Por enquanto, apenas criar estado
+  /**
+   * Inicializa estado do usuário
+   */
+  private initializeUserState(userId: string, config: FalconUserConfig): void {
     const state: FalconUserState = {
       userId,
       isActive: true,
-      saldoInicial: config.initialBalance || 0,
+      saldoInicial: config.initialBalance,
       lucroAtual: 0,
       picoLucro: 0,
       consecutiveLosses: 0,
       consecutiveWins: 0,
       opsCount: 0,
-      mode: 'PRECISO',
+      mode: 'PRECISO', // 'PRECISO' (>80%) ou 'ALTA_PRECISAO' (>90%)
       stopBlindadoAtivo: false,
       pisoBlindado: 0,
       lastProfit: 0,
-      config: {
-        stakeInicial: config.initialStake,
-        metaLucro: config.dailyProfitTarget,
-        limitePerda: config.dailyLossLimit,
-      },
+      currentContractId: null,
+      currentTradeId: null,
+      isWaitingContract: false,
     };
 
     this.userStates.set(userId, state);
+    this.ticks.set(userId, []);
+  }
+
+  async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
+    const falconConfig: FalconUserConfig = {
+      userId: config.userId,
+      initialStake: config.initialStake,
+      dailyProfitTarget: config.dailyProfitTarget,
+      dailyLossLimit: config.dailyLossLimit,
+      derivToken: config.derivToken,
+      currency: config.currency,
+      symbol: config.symbol || 'R_75',
+      initialBalance: config.initialBalance || 0,
+    };
+
+    this.userConfigs.set(userId, falconConfig);
+    this.initializeUserState(userId, falconConfig);
+
+    // Log de ativação
+    await this.saveLog(userId, 'INFO', 'CORE', `🦅 Agente FALCON iniciando...`);
+    await this.saveLog(userId, 'INFO', 'CORE', 
+      `Carregando configurações: Stake=${falconConfig.initialStake}, Meta=${falconConfig.dailyProfitTarget}, Stop=${falconConfig.dailyLossLimit}`);
+
     this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
+    this.userConfigs.delete(userId);
     this.userStates.delete(userId);
+    this.ticks.delete(userId);
     this.logger.log(`[Falcon] ✅ Usuário ${userId} desativado`);
+  }
+
+  /**
+   * Processa um tick recebido
+   */
+  async processTick(tick: Tick, symbol?: string): Promise<void> {
+    const promises: Promise<void>[] = [];
+    const tickSymbol = symbol || 'R_75';
+
+    for (const [userId, config] of this.userConfigs.entries()) {
+      if (config.symbol === tickSymbol) {
+        promises.push(this.processTickForUser(userId, tick).catch((error) => {
+          this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
+        }));
+      }
+    }
+
+    await Promise.all(promises);
+  }
+
+  /**
+   * Processa tick para um usuário específico
+   */
+  private async processTickForUser(userId: string, tick: Tick): Promise<void> {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state || !state.isActive) {
+      return;
+    }
+
+    // Se está aguardando resultado de contrato, não processar novos ticks
+    if (state.isWaitingContract) {
+      return;
+    }
+
+    // Adicionar tick à coleção
+    const userTicks = this.ticks.get(userId) || [];
+    userTicks.push(tick);
+    
+    // Manter apenas os últimos maxTicks
+    if (userTicks.length > this.maxTicks) {
+      userTicks.shift();
+    }
+    this.ticks.set(userId, userTicks);
+
+    // FALCON precisa de pelo menos 50 ticks para análise confiável
+    if (userTicks.length < 50) {
+      // Log apenas a cada 10 ticks
+      if (userTicks.length % 10 === 0) {
+        await this.saveLog(userId, 'INFO', 'ANALYZER', 
+          `Ticks coletados: ${userTicks.length}/50`);
+      }
+      return;
+    }
+
+    // Realizar análise de mercado
+    const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+    
+    if (marketAnalysis) {
+      // Processar decisão de trade
+      const decision = await this.processAgent(userId, marketAnalysis);
+      
+      if (decision.action === 'BUY') {
+        await this.executeTrade(userId, decision, marketAnalysis);
+      } else if (decision.action === 'STOP') {
+        await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
+      }
+    }
+  }
+
+  /**
+   * Análise de mercado para determinar probabilidade
+   * FALCON usa análise de volatilidade e padrões de dígitos
+   */
+  private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
+    const config = this.userConfigs.get(userId);
+    if (!config) return null;
+
+    // Usar últimos 50 ticks para análise
+    const recentTicks = ticks.slice(-50);
+    const prices = recentTicks.map(t => t.value);
+
+    // 1. Análise de Volatilidade
+    const volatility = this.calculateVolatility(prices);
+    
+    // 2. Análise de Tendência (EMA)
+    const emaFast = this.calculateEMA(prices, 10);
+    const emaSlow = this.calculateEMA(prices, 25);
+    const trend = emaFast > emaSlow ? 'CALL' : 'PUT';
+    
+    // 3. Análise de Padrões de Dígitos
+    const digitAnalysis = this.analyzeDigits(recentTicks);
+    
+    // 4. Calcular Probabilidade Combinada
+    let probability = 50; // Base
+    
+    // Volatilidade: Alta volatilidade = maior confiança em tendências
+    if (volatility > 0.5) {
+      probability += 15;
+    }
+    
+    // Tendência: EMA rápida acima da lenta = CALL, abaixo = PUT
+    const trendStrength = Math.abs(emaFast - emaSlow) / emaSlow;
+    if (trendStrength > 0.001) {
+      probability += 10;
+    }
+    
+    // Padrões de dígitos: Se há padrão forte, aumenta probabilidade
+    if (digitAnalysis.patternStrength > 0.6) {
+      probability += 15;
+    }
+    
+    // Limitar entre 0 e 100
+    probability = Math.min(100, Math.max(0, probability));
+
+    // Determinar sinal
+    let signal: 'CALL' | 'PUT' | null = trend;
+    
+    // Se análise de dígitos sugere direção oposta e tem força, considerar
+    if (digitAnalysis.direction && digitAnalysis.patternStrength > 0.7) {
+      // Se digitAnalysis sugere direção diferente, reduzir probabilidade
+      if (digitAnalysis.direction !== trend) {
+        probability -= 10;
+        // Se ainda assim a probabilidade é alta, usar direção dos dígitos
+        if (probability >= 80 && digitAnalysis.patternStrength > 0.8) {
+          signal = digitAnalysis.direction;
+        }
+      } else {
+        // Se concordam, aumentar probabilidade
+        probability += 5;
+      }
+    }
+
+    return {
+      probability,
+      signal,
+      payout: 0.95, // Payout padrão Rise/Fall
+      confidence: probability / 100,
+      details: {
+        volatility,
+        trend,
+        trendStrength,
+        digitPattern: digitAnalysis.pattern,
+        digitStrength: digitAnalysis.patternStrength,
+      },
+    };
+  }
+
+  /**
+   * Calcula volatilidade dos preços
+   */
+  private calculateVolatility(prices: number[]): number {
+    if (prices.length < 2) return 0;
+    
+    const returns: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      returns.push(Math.abs((prices[i] - prices[i - 1]) / prices[i - 1]));
+    }
+    
+    const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+    return avgReturn;
+  }
+
+  /**
+   * Calcula EMA (Exponential Moving Average)
+   */
+  private calculateEMA(prices: number[], period: number): number {
+    if (prices.length < period) {
+      return prices[prices.length - 1];
+    }
+
+    const multiplier = 2 / (period + 1);
+    let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+    for (let i = period; i < prices.length; i++) {
+      ema = (prices[i] * multiplier) + (ema * (1 - multiplier));
+    }
+
+    return ema;
+  }
+
+  /**
+   * Analisa padrões de dígitos
+   */
+  private analyzeDigits(ticks: Tick[]): {
+    pattern: 'strongeven' | 'strongodd' | 'balanced';
+    direction: 'CALL' | 'PUT' | null;
+    patternStrength: number;
+  } {
+    const lastDigits = ticks.slice(-20).map(t => {
+      const value = t.value.toString();
+      return parseInt(value[value.length - 1]);
+    });
+
+    const evenCount = lastDigits.filter(d => d % 2 === 0).length;
+    const oddCount = lastDigits.filter(d => d % 2 === 1).length;
+
+    let pattern: 'strongeven' | 'strongodd' | 'balanced' = 'balanced';
+    let direction: 'CALL' | 'PUT' | null = null;
+    let patternStrength = 0;
+
+    if (evenCount > oddCount + 3) {
+      pattern = 'strongeven';
+      direction = 'PUT'; // Se muitos pares, espera-se ímpar
+      patternStrength = (evenCount - oddCount) / 20;
+    } else if (oddCount > evenCount + 3) {
+      pattern = 'strongodd';
+      direction = 'CALL'; // Se muitos ímpares, espera-se par
+      patternStrength = (oddCount - evenCount) / 20;
+    }
+
+    return { pattern, direction, patternStrength };
+  }
+
+  /**
+   * Processa agente (chamado via interface)
+   */
+  async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state || !state.isActive) {
+      return { action: 'WAIT', reason: 'USER_NOT_ACTIVE' };
+    }
+
+    // A. Verificações de Segurança (Hard Stops)
+    if (state.lucroAtual <= -config.dailyLossLimit) {
+      return { action: 'STOP', reason: 'STOP_LOSS' };
+    }
+
+    if (state.lucroAtual >= config.dailyProfitTarget) {
+      return { action: 'STOP', reason: 'TAKE_PROFIT' };
+    }
+
+    if (!this.checkBlindado(userId)) {
+      return { action: 'STOP', reason: 'BLINDADO' };
+    }
+
+    // B. Filtro de Precisão
+    const requiredProb = state.mode === 'ALTA_PRECISAO' ? 90 : 80;
+    
+    if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
+      const stake = this.calculateStake(userId, marketAnalysis.payout);
+      
+      if (stake <= 0) {
+        return { action: 'WAIT', reason: 'NO_STAKE' };
+      }
+
+      // ✅ Log consolidado de decisão
+      const modeText = state.mode === 'ALTA_PRECISAO' ? 'ALTA PRECISÃO (>90%)' : 'PRECISO (>80%)';
+      await this.saveLog(userId, 'INFO', 'DECISION',
+        `✅ COMPRA APROVADA | Modo: ${modeText} | Probabilidade: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal} | Stake: $${stake.toFixed(2)}`);
+
+      return {
+        action: 'BUY',
+        stake: stake,
+        contractType: marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL',
+        mode: state.mode,
+        reason: 'HIGH_PROBABILITY',
+      };
+    } else {
+      // ✅ Log de motivo para não comprar
+      const missingProb = requiredProb - marketAnalysis.probability;
+      const reasonMsg = marketAnalysis.probability < requiredProb 
+        ? `Probabilidade ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
+        : 'Sinal indefinido';
+      
+      await this.saveLog(userId, 'INFO', 'DECISION',
+        `⏸️ COMPRA NEGADA | Modo: ${state.mode} | Probabilidade: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
+    }
+
+    return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
   }
 
   /**
    * Atualiza o modo do agente baseado em vitória/derrota
    */
-  private updateMode(state: FalconUserState, win: boolean): void {
+  private updateMode(userId: string, win: boolean): void {
+    const state = this.userStates.get(userId);
+    if (!state) return;
+
     if (win) {
       state.consecutiveWins++;
       state.consecutiveLosses = 0;
       state.mode = 'PRECISO'; // Reseta para modo normal após vitória
+      
+      // Soros: Se ganhou 2 vezes seguidas, volta para stake inicial na próxima
+      if (state.consecutiveWins >= 2) {
+        state.consecutiveWins = 0; // Resetar contador
+      }
     } else {
       state.consecutiveWins = 0;
       state.consecutiveLosses++;
-      // RECUPERAÇÃO IMEDIATA: Qualquer perda ativa o modo Sniper
+      // ✅ RECUPERAÇÃO IMEDIATA: Qualquer perda ativa o modo Sniper
       state.mode = 'ALTA_PRECISAO';
+      
       this.logger.log(
-        `[Falcon][${state.userId}] ⚠️ LOSS DETECTADO: Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`,
+        `[Falcon][${userId}] ⚠️ LOSS DETECTADO: Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`,
       );
+      
+      this.saveLog(userId, 'WARN', 'RISK',
+        `⚠️ Perda detectada. Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`);
     }
   }
 
   /**
    * Calcula o stake baseado no modo e situação
    */
-  private calculateStake(state: FalconUserState, marketPayoutPercent: number): number {
-    let stake = state.config.stakeInicial;
-    const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma) / 100;
+  private calculateStake(userId: string, marketPayoutPercent: number): number {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
 
-    // Lógica para Modo ALTA PRECISÃO (Recuperação)
+    if (!config || !state) {
+      return 0;
+    }
+
+    let stake = config.initialStake;
+    const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma);
+
+    // Lógica para Modo ALTA PRECISÃO (Recuperação - Smart Martingale)
     if (state.mode === 'ALTA_PRECISAO') {
       // Recuperar perdas + 25% de lucro sobre a perda
       const lossToRecover = Math.abs(Math.min(0, state.lucroAtual));
@@ -155,36 +470,61 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const targetProfit = lossToRecover * 0.25;
         const totalNeeded = lossToRecover + targetProfit;
         stake = totalNeeded / realPayout;
+        
         this.logger.log(
-          `[Falcon][${state.userId}] 🚑 RECUPERAÇÃO: Buscando ${totalNeeded.toFixed(2)} (Stake: ${stake.toFixed(2)})`,
+          `[Falcon][${userId}] 🚑 RECUPERAÇÃO: Buscando ${totalNeeded.toFixed(2)} (Stake: ${stake.toFixed(2)})`,
         );
+        
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🚑 Smart Martingale: Recuperando $${lossToRecover.toFixed(2)} + $${targetProfit.toFixed(2)} lucro = $${totalNeeded.toFixed(2)} | Stake: $${stake.toFixed(2)}`);
       } else {
         // Se estiver no modo Alta Precisão mas sem prejuízo acumulado, usa stake base
-        stake = state.config.stakeInicial;
+        stake = config.initialStake;
       }
     }
     // Lógica para Modo PRECISO (Soros Nível 1)
     else {
+      // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
       if (state.consecutiveWins === 1) {
-        stake = state.config.stakeInicial + state.lastProfit;
-        this.logger.log(`[Falcon][${state.userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
+        stake = config.initialStake + state.lastProfit;
+        this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
+        
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🚀 Soros Nível 1: Stake Base (${config.initialStake.toFixed(2)}) + Lucro Anterior (${state.lastProfit.toFixed(2)}) = ${stake.toFixed(2)}`);
+      }
+      // Win3 ou mais: volta para Base
+      else if (state.consecutiveWins >= 2) {
+        stake = config.initialStake;
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🔄 Soros: Voltando para Stake Base após ${state.consecutiveWins} vitórias`);
       }
     }
 
-    return this.adjustStakeForStopLoss(state, stake);
+    return this.adjustStakeForStopLoss(userId, stake);
   }
 
   /**
    * Ajusta o stake para respeitar o stop loss restante
    */
-  private adjustStakeForStopLoss(state: FalconUserState, calculatedStake: number): number {
-    const remainingLossLimit = state.config.limitePerda + state.lucroAtual;
+  private adjustStakeForStopLoss(userId: string, calculatedStake: number): number {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state) {
+      return calculatedStake;
+    }
+
+    const remainingLossLimit = config.dailyLossLimit + state.lucroAtual;
     if (remainingLossLimit <= 0) return 0; // Stop já atingido
 
     if (calculatedStake > remainingLossLimit) {
       this.logger.log(
-        `[Falcon][${state.userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${remainingLossLimit.toFixed(2)}`,
+        `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${remainingLossLimit.toFixed(2)}`,
       );
+      
+      this.saveLog(userId, 'WARN', 'RISK',
+        `⛔ Stake ajustada pelo Stop Loss: De $${calculatedStake.toFixed(2)} para $${remainingLossLimit.toFixed(2)}`);
+      
       return remainingLossLimit;
     }
 
@@ -194,16 +534,27 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   /**
    * Verifica e gerencia o Stop Loss Blindado (Efeito Catraca)
    */
-  private checkBlindado(state: FalconUserState): boolean {
+  private checkBlindado(userId: string): boolean {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state) {
+      return true;
+    }
+
     // Verifica Ativação (40% da Meta)
     if (!state.stopBlindadoAtivo) {
-      if (state.lucroAtual >= state.config.metaLucro * 0.40) {
+      if (state.lucroAtual >= config.dailyProfitTarget * 0.40) {
         state.stopBlindadoAtivo = true;
         state.picoLucro = state.lucroAtual;
         state.pisoBlindado = state.picoLucro * 0.50;
+        
         this.logger.log(
-          `[Falcon][${state.userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`,
+          `[Falcon][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`,
         );
+        
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🔒 STOP BLINDADO ATIVADO! Lucro atual: $${state.lucroAtual.toFixed(2)} (${((state.lucroAtual / config.dailyProfitTarget) * 100).toFixed(1)}% da meta) | Piso protegido: $${state.pisoBlindado.toFixed(2)}`);
       }
     }
     // Atualização Dinâmica (Trailing Stop)
@@ -211,14 +562,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (state.lucroAtual > state.picoLucro) {
         state.picoLucro = state.lucroAtual;
         state.pisoBlindado = state.picoLucro * 0.50;
+        
         this.logger.log(
-          `[Falcon][${state.userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
+          `[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
         );
+        
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🔒 Blindagem atualizada: Novo pico $${state.picoLucro.toFixed(2)} | Novo piso protegido: $${state.pisoBlindado.toFixed(2)}`);
       }
 
       // Gatilho de Saída
       if (state.lucroAtual <= state.pisoBlindado) {
-        this.logger.log(`[Falcon][${state.userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
+        this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
+        
+        this.saveLog(userId, 'WARN', 'RISK',
+          `🛑 STOP BLINDADO ATINGIDO! Lucro caiu para $${state.lucroAtual.toFixed(2)} (piso: $${state.pisoBlindado.toFixed(2)}). Encerrando operações.`);
+        
         return false; // Deve parar
       }
     }
@@ -226,63 +585,559 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     return true; // Pode continuar
   }
 
-  async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {
+  /**
+   * Executa trade
+   */
+  private async executeTrade(userId: string, decision: TradeDecision, marketAnalysis: MarketAnalysis): Promise<void> {
+    const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
-    if (!state || !state.isActive) {
-      return { action: 'WAIT', reason: 'USER_NOT_ACTIVE' };
+
+    if (!config || !state || decision.action !== 'BUY') {
+      return;
     }
 
-    // A. Verificações de Segurança (Hard Stops)
-    if (state.lucroAtual <= -state.config.limitePerda) {
-      return { action: 'STOP', reason: 'STOP_LOSS' };
+    // Verificar Stop Loss antes de executar
+    if (!this.checkBlindado(userId)) {
+      return;
     }
 
-    if (state.lucroAtual >= state.config.metaLucro) {
-      return { action: 'STOP', reason: 'TAKE_PROFIT' };
-    }
+    const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL');
 
-    if (!this.checkBlindado(state)) {
-      return { action: 'STOP', reason: 'BLINDADO' };
-    }
+    await this.saveLog(userId, 'INFO', 'API', `Consultando payout para contrato ${contractType}...`);
 
-    // B. Filtro de Precisão
-    const requiredProb = state.mode === 'ALTA_PRECISAO' ? 90 : 80;
-    if (marketAnalysis.probability >= requiredProb) {
-      const stake = this.calculateStake(state, marketAnalysis.payout);
-      if (stake <= 0) {
-        return { action: 'WAIT', reason: 'NO_STAKE' };
+    try {
+      // Obter payout via proposal
+      const payout = await this.getPayout(config.derivToken, contractType, config.symbol, 5);
+      const zenixPayout = payout * 0.97; // Markup de 3%
+
+      await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
+
+      // Executar compra
+      await this.saveLog(userId, 'INFO', 'API', 
+        `Comprando contrato ${contractType}. stake=${decision.stake?.toFixed(2)}, direction=${marketAnalysis.signal}`);
+
+      // ✅ Criar registro de trade ANTES de executar
+      const tradeId = await this.createTradeRecord(
+        userId,
+        {
+          contractType: contractType,
+          stakeAmount: decision.stake || config.initialStake,
+          duration: 5,
+          marketAnalysis: marketAnalysis,
+          payout: zenixPayout,
+          entryPrice: 0,
+        },
+      );
+
+      const contractId = await this.buyContract(
+        userId,
+        config.derivToken,
+        contractType,
+        config.symbol,
+        decision.stake || config.initialStake,
+        5, // duration em ticks
+      );
+
+      if (contractId) {
+        state.isWaitingContract = true;
+        state.currentContractId = contractId;
+        state.currentTradeId = tradeId;
+        await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+        
+        // ✅ Atualizar trade com contract_id
+        await this.updateTradeRecord(tradeId, {
+          contractId: contractId,
+          status: 'ACTIVE',
+        });
+      } else {
+        // Se falhou, atualizar trade com erro
+        await this.updateTradeRecord(tradeId, {
+          status: 'ERROR',
+          errorMessage: 'Falha ao comprar contrato',
+        });
       }
-
-      return {
-        action: 'BUY',
-        stake: stake,
-        contractType: marketAnalysis.signal || 'CALL',
-        mode: state.mode,
-      };
+    } catch (error) {
+      this.logger.error(`[Falcon][${userId}] Erro ao executar trade:`, error);
+      await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}`);
     }
-
-    return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
   }
 
+  /**
+   * Obtém payout de um contrato via Deriv API
+   */
+  private async getPayout(token: string, contractType: string, symbol: string, duration: number): Promise<number> {
+    try {
+      const response = await this.derivPool.sendRequest(
+        token,
+        {
+          proposal: 1,
+          amount: 1,
+          basis: 'stake',
+          contract_type: contractType,
+          currency: 'USD',
+          duration: duration,
+          duration_unit: 't',
+          symbol: symbol,
+        },
+        10000, // timeout 10s
+      );
+
+      if (response.error) {
+        throw new Error(response.error.message || 'Erro ao obter payout');
+      }
+
+      if (response.proposal) {
+        const payout = Number(response.proposal.payout || 0);
+        const askPrice = Number(response.proposal.ask_price || 0);
+        
+        // Calcular payout percentual: (payout - askPrice) / askPrice
+        const payoutPercent = askPrice > 0 ? (payout - askPrice) / askPrice : 0;
+        return payoutPercent;
+      }
+
+      throw new Error('Resposta de proposal inválida');
+    } catch (error) {
+      this.logger.error(`[Falcon] Erro ao obter payout:`, error);
+      // Retornar valores padrão em caso de erro
+      return 0.95; // 95% para Rise/Fall
+    }
+  }
+
+  /**
+   * Compra contrato na Deriv via WebSocket Pool
+   */
+  private async buyContract(
+    userId: string,
+    token: string,
+    contractType: string,
+    symbol: string,
+    stake: number,
+    duration: number,
+  ): Promise<string | null> {
+    try {
+      // Primeiro, obter proposta
+      const proposalResponse = await this.derivPool.sendRequest(
+        token,
+        {
+          proposal: 1,
+          amount: stake,
+          basis: 'stake',
+          contract_type: contractType,
+          currency: 'USD',
+          duration: duration,
+          duration_unit: 't',
+          symbol: symbol,
+        },
+        10000, // timeout 10s
+      );
+
+      if (proposalResponse.error) {
+        throw new Error(proposalResponse.error.message || 'Erro ao obter proposta');
+      }
+
+      if (!proposalResponse.proposal || !proposalResponse.proposal.id) {
+        throw new Error('Resposta de proposta inválida');
+      }
+
+      const proposalId = proposalResponse.proposal.id;
+      const proposalPrice = Number(proposalResponse.proposal.ask_price || 0);
+
+      // Enviar compra
+      const buyResponse = await this.derivPool.sendRequest(
+        token,
+        {
+          buy: proposalId,
+          price: proposalPrice,
+        },
+        30000, // timeout 30s
+      );
+
+      if (buyResponse.error) {
+        throw new Error(buyResponse.error.message || 'Erro ao comprar contrato');
+      }
+
+      if (!buyResponse.buy || !buyResponse.buy.contract_id) {
+        throw new Error('Resposta de compra inválida');
+      }
+
+      const contractId = buyResponse.buy.contract_id;
+
+      // Inscrever para monitorar contrato
+      this.derivPool.subscribe(
+        token,
+        {
+          proposal_open_contract: 1,
+          contract_id: contractId,
+          subscribe: 1,
+        },
+        (contractMsg: any) => {
+          if (contractMsg.proposal_open_contract) {
+            const contract = contractMsg.proposal_open_contract;
+            const state = this.userStates.get(userId);
+            
+            // ✅ Atualizar entry_price quando disponível
+            if (contract.entry_spot && state?.currentTradeId) {
+              this.updateTradeRecord(state.currentTradeId, {
+                entryPrice: Number(contract.entry_spot),
+              }).catch((error) => {
+                this.logger.error(`[Falcon][${userId}] Erro ao atualizar entry_price:`, error);
+              });
+            }
+            
+            // Verificar se contrato foi finalizado
+            if (contract.is_sold === 1) {
+              const profit = Number(contract.profit || 0);
+              const win = profit > 0;
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              
+              // Processar resultado
+              this.onContractFinish(
+                userId,
+                { win, profit, contractId, exitPrice },
+              ).catch((error) => {
+                this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
+              });
+              
+              // Remover subscription
+              this.derivPool.removeSubscription(token, contractId);
+            }
+          }
+        },
+        contractId,
+      );
+
+      return contractId;
+    } catch (error) {
+      this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Processa resultado de contrato finalizado
+   */
   async onContractFinish(
     userId: string,
-    result: { win: boolean; profit: number; contractId: string },
+    result: { win: boolean; profit: number; contractId: string; exitPrice?: number },
   ): Promise<void> {
+    const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
-    if (!state) return;
 
+    if (!config || !state) {
+      return;
+    }
+
+    state.isWaitingContract = false;
+    const tradeId = state.currentTradeId;
+    state.currentContractId = null;
+    state.currentTradeId = null;
+
+    // ✅ Atualizar trade no banco com resultado
+    if (tradeId) {
+      await this.updateTradeRecord(tradeId, {
+        status: result.win ? 'WON' : 'LOST',
+        exitPrice: result.exitPrice || 0,
+        profitLoss: result.profit,
+        closedAt: new Date(),
+      });
+    }
+
+    // Atualizar estado
     state.opsCount++;
-    state.lastProfit = result.profit; // Valor líquido (já descontado stake)
+    state.lastProfit = result.profit;
     state.lucroAtual += result.profit;
 
-    this.updateMode(state, result.win);
+    // Atualizar modo (PRECISO ou ALTA_PRECISAO)
+    this.updateMode(userId, result.win);
 
-    this.logger.log(
-      `[Falcon][${userId}] 📊 RESULTADO: ${result.win ? 'WIN' : 'LOSS'} | Lucro: ${result.profit.toFixed(2)} | Total: ${state.lucroAtual.toFixed(2)}`,
-    );
+    // Logs
+    if (result.win) {
+      await this.saveLog(userId, 'INFO', 'API', 
+        `✅ Operação finalizada. result=WIN, profit=$${result.profit.toFixed(2)}`);
+    } else {
+      await this.saveLog(userId, 'ERROR', 'API', 
+        `❌ Operação finalizada. result=LOSS, loss=$${Math.abs(result.profit).toFixed(2)}`);
+    }
+
+    await this.saveLog(userId, 'INFO', 'RISK',
+      `Estado atualizado: lucro_atual=$${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
 
     // Atualizar banco de dados
     await this.updateUserStateInDb(userId, state);
+
+    // Verificar se atingiu meta ou stop
+    if (state.lucroAtual >= config.dailyProfitTarget) {
+      await this.handleStopCondition(userId, 'TAKE_PROFIT');
+    } else if (state.lucroAtual <= -config.dailyLossLimit) {
+      await this.handleStopCondition(userId, 'STOP_LOSS');
+    }
+  }
+
+  /**
+   * Trata condições de parada
+   */
+  private async handleStopCondition(userId: string, reason: string): Promise<void> {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state) {
+      return;
+    }
+
+    let status = 'active';
+    let message = '';
+
+    switch (reason) {
+      case 'TAKE_PROFIT':
+        status = 'stopped_profit';
+        message = `🎯 META DE LUCRO ATINGIDA! lucro=${state.lucroAtual.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`;
+        break;
+      case 'STOP_LOSS':
+        status = 'stopped_loss';
+        message = `🛑 STOP LOSS ATINGIDO! perda=${Math.abs(state.lucroAtual).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`;
+        break;
+      case 'BLINDADO':
+        status = 'stopped_blindado';
+        message = `🔒 STOP BLINDADO ATINGIDO! Lucro protegido: $${state.pisoBlindado.toFixed(2)}. Encerrando operações.`;
+        break;
+    }
+
+    await this.saveLog(userId, 'WARN', 'RISK', message);
+
+    // Desativar agente
+    state.isActive = false;
+    await this.dataSource.query(
+      `UPDATE autonomous_agent_config SET session_status = ?, is_active = FALSE WHERE user_id = ?`,
+      [status, userId],
+    );
+
+    this.logger.log(`[Falcon][${userId}] ${message}`);
+  }
+
+  /**
+   * Cria registro de trade no banco
+   */
+  private async createTradeRecord(
+    userId: string,
+    trade: {
+      contractType: string;
+      stakeAmount: number;
+      duration: number;
+      marketAnalysis: MarketAnalysis;
+      payout: number;
+      entryPrice: number;
+    },
+  ): Promise<number> {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+
+    if (!config || !state) {
+      return 0;
+    }
+
+    const analysisData = {
+      strategy: 'falcon',
+      mode: state.mode,
+      probability: trade.marketAnalysis.probability,
+      signal: trade.marketAnalysis.signal,
+      volatility: trade.marketAnalysis.details?.volatility,
+      trend: trade.marketAnalysis.details?.trend,
+      digitPattern: trade.marketAnalysis.details?.digitPattern,
+      timestamp: new Date().toISOString(),
+    };
+
+    const analysisReasoning = `Análise FALCON: Probabilidade ${trade.marketAnalysis.probability.toFixed(1)}%, ` +
+      `Direção ${trade.marketAnalysis.signal}, ` +
+      `Modo ${state.mode}, ` +
+      `Volatilidade=${trade.marketAnalysis.details?.volatility?.toFixed(4) || 'N/A'}`;
+
+    try {
+      const result = await this.dataSource.query(
+        `INSERT INTO autonomous_agent_trades (
+          user_id, analysis_data, confidence_score, analysis_reasoning,
+          contract_type, contract_duration, entry_price, stake_amount,
+          martingale_level, payout, symbol, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW())`,
+        [
+          userId,
+          JSON.stringify(analysisData),
+          trade.marketAnalysis.probability,
+          analysisReasoning,
+          trade.contractType,
+          trade.duration,
+          trade.entryPrice,
+          trade.stakeAmount,
+          state.mode === 'ALTA_PRECISAO' ? 'M1' : 'M0',
+          trade.payout * 100, // Converter para percentual
+          config.symbol,
+        ],
+      );
+
+      const insertId = Array.isArray(result) ? result[0]?.insertId : result?.insertId;
+      return insertId || 0;
+    } catch (error) {
+      this.logger.error(`[Falcon][${userId}] Erro ao criar registro de trade:`, error);
+      return 0;
+    }
+  }
+
+  /**
+   * Atualiza registro de trade no banco
+   */
+  private async updateTradeRecord(
+    tradeId: number,
+    updates: {
+      contractId?: string;
+      entryPrice?: number;
+      exitPrice?: number;
+      status?: string;
+      profitLoss?: number;
+      errorMessage?: string;
+      closedAt?: Date;
+    },
+  ): Promise<void> {
+    if (!tradeId || tradeId === 0) {
+      return;
+    }
+
+    const updateFields: string[] = [];
+    const updateValues: any[] = [];
+
+    if (updates.contractId !== undefined) {
+      updateFields.push('contract_id = ?');
+      updateValues.push(updates.contractId);
+    }
+
+    if (updates.entryPrice !== undefined) {
+      updateFields.push('entry_price = ?');
+      updateValues.push(updates.entryPrice);
+    }
+
+    if (updates.exitPrice !== undefined) {
+      updateFields.push('exit_price = ?');
+      updateValues.push(updates.exitPrice);
+    }
+
+    if (updates.status !== undefined) {
+      updateFields.push('status = ?');
+      updateValues.push(updates.status);
+      
+      if (updates.status === 'ACTIVE') {
+        updateFields.push('started_at = NOW()');
+      }
+    }
+
+    if (updates.profitLoss !== undefined) {
+      updateFields.push('profit_loss = ?');
+      updateValues.push(updates.profitLoss);
+    }
+
+    if (updates.errorMessage !== undefined) {
+      updateFields.push('error_message = ?');
+      updateValues.push(updates.errorMessage);
+    }
+
+    if (updates.closedAt !== undefined) {
+      updateFields.push('closed_at = ?');
+      updateValues.push(updates.closedAt);
+    }
+
+    if (updateFields.length === 0) {
+      return;
+    }
+
+    updateValues.push(tradeId);
+
+    try {
+      await this.dataSource.query(
+        `UPDATE autonomous_agent_trades SET ${updateFields.join(', ')} WHERE id = ?`,
+        updateValues,
+      );
+    } catch (error) {
+      this.logger.error(`[Falcon] Erro ao atualizar trade ${tradeId}:`, error);
+    }
+  }
+
+  /**
+   * Atualiza estado do usuário no banco de dados
+   */
+  private async updateUserStateInDb(userId: string, state: FalconUserState): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `UPDATE autonomous_agent_config 
+         SET daily_profit = ?, 
+             daily_loss = ?,
+             total_trades = ?,
+             updated_at = NOW()
+         WHERE user_id = ? AND agent_type = 'falcon'`,
+        [
+          Math.max(0, state.lucroAtual),
+          Math.abs(Math.min(0, state.lucroAtual)),
+          state.opsCount,
+          userId,
+        ],
+      );
+    } catch (error) {
+      this.logger.error(`[Falcon] Erro ao atualizar estado no DB:`, error);
+    }
+  }
+
+  /**
+   * Salva log no sistema
+   */
+  private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
+    // Formatar mensagem sem duplicar prefixo do módulo
+    let formattedMessage = message;
+    if (!message.startsWith('[') || !message.includes(']')) {
+      formattedMessage = message;
+    }
+
+    // ✅ Salvar no banco de dados (autonomous_agent_logs)
+    try {
+      await this.dataSource.query(
+        `INSERT INTO autonomous_agent_logs (user_id, timestamp, log_level, module, message, metadata)
+         VALUES (?, NOW(), ?, ?, ?, NULL)`,
+        [userId, level.toUpperCase(), module.toUpperCase(), formattedMessage],
+      );
+    } catch (error) {
+      this.logger.error(`[Falcon] Erro ao salvar log no banco:`, error);
+    }
+
+    // ✅ Salvar via LogQueueService (para exibição em tempo real)
+    if (this.logQueueService) {
+      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] = 
+        ['CORE', 'API', 'ANALYZER', 'DECISION', 'TRADER', 'RISK', 'HUMANIZER'];
+      const normalizedModule = validModules.includes(module.toUpperCase() as any) 
+        ? (module.toUpperCase() as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')
+        : 'CORE';
+
+      this.logQueueService.saveLogAsync({
+        userId,
+        level: level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
+        module: normalizedModule,
+        message: formattedMessage,
+        icon: this.getLogIcon(level),
+        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_75' },
+        tableName: 'autonomous_agent_logs',
+      });
+    }
+
+    this.logger.log(`[Falcon][${module}][${userId}] ${formattedMessage}`);
+  }
+
+  private getLogIcon(level: string): string {
+    switch (level.toUpperCase()) {
+      case 'ERROR':
+        return '🚫';
+      case 'WARN':
+        return '⚠️';
+      case 'INFO':
+        return 'ℹ️';
+      case 'DEBUG':
+        return '🔍';
+      default:
+        return 'ℹ️';
+    }
   }
 
   async getUserState(userId: string): Promise<AutonomousAgentState | null> {
@@ -315,25 +1170,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.lastProfit = 0;
     }
   }
+}
 
-  /**
-   * Atualiza estado do usuário no banco de dados
-   */
-  private async updateUserStateInDb(userId: string, state: FalconUserState): Promise<void> {
-    try {
-      await this.dataSource.query(
-        `UPDATE autonomous_agent_config 
-         SET daily_profit = ?, 
-             profit_peak = ?,
-             total_trades = ?,
-             updated_at = NOW()
-         WHERE user_id = ? AND agent_type = 'falcon'`,
-        [state.lucroAtual, state.picoLucro, state.opsCount, userId],
-      );
-    } catch (error) {
-      this.logger.error(`[Falcon] Erro ao atualizar estado no DB:`, error);
-    }
-  }
+/**
+ * Configuração do usuário para FALCON
+ */
+interface FalconUserConfig {
+  userId: string;
+  initialStake: number;
+  dailyProfitTarget: number;
+  dailyLossLimit: number;
+  derivToken: string;
+  currency: string;
+  symbol: string;
+  initialBalance: number;
 }
 
 /**
@@ -352,10 +1202,7 @@ interface FalconUserState {
   stopBlindadoAtivo: boolean;
   pisoBlindado: number;
   lastProfit: number;
-  config: {
-    stakeInicial: number;
-    metaLucro: number;
-    limitePerda: number;
-  };
+  currentContractId: string | null;
+  currentTradeId: number | null;
+  isWaitingContract: boolean;
 }
-

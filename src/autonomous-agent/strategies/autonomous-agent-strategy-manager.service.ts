@@ -28,19 +28,15 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // ✅ Registrar Orion e Sentinel
+    // ✅ Registrar Orion, Sentinel e Falcon
     this.strategies.set('orion', this.orionStrategy);
     this.strategies.set('sentinel', this.sentinelStrategy);
-    
-    // ✅ DESATIVADO: Falcon
-    // this.strategies.set('falcon', this.falconStrategy);
+    this.strategies.set('falcon', this.falconStrategy);
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
     await this.sentinelStrategy.initialize();
-    
-    // ✅ DESATIVADO: Inicializar Falcon
-    // await this.falconStrategy.initialize();
+    await this.falconStrategy.initialize();
 
     this.logger.log(
       `[AutonomousAgentStrategyManager] ✅ ${this.strategies.size} estratégia(s) registrada(s): ${Array.from(this.strategies.keys()).join(', ')}`,
@@ -83,15 +79,18 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ FALCON: Processa R_75 (quando reativado)
-    // const falconStrategy = this.strategies.get('falcon');
-    // if (falconStrategy && symbol === 'R_75') {
-    //   promises.push(
-    //     (falconStrategy as any).processTick(tick).catch((error: any) => {
-    //       this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
-    //     })
-    //   );
-    // }
+    // ✅ FALCON: Processa R_75
+    const falconStrategy = this.strategies.get('falcon');
+    if (falconStrategy && typeof (falconStrategy as any).processTick === 'function') {
+      // Falcon processa R_75
+      if (!symbol || symbol === 'R_75') {
+        promises.push(
+          (falconStrategy as any).processTick(tick, symbol || 'R_75').catch((error: any) => {
+            this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
+          })
+        );
+      }
+    }
 
     // Processar todas as estratégias em paralelo
     if (promises.length > 0) {
