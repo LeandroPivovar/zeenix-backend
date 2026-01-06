@@ -625,7 +625,7 @@ export class AutonomousAgentService implements OnModuleInit {
     return await this.dataSource.query(
       `SELECT * FROM autonomous_agent_logs 
        WHERE user_id = ? 
-       ORDER BY created_at DESC 
+       ORDER BY timestamp DESC 
        ${limitClause}`,
       [userId],
     );
