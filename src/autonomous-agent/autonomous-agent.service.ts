@@ -226,9 +226,7 @@ export class AutonomousAgentService implements OnModuleInit {
           this.logger.log(`📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`);
         }
         if (msg.history?.prices) {
-          // ✅ Passar símbolo para processHistory se disponível
-          const symbolForHistory = subId ? this.getSymbolForSubscription(subId) || this.symbol : this.symbol;
-          this.processHistory(msg.history, subId, symbolForHistory);
+          this.processHistory(msg.history, subId);
         }
         break;
 
@@ -597,7 +595,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // ✅ Determinar símbolo baseado no tipo de agente
-      const agentSymbol = config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100');
+      const agentSymbol = config.symbol || (strategy === 'sentinel' ? 'R_75' : 'R_100');
       
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -758,14 +756,14 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém logs do agente
    * ✅ OTIMIZADO: Cache de session_date para reduzir queries
    */
-  private sessionDateCache: Map<string, { date: Date | null; timestamp: number }> = new Map();
+  private sessionDateCache: Map<string, { date: Date | string | null; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 30000; // 30 segundos
 
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
     
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
-    let sessionStartTime = null;
+    let sessionStartTime: Date | string | null = null;
     const cached = this.sessionDateCache.get(userId);
     const now = Date.now();
     
