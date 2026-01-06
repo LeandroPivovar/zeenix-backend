@@ -73,7 +73,9 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
       );
 
       for (const user of activeUsers) {
+        const userId = user.user_id.toString();
         const config: AutonomousAgentConfig = {
+          userId: userId,
           initialStake: parseFloat(user.initial_stake),
           dailyProfitTarget: parseFloat(user.daily_profit_target),
           dailyLossLimit: parseFloat(user.daily_loss_limit),
@@ -84,10 +86,10 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
           initialBalance: parseFloat(user.initial_balance) || 0,
         };
 
-        this.userConfigs.set(user.user_id.toString(), config);
+        this.userConfigs.set(userId, config);
         
         // Ativar usuário na Orion Strategy
-        await this.activateUserInOrion(user.user_id.toString(), config);
+        await this.activateUserInOrion(userId, config);
       }
 
       this.logger.log(`[Orion] Sincronizados ${activeUsers.length} usuários ativos`);

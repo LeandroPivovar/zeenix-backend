@@ -393,7 +393,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
         if (config && config.length > 0) {
           const agentConfig = config[0];
-          await this.strategyManager.activateUser('orion', agent.user_id, {
+          const userId = agent.user_id.toString();
+          await this.strategyManager.activateUser('orion', userId, {
+            userId: userId,
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
             dailyLossLimit: parseFloat(agentConfig.daily_loss_limit),
@@ -487,6 +489,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Ativar agente na estratégia Orion
       await this.strategyManager.activateUser('orion', userId, {
+        userId: userId,
         initialStake: config.initialStake,
         dailyProfitTarget: config.dailyProfitTarget,
         dailyLossLimit: config.dailyLossLimit,
