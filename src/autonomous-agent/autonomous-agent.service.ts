@@ -421,10 +421,11 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async activateAgent(userId: string, config: any): Promise<void> {
     try {
-      // Verificar se já existe configuração ativa
+      // Verificar se já existe configuração (independente de is_active)
+      // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
       const existing = await this.dataSource.query(
-        `SELECT id FROM autonomous_agent_config 
-         WHERE user_id = ? AND is_active = TRUE
+        `SELECT id, is_active FROM autonomous_agent_config 
+         WHERE user_id = ?
          LIMIT 1`,
         [userId],
       );
@@ -433,10 +434,11 @@ export class AutonomousAgentService implements OnModuleInit {
       today.setHours(0, 0, 0, 0);
 
       if (existing && existing.length > 0) {
-        // Atualizar configuração existente
+        // Atualizar configuração existente (reativar se estava desativada)
         await this.dataSource.query(
           `UPDATE autonomous_agent_config 
-           SET initial_stake = ?,
+           SET is_active = TRUE,
+               initial_stake = ?,
                daily_profit_target = ?,
                daily_loss_limit = ?,
                deriv_token = ?,
@@ -450,7 +452,7 @@ export class AutonomousAgentService implements OnModuleInit {
                daily_profit = 0,
                daily_loss = 0,
                updated_at = NOW()
-           WHERE user_id = ? AND is_active = TRUE`,
+           WHERE user_id = ?`,
           [
             config.initialStake,
             config.dailyProfitTarget,
@@ -464,6 +466,7 @@ export class AutonomousAgentService implements OnModuleInit {
             userId,
           ],
         );
+        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`);
       } else {
         // Criar nova configuração
         await this.dataSource.query(
@@ -485,6 +488,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.initialBalance || 0,
           ],
         );
+        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
       }
 
       // ✅ Agente autônomo usa sempre Orion Strategy (100% integrado com IA)
