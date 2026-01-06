@@ -258,15 +258,33 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
         }
       } else {
-        // ✅ Log de análise insuficiente
+        // ✅ Log de análise insuficiente com detalhes
         const missingScore = modeConfig.scoreMinimum - analysis.score;
-        const directionIssue = !analysis.direction ? 'Direção indefinida (análises divergentes)' : '';
-        const scoreIssue = analysis.score < modeConfig.scoreMinimum ? `Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)` : '';
+        const reasons: string[] = [];
         
-        const issues = [directionIssue, scoreIssue].filter(Boolean).join(' | ');
+        // Verificar motivo de direção N/A
+        if (!analysis.direction) {
+          const techDir = analysis.technical.direction || 'N/A';
+          const statDir = analysis.statistical.direction || 'N/A';
+          
+          if (techDir === 'N/A' && statDir === 'N/A') {
+            reasons.push('Nenhuma análise indicou direção');
+          } else if (techDir !== statDir && techDir !== 'N/A' && statDir !== 'N/A') {
+            reasons.push(`Análises divergem: Técnica=${techDir}, Estatística=${statDir} (priorizando técnica)`);
+          } else {
+            reasons.push('Direção indefinida');
+          }
+        }
+        
+        // Verificar score
+        if (analysis.score < modeConfig.scoreMinimum) {
+          reasons.push(`Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)`);
+        }
+        
+        const reasonMsg = reasons.length > 0 ? reasons.join(' | ') : 'Análise insuficiente';
         
         await this.saveLog(userId, 'INFO', 'DECISION',
-          `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${issues || 'Análise insuficiente'}`);
+          `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
       }
     }
   }
@@ -289,9 +307,32 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // Combinar análises
     const combinedScore = (technicalAnalysis.score * 0.6) + (statisticalAnalysis.score * 0.4);
-    const direction = technicalAnalysis.direction && statisticalAnalysis.direction === technicalAnalysis.direction
-      ? technicalAnalysis.direction
-      : null;
+    
+    // ✅ LÓGICA MELHORADA: Determinar direção de forma mais flexível
+    // 1. Se ambas concordam → usar essa direção (melhor caso)
+    // 2. Se apenas técnica tem direção → usar técnica (peso 60%)
+    // 3. Se apenas estatística tem direção → usar estatística (peso 40%)
+    // 4. Se divergem → priorizar técnica (peso maior)
+    // 5. Se nenhuma tem direção → null (N/A)
+    let direction: 'CALL' | 'PUT' | null = null;
+    
+    if (technicalAnalysis.direction && statisticalAnalysis.direction) {
+      // Ambas têm direção
+      if (technicalAnalysis.direction === statisticalAnalysis.direction) {
+        // Concordam → usar essa direção
+        direction = technicalAnalysis.direction;
+      } else {
+        // Divergem → priorizar técnica (peso maior: 60%)
+        direction = technicalAnalysis.direction;
+      }
+    } else if (technicalAnalysis.direction) {
+      // Apenas técnica tem direção → usar técnica
+      direction = technicalAnalysis.direction;
+    } else if (statisticalAnalysis.direction) {
+      // Apenas estatística tem direção → usar estatística
+      direction = statisticalAnalysis.direction;
+    }
+    // Se nenhuma tem direção, direction permanece null (N/A)
 
     // ✅ REMOVIDO: Logs individuais de análise técnica e estatística
     // Agora apenas o log consolidado será exibido após a decisão
