@@ -439,6 +439,10 @@ export class AutonomousAgentService implements OnModuleInit {
       // Os ticks serão coletados novamente a partir da nova sessão
       // Nota: ticks são globais, mas podemos filtrar por timestamp da sessão no frontend
 
+      // ✅ Limpar histórico de ticks para este usuário (começar do zero)
+      // Os ticks serão coletados novamente a partir da nova sessão
+      // Nota: ticks são globais, mas podemos filtrar por timestamp da sessão no frontend
+
       // Verificar se já existe configuração (independente de is_active)
       // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
       const existing = await this.dataSource.query(
@@ -453,6 +457,10 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (existing && existing.length > 0) {
         // Atualizar configuração existente (reativar se estava desativada)
+        // ✅ Determinar agent_type baseado na estratégia
+        const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
+        const normalizedAgentType = agentType === 'arion' ? 'orion' : agentType;
+
         await this.dataSource.query(
           `UPDATE autonomous_agent_config 
            SET is_active = TRUE,
@@ -477,8 +485,8 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || 'R_100',
-            config.strategy || 'orion',
+            config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100'),
+            normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
             userId,
@@ -486,6 +494,10 @@ export class AutonomousAgentService implements OnModuleInit {
         );
         this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`);
       } else {
+        // ✅ Determinar agent_type baseado na estratégia
+        const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
+        const normalizedAgentType = agentType === 'arion' ? 'orion' : agentType;
+
         // Criar nova configuração
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config 
@@ -500,8 +512,8 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || 'R_100',
-            config.strategy || 'orion',
+            config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100'),
+            normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
           ],
@@ -509,16 +521,16 @@ export class AutonomousAgentService implements OnModuleInit {
         this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
       }
 
-      // ✅ Agente autônomo usa sempre Orion Strategy (100% integrado com IA)
-      // Normalizar estratégia: 'arion' -> 'orion', qualquer outra -> 'orion'
+      // ✅ Determinar estratégia baseado no agentType
+      // Normalizar estratégia: 'arion' -> 'orion'
       let strategy = (config.agentType || config.strategy || 'orion').toLowerCase();
       if (strategy === 'arion') {
         strategy = 'orion';
       }
       
-      // Por enquanto, apenas Orion está implementado para agente autônomo
-      if (strategy !== 'orion') {
-        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion' está disponível. Usando 'orion'.`);
+      // ✅ Suportar Sentinel e Orion
+      if (strategy !== 'orion' && strategy !== 'sentinel') {
+        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion' e 'sentinel' estão disponíveis. Usando 'orion'.`);
         strategy = 'orion';
       }
 

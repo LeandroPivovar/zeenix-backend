@@ -28,18 +28,18 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // ✅ Registrar apenas Orion (outras desativadas por enquanto)
+    // ✅ Registrar Orion e Sentinel
     this.strategies.set('orion', this.orionStrategy);
+    this.strategies.set('sentinel', this.sentinelStrategy);
     
-    // ✅ DESATIVADO: Sentinel e Falcon
-    // this.strategies.set('sentinel', this.sentinelStrategy);
+    // ✅ DESATIVADO: Falcon
     // this.strategies.set('falcon', this.falconStrategy);
 
-    // Inicializar apenas Orion
+    // Inicializar estratégias
     await this.orionStrategy.initialize();
+    await this.sentinelStrategy.initialize();
     
-    // ✅ DESATIVADO: Inicializar outras estratégias
-    // await this.sentinelStrategy.initialize();
+    // ✅ DESATIVADO: Inicializar Falcon
     // await this.falconStrategy.initialize();
 
     this.logger.log(
@@ -70,15 +70,18 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ SENTINEL: Processa R_75 (quando reativado)
-    // const sentinelStrategy = this.strategies.get('sentinel');
-    // if (sentinelStrategy && symbol === 'R_75') {
-    //   promises.push(
-    //     (sentinelStrategy as any).processTick(tick).catch((error: any) => {
-    //       this.logger.error('[AutonomousAgentStrategyManager][Sentinel] Erro:', error);
-    //     })
-    //   );
-    // }
+    // ✅ SENTINEL: Processa R_75
+    const sentinelStrategy = this.strategies.get('sentinel');
+    if (sentinelStrategy && typeof (sentinelStrategy as any).processTick === 'function') {
+      // Sentinel processa R_75
+      if (!symbol || symbol === 'R_75') {
+        promises.push(
+          (sentinelStrategy as any).processTick(tick).catch((error: any) => {
+            this.logger.error('[AutonomousAgentStrategyManager][Sentinel] Erro:', error);
+          })
+        );
+      }
+    }
 
     // ✅ FALCON: Processa R_75 (quando reativado)
     // const falconStrategy = this.strategies.get('falcon');
