@@ -682,6 +682,28 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
+    
+    // ✅ Buscar session_date para filtrar apenas logs da sessão atual
+    const config = await this.dataSource.query(
+      `SELECT session_date FROM autonomous_agent_config 
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+    
+    let sessionStartTime = null;
+    if (config && config.length > 0 && config[0].session_date) {
+      sessionStartTime = config[0].session_date;
+    }
+    
+    // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
+    const whereClause = sessionStartTime 
+      ? `WHERE user_id = ? AND timestamp >= ?`
+      : `WHERE user_id = ?`;
+    const params = sessionStartTime 
+      ? [userId, sessionStartTime]
+      : [userId];
+    
     const logs = await this.dataSource.query(
       `SELECT 
          id,
@@ -692,10 +714,10 @@ export class AutonomousAgentService implements OnModuleInit {
          message,
          metadata
        FROM autonomous_agent_logs 
-       WHERE user_id = ? 
+       ${whereClause}
        ORDER BY timestamp DESC 
        ${limitClause}`,
-      [userId],
+      params,
     );
     
     // ✅ Converter campos snake_case para camelCase para o frontend

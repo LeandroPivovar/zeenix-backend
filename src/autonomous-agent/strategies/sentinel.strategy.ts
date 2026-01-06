@@ -1163,28 +1163,17 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   }
 
   /**
-   * Salva log no sistema (banco de dados e LogQueueService)
+   * Salva log no sistema (via LogQueueService que salva no banco)
+   * ✅ Evita duplicação: salva apenas uma vez via LogQueueService
    */
   private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
     // ✅ Formatar mensagem sem duplicar prefixo do módulo
-    // Se a mensagem já começar com [MÓDULO], não adicionar novamente
     let formattedMessage = message;
-    if (!message.startsWith('[') || !message.includes(']')) {
-      formattedMessage = message; // Mensagem simples, sem prefixo
-    }
+    // Remover prefixos duplicados se existirem (ex: [CORE] - mensagem)
+    formattedMessage = formattedMessage.replace(/^\[.*?\]\s*-\s*/g, '');
 
-    // ✅ Salvar no banco de dados (autonomous_agent_logs)
-    try {
-      await this.dataSource.query(
-        `INSERT INTO autonomous_agent_logs (user_id, timestamp, log_level, module, message, metadata)
-         VALUES (?, NOW(), ?, ?, ?, NULL)`,
-        [userId, level.toUpperCase(), module.toUpperCase(), formattedMessage],
-      );
-    } catch (error) {
-      this.logger.error(`[Sentinel] Erro ao salvar log no banco:`, error);
-    }
-
-    // ✅ Salvar via LogQueueService (para exibição em tempo real)
+    // ✅ Salvar APENAS via LogQueueService (evita duplicação)
+    // O LogQueueService já salva no banco de dados automaticamente
     if (this.logQueueService) {
       // Normalizar módulo para tipo válido
       const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] = 
