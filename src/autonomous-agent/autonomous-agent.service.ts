@@ -487,18 +487,42 @@ export class AutonomousAgentService implements OnModuleInit {
         );
       }
 
+      // ✅ Agente autônomo usa sempre Orion Strategy (100% integrado com IA)
+      // Normalizar estratégia: 'arion' -> 'orion', qualquer outra -> 'orion'
+      let strategy = (config.agentType || config.strategy || 'orion').toLowerCase();
+      if (strategy === 'arion') {
+        strategy = 'orion';
+      }
+      
+      // Por enquanto, apenas Orion está implementado para agente autônomo
+      if (strategy !== 'orion') {
+        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion' está disponível. Usando 'orion'.`);
+        strategy = 'orion';
+      }
+
+      // Verificar se strategyManager está disponível
+      if (!this.strategyManager) {
+        throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
+      }
+
       // Ativar agente na estratégia Orion
-      await this.strategyManager.activateUser('orion', userId, {
-        userId: userId,
-        initialStake: config.initialStake,
-        dailyProfitTarget: config.dailyProfitTarget,
-        dailyLossLimit: config.dailyLossLimit,
-        derivToken: config.derivToken,
-        currency: config.currency || 'USD',
-        symbol: config.symbol || 'R_100',
-        tradingMode: config.tradingMode || 'normal',
-        initialBalance: config.initialBalance || 0,
-      });
+      try {
+        await this.strategyManager.activateUser(strategy, userId, {
+          userId: userId,
+          initialStake: config.initialStake,
+          dailyProfitTarget: config.dailyProfitTarget,
+          dailyLossLimit: config.dailyLossLimit,
+          derivToken: config.derivToken,
+          currency: config.currency || 'USD',
+          symbol: config.symbol || 'R_100',
+          tradingMode: config.tradingMode || 'normal',
+          initialBalance: config.initialBalance || 0,
+        });
+        this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
+      } catch (strategyError) {
+        this.logger.error(`[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}:`, strategyError);
+        throw new Error(`Erro ao ativar agente na estratégia ${strategy}: ${strategyError.message}`);
+      }
 
       this.logger.log(`[ActivateAgent] ✅ Agente autônomo ativado para usuário ${userId}`);
     } catch (error) {

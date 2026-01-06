@@ -43,6 +43,11 @@ export class AutonomousAgentController {
         );
       }
 
+      // Determinar estratégia: usar agentType se fornecido, senão usar strategy, senão default 'orion'
+      const agentType = body.agentType || body.strategy || 'orion';
+      // Normalizar: 'arion' -> 'orion', 'sentinel' -> 'sentinel', etc
+      const normalizedStrategy = agentType.toLowerCase() === 'arion' ? 'orion' : agentType.toLowerCase();
+
       await this.agentService.activateAgent(userId, {
         initialStake: parseFloat(body.initialStake),
         dailyProfitTarget: parseFloat(body.dailyProfitTarget),
@@ -50,7 +55,8 @@ export class AutonomousAgentController {
         derivToken: body.derivToken,
         currency: body.currency || 'USD',
         symbol: body.symbol,
-        strategy: body.strategy,
+        strategy: normalizedStrategy,
+        agentType: normalizedStrategy,
         riskLevel: body.riskLevel,
         tradingMode: body.tradingMode || 'normal',
         stopLossType: body.stopLossType || 'normal',
