@@ -211,29 +211,62 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // Verificar se tem ticks suficientes para análise
     const modeConfig = this.tradingModeConfigs[config.tradingMode];
     if (userTicks.length < modeConfig.ticksToCollect) {
-      // Log apenas a cada 10 ticks para não poluir
+      // ✅ Log apenas a cada 10 ticks para não poluir (mantido para feedback de progresso)
       if (userTicks.length % 10 === 0) {
-        await this.saveLog(userId, 'DEBUG', 'ANALYZER', 
+        await this.saveLog(userId, 'INFO', 'ANALYZER', 
           `Ticks coletados: ${userTicks.length}/${modeConfig.ticksToCollect}`);
       }
       return;
     }
 
-    // ✅ Log periódico mostrando que está processando (a cada 50 ticks)
-    if (userTicks.length % 50 === 0) {
-      await this.saveLog(userId, 'INFO', 'CORE', 
-        `Agente ativo e processando ticks. Total coletados: ${userTicks.length} | Aguardando sinal...`);
-    }
+    // ✅ Log periódico removido - apenas logs de decisão serão exibidos
 
     // Realizar análise
     const analysis = await this.analyze(userId, userTicks);
     
-    if (analysis && analysis.score >= modeConfig.scoreMinimum) {
-      // Tomar decisão de trade
-      const decision = await this.makeTradeDecision(userId, analysis);
+    if (analysis) {
+      // ✅ Log consolidado da análise e conclusão
+      const config = this.userConfigs.get(userId);
+      const state = this.userStates.get(userId);
       
-      if (decision.action === 'BUY') {
-        await this.executeTrade(userId, decision, analysis);
+      if (analysis.score >= modeConfig.scoreMinimum && analysis.direction) {
+        // Tomar decisão de trade
+        const decision = await this.makeTradeDecision(userId, analysis);
+        
+        if (decision.action === 'BUY') {
+          // ✅ Log de decisão de compra
+          const reasons: string[] = [];
+          if (analysis.technical.direction === analysis.direction) {
+            reasons.push(`Técnica: ${analysis.technical.direction} (Score: ${analysis.technical.score.toFixed(1)}%)`);
+          }
+          if (analysis.statistical.direction === analysis.direction) {
+            reasons.push(`Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`);
+          }
+          
+          await this.saveLog(userId, 'INFO', 'DECISION',
+            `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
+          
+          await this.executeTrade(userId, decision, analysis);
+        } else {
+          // ✅ Log de motivo para não comprar
+          const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
+                           decision.reason === 'STOP_LOSS_BLINDADO' ? 'Stop Loss Blindado ativado' :
+                           decision.reason === 'INVALID_STAKE' ? 'Stake inválido' :
+                           'Aguardando condições ideais';
+          
+          await this.saveLog(userId, 'INFO', 'DECISION',
+            `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
+        }
+      } else {
+        // ✅ Log de análise insuficiente
+        const missingScore = modeConfig.scoreMinimum - analysis.score;
+        const directionIssue = !analysis.direction ? 'Direção indefinida (análises divergentes)' : '';
+        const scoreIssue = analysis.score < modeConfig.scoreMinimum ? `Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)` : '';
+        
+        const issues = [directionIssue, scoreIssue].filter(Boolean).join(' | ');
+        
+        await this.saveLog(userId, 'INFO', 'DECISION',
+          `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${issues || 'Análise insuficiente'}`);
       }
     }
   }
@@ -260,16 +293,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       ? technicalAnalysis.direction
       : null;
 
-    // Log da análise
-    await this.saveLog(userId, 'DEBUG', 'ANALYZER',
-      `Análise técnica: EMA_fast=${technicalAnalysis.emaFast.toFixed(4)}, RSI=${technicalAnalysis.rsi.toFixed(1)}, Momentum=${technicalAnalysis.momentum.toFixed(4)}`);
-    await this.saveLog(userId, 'DEBUG', 'ANALYZER',
-      `Análise estatística: digitpattern=${statisticalAnalysis.digitPattern}`);
-
-    if (direction && combinedScore >= modeConfig.scoreMinimum) {
-      await this.saveLog(userId, 'INFO', 'ANALYZER',
-        `Sinal encontrado. direction=${direction}, score=${combinedScore.toFixed(1)}%`);
-    }
+    // ✅ REMOVIDO: Logs individuais de análise técnica e estatística
+    // Agora apenas o log consolidado será exibido após a decisão
 
     return {
       score: combinedScore,
