@@ -314,3 +314,4 @@ private processSharedTick(tick: any): void {
 *Documento criado em 2025-01-XX*
 
 
+

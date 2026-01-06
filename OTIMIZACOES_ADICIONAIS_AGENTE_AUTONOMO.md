@@ -145,3 +145,4 @@ private readonly ENABLE_DEBUG_LOGS = true; // Não recomendado em produção
 *Versão: 3.0 - Otimizações Adicionais*
 
 
+

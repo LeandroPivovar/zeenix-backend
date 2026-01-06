@@ -62,8 +62,12 @@ const DEFAULT_CONFIG = {
  */
 class RiskManager {
   private config: any;
-  // ✅ Payout fixo de 63% (0.63) para todas as operações Apollo
-  private readonly PAYOUT_APOLLO = 0.63; // 63% - payout padrão das operações Over
+  private payouts: Record<number, number> = {
+    0: 0.63, // Normal (Over 3)
+    1: 0.96, // M1 (Over 4)
+    2: 1.44, // M2 (Over 5)
+    3: 2.23, // M3+ (Over 6)
+  };
 
   constructor(config: any) {
     this.config = config;
@@ -119,16 +123,14 @@ class RiskManager {
     state.martingaleLevel += 1;
 
     // Progressão de Barreiras (Martingale Inteligente)
-    // ✅ Mantém a progressão de barreiras, mas usa payout fixo de 63%
     let barrier = 6;
     if (state.martingaleLevel === 1) barrier = 4;
     else if (state.martingaleLevel === 2) barrier = 5;
     else barrier = 6;
 
-    // ✅ Fatores de Recuperação (igual à Orion)
-    // CONSERVADOR: Recuperar apenas o valor da perda (break-even)
-    // MODERADO: Recuperar 100% das perdas + 25% de lucro
-    // AGRESSIVO: Recuperar 100% das perdas + 50% de lucro
+    const payoutRate = this.payouts[Math.min(state.martingaleLevel, 3)] || 2.23;
+
+    // Fatores de Recuperação
     let factor = 1.0;
     if (state.riskProfile === 'moderado') factor = 1.25;
     else if (state.riskProfile === 'agressivo') factor = 1.50;
@@ -141,16 +143,10 @@ class RiskManager {
       return { stake: this.config.INITIAL_STAKE, barrier: 3 };
     }
 
-    // ✅ Cálculo do martingale usando payout de 63% (0.63)
-    // Fórmula: (perdas_acumuladas × fator) / payout
-    // Exemplo: Se perdeu $1.00 e está em modo conservador:
-    //   nextStake = ($1.00 × 1.0) / 0.63 = $1.59
-    //   Se ganhar: $1.59 × 0.63 = $1.00 de lucro (recupera exatamente o que perdeu)
-    let nextStake = (state.lossAccumulated * factor) / this.PAYOUT_APOLLO;
+    let nextStake = (state.lossAccumulated * factor) / payoutRate;
     nextStake = Math.max(nextStake, 0.35);
-    nextStake = Math.round(nextStake * 100) / 100; // 2 casas decimais
 
-    return { stake: nextStake, barrier };
+    return { stake: Number(nextStake.toFixed(2)), barrier };
   }
 
   registerLoss(state: ApolloUserState, stake: number) {
@@ -190,12 +186,6 @@ export class ApolloStrategy implements IStrategy {
   private ticks: Tick[] = [];
   private apolloUsers = new Map<string, ApolloUserState>();
 
-  // ✅ Rastreamento de logs de stop blindado (para evitar logs duplicados)
-  private stopBlindadoLogsEnviados = new Map<string, boolean>(); // userId -> se já logou ativação
-
-  // ✅ Rastreamento de último Loss Virtual logado (para evitar spam de logs)
-  private ultimoLossVirtualLogado = new Map<string, number>(); // userId -> último loss virtual logado
-
   // Pool de conexões WebSocket por token (reutilização)
   private wsConnections: Map<
     string,
@@ -229,77 +219,22 @@ export class ApolloStrategy implements IStrategy {
 
     const digit = tick.digit;
 
-    // ✅ OTIMIZADO: Processar usuários em paralelo para reduzir latência
-    const activeUsers = Array.from(this.apolloUsers.entries());
-    
-    if (activeUsers.length === 0) {
-      return;
-    }
+    for (const [userId, state] of this.apolloUsers.entries()) {
+      const shouldTrade = ApolloLogic.processTick(state, digit);
 
-    // Processar todos os usuários em paralelo
-    await Promise.all(
-      activeUsers.map(([userId, state]) =>
-        this.processApolloUser(state, digit).catch(error => {
-          this.logger.error(`[APOLLO][${userId}] Erro ao processar:`, error);
-        })
-      )
-    );
-  }
+      // Log de TICK somente com debounce ou se houver mudança relevante no loss virtual para não spammar
+      // Mas o requisito pede "📉 TICK: {digit} | Loss Virtual: {vl}"
+      // Para não inundar o banco/front, vamos logar apenas quando loss virtual mudar ou for > 0
+      // Ou melhor, logar somente para usuário ativo na sessão e talvez filtrar no front
+      // Mas aqui vou logar sempre que o Loss Virtual > 0 ou quando zera, para ter rastro
 
-  /**
-   * ✅ OTIMIZADO: Processa um usuário Apollo individualmente (para processamento paralelo)
-   */
-  private async processApolloUser(state: ApolloUserState, digit: number): Promise<void> {
-    const virtualLossAntes = state.virtualLoss;
-    const shouldTrade = ApolloLogic.processTick(state, digit);
+      if (state.virtualLoss > 0 || shouldTrade) {
+        // Opcional: Logar no console apenas
+      }
 
-    // ✅ Calcular threshold baseado no modo
-    const threshold = state.mode === 'veloz' ? 0 : state.mode === 'balanceado' ? 3 : 5;
-    const ultimoLogado = this.ultimoLossVirtualLogado.get(state.userId) ?? -1;
-
-    // ✅ Log de TICK quando Loss Virtual muda significativamente
-    // Logar quando:
-    // 1. Loss Virtual mudou (aumentou ou zerou) - mas não logar se já logou esse valor
-    // 2. Está próximo do threshold (1 tick antes) - sempre logar
-    // 3. Atingiu o threshold (vai entrar) - sempre logar
-    const mudouSignificativamente = virtualLossAntes !== state.virtualLoss && state.virtualLoss !== ultimoLogado;
-    const proximoDoThreshold = state.virtualLoss > 0 && state.virtualLoss === threshold - 1;
-    const atingiuThreshold = state.virtualLoss >= threshold;
-
-    if (mudouSignificativamente || proximoDoThreshold || atingiuThreshold) {
-      const statusLossVirtual = state.virtualLoss === 0 
-        ? '✅ Resetado' 
-        : state.virtualLoss < threshold 
-          ? `⏳ Acumulando (${state.virtualLoss}/${threshold})`
-          : `🎯 PRONTO (${state.virtualLoss}/${threshold})`;
-
-      this.saveApolloLog(
-        state.userId,
-        'tick',
-        `📊 TICK: ${digit} | Loss Virtual: ${state.virtualLoss} | ${statusLossVirtual} | Modo: ${state.mode.toUpperCase()}`
-      );
-
-      // Atualizar último valor logado
-      this.ultimoLossVirtualLogado.set(state.userId, state.virtualLoss);
-    }
-
-    // ✅ Log de ANÁLISE quando está próximo ou atingiu o threshold
-    if ((proximoDoThreshold || atingiuThreshold) && !state.isOperationActive) {
-      const stakeAtual = state.currentBarrier === 3 ? state.apostaInicial : state.currentStake;
-      const analiseMessage = `🔍 [ANÁLISE ${state.mode.toUpperCase()}]\n` +
-        ` • Dígito Atual: ${digit}\n` +
-        ` • Loss Virtual: ${state.virtualLoss}/${threshold} ${atingiuThreshold ? '✅' : '⏳'}\n` +
-        ` • Barreira: Over ${state.currentBarrier}\n` +
-        ` • Stake: $${stakeAtual.toFixed(2)}\n` +
-        ` • Martingale Level: ${state.martingaleLevel}\n` +
-        `${atingiuThreshold ? '🌊 [DECISÃO] Critérios atendidos. Entrada: Over ' + state.currentBarrier : '⏳ Aguardando threshold...'}`;
-
-      this.saveApolloLog(state.userId, 'analise', analiseMessage);
-      this.logger.log(`[APOLLO][${state.userId}] ${analiseMessage.replace(/\n/g, ' | ')}`);
-    }
-
-    if (shouldTrade && !state.isOperationActive) {
-      await this.executeTradeCycle(state);
+      if (shouldTrade && !state.isOperationActive) {
+        await this.executeTradeCycle(state);
+      }
     }
   }
 
@@ -340,9 +275,6 @@ export class ApolloStrategy implements IStrategy {
 
   async deactivateUser(userId: string): Promise<void> {
     this.apolloUsers.delete(userId);
-    // ✅ Limpar flags de log
-    this.stopBlindadoLogsEnviados.delete(`stop_blindado_ativado_${userId}`);
-    this.ultimoLossVirtualLogado.delete(userId);
     this.saveApolloLog(userId, 'info', '☀️ Usuário DESATIVADO');
   }
 
@@ -350,158 +282,7 @@ export class ApolloStrategy implements IStrategy {
     return this.apolloUsers.get(userId) || null;
   }
 
-  /**
-   * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
-   */
-  hasActiveUsers(): boolean {
-    return this.apolloUsers.size > 0;
-  }
-
   private async executeTradeCycle(state: ApolloUserState): Promise<void> {
-    // ✅ VERIFICAR STOP LOSS BLINDADO ANTES DE QUALQUER OPERAÇÃO
-    try {
-      const stopLossConfig = await this.dataSource.query(
-        `SELECT 
-          COALESCE(loss_limit, 0) as lossLimit,
-          COALESCE(profit_target, 0) as profitTarget,
-          COALESCE(session_balance, 0) as sessionBalance,
-          COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(profit_peak, 0) as profitPeak,
-          stop_blindado_percent as stopBlindadoPercent,
-          is_active
-         FROM ai_user_config 
-         WHERE user_id = ? AND is_active = 1
-         LIMIT 1`,
-        [state.userId],
-      );
-
-      if (stopLossConfig && stopLossConfig.length > 0) {
-        const config = stopLossConfig[0];
-        const profitTarget = parseFloat(config.profitTarget) || 0;
-        const capitalInicial = parseFloat(config.capitalInicial) || 0;
-        const sessionBalance = parseFloat(config.sessionBalance) || 0;
-        const capitalSessao = capitalInicial + sessionBalance;
-        const lucroAtual = sessionBalance;
-
-        // ✅ Verificar STOP WIN (profit target) antes de executar operação
-        if (profitTarget > 0 && lucroAtual >= profitTarget) {
-          this.logger.log(
-            `[APOLLO][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
-          );
-          this.saveApolloLog(state.userId, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
-
-          await this.deactivateApolloUser(state.userId, 'stopped_profit');
-          return;
-        }
-
-        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0 - Dynamic Trailing)
-        // Ativar se atingir 40% da meta. Proteger 50% do lucro máximo (PICO).
-        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
-          let profitPeak = parseFloat(config.profitPeak) || 0;
-
-          // Auto-healing: se lucro atual superou o pico registrado, atualizar pico
-          if (lucroAtual > profitPeak) {
-            const profitPeakAnterior = profitPeak;
-            profitPeak = lucroAtual;
-
-            // ✅ Log quando profit peak aumenta
-            if (profitPeak >= profitTarget * 0.40) {
-              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
-              const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-              const stopBlindado = capitalInicial + protectedAmount;
-
-              this.logger.log(
-                `[APOLLO][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
-              );
-              this.saveApolloLog(
-                state.userId,
-                'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
-              );
-            }
-
-            // Atualizar no banco em background
-            this.dataSource.query(
-              `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-              [profitPeak, state.userId],
-            ).catch(err => this.logger.error(`[APOLLO] Erro ao atualizar profit_peak:`, err));
-          }
-
-          // Ativar apenas se atingiu 40% da meta
-          if (profitPeak >= profitTarget * 0.40) {
-            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
-            const fatorProtecao = stopBlindadoPercent / 100;
-
-            // Trailing Stop: Protege % do PICO de lucro
-            const protectedAmount = profitPeak * fatorProtecao;
-            const stopBlindado = capitalInicial + protectedAmount;
-
-            // ✅ Log quando Stop Blindado é ativado pela primeira vez (só loga se ainda não logou)
-            const stopBlindadoKey = `stop_blindado_ativado_${state.userId}`;
-            if (!this.stopBlindadoLogsEnviados.has(stopBlindadoKey)) {
-              this.stopBlindadoLogsEnviados.set(stopBlindadoKey, true);
-              this.logger.log(
-                `[APOLLO][${state.userId}] 🛡️✅ STOP BLINDADO ATIVADO! | ` +
-                `Meta: $${profitTarget.toFixed(2)} | ` +
-                `40% Meta: $${(profitTarget * 0.40).toFixed(2)} | ` +
-                `Pico Atual: $${profitPeak.toFixed(2)} | ` +
-                `Protegendo: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-                `Stop Level: $${stopBlindado.toFixed(2)}`
-              );
-              this.saveApolloLog(
-                state.userId,
-                'info',
-                `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}% do pico $${profitPeak.toFixed(2)}) | Stop: $${stopBlindado.toFixed(2)}`
-              );
-            }
-
-            // Se capital da sessão caiu abaixo do stop blindado → PARAR
-            if (capitalSessao <= stopBlindado) {
-              const lucroProtegido = capitalSessao - capitalInicial;
-
-              this.logger.warn(
-                `[APOLLO][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-                `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
-                `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`,
-              );
-
-              this.saveApolloLog(
-                state.userId,
-                'alerta',
-                `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`,
-              );
-
-              const deactivationReason =
-                `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-                `(${stopBlindadoPercent}% do pico de $${profitPeak.toFixed(2)})`;
-
-              await this.deactivateApolloUser(state.userId, 'stopped_blindado');
-              return;
-            }
-          }
-        }
-
-        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
-        const lossLimit = parseFloat(config.lossLimit) || 0;
-        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
-
-        if (lossLimit > 0 && perdaAtual >= lossLimit) {
-          this.logger.warn(
-            `[APOLLO][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
-          );
-          this.saveApolloLog(state.userId, 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
-
-          await this.deactivateApolloUser(state.userId, 'stopped_loss');
-          return;
-        }
-      }
-    } catch (error) {
-      this.logger.error(`[APOLLO][${state.userId}] Erro ao verificar stop loss:`, error);
-      // Continuar mesmo se houver erro na verificação (fail-open)
-    }
-
     // Instanciar RiskManager apenas para lógica
     const riskManager = new RiskManager({ INITIAL_STAKE: state.apostaInicial });
 
@@ -565,138 +346,18 @@ export class ApolloStrategy implements IStrategy {
 
     riskManager.updateProfit(state, profit);
 
-    // ✅ Atualizar capital primeiro
-    state.capital += profit;
-
     const statusIcon = isWin ? "✅ WIN " : "❌ LOSS";
-    // ✅ Calcular lucro atual após atualizar capital
-    const currentProfit = state.capital - state.capitalInicial;
+    const currentProfit = state.capital - state.capitalInicial + profit;
 
     this.saveApolloLog(state.userId, 'resultado', `${statusIcon} | Lucro: ${profit > 0 ? '+' : ''}${profit.toFixed(2)} | Saldo Sessão: ${currentProfit > 0 ? '+' : ''}${currentProfit.toFixed(2)}`);
 
-    // ✅ Atualizar session_balance no banco
-    try {
-      await this.dataSource.query(
-        `UPDATE ai_user_config 
-         SET session_balance = ?
-         WHERE user_id = ? AND is_active = 1`,
-        [currentProfit, state.userId],
-      );
-    } catch (error) {
-      this.logger.error(`[APOLLO] Erro ao atualizar session_balance:`, error);
-    }
+    state.capital += profit;
 
-    // ✅ Verificar stop loss e stop win após processar resultado
-    try {
-      const configResult = await this.dataSource.query(
-        `SELECT 
-          COALESCE(loss_limit, 0) as lossLimit,
-          COALESCE(profit_target, 0) as profitTarget,
-          COALESCE(session_balance, 0) as sessionBalance,
-          COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(profit_peak, 0) as profitPeak,
-          stop_blindado_percent as stopBlindadoPercent,
-          is_active
-         FROM ai_user_config 
-         WHERE user_id = ? AND is_active = 1
-         LIMIT 1`,
-        [state.userId],
-      );
-
-      if (configResult && configResult.length > 0) {
-        const config = configResult[0];
-        const lossLimit = parseFloat(config.lossLimit) || 0;
-        const profitTarget = parseFloat(config.profitTarget) || 0;
-        const capitalInicial = parseFloat(config.capitalInicial) || 0;
-
-        // ✅ CORREÇÃO: Usar capital atual do estado em memória (mais preciso que session_balance do banco)
-        const capitalAtualMemoria = state.capital || capitalInicial;
-        const lucroAtual = capitalAtualMemoria - capitalInicial;
-        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
-        const capitalSessao = capitalAtualMemoria;
-
-        // ✅ Verificar STOP WIN (profit target)
-        if (profitTarget > 0 && lucroAtual >= profitTarget) {
-          this.logger.log(
-            `[APOLLO][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`,
-          );
-          this.saveApolloLog(state.userId, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
-
-          if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
-          await this.deactivateApolloUser(state.userId, 'stopped_profit');
-          return;
-        }
-
-        // ✅ STOP LOSS BLINDADO (Dynamic Trailing)
-        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
-          let profitPeak = parseFloat(config.profitPeak) || 0;
-
-          // Auto-healing / Update Peak
-          if (lucroAtual > profitPeak) {
-            const profitPeakAnterior = profitPeak;
-            profitPeak = lucroAtual;
-
-            // ✅ Log quando profit peak aumenta após vitória
-            if (profitPeak >= profitTarget * 0.40) {
-              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
-              const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-              const stopBlindado = capitalInicial + protectedAmount;
-
-              this.logger.log(
-                `[APOLLO][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
-              );
-              this.saveApolloLog(
-                state.userId,
-                'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
-              );
-            }
-
-            // Update DB
-            await this.dataSource.query(
-              `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-              [profitPeak, state.userId]
-            );
-          }
-
-          // Check Stop
-          if (profitPeak >= profitTarget * 0.40) {
-            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
-            const fatorProtecao = stopBlindadoPercent / 100;
-            const protectedAmount = profitPeak * fatorProtecao;
-            const stopBlindado = capitalInicial + protectedAmount;
-
-            if (capitalSessao <= stopBlindado) {
-              const lucroProtegido = capitalSessao - capitalInicial;
-              this.logger.warn(`[APOLLO] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
-              this.saveApolloLog(state.userId, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`);
-
-              const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
-
-              if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
-              await this.deactivateApolloUser(state.userId, 'stopped_blindado');
-              return;
-            }
-          }
-        }
-
-        // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
-        if (lossLimit > 0 && perdaAtual >= lossLimit) {
-          this.logger.warn(
-            `[APOLLO][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
-          );
-          this.saveApolloLog(state.userId, 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
-
-          if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
-          await this.deactivateApolloUser(state.userId, 'stopped_loss');
-          return;
-        }
-      }
-    } catch (error) {
-      this.logger.error(`[APOLLO][${state.userId}] Erro ao verificar limites após resultado:`, error);
-      // Continuar mesmo se houver erro na verificação (fail-open)
+    if (currentProfit >= state.profitTarget) {
+      this.saveApolloLog(state.userId, 'info', "🏆 [META] Objetivo Diário Conquistado!");
+      if (tradeId) await this.updateApolloTradeRecord(state, tradeId, isWin ? 'WON' : 'LOST', result, profit);
+      await this.deactivateApolloUser(state.userId, 'target_reached');
+      return;
     }
 
     if (isWin) {
@@ -711,22 +372,7 @@ export class ApolloStrategy implements IStrategy {
       state.currentStake = params.stake;
       state.currentBarrier = params.barrier;
 
-      // ✅ Log detalhado do cálculo do martingale
-      const modoMartingale = state.riskProfile === 'conservador' ? 'CONSERVADOR' : 
-                            state.riskProfile === 'moderado' ? 'MODERADO' : 'AGRESSIVO';
-      const factor = state.riskProfile === 'conservador' ? 1.0 : 
-                    state.riskProfile === 'moderado' ? 1.25 : 1.50;
-      
-      this.saveApolloLog(
-        state.userId, 
-        'info', 
-        `🔄 MARTINGALE (${modoMartingale}) | Nível: ${state.martingaleLevel} | Perda acumulada: $${state.lossAccumulated.toFixed(2)} | Stake calculado: $${params.stake.toFixed(2)} | Barreira: Over ${params.barrier}`
-      );
-      this.saveApolloLog(
-        state.userId, 
-        'info', 
-        `🚀 [TRADE] Comprando Over ${params.barrier} | Stake: $${params.stake.toFixed(2)} <-- Barreira subiu/ajuste`
-      );
+      this.saveApolloLog(state.userId, 'info', `🚀 [TRADE] Comprando Over ${params.barrier} | Stake: $${params.stake.toFixed(2)} <-- Barreira subiu/ajuste`);
 
       setTimeout(() => {
         this.executeTradeCycle(state);
@@ -896,55 +542,11 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private async deactivateApolloUser(userId: string, reason: string = 'stopped'): Promise<void> {
-    let deactivationReason = reason;
-    
-    // ✅ Se for stop blindado, buscar informações para o log
-    if (reason === 'stopped_blindado') {
-      try {
-        const config = await this.dataSource.query(
-          `SELECT 
-            COALESCE(stake_amount, 0) as capitalInicial,
-            COALESCE(session_balance, 0) as sessionBalance,
-            COALESCE(profit_peak, 0) as profitPeak,
-            COALESCE(stop_blindado_percent, 50.00) as stopBlindadoPercent
-           FROM ai_user_config 
-           WHERE user_id = ? AND is_active = 1
-           LIMIT 1`,
-          [userId],
-        );
-
-        if (config && config.length > 0) {
-          const capitalInicial = parseFloat(config[0].capitalInicial) || 0;
-          const sessionBalance = parseFloat(config[0].sessionBalance) || 0;
-          const profitPeak = parseFloat(config[0].profitPeak) || 0;
-          const stopBlindadoPercent = parseFloat(config[0].stopBlindadoPercent) || 50.0;
-          const lucroProtegido = sessionBalance;
-
-          deactivationReason =
-            `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-            `(${stopBlindadoPercent}% do pico de $${profitPeak.toFixed(2)})`;
-
-          this.logger.log(
-            `[APOLLO][${userId}] 🛡️ IA DESATIVADA POR STOP BLINDADO | ` +
-            `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-            `Capital Sessão final: $${(capitalInicial + sessionBalance).toFixed(2)}`,
-          );
-        }
-      } catch (error) {
-        this.logger.error(`[APOLLO] Erro ao buscar informações do stop blindado:`, error);
-      }
-    }
-
     await this.dataSource.query(
-      `UPDATE ai_user_config 
-       SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() 
-       WHERE user_id = ? AND is_active = 1`,
-      [reason, deactivationReason, userId],
+      `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+      [reason, userId],
     );
     this.apolloUsers.delete(userId);
-    
-    // ✅ Limpar flag de log de stop blindado
-    this.stopBlindadoLogsEnviados.delete(`stop_blindado_ativado_${userId}`);
   }
 
   /**

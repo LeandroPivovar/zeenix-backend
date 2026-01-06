@@ -102,7 +102,7 @@ export class AtlasStrategy implements IStrategy {
   private appId: string;
   private maxTicks = 50; // ✅ ATLAS: Buffer menor para análise ultrarrápida
 
-  // ✅ Sistema de logs
+  // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
     userId: string;
     symbol: 'R_10' | 'R_25' | 'SISTEMA';
@@ -172,8 +172,7 @@ export class AtlasStrategy implements IStrategy {
 
     if (activeUsers.length === 0) return;
 
-    // ✅ OTIMIZADO: Processar usuários em paralelo para reduzir latência
-    const processPromises = activeUsers.map(state => {
+    for (const state of activeUsers) {
       // Adicionar ao buffer do usuário
       state.digitBuffer.push(tick.digit);
       if (state.digitBuffer.length > 100) {
@@ -187,12 +186,8 @@ export class AtlasStrategy implements IStrategy {
         this.saveAtlasLog(state.userId, assetSymbol, 'info', `💓 IA Atlas operando | Analisando mercado ${assetSymbol}...`);
       }
 
-      return this.processAtlasStrategies(tick, state).catch(error => {
-        this.logger.error(`[ATLAS][${state.userId}] Erro ao processar:`, error);
-      });
-    });
-
-    await Promise.all(processPromises);
+      await this.processAtlasStrategies(tick, state);
+    }
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
@@ -1785,12 +1780,5 @@ export class AtlasStrategy implements IStrategy {
 
   getActiveUsers(): AtlasUserState[] {
     return Array.from(this.atlasUsers.values()).filter((u) => !u.isStopped);
-  }
-
-  /**
-   * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
-   */
-  hasActiveUsers(): boolean {
-    return this.atlasUsers.size > 0;
   }
 }

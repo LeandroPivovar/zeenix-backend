@@ -120,3 +120,4 @@ Para uma solução permanente, considerar:
 *Versão: 1.0 - Correção Crítica de CPU*
 
 
+

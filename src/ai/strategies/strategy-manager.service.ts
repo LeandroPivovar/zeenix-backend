@@ -43,7 +43,6 @@ export class StrategyManagerService implements OnModuleInit {
 
   /**
    * Processa um tick para todas as estratégias ativas
-   * ✅ OTIMIZADO: Verifica se há usuários ativos ANTES de processar (reduz CPU em 60-80%)
    * ✅ OTIMIZADO: Processa estratégias em paralelo para reduzir latência
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -51,55 +50,33 @@ export class StrategyManagerService implements OnModuleInit {
 
     // ORION agora usa R_100 como símbolo padrão
     if (!symbol || symbol === 'R_100') {
-      // ✅ OTIMIZAÇÃO CRÍTICA: Verificar usuários antes de adicionar à fila
-      if (this.orionStrategy.hasActiveUsers?.()) {
-        promises.push(
-          this.orionStrategy.processTick(tick, 'R_100').catch(error => {
-            this.logger.error('[StrategyManager][Orion] Erro:', error);
-          })
-        );
-      }
-      
-      if (this.apolloStrategy.hasActiveUsers?.()) {
-        promises.push(
-          this.apolloStrategy.processTick(tick, 'R_100').catch(error => {
-            this.logger.error('[StrategyManager][Apollo] Erro:', error);
-          })
-        );
-      }
-      
-      if (this.titanStrategy.hasActiveUsers?.()) {
-        promises.push(
-          this.titanStrategy.processTick(tick, 'R_100').catch(error => {
-            this.logger.error('[StrategyManager][Titan] Erro:', error);
-          })
-        );
-      }
-      
-      if (this.nexusStrategy.hasActiveUsers?.()) {
-        promises.push(
-          this.nexusStrategy.processTick(tick, 'R_100').catch(error => {
-            this.logger.error('[StrategyManager][Nexus] Erro:', error);
-          })
-        );
-      }
+      promises.push(
+        this.orionStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Orion] Erro:', error);
+        }),
+        this.apolloStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Apollo] Erro:', error);
+        }),
+        this.titanStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Titan] Erro:', error);
+        }),
+        this.nexusStrategy.processTick(tick, 'R_100').catch(error => {
+          this.logger.error('[StrategyManager][Nexus] Erro:', error);
+        })
+      );
     }
 
     // ATLAS processa R_10, R_25
     if (symbol && ['R_10', 'R_25'].includes(symbol)) {
-      if (this.atlasStrategy.hasActiveUsers?.()) {
-        promises.push(
-          this.atlasStrategy.processTick(tick, symbol).catch(error => {
-            this.logger.error('[StrategyManager][Atlas] Erro:', error);
-          })
-        );
-      }
+      promises.push(
+        this.atlasStrategy.processTick(tick, symbol).catch(error => {
+          this.logger.error('[StrategyManager][Atlas] Erro:', error);
+        })
+      );
     }
 
-    // Processar apenas estratégias com usuários ativos
-    if (promises.length > 0) {
-      await Promise.all(promises);
-    }
+    // Processar todas as estratégias em paralelo
+    await Promise.all(promises);
   }
 
   /**

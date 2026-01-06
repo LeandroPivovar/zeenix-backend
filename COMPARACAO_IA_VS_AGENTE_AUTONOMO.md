@@ -149,3 +149,4 @@ await this.ensureWebSocketConnection(userId); // Por usuário!
 *Versão: 1.0 - Análise Comparativa*
 
 
+

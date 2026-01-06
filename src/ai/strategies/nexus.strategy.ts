@@ -101,69 +101,26 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        
-        // ✅ NEXUS: Payout varia conforme a barreira (conforme documentação)
-        // -0.15: ~30% payout | -0.25: ~25% payout | -0.35: ~20% payout | -0.45: ~15% payout
-        let payoutRate = 0.30; // Entrada Normal (-0.15)
-        if (this.consecutiveLosses === 1) {
-            payoutRate = 0.25; // Recuperação M1 (-0.25)
-        } else if (this.consecutiveLosses === 2) {
-            payoutRate = 0.20; // Recuperação M2 (-0.35)
-        } else if (this.consecutiveLosses >= 3) {
-            payoutRate = 0.15; // Recuperação M3+ (-0.45)
-        }
+        const PAYOUT_RATE = 0.30;
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    // ✅ Conservador: Recuperar apenas o valor perdido (break-even)
-                    nextStake = this.totalLossAccumulated / payoutRate;
-                    if (logger && userId && symbol && logCallback) {
-                        logger.log(
-                            `[NEXUS][${userId}] 🔄 MARTINGALE (CONSERVADOR) | ` +
-                            `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
-                            `Payout: ${(payoutRate * 100).toFixed(0)}% | Stake calculado: $${nextStake.toFixed(2)}`
-                        );
-                    }
+                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
                 } else {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
-                    if (logger && userId && symbol && logCallback) {
-                        logger.log(`[NEXUS][${userId}] 🛑 Limite de 5 martingales atingido. Resetando para aposta base.`);
-                    }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                // ✅ Moderado: Recuperar 100% das perdas + 25% de lucro
                 const targetRecovery = this.totalLossAccumulated + (baseStake * 0.25);
-                nextStake = targetRecovery / payoutRate;
-                if (logger && userId && symbol && logCallback) {
-                    logger.log(
-                        `[NEXUS][${userId}] 🔄 MARTINGALE (MODERADO) | ` +
-                        `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
-                        `Meta recuperação: $${targetRecovery.toFixed(2)} | Payout: ${(payoutRate * 100).toFixed(0)}% | Stake: $${nextStake.toFixed(2)}`
-                    );
-                }
+                nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                // ✅ Agressivo: Recuperar 100% das perdas + 50% de lucro
                 const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
-                nextStake = targetRecovery / payoutRate;
-                if (logger && userId && symbol && logCallback) {
-                    logger.log(
-                        `[NEXUS][${userId}] 🔄 MARTINGALE (AGRESSIVO) | ` +
-                        `Nível: ${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | ` +
-                        `Meta recuperação: $${targetRecovery.toFixed(2)} | Payout: ${(payoutRate * 100).toFixed(0)}% | Stake: $${nextStake.toFixed(2)}`
-                    );
-                }
+                nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {
-            // ✅ Soros: Reinvestir lucro da última vitória (apenas 1 nível)
             nextStake = baseStake + lastProfit;
-            if (logger && userId && symbol && logCallback) {
-                logger.log(
-                    `[NEXUS][${userId}] 💰 SOROS | Base: $${baseStake.toFixed(2)} + Lucro: $${lastProfit.toFixed(2)} = Stake: $${nextStake.toFixed(2)}`
-                );
-            }
         }
 
         nextStake = Math.round(nextStake * 100) / 100;
@@ -203,8 +160,6 @@ interface NexusUserState {
     derivToken: string;
     currency: string;
     capital: number;
-    capitalInicial: number;
-    maxBalance: number;
     apostaInicial: number;
     modoMartingale: ModoMartingale;
     mode: 'VELOZ' | 'BALANCEADO' | 'PRECISO';
@@ -214,7 +169,6 @@ interface NexusUserState {
     vitoriasConsecutivas: number;
     ultimoLucro: number;
     ticksColetados: number;
-    stopBlindadoLogsEnviados: Set<string>;
 }
 
 @Injectable()
@@ -230,9 +184,6 @@ export class NexusStrategy implements IStrategy {
     private wsConnections: Map<string, WsConnection> = new Map();
     private logQueue: any[] = [];
     private logProcessing = false;
-
-    // ✅ Rastreamento de logs de coleta de dados (para evitar logs duplicados)
-    private coletaLogsEnviados = new Map<string, Set<number>>(); // userId -> Set de marcos já logados
 
     constructor(
         private dataSource: DataSource,
@@ -250,115 +201,20 @@ export class NexusStrategy implements IStrategy {
         this.ticks.push(tick);
         if (this.ticks.length > 100) this.ticks.shift();
 
-        // ✅ Log de debug: verificar se está recebendo ticks (a cada 20 ticks quando há usuários)
-        if (this.users.size > 0 && this.ticks.length % 20 === 0) {
-            this.logger.debug(`[NEXUS] 📥 Tick #${this.ticks.length} recebido | Valor: ${tick.value.toFixed(2)} | Dígito: ${tick.digit} | Usuários ativos: ${this.users.size}`);
-        }
-
-        // ✅ OTIMIZADO: Processar usuários em batches paralelos (limitado a 5 simultâneos) para reduzir latência
-        const usersToProcess = Array.from(this.users.values());
-
-        if (usersToProcess.length === 0) {
-            return;
-        }
-
-        // Processar em batches de 5 usuários simultaneamente
-        for (let i = 0; i < usersToProcess.length; i += 5) {
-            const batch = usersToProcess.slice(i, i + 5);
-            await Promise.all(
-                batch.map(state =>
-                    this.processNexusUserTick(state).catch(error => {
-                        this.logger.error(`[NEXUS][${state.userId}] Erro ao processar tick:`, error);
-                    })
-                )
-            );
-        }
-    }
-
-    /**
-     * ✅ OTIMIZADO: Processa um usuário Nexus individualmente (para processamento paralelo em batches)
-     */
-    private async processNexusUserTick(state: NexusUserState): Promise<void> {
-        try {
+        for (const state of this.users.values()) {
             state.ticksColetados++;
-            
-            // ✅ Log de coleta de ticks (similar à Orion)
-            const requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
-            const ticksAtuais = state.ticksColetados;
-            const ticksFaltando = requiredTicks - ticksAtuais;
-            const key = `nexus_${state.userId}`;
-            
-            if (ticksAtuais < requiredTicks) {
-                // ✅ Logar apenas uma vez quando começar a coletar
-                if (!this.coletaLogsEnviados.has(key)) {
-                    this.coletaLogsEnviados.set(key, new Set());
-                    this.saveNexusLog(state.userId, this.symbol, 'info', 
-                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Coleta inicial iniciada.`);
-                }
-                
-                // ✅ Logar progresso: a cada tick para VELOZ (10 ticks), a cada 2 para BALANCEADO (20 ticks), a cada 5 para PRECISO (50 ticks)
-                const intervaloLog = state.mode === 'VELOZ' ? 1 : state.mode === 'BALANCEADO' ? 2 : 5;
-                if (ticksAtuais % intervaloLog === 0) {
-                    this.logger.debug(`[NEXUS][${state.userId}] Coletando amostra (${ticksAtuais}/${requiredTicks})`);
-                    this.saveNexusLog(state.userId, this.symbol, 'info', 
-                        `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${state.mode} | Ticks coletados: ${ticksAtuais}/${requiredTicks} | Faltam: ${ticksFaltando}`);
-                }
-                
-                return; // Continuar coletando
-            }
-            
-            // ✅ Logar quando completar a coleta (apenas uma vez)
-            if (ticksAtuais === requiredTicks) {
-                if (this.coletaLogsEnviados.has(key)) {
-                    const marcosLogados = this.coletaLogsEnviados.get(key)!;
-                    if (!marcosLogados.has(100)) {
-                        marcosLogados.add(100);
-                        this.saveNexusLog(state.userId, this.symbol, 'info', 
-                            `✅ DADOS COLETADOS | Modo: ${state.mode} | Amostra completa: ${requiredTicks} ticks | Iniciando operações...`);
-                    }
-                }
-            }
-            
-            // ✅ Log de tick quando já coletou dados suficientes (a cada 10 ticks para não spammar)
-            if (ticksAtuais >= requiredTicks && ticksAtuais % 10 === 0) {
-                const ultimoTick = this.ticks[this.ticks.length - 1];
-                const digit = ultimoTick.digit;
-                const paridade = digit % 2 === 0 ? 'PAR' : 'IMPAR';
-                this.saveNexusLog(state.userId, this.symbol, 'tick', 
-                    `📊 TICK: ${digit} (${paridade}) | Valor: ${ultimoTick.value.toFixed(2)} | Modo: ${state.mode} | Analisando...`);
-            }
-            
-            // ✅ Processar usuário apenas se já coletou ticks suficientes
-            if (ticksAtuais >= requiredTicks) {
-                await this.processUser(state);
-            }
-        } catch (error) {
-            this.logger.error(`[NEXUS][${state.userId}] Erro ao processar tick:`, error);
+            await this.processUser(state);
         }
     }
 
     private async processUser(state: NexusUserState): Promise<void> {
-        if (state.isOperationActive) {
-            this.logger.debug(`[NEXUS][${state.userId}] Operação ativa, pulando`);
-            return;
-        }
-        
+        if (state.isOperationActive) return;
         const riskManager = this.riskManagers.get(state.userId);
-        if (!riskManager) {
-            this.logger.warn(`[NEXUS][${state.userId}] ⚠️ RiskManager não encontrado!`);
-            return;
-        }
+        if (!riskManager) return;
 
         const signal = this.check_signal(state, riskManager);
-        if (!signal) {
-            // ✅ Log periódico quando não há sinal (a cada 20 ticks para não spammar)
-            if (state.ticksColetados % 20 === 0 && state.ticksColetados >= (state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50)) {
-                this.logger.debug(`[NEXUS][${state.userId}] Aguardando sinal | Ticks coletados: ${state.ticksColetados} | Buffer: ${this.ticks.length}`);
-            }
-            return;
-        }
+        if (!signal) return;
 
-        this.logger.log(`[NEXUS][${state.userId}] 🎯 SINAL GERADO: ${signal}`);
         await this.executeOperation(state, signal);
     }
 
@@ -366,134 +222,33 @@ export class NexusStrategy implements IStrategy {
         let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
         if (state.ticksColetados < requiredTicks) return null;
 
-        // ✅ Verificar se temos ticks suficientes no buffer global
-        if (this.ticks.length < requiredTicks) {
-            // ✅ Log quando não há ticks suficientes no buffer
-            if (state.ticksColetados % 10 === 0) {
-                this.saveNexusLog(state.userId, this.symbol, 'info', 
-                    `⏳ Aguardando buffer de ticks | Buffer: ${this.ticks.length}/${requiredTicks} | Coletados: ${state.ticksColetados}`);
-            }
-            return null;
-        }
-
         const lastTicks = this.ticks.slice(-requiredTicks);
-        if (lastTicks.length < requiredTicks) return null;
+        if (lastTicks.length < 5) return null;
 
         let signal: DigitParity | null = null;
-        let analiseMessage = '';
 
         if (state.mode === 'VELOZ') {
-            // ✅ Pegar os últimos 3 ticks (mais recentes primeiro)
             const t = lastTicks.slice(-3);
-            const ultimoTick = this.ticks[this.ticks.length - 1];
-            const valorAtual = ultimoTick.value;
-            
-            // ✅ CORREÇÃO: t[0] é o mais antigo, t[1] é o do meio, t[2] é o mais recente
-            // Para momentum de alta: t[2] > t[1] > t[0] (mais recente > meio > antigo)
-            const tickAntigo = t[0]?.value || 0;
-            const tickMeio = t[1]?.value || 0;
-            const tickRecente = t[2]?.value || 0;
-            
-            // ✅ Log de análise mesmo quando não há sinal (para mostrar o que está sendo analisado)
-            const diferenca1 = tickMeio - tickAntigo;
-            const diferenca2 = tickRecente - tickMeio;
-            const tendencia = diferenca1 > 0 && diferenca2 > 0 ? '📈 ALTA' : diferenca1 < 0 && diferenca2 < 0 ? '📉 BAIXA' : '➡️ LATERAL';
-            
-            analiseMessage = `🔍 [ANÁLISE VELOZ]\n` +
-                ` • Últimos 3 ticks: ${tickAntigo.toFixed(2)} → ${tickMeio.toFixed(2)} → ${tickRecente.toFixed(2)}\n` +
-                ` • Variações: +${diferenca1.toFixed(2)} → +${diferenca2.toFixed(2)}\n` +
-                ` • Tendência: ${tendencia}\n` +
-                ` • Valor atual: ${valorAtual.toFixed(2)}\n` +
-                ` • Dígito: ${ultimoTick.digit} (${ultimoTick.digit % 2 === 0 ? 'PAR' : 'IMPAR'})\n` +
-                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
-            
-            // ✅ Verificar momentum: mais recente > meio > antigo
-            if (t.length >= 3 && tickRecente > tickMeio && tickMeio > tickAntigo) {
+            if (t[2].value > t[1].value && t[1].value > t[0].value) {
                 signal = 'PAR';
-                analiseMessage += `\n🌊 [DECISÃO] Momentum de ALTA detectado (3 subidas consecutivas)\n` +
-                    `✅ SINAL: Higher (CALL) | Confiança: ALTA`;
-                this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | Momentum de alta confirmado`);
-            } else {
-                // ✅ Logar análise mesmo sem sinal (a cada 5 ticks para não spammar)
-                if (state.ticksColetados % 5 === 0) {
-                    analiseMessage += `\n⏳ Aguardando momentum de alta (3 subidas consecutivas)...`;
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                }
+                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (3 subidas consecutivas)`);
             }
         } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
             const currentPrice = lastTicks[lastTicks.length - 1].value;
-            const ultimoTick = this.ticks[this.ticks.length - 1];
-            
-            const distanciaSMA = ((currentPrice - sma50) / sma50) * 100;
-            const posicao = currentPrice > sma50 ? 'ACIMA' : 'ABAIXO';
-            
-            analiseMessage = `🔍 [ANÁLISE BALANCEADO]\n` +
-                ` • Preço atual: ${currentPrice.toFixed(2)}\n` +
-                ` • SMA(50): ${sma50.toFixed(2)}\n` +
-                ` • Posição: ${posicao} da média (${Math.abs(distanciaSMA).toFixed(2)}%)\n` +
-                ` • Últimos 4 ticks: ${lastTicks.slice(-4).map(t => t.value.toFixed(2)).join(' → ')}\n` +
-                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
 
-            // ✅ BALANCEADO: Tendência Macro de Alta (SMA > Preço) + 3 ticks consecutivos de queda (Correção) + Entrada na reversão
             if (currentPrice > sma50) {
-                // Tendência de alta confirmada (preço acima da SMA)
-                const t = lastTicks.slice(-3); // Últimos 3 ticks para verificar correção
-                // ✅ Verificar 3 ticks consecutivos de queda: t[2] < t[1] < t[0] (mais recente < meio < antigo)
-                const temCorrecao = t.length >= 3 && t[2].value < t[1].value && t[1].value < t[0].value;
-                
-                if (temCorrecao) {
-                    // ✅ Correção detectada, entrada na reversão (expectativa de volta a subir)
+                const t = lastTicks.slice(-4);
+                if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
                     signal = 'PAR';
-                    analiseMessage += `\n🌊 [DECISÃO] Pullback detectado em Tendência de Alta\n` +
-                        ` • Correção: 3 ticks consecutivos de queda\n` +
-                        ` • Entrada: Reversão esperada (Higher)\n` +
-                        `✅ SINAL: Higher (CALL) | Confiança: MÉDIA`;
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                    this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | Pullback em alta confirmado`);
-                } else {
-                    // ✅ Logar análise mesmo sem sinal
-                    if (state.ticksColetados % 10 === 0) {
-                        analiseMessage += `\n⏳ Aguardando pullback (3 ticks consecutivos de queda) em tendência de alta...`;
-                        this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                    }
-                }
-            } else {
-                // ✅ Logar quando está abaixo da média
-                if (state.ticksColetados % 10 === 0) {
-                    analiseMessage += `\n⏳ Preço abaixo da média. Aguardando tendência de alta (SMA > Preço)...`;
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE BALANCEADO] Pullback detectado em Tendência de Alta`);
                 }
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
-            const ultimoTick = this.ticks[this.ticks.length - 1];
-            const valorAtual = ultimoTick.value;
-            
-            const statusRSI = rsi < 20 ? 'EXAUSTÃO (Oversold)' : rsi > 80 ? 'SOBRECOMPRA (Overbought)' : rsi < 30 ? 'PRÓXIMO DE EXAUSTÃO' : rsi > 70 ? 'PRÓXIMO DE SOBRECOMPRA' : 'NEUTRO';
-            const distanciaExaustao = 20 - rsi;
-            
-            analiseMessage = `🔍 [ANÁLISE PRECISO]\n` +
-                ` • Valor atual: ${valorAtual.toFixed(2)}\n` +
-                ` • RSI(14): ${rsi.toFixed(2)}\n` +
-                ` • Status: ${statusRSI}\n` +
-                ` • Distância da exaustão: ${distanciaExaustao > 0 ? distanciaExaustao.toFixed(2) : '0.00'} pontos\n` +
-                ` • Últimos 5 ticks: ${lastTicks.slice(-5).map(t => t.value.toFixed(2)).join(' → ')}\n` +
-                ` • Ticks analisados: ${lastTicks.length}/${requiredTicks}`;
-            
             if (rsi < 20) {
                 signal = 'PAR';
-                analiseMessage += `\n🌊 [DECISÃO] RSI em exaustão (${rsi.toFixed(2)}) - Reversão esperada\n` +
-                    `✅ SINAL: Higher (CALL) | Confiança: ALTA`;
-                this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                this.saveNexusLog(state.userId, this.symbol, 'sinal', `✅ SINAL GERADO: Higher (CALL) | RSI em exaustão confirmado`);
-            } else {
-                // ✅ Logar análise mesmo sem sinal
-                if (state.ticksColetados % 10 === 0) {
-                    analiseMessage += `\n⏳ Aguardando RSI < 20 (exaustão)... Atual: ${rsi.toFixed(2)}`;
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', analiseMessage);
-                }
+                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO] RSI em exaustão (${rsi.toFixed(2)})`);
             }
         }
 
@@ -532,13 +287,11 @@ export class NexusStrategy implements IStrategy {
 
         this.users.set(userId, {
             userId, derivToken, currency: currency || 'USD',
-            capital: stakeAmount, capitalInicial: stakeAmount, maxBalance: stakeAmount,
-            apostaInicial: entryValue || 0.35,
+            capital: stakeAmount, apostaInicial: entryValue || 0.35,
             modoMartingale: modoMartingale || 'conservador',
             mode: nexusMode, originalMode: nexusMode,
             lastDirection: null, isOperationActive: false,
-            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0,
-            stopBlindadoLogsEnviados: new Set()
+            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
         });
 
         this.riskManagers.set(userId, new RiskManager(
@@ -551,164 +304,14 @@ export class NexusStrategy implements IStrategy {
     }
 
     async deactivateUser(userId: string): Promise<void> {
-        const state = this.users.get(userId);
-        if (state) {
-            state.stopBlindadoLogsEnviados.clear();
-        }
         this.users.delete(userId);
         this.riskManagers.delete(userId);
-        // ✅ Limpar flags de log
-        this.coletaLogsEnviados.delete(`nexus_${userId}`);
     }
 
     getUserState(userId: string) { return this.users.get(userId); }
 
-    /**
-     * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
-     */
-    hasActiveUsers(): boolean {
-        return this.users.size > 0;
-    }
-
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
         const riskManager = this.riskManagers.get(state.userId)!;
-        
-        // ✅ Buscar configuração do usuário
-        const configResult = await this.dataSource.query(
-            `SELECT profit_target, loss_limit, stop_blindado_percent, profit_peak, session_balance
-             FROM ai_user_config 
-             WHERE user_id = ? AND is_active = 1
-             LIMIT 1`,
-            [state.userId]
-        );
-        
-        const config = configResult && configResult.length > 0 ? configResult[0] : {};
-        const profitTarget = parseFloat(config.profit_target) || riskManager.getProfitTarget();
-        const lossLimit = parseFloat(config.loss_limit) || 50;
-        const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-        let profitPeak = parseFloat(config.profit_peak) || 0;
-        
-        // ✅ Atualizar maxBalance se necessário
-        if (state.capital > state.maxBalance) {
-            state.maxBalance = state.capital;
-        }
-        
-        const capitalInicial = state.capitalInicial;
-        const capitalSessao = state.capital;
-        const lucroAtual = capitalSessao - capitalInicial;
-        
-        // ✅ Verificar META DE LUCRO antes da operação
-        if (profitTarget > 0 && lucroAtual >= profitTarget) {
-            this.logger.log(
-                `[NEXUS][${state.mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`
-            );
-            this.saveNexusLog(state.userId, this.symbol, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
-            
-            await this.dataSource.query(
-                `UPDATE ai_user_config 
-                 SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
-                 WHERE user_id = ? AND is_active = 1`,
-                [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId]
-            );
-            
-            await this.deactivateUser(state.userId);
-            return;
-        }
-        
-        // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação
-        if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
-            // Auto-healing: se lucro atual superou o pico registrado, atualizar pico
-            if (lucroAtual > profitPeak) {
-                const profitPeakAnterior = profitPeak;
-                profitPeak = lucroAtual;
-                
-                // ✅ Log quando profit peak aumenta
-                if (profitPeak >= profitTarget * 0.40) {
-                    const fatorProtecao = stopBlindadoPercent / 100;
-                    const protectedAmount = profitPeak * fatorProtecao;
-                    const stopBlindado = capitalInicial + protectedAmount;
-                    
-                    this.logger.log(
-                        `[NEXUS][${state.mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                        `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                        `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
-                    );
-                    this.saveNexusLog(
-                        state.userId,
-                        this.symbol,
-                        'info',
-                        `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
-                    );
-                }
-                
-                // Atualizar no banco em background
-                this.dataSource.query(
-                    `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-                    [profitPeak, state.userId]
-                ).catch(err => this.logger.error(`[NEXUS] Erro ao atualizar profit_peak:`, err));
-            }
-            
-            // Ativar apenas se atingiu 40% da meta
-            if (profitPeak >= profitTarget * 0.40) {
-                const fatorProtecao = stopBlindadoPercent / 100;
-                const protectedAmount = profitPeak * fatorProtecao;
-                const stopBlindado = capitalInicial + protectedAmount;
-                
-                // ✅ Log quando Stop Blindado é ativado pela primeira vez
-                const stopBlindadoKey = 'stop_blindado_ativado';
-                if (!state.stopBlindadoLogsEnviados.has(stopBlindadoKey)) {
-                    state.stopBlindadoLogsEnviados.add(stopBlindadoKey);
-                    this.logger.log(
-                        `[NEXUS][${state.mode}][${state.userId}] 🛡️✅ STOP BLINDADO ATIVADO! | ` +
-                        `Meta: $${profitTarget.toFixed(2)} | ` +
-                        `40% Meta: $${(profitTarget * 0.40).toFixed(2)} | ` +
-                        `Pico Atual: $${profitPeak.toFixed(2)} | ` +
-                        `Protegendo: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-                        `Stop Level: $${stopBlindado.toFixed(2)}`
-                    );
-                    this.saveNexusLog(
-                        state.userId,
-                        this.symbol,
-                        'info',
-                        `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}% do pico $${profitPeak.toFixed(2)}) | Stop: $${stopBlindado.toFixed(2)}`
-                    );
-                }
-                
-                // Se capital da sessão caiu abaixo do stop blindado → PARAR
-                if (capitalSessao <= stopBlindado) {
-                    const lucroProtegido = capitalSessao - capitalInicial;
-                    
-                    this.logger.warn(
-                        `[NEXUS][${state.mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-                        `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
-                        `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`
-                    );
-                    
-                    this.saveNexusLog(
-                        state.userId,
-                        this.symbol,
-                        'alerta',
-                        `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
-                    );
-                    
-                    const deactivationReason =
-                        `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
-                        `(${stopBlindadoPercent}% do pico de $${profitPeak.toFixed(2)})`;
-                    
-                    // Desativar a IA
-                    await this.dataSource.query(
-                        `UPDATE ai_user_config 
-                         SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-                         WHERE user_id = ? AND is_active = 1`,
-                        [deactivationReason, state.userId]
-                    );
-                    
-                    await this.deactivateUser(state.userId);
-                    return; // NÃO EXECUTAR OPERAÇÃO
-                }
-            }
-        }
-        
         const stake = riskManager.calculateStake(
             state.capital,
             state.apostaInicial,
@@ -726,44 +329,22 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
+        let barrier = '-0.15';
+        if (riskManager.consecutiveLosses === 1) barrier = '-0.25';
+        else if (riskManager.consecutiveLosses === 2) barrier = '-0.35';
+
         state.isOperationActive = true;
-        let tradeId: number | null = null;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
-            
-            // ✅ Calcular barreira dinâmica
-            let barrier = '-0.15';
-            if (riskManager.consecutiveLosses === 1) {
-                barrier = '-0.25';
-            } else if (riskManager.consecutiveLosses === 2) {
-                barrier = '-0.35';
-            } else if (riskManager.consecutiveLosses >= 3) {
-                barrier = '-0.45';
-            }
-            
-            tradeId = await this.createTradeRecord(state, direction, stake, currentPrice, barrier);
+            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            // ✅ NEXUS usa Higher/Lower com barreira negativa (conforme documentação)
-            // Higher = CALL (direção de alta), Lower = PUT (direção de baixa)
-            // Barreira dinâmica já calculada acima
-            
-            // Direction: PAR = Higher (CALL), IMPAR = Lower (PUT)
-            const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
-            const directionDisplay = direction === 'PAR' ? 'Higher (CALL)' : 'Lower (PUT)';
-            
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', 
-                `🎯 ENTRADA CONFIRMADA: ${directionDisplay} | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: CALL | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
 
-            // ✅ NEXUS: Para contratos CALL/PUT com barreira, a API Deriv requer mínimo de 5 ticks
-            // A documentação menciona 5 ticks (padrão) ou 1 tick (veloz extremo), mas com barreira só funciona com 5+
-            const duration = 5; // Sempre 5 ticks para contratos com barreira (requisito da API Deriv)
-            
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
-                contract_type: contractType,
+                contract_type: 'CALL',
                 amount: stake,
                 currency: state.currency,
-                barrier: barrier,
-                duration: duration
+                barrier: barrier
             }, state.userId);
 
             if (result) {
@@ -783,168 +364,16 @@ export class NexusStrategy implements IStrategy {
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
 
-                // ✅ Processar resultado e verificar stop loss blindado após operação
-                await this.processResult(state, result, stake, tradeId);
+                if (state.ultimoLucro > 0 && (state.capital - riskManager.getInitialBalance()) >= riskManager.getProfitTarget()) {
+                    await this.stopUser(state, 'stopped_profit');
+                }
             } else {
-                // ✅ Erro ao executar trade - atualizar registro e continuar processando
                 await this.dataSource.query(`UPDATE ai_trades SET status = 'ERROR' WHERE id = ?`, [tradeId]);
-                this.saveNexusLog(state.userId, this.symbol, 'erro', `❌ Erro ao executar operação. Continuando análise...`);
             }
         } catch (e) {
-            this.logger.error(`[NEXUS][ERR] Erro ao executar operação:`, e);
-            this.saveNexusLog(state.userId, this.symbol, 'erro', `❌ Erro: ${e.message || 'Erro desconhecido'}. Continuando análise...`);
-            // ✅ Garantir que o trade seja marcado como erro se existir
-            if (tradeId) {
-                try {
-                    await this.dataSource.query(`UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`, [e.message || 'Erro desconhecido', tradeId]);
-                } catch (updateError) {
-                    this.logger.error(`[NEXUS] Erro ao atualizar trade:`, updateError);
-                }
-            }
+            this.logger.error(`[NEXUS][ERR] ${e.message}`);
         } finally {
-            // ✅ Sempre resetar o flag de operação ativa para permitir novas operações
             state.isOperationActive = false;
-        }
-    }
-
-    private async processResult(
-        state: NexusUserState,
-        result: { profit: number, exitSpot: any, contractId: string },
-        stakeUsed: number,
-        tradeId: number | null
-    ): Promise<void> {
-        try {
-            const riskManager = this.riskManagers.get(state.userId)!;
-            const capitalInicial = state.capitalInicial;
-            const capitalSessao = state.capital;
-            const lucroAtual = capitalSessao - capitalInicial;
-            const perdaAtual = capitalInicial - capitalSessao;
-            
-            // ✅ Atualizar session_balance no banco
-            await this.dataSource.query(
-                `UPDATE ai_user_config 
-                 SET session_balance = ?
-                 WHERE user_id = ? AND is_active = 1`,
-                [lucroAtual, state.userId]
-            );
-            
-            // ✅ Buscar configuração do usuário
-            const configResult = await this.dataSource.query(
-                `SELECT profit_target, loss_limit, stop_blindado_percent, profit_peak
-                 FROM ai_user_config 
-                 WHERE user_id = ? AND is_active = 1
-                 LIMIT 1`,
-                [state.userId]
-            );
-            
-            const config = configResult && configResult.length > 0 ? configResult[0] : {};
-            const profitTarget = parseFloat(config.profit_target) || riskManager.getProfitTarget();
-            const lossLimit = parseFloat(config.loss_limit) || 50;
-            const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-            let profitPeak = parseFloat(config.profit_peak) || 0;
-            
-            // ✅ Atualizar maxBalance se necessário
-            if (state.capital > state.maxBalance) {
-                state.maxBalance = state.capital;
-            }
-            
-            // ✅ Verificar STOP WIN (profit target)
-            if (profitTarget > 0 && lucroAtual >= profitTarget) {
-                this.logger.log(
-                    `[NEXUS][${state.mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`
-                );
-                this.saveNexusLog(state.userId, this.symbol, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
-                
-                await this.dataSource.query(
-                    `UPDATE ai_user_config 
-                     SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
-                     WHERE user_id = ? AND is_active = 1`,
-                    [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId]
-                );
-                
-                await this.deactivateUser(state.userId);
-                return;
-            }
-            
-            // ✅ STOP LOSS BLINDADO (Dynamic Trailing)
-            if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
-                // Auto-healing / Update Peak
-                if (lucroAtual > profitPeak) {
-                    const profitPeakAnterior = profitPeak;
-                    profitPeak = lucroAtual;
-                    
-                    // ✅ Log quando profit peak aumenta após vitória
-                    if (profitPeak >= profitTarget * 0.40) {
-                        const fatorProtecao = stopBlindadoPercent / 100;
-                        const protectedAmount = profitPeak * fatorProtecao;
-                        const stopBlindado = capitalInicial + protectedAmount;
-                        
-                        this.logger.log(
-                            `[NEXUS][${state.mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                            `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                            `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
-                        );
-                        this.saveNexusLog(
-                            state.userId,
-                            this.symbol,
-                            'info',
-                            `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
-                        );
-                    }
-                    
-                    // Update DB
-                    await this.dataSource.query(
-                        `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-                        [profitPeak, state.userId]
-                    );
-                }
-                
-                // Check Stop
-                if (profitPeak >= profitTarget * 0.40) {
-                    const fatorProtecao = stopBlindadoPercent / 100;
-                    const protectedAmount = profitPeak * fatorProtecao;
-                    const stopBlindado = capitalInicial + protectedAmount;
-                    
-                    if (capitalSessao <= stopBlindado) {
-                        const lucroProtegido = capitalSessao - capitalInicial;
-                        this.logger.warn(`[NEXUS] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
-                        this.saveNexusLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`);
-                        
-                        const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
-                        
-                        // STOP
-                        await this.dataSource.query(
-                            `UPDATE ai_user_config 
-                             SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-                             WHERE user_id = ? AND is_active = 1`,
-                            [deactivationReason, state.userId]
-                        );
-                        
-                        await this.deactivateUser(state.userId);
-                        return;
-                    }
-                }
-            }
-            
-            // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
-            if (lossLimit > 0 && perdaAtual >= lossLimit) {
-                this.logger.warn(
-                    `[NEXUS][${state.mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`
-                );
-                this.saveNexusLog(state.userId, this.symbol, 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
-                
-                await this.dataSource.query(
-                    `UPDATE ai_user_config 
-                     SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-                     WHERE user_id = ? AND is_active = 1`,
-                    [`Stop loss atingido após operação: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId]
-                );
-                
-                await this.deactivateUser(state.userId);
-                return;
-            }
-        } catch (error) {
-            this.logger.error(`[NEXUS] Erro ao processar resultado:`, error);
         }
     }
 
@@ -955,15 +384,12 @@ export class NexusStrategy implements IStrategy {
         await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [reason, state.userId]);
     }
 
-    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
-        const analysisData = { strategy: 'nexus', mode: state.mode, direction, barrier };
-        const contractType = direction === 'PAR' ? 'CALL' : 'PUT';
-        // ✅ NEXUS: Para contratos CALL/PUT com barreira, a API Deriv requer mínimo de 5 ticks
-        const duration = 5; // Sempre 5 ticks para contratos com barreira
+    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
+        const analysisData = { strategy: 'nexus', mode: state.mode, direction };
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, ?)`,
-            [state.userId, direction, entryPrice, stake, contractType, JSON.stringify(analysisData), this.symbol, duration]
+             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
+            [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
         );
         return r.insertId || r[0]?.insertId;
     }
@@ -972,28 +398,17 @@ export class NexusStrategy implements IStrategy {
         try {
             const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-            // ✅ NEXUS: Duração baseada no modo (5 ticks padrão, 1 tick para veloz extremo)
-            // A duração será determinada pelo modo do usuário passado via params
-            const duration = params.duration || 5; // Padrão 5 ticks conforme documentação
-            
-            const proposalPayload: any = {
+            const proposalResponse: any = await connection.sendRequest({
                 proposal: 1,
                 amount: params.amount,
                 basis: 'stake',
                 contract_type: params.contract_type,
                 currency: params.currency || 'USD',
-                duration: duration,
+                duration: 5,
                 duration_unit: 't',
                 symbol: this.symbol,
-            };
-            
-            // ✅ Adicionar barreira negativa (offset) para Higher/Lower (CALL/PUT)
-            // A barreira deve ser uma string no formato "-0.15", "-0.25", etc.
-            if (params.barrier) {
-                proposalPayload.barrier = String(params.barrier); // Converter para string
-            }
-            
-            const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
+                barrier: params.barrier
+            }, 60000);
 
             if (proposalResponse.error) {
                 const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
@@ -1259,7 +674,7 @@ export class NexusStrategy implements IStrategy {
         if (conn) conn.subscriptions.delete(subId);
     }
 
-    private saveNexusLog(userId: string, symbol: string, type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro', message: string) {
+    private saveNexusLog(userId: string, symbol: string, type: any, message: string) {
         if (!userId || !type || !message) return;
         this.logQueue.push({ userId, symbol, type, message, timestamp: new Date() });
         this.processQueue();
@@ -1272,14 +687,7 @@ export class NexusStrategy implements IStrategy {
         try {
             const logs = this.logQueue.splice(0, 50);
             const icons: Record<string, string> = {
-                'info': 'ℹ️', 
-                'tick': '📊', 
-                'analise': '🔍', 
-                'sinal': '🎯', 
-                'operacao': '⚡', 
-                'resultado': '💰', 
-                'alerta': '⚠️', 
-                'erro': '❌'
+                'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
             };
 
             for (const log of logs) {

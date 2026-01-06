@@ -39,12 +39,12 @@ export class AiScheduler {
   }
 
   /**
-   * ✅ OTIMIZAÇÃO: Executa a cada 15 segundos (em vez de 10s) para modo fast
-   * - Reduz execuções de 6/min para 4/min (33% menos)
-   * - Verifica se há usuários ativos ANTES de executar (evita queries desnecessárias)
+   * ✅ OTIMIZAÇÃO: Executa a cada 10 segundos (em vez de 5s) para modo fast
+   * - Reduz execuções de 12/min para 6/min (50% menos)
+   * - Ainda mantém boa responsividade (10s é aceitável para fast mode)
    * - Adiciona proteção contra execuções simultâneas
    */
-  @Cron('*/15 * * * * *', {
+  @Cron('*/10 * * * * *', {
     name: 'process-fast-mode-ais',
   })
   async handleFastModeAIs() {
@@ -54,15 +54,8 @@ export class AiScheduler {
       return;
     }
 
-    // ✅ OTIMIZAÇÃO CRÍTICA: Verificar se há usuários ativos ANTES de executar
-    const activeUsersCount = await this.aiService.getActiveUsersCount();
-    if (activeUsersCount === 0) {
-      // Não logar para evitar poluição - apenas retornar silenciosamente
-      return;
-    }
-
     this.isProcessingFastMode = true;
-    this.logger.debug(`🔄 [Scheduler] Executando processamento de modo fast (${activeUsersCount} usuários ativos)`);
+    this.logger.debug('🔄 [Scheduler] Executando processamento de modo fast');
     
     try {
       await this.aiService.processFastModeUsers();

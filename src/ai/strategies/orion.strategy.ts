@@ -436,67 +436,34 @@ export class OrionStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    // ✅ OTIMIZAÇÃO CRÍTICA: Verificar se há usuários ativos ANTES de processar
-    const totalUsers = this.velozUsers.size + this.moderadoUsers.size + 
-                       this.precisoUsers.size + this.lentaUsers.size;
-    
-    if (totalUsers === 0) {
-      // Não há usuários ativos - retornar early sem processar nada
-      return;
-    }
-
     this.ticks.push(tick);
     // ✅ Limitar a 100 ticks para evitar consumo excessivo de memória
     if (this.ticks.length > 100) {
       this.ticks.shift();
     }
 
-    // Log de diagnóstico a cada 50 ticks (apenas quando há usuários)
+    // Log de diagnóstico a cada 50 ticks
     if (this.ticks.length % 50 === 0) {
       this.logger.debug(
         `[ORION] 📊 Ticks: ${this.ticks.length} | Veloz: ${this.velozUsers.size} | Moderado: ${this.moderadoUsers.size} | Preciso: ${this.precisoUsers.size} | Lenta: ${this.lentaUsers.size}`,
       );
     }
 
-    // ✅ OTIMIZADO: Processar apenas modos que têm usuários ativos
-    const promises: Promise<void>[] = [];
-    
-    if (this.velozUsers.size > 0) {
-      promises.push(
-        this.processVelozStrategies(tick).catch(error => {
-          this.logger.error('[ORION][Veloz] Erro:', error);
-        })
-      );
-    }
-    
-    if (this.moderadoUsers.size > 0) {
-      promises.push(
-        this.processModeradoStrategies(tick).catch(error => {
-          this.logger.error('[ORION][Moderado] Erro:', error);
-        })
-      );
-    }
-    
-    if (this.precisoUsers.size > 0) {
-      promises.push(
-        this.processPrecisoStrategies(tick).catch(error => {
-          this.logger.error('[ORION][Preciso] Erro:', error);
-        })
-      );
-    }
-    
-    if (this.lentaUsers.size > 0) {
-      promises.push(
-        this.processLentaStrategies(tick).catch(error => {
-          this.logger.error('[ORION][Lenta] Erro:', error);
-        })
-      );
-    }
-
-    // Processar apenas modos com usuários ativos
-    if (promises.length > 0) {
-      await Promise.all(promises);
-    }
+    // ✅ OTIMIZADO: Processar modos em paralelo para reduzir latência
+    await Promise.all([
+      this.processVelozStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Veloz] Erro:', error);
+      }),
+      this.processModeradoStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Moderado] Erro:', error);
+      }),
+      this.processPrecisoStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Preciso] Erro:', error);
+      }),
+      this.processLentaStrategies(tick).catch(error => {
+        this.logger.error('[ORION][Lenta] Erro:', error);
+      }),
+    ]);
 
     // ✅ Incrementar ticksColetados para todos os usuários ativos
     for (const state of this.velozUsers.values()) state.ticksColetados++;
@@ -631,16 +598,6 @@ export class OrionStrategy implements IStrategy {
       this.precisoUsers.get(userId) ||
       this.lentaUsers.get(userId) ||
       null;
-  }
-
-  /**
-   * ✅ OTIMIZAÇÃO: Verifica se há usuários ativos nesta estratégia
-   */
-  hasActiveUsers(): boolean {
-    return this.velozUsers.size > 0 || 
-           this.moderadoUsers.size > 0 || 
-           this.precisoUsers.size > 0 || 
-           this.lentaUsers.size > 0;
   }
 
   /**

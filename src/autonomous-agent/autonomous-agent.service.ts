@@ -1,414 +1,611 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import WebSocket from 'ws';
+import { Tick } from '../ai/ai.service';
+import { AutonomousAgentStrategyManagerService } from './strategies/autonomous-agent-strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
 
 /**
- * ✅ VERSÃO SIMPLIFICADA: Service do Agente Autônomo
- * Apenas operações de banco de dados - SEM processamento
- * Mantém apenas os endpoints necessários para o frontend
+ * ✅ Serviço Principal do Agente Autônomo
+ * 
+ * Similar ao AiService, mas específico para o agente autônomo.
+ * Recebe ticks do WebSocket e distribui para o StrategyManager do agente autônomo.
+ * 
+ * Arquitetura:
+ * - Uma conexão WebSocket compartilhada (similar à IA)
+ * - Processamento REATIVO baseado em ticks
+ * - Integração 100% com a IA Orion
+ * - Lógica de parar no dia após stop loss/win/blindado
  */
 @Injectable()
-export class AutonomousAgentService {
+export class AutonomousAgentService implements OnModuleInit {
   private readonly logger = new Logger(AutonomousAgentService.name);
+  private ws: WebSocket | null = null;
+  private ticks: Tick[] = [];
+  private readonly maxTicks = 100;
+  private readonly appId: string;
+  private symbol = 'R_100'; // Símbolo padrão para Orion
+  private isConnected = false;
+  private subscriptionId: string | null = null;
+  private keepAliveInterval: NodeJS.Timeout | null = null;
+  private lastTickReceivedTime: number = 0;
 
   constructor(
-    @InjectDataSource() private dataSource: DataSource,
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => AutonomousAgentStrategyManagerService))
+    private readonly strategyManager: AutonomousAgentStrategyManagerService,
+    @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
-  ) {}
+  ) {
+    this.appId = process.env.DERIV_APP_ID || '111346';
+  }
+
+  async onModuleInit() {
+    this.logger.log('🚀 Inicializando AutonomousAgentService...');
+    try {
+      // Inicializar conexão WebSocket
+      this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
+      await this.initialize();
+      this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
+      
+      // Sincronizar agentes ativos do banco
+      await this.syncActiveAgentsFromDb();
+    } catch (error) {
+      this.logger.error('❌ Erro ao inicializar AutonomousAgentService:', error.message);
+    }
+  }
 
   /**
-   * Ativa o agente autônomo (apenas atualiza banco de dados)
+   * Inicializa conexão WebSocket com Deriv API
    */
-  async activateAgent(
-    userId: string,
-    config: {
-      initialStake: number;
-      dailyProfitTarget: number;
-      dailyLossLimit: number;
-      derivToken: string;
-      currency?: string;
-      symbol?: string;
-      strategy?: string;
-      riskLevel?: string;
-      tradingMode?: string;
-      stopLossType?: string;
-      initialBalance?: number;
-      agentType?: string;
-    },
-  ): Promise<void> {
-    try {
-      const symbol = config.symbol || 'R_75';
-      const strategy = config.strategy || 'arion';
-      const riskLevel = config.riskLevel || 'balanced';
-      const tradingMode = config.tradingMode || 'normal';
-      const stopLossType = config.stopLossType || 'normal';
-      const initialBalance = config.initialBalance || 0;
-      const agentType = config.agentType || 'sentinel';
+  async initialize(): Promise<void> {
+    if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.logger.log('✅ Já está conectado ao Deriv API');
+      return;
+    }
 
-      // Verificar se já existe configuração
+    return new Promise<void>((resolve, reject) => {
+      this.logger.log(`🔌 Inicializando conexão com Deriv API (app_id: ${this.appId})...`);
+
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      this.ws = new WebSocket(endpoint);
+
+      this.ws.on('open', async () => {
+        this.logger.log('✅ Conexão WebSocket aberta com sucesso');
+        this.isConnected = true;
+        this.subscribeToTicks();
+        this.startKeepAlive();
+        resolve();
+      });
+
+      this.ws.on('message', (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          this.handleMessage(msg);
+        } catch (error) {
+          this.logger.error('Erro ao processar mensagem:', error);
+        }
+      });
+
+      this.ws.on('error', (error) => {
+        this.logger.error('Erro no WebSocket:', error.message);
+        reject(error);
+      });
+
+      this.ws.on('close', () => {
+        this.logger.log('Conexão WebSocket fechada');
+        this.isConnected = false;
+        this.stopKeepAlive();
+        this.ws = null;
+        // Tentar reconectar após 5 segundos
+        setTimeout(() => {
+          this.initialize().catch((err) => {
+            this.logger.error('Erro ao reconectar:', err);
+          });
+        }, 5000);
+      });
+
+      // Timeout de 10 segundos
+      setTimeout(() => {
+        if (!this.isConnected) {
+          reject(new Error('Timeout ao conectar com Deriv API'));
+        }
+      }, 10000);
+    });
+  }
+
+  /**
+   * Inscreve-se nos ticks do símbolo
+   */
+  private subscribeToTicks(): void {
+    this.logger.log(`📡 Inscrevendo-se nos ticks de ${this.symbol}...`);
+    const subscriptionPayload = {
+      ticks_history: this.symbol,
+      adjust_start_time: 1,
+      count: this.maxTicks,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    };
+    this.send(subscriptionPayload);
+    this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
+  }
+
+  /**
+   * Envia mensagem via WebSocket
+   */
+  private send(payload: any): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+    } else {
+      this.logger.warn('WebSocket não está aberto, não é possível enviar mensagem');
+    }
+  }
+
+  /**
+   * Keep-alive: Envia ping a cada 90 segundos
+   */
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    this.keepAliveInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ ping: 1 }));
+          this.logger.debug('[KeepAlive] Ping enviado para manter conexão ativa');
+        } catch (error) {
+          this.logger.error('[KeepAlive] Erro ao enviar ping:', error);
+        }
+      } else {
+        this.logger.warn('[KeepAlive] WebSocket não está aberto, parando keep-alive');
+        this.stopKeepAlive();
+      }
+    }, 90000); // 90 segundos
+    this.logger.log('✅ Keep-alive iniciado (ping a cada 90s)');
+  }
+
+  /**
+   * Para o keep-alive
+   */
+  private stopKeepAlive(): void {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+  }
+
+  /**
+   * Processa mensagens recebidas do WebSocket
+   */
+  private handleMessage(msg: any): void {
+    if (msg.error) {
+      const errorMsg = msg.error.message || JSON.stringify(msg.error);
+      this.logger.error('❌ Erro da API:', errorMsg);
+      return;
+    }
+
+    // Capturar subscription ID
+    if (msg.subscription?.id) {
+      if (this.subscriptionId !== msg.subscription.id) {
+        this.subscriptionId = msg.subscription.id;
+        this.logger.log(`📋 Subscription ID capturado: ${this.subscriptionId}`);
+      }
+    }
+
+    switch (msg.msg_type) {
+      case 'history':
+        this.logger.log(`📊 Histórico recebido: ${msg.history?.prices?.length || 0} preços`);
+        this.processHistory(msg.history, msg.subscription?.id);
+        break;
+
+      case 'ticks_history':
+        const subId = msg.subscription?.id || msg.subscription_id || msg.id;
+        if (subId) {
+          this.subscriptionId = subId;
+          this.logger.log(`📋 Subscription ID capturado: ${this.subscriptionId}`);
+        }
+        if (msg.history?.prices) {
+          this.processHistory(msg.history, subId);
+        }
+        break;
+
+      case 'tick':
+        if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
+          this.subscriptionId = msg.subscription.id;
+          this.logger.log(`📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
+        }
+        this.processTick(msg.tick);
+        break;
+
+      default:
+        if (msg.msg_type) {
+          this.logger.debug(`⚠️ Mensagem desconhecida: msg_type=${msg.msg_type}`);
+        }
+        break;
+    }
+  }
+
+  /**
+   * Processa histórico de preços
+   */
+  private processHistory(history: any, subscriptionId?: string): void {
+    if (!history || !history.prices) {
+      this.logger.warn('⚠️ Histórico recebido sem dados de preços');
+      return;
+    }
+
+    if (subscriptionId) {
+      this.subscriptionId = subscriptionId;
+    }
+
+    this.logger.log(`📊 Processando histórico: ${history.prices?.length || 0} preços recebidos`);
+
+    this.ticks = history.prices.map((price: string, index: number) => {
+      const value = parseFloat(price);
+      const digit = this.extractLastDigit(value);
+      const parity = this.getParityFromDigit(digit);
+
+      return {
+        value,
+        epoch: history.times ? history.times[index] : Date.now() / 1000,
+        timestamp: history.times
+          ? new Date(history.times[index] * 1000).toLocaleTimeString('pt-BR')
+          : new Date().toLocaleTimeString('pt-BR'),
+        digit,
+        parity,
+      };
+    });
+
+    this.logger.log(`✅ ${this.ticks.length} ticks carregados no histórico`);
+  }
+
+  /**
+   * Processa um tick recebido
+   */
+  private processTick(tick: any): void {
+    if (!tick || !tick.quote) {
+      this.logger.debug('⚠️ Tick recebido sem quote');
+      return;
+    }
+
+    const value = parseFloat(tick.quote);
+    const digit = this.extractLastDigit(value);
+    const parity = this.getParityFromDigit(digit);
+
+    const newTick: Tick = {
+      value,
+      epoch: tick.epoch || Date.now() / 1000,
+      timestamp: new Date(
+        (tick.epoch || Date.now() / 1000) * 1000,
+      ).toLocaleTimeString('pt-BR'),
+      digit,
+      parity,
+    };
+
+    this.ticks.push(newTick);
+    this.lastTickReceivedTime = Date.now();
+
+    // Manter apenas os últimos maxTicks
+    if (this.ticks.length > this.maxTicks) {
+      this.ticks.shift();
+    }
+
+    // Log a cada 50 ticks
+    if (this.ticks.length % 50 === 0) {
+      this.logger.debug(
+        `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+      );
+    }
+
+    // ✅ Enviar tick para o StrategyManager do agente autônomo
+    if (!this.strategyManager) {
+      this.logger.error('[StrategyManager] Indisponível - tick ignorado');
+      return;
+    }
+
+    this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
+      this.logger.error('[StrategyManager] Erro ao processar tick:', error);
+    });
+  }
+
+  /**
+   * Extrai o último dígito de um valor
+   */
+  private extractLastDigit(value: number): number {
+    const numeric = Math.abs(value);
+    const normalized = numeric.toString().replace('.', '').replace('-', '');
+    return parseInt(normalized[normalized.length - 1], 10);
+  }
+
+  /**
+   * Obtém paridade do dígito
+   */
+  private getParityFromDigit(digit: number): 'PAR' | 'IMPAR' {
+    return digit % 2 === 0 ? 'PAR' : 'IMPAR';
+  }
+
+  /**
+   * Sincroniza agentes ativos do banco de dados
+   */
+  async syncActiveAgentsFromDb(): Promise<void> {
+    try {
+      const activeAgents = await this.dataSource.query(
+        `SELECT user_id, agent_type, symbol
+         FROM autonomous_agent_config 
+         WHERE is_active = TRUE AND agent_type = 'orion'`,
+      );
+
+      this.logger.log(`[SyncActiveAgents] Sincronizados ${activeAgents.length} agentes ativos`);
+
+      // Verificar se há agentes que precisam ser resetados (mudança de dia)
+      await this.checkAndResetDailySessions();
+    } catch (error) {
+      this.logger.error('[SyncActiveAgents] Erro ao sincronizar agentes:', error);
+    }
+  }
+
+  /**
+   * Verifica e reseta sessões diárias se necessário
+   * Se um agente parou no dia anterior (stop loss/win/blindado), reseta para o novo dia
+   */
+  async checkAndResetDailySessions(): Promise<void> {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
+
+      // Buscar agentes que pararam no dia anterior
+      const agentsToReset = await this.dataSource.query(
+        `SELECT user_id, session_status, session_date
+         FROM autonomous_agent_config 
+         WHERE is_active = TRUE 
+           AND agent_type = 'orion'
+           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
+           AND (session_date IS NULL OR DATE(session_date) < ?)`,
+        [todayStr],
+      );
+
+      for (const agent of agentsToReset) {
+        this.logger.log(
+          `[ResetDailySession] Resetando sessão diária para usuário ${agent.user_id} (status anterior: ${agent.session_status})`,
+        );
+
+        // Resetar sessão diária
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config 
+           SET session_status = 'active',
+               session_date = NOW(),
+               daily_profit = 0,
+               daily_loss = 0
+           WHERE user_id = ? AND is_active = TRUE`,
+          [agent.user_id],
+        );
+
+        // Reativar agente na estratégia Orion
+        const config = await this.dataSource.query(
+          `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
+                  deriv_token, currency, symbol, trading_mode, initial_balance
+           FROM autonomous_agent_config 
+           WHERE user_id = ? AND is_active = TRUE
+           LIMIT 1`,
+          [agent.user_id],
+        );
+
+        if (config && config.length > 0) {
+          const agentConfig = config[0];
+          await this.strategyManager.activateUser('orion', agent.user_id, {
+            initialStake: parseFloat(agentConfig.initial_stake),
+            dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
+            dailyLossLimit: parseFloat(agentConfig.daily_loss_limit),
+            derivToken: agentConfig.deriv_token,
+            currency: agentConfig.currency,
+            symbol: agentConfig.symbol || 'R_100',
+            tradingMode: agentConfig.trading_mode || 'normal',
+            initialBalance: parseFloat(agentConfig.initial_balance) || 0,
+          });
+        }
+      }
+
+      if (agentsToReset.length > 0) {
+        this.logger.log(`[ResetDailySession] ✅ ${agentsToReset.length} sessões resetadas para o novo dia`);
+      }
+    } catch (error) {
+      this.logger.error('[ResetDailySession] Erro ao verificar e resetar sessões:', error);
+    }
+  }
+
+  /**
+   * Ativa um agente autônomo
+   */
+  async activateAgent(userId: string, config: any): Promise<void> {
+    try {
+      // Verificar se já existe configuração ativa
       const existing = await this.dataSource.query(
-        `SELECT id FROM autonomous_agent_config WHERE user_id = ?`,
+        `SELECT id FROM autonomous_agent_config 
+         WHERE user_id = ? AND is_active = TRUE
+         LIMIT 1`,
         [userId],
       );
 
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
       if (existing && existing.length > 0) {
-        // Atualizar existente
+        // Atualizar configuração existente
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET
-            is_active = TRUE,
-            initial_stake = ?,
-            daily_profit_target = ?,
-            daily_loss_limit = ?,
-            initial_balance = ?,
-            deriv_token = ?,
-            currency = ?,
-            symbol = ?,
-            agent_type = ?,
-            strategy = ?,
-            risk_level = ?,
-            trading_mode = ?,
-            stop_loss_type = ?,
-            session_date = NOW(),
-            daily_profit = 0,
-            daily_loss = 0,
-            profit_peak = 0,
-            operations_since_pause = 0,
-            martingale_level = 'M0',
-            martingale_count = 0,
-            soros_level = 0,
-            soros_stake = 0,
-            session_status = 'active',
-            updated_at = NOW()
-          WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config 
+           SET initial_stake = ?,
+               daily_profit_target = ?,
+               daily_loss_limit = ?,
+               deriv_token = ?,
+               currency = ?,
+               symbol = ?,
+               agent_type = ?,
+               trading_mode = ?,
+               initial_balance = ?,
+               session_status = 'active',
+               session_date = NOW(),
+               daily_profit = 0,
+               daily_loss = 0,
+               updated_at = NOW()
+           WHERE user_id = ? AND is_active = TRUE`,
           [
             config.initialStake,
             config.dailyProfitTarget,
             config.dailyLossLimit,
-            initialBalance,
             config.derivToken,
             config.currency || 'USD',
-            symbol,
-            agentType,
-            strategy,
-            riskLevel,
-            tradingMode,
-            stopLossType,
+            config.symbol || 'R_100',
+            config.strategy || 'orion',
+            config.tradingMode || 'normal',
+            config.initialBalance || 0,
             userId,
           ],
         );
       } else {
-        // Criar novo
+        // Criar nova configuração
         await this.dataSource.query(
-          `INSERT INTO autonomous_agent_config (
-            user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            initial_balance, deriv_token, currency, symbol, agent_type, strategy,
-            risk_level, trading_mode, stop_loss_type, session_date, session_status,
-            daily_profit, daily_loss, profit_peak, operations_since_pause,
-            martingale_level, martingale_count, soros_level, soros_stake, created_at, updated_at
-          ) VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'active', 0, 0, 0, 0, 'M0', 0, 0, 0, NOW(), NOW())`,
+          `INSERT INTO autonomous_agent_config 
+           (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
+            deriv_token, currency, symbol, agent_type, trading_mode, initial_balance,
+            session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
             config.dailyProfitTarget,
             config.dailyLossLimit,
-            initialBalance,
             config.derivToken,
             config.currency || 'USD',
-            symbol,
-            agentType,
-            strategy,
-            riskLevel,
-            tradingMode,
-            stopLossType,
+            config.symbol || 'R_100',
+            config.strategy || 'orion',
+            config.tradingMode || 'normal',
+            config.initialBalance || 0,
           ],
         );
       }
 
-      // Salvar log
-      if (this.logQueueService) {
-        this.logQueueService.saveLogAsync({
-          userId,
-          level: 'INFO',
-          module: 'CORE',
-          message: 'Agente autônomo ativado (modo simplificado - sem processamento)',
-          tableName: 'autonomous_agent_logs',
-        });
-      }
+      // Ativar agente na estratégia Orion
+      await this.strategyManager.activateUser('orion', userId, {
+        initialStake: config.initialStake,
+        dailyProfitTarget: config.dailyProfitTarget,
+        dailyLossLimit: config.dailyLossLimit,
+        derivToken: config.derivToken,
+        currency: config.currency || 'USD',
+        symbol: config.symbol || 'R_100',
+        tradingMode: config.tradingMode || 'normal',
+        initialBalance: config.initialBalance || 0,
+      });
 
-      this.logger.log(`[ActivateAgent] ✅ Agente ativado para usuário ${userId} (apenas banco de dados)`);
+      this.logger.log(`[ActivateAgent] ✅ Agente autônomo ativado para usuário ${userId}`);
     } catch (error) {
-      this.logger.error(`[ActivateAgent] ❌ Erro ao ativar agente:`, error);
+      this.logger.error(`[ActivateAgent] Erro ao ativar agente:`, error);
       throw error;
     }
   }
 
   /**
-   * Desativa o agente autônomo (apenas atualiza banco de dados)
+   * Desativa um agente autônomo
    */
   async deactivateAgent(userId: string): Promise<void> {
     try {
-      if (!userId) {
-        throw new Error('User ID é obrigatório para desativar agente');
-      }
-
-      this.logger.log(`[DeactivateAgent] Desativando agente para usuário ${userId}`);
-
-      // Atualizar banco de dados
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
-         SET is_active = FALSE, 
-             session_status = 'paused', 
-             updated_at = NOW() 
-         WHERE user_id = ?`,
+         SET is_active = FALSE, updated_at = NOW()
+         WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
 
-      // Salvar log
-      if (this.logQueueService) {
-        this.logQueueService.saveLogAsync({
-          userId,
-          level: 'INFO',
-          module: 'CORE',
-          message: 'Agente parado manualmente pelo usuário (modo simplificado)',
-          tableName: 'autonomous_agent_logs',
-        });
-      }
+      await this.strategyManager.deactivateUser(userId);
 
-      this.logger.log(`[DeactivateAgent] ✅ Agente desativado para usuário ${userId}`);
+      this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`);
     } catch (error) {
-      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, error);
+      this.logger.error(`[DeactivateAgent] Erro ao desativar agente:`, error);
       throw error;
     }
   }
 
   /**
-   * Busca configuração do agente
+   * Obtém configuração do agente
    */
   async getAgentConfig(userId: string): Promise<any> {
     const config = await this.dataSource.query(
-      `SELECT 
-        is_active,
-        initial_stake,
-        daily_profit_target,
-        daily_loss_limit,
-        symbol,
-        strategy,
-        risk_level,
-        total_trades,
-        total_wins,
-        total_losses,
-        daily_profit,
-        daily_loss,
-        session_status,
-        session_date,
-        last_trade_at,
-        next_trade_at,
-        created_at
-       FROM autonomous_agent_config
-       WHERE user_id = ?`,
+      `SELECT * FROM autonomous_agent_config 
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
       [userId],
     );
 
-    if (!config || config.length === 0) {
-      return null;
-    }
-
-    const cfg = config[0];
-
-    // Processar session_date
-    let sessionDate: string | null = null;
-    if (cfg.session_date) {
-      try {
-        if (cfg.session_date instanceof Date) {
-          sessionDate = cfg.session_date.toISOString();
-        } else if (typeof cfg.session_date === 'string') {
-          if (cfg.session_date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            const dateOnly = new Date(cfg.session_date);
-            const now = new Date();
-            dateOnly.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-            sessionDate = dateOnly.toISOString();
-          } else {
-            sessionDate = new Date(cfg.session_date).toISOString();
-          }
-        } else {
-          sessionDate = new Date(cfg.session_date).toISOString();
-        }
-      } catch (error) {
-        this.logger.warn(`[GetAgentConfig] Erro ao processar session_date:`, error);
-        sessionDate = null;
-      }
-    }
-
-    // Processar created_at
-    let createdAt: string | null = null;
-    if (cfg.created_at) {
-      if (cfg.created_at instanceof Date) {
-        createdAt = cfg.created_at.toISOString();
-      } else if (typeof cfg.created_at === 'string') {
-        createdAt = new Date(cfg.created_at).toISOString();
-      } else {
-        createdAt = String(cfg.created_at);
-      }
-    }
-
-    return {
-      isActive: cfg.is_active === 1 || cfg.is_active === true,
-      initialStake: parseFloat(cfg.initial_stake),
-      dailyProfitTarget: parseFloat(cfg.daily_profit_target),
-      dailyLossLimit: parseFloat(cfg.daily_loss_limit),
-      symbol: cfg.symbol,
-      strategy: cfg.strategy || 'arion',
-      riskLevel: cfg.risk_level || 'balanced',
-      totalTrades: cfg.total_trades || 0,
-      totalWins: cfg.total_wins || 0,
-      totalLosses: cfg.total_losses || 0,
-      dailyProfit: parseFloat(cfg.daily_profit) || 0,
-      dailyLoss: parseFloat(cfg.daily_loss) || 0,
-      sessionStatus: cfg.session_status,
-      sessionDate: sessionDate,
-      createdAt: createdAt,
-      lastTradeAt: cfg.last_trade_at ? (cfg.last_trade_at instanceof Date ? cfg.last_trade_at.toISOString() : cfg.last_trade_at) : null,
-      nextTradeAt: cfg.next_trade_at ? (cfg.next_trade_at instanceof Date ? cfg.next_trade_at.toISOString() : cfg.next_trade_at) : null,
-    };
+    return config && config.length > 0 ? config[0] : null;
   }
 
   /**
-   * Busca histórico de trades
+   * Obtém histórico de trades
    */
   async getTradeHistory(userId: string, limit: number = 50): Promise<any[]> {
-    const trades = await this.dataSource.query(
-      `SELECT 
-        id, contract_type, contract_duration, entry_price, exit_price,
-        stake_amount, profit_loss, status, confidence_score, martingale_level,
-        payout, contract_id, created_at, started_at, closed_at
-       FROM autonomous_agent_trades
-       WHERE user_id = ?
-       ORDER BY created_at DESC
+    return await this.dataSource.query(
+      `SELECT * FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
        LIMIT ?`,
       [userId, limit],
     );
-
-    return trades.map((trade: any) => ({
-      id: trade.id,
-      contractType: trade.contract_type,
-      duration: trade.contract_duration,
-      entryPrice: parseFloat(trade.entry_price),
-      exitPrice: trade.exit_price ? parseFloat(trade.exit_price) : null,
-      stakeAmount: parseFloat(trade.stake_amount),
-      profitLoss: trade.profit_loss ? parseFloat(trade.profit_loss) : null,
-      status: trade.status,
-      confidenceScore: parseFloat(trade.confidence_score),
-      martingaleLevel: trade.martingale_level,
-      payout: trade.payout ? parseFloat(trade.payout) : null,
-      contractId: trade.contract_id,
-      createdAt: trade.created_at,
-      startedAt: trade.started_at,
-      closedAt: trade.closed_at,
-    }));
   }
 
   /**
-   * Busca estatísticas da sessão
+   * Obtém estatísticas da sessão
    */
   async getSessionStats(userId: string): Promise<any> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
-
-    // Buscar estatísticas do agente autônomo
     const stats = await this.dataSource.query(
       `SELECT 
-        COUNT(CASE WHEN status IN ('WON', 'LOST') THEN 1 END) as total_trades,
-        SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
-        SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as total_profit,
-        SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as total_loss
-       FROM autonomous_agent_trades
-       WHERE user_id = ? AND DATE(created_at) = ?
-       AND status IN ('WON', 'LOST')`,
-      [userId, todayStr],
-    );
-
-    // Buscar todas as operações do dia
-    const allAutonomousTrades = await this.dataSource.query(
-      `SELECT COUNT(*) as total_trades
-       FROM autonomous_agent_trades
-       WHERE user_id = ? AND DATE(created_at) = ? AND status != 'ERROR'`,
-      [userId, todayStr],
-    );
-
-    // Buscar configuração
-    const config = await this.dataSource.query(
-      `SELECT initial_stake, initial_balance, daily_profit, daily_loss
+         daily_profit,
+         daily_loss,
+         total_trades,
+         total_wins,
+         total_losses,
+         session_status,
+         session_date
        FROM autonomous_agent_config 
-       WHERE user_id = ?`,
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
       [userId],
     );
 
-    const initialBalance = config && config.length > 0 ? parseFloat(config[0].initial_balance) || 0 : 0;
-    const dailyProfit = config && config.length > 0 ? parseFloat(config[0].daily_profit) || 0 : 0;
-    const dailyLoss = config && config.length > 0 ? parseFloat(config[0].daily_loss) || 0 : 0;
-    const totalCapital = initialBalance > 0 ? initialBalance : 0;
-
-    const result = stats && stats.length > 0 ? stats[0] : {};
-    const allTradesResult = allAutonomousTrades && allAutonomousTrades.length > 0 ? allAutonomousTrades[0] : {};
-
-    const totalTrades = parseInt(result.total_trades) || 0;
-    const wins = parseInt(result.wins) || 0;
-    const losses = parseInt(result.losses) || 0;
-    const totalProfit = parseFloat(result.total_profit) || 0;
-    const totalLoss = parseFloat(result.total_loss) || 0;
-    const netProfit = totalProfit - totalLoss;
-    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
-    const totalOperations = parseInt(allTradesResult.total_trades) || 0;
-
-    return {
-      totalTrades,
-      wins,
-      losses,
-      winRate: Math.round(winRate * 100) / 100,
-      totalProfit,
-      totalLoss,
-      netProfit,
-      totalCapital,
-      initialBalance,
-      dailyProfit,
-      dailyLoss,
-      totalOperations,
-    };
+    return stats && stats.length > 0 ? stats[0] : null;
   }
 
   /**
-   * Busca histórico de preços (retorna vazio - não há processamento)
+   * Obtém histórico de preços para um usuário
    */
   async getPriceHistoryForUser(userId: string, limit: number = 100): Promise<any[]> {
-    // Retornar array vazio - não há processamento de ticks
-    return [];
+    // Retornar os últimos ticks recebidos
+    return this.ticks.slice(-limit).map((tick) => ({
+      value: tick.value,
+      epoch: tick.epoch,
+      timestamp: tick.timestamp,
+    }));
   }
 
   /**
-   * Busca logs do agente
+   * Obtém logs do agente
    */
   async getLogs(userId: string, limit?: number): Promise<any[]> {
-    const limitNum = limit || 100;
-    const logs = await this.dataSource.query(
-      `SELECT id, timestamp, log_level, module, message, metadata
-       FROM autonomous_agent_logs
-       WHERE user_id = ?
-       ORDER BY timestamp DESC
-       LIMIT ?`,
-      [userId, limitNum],
+    const limitClause = limit ? `LIMIT ${limit}` : '';
+    return await this.dataSource.query(
+      `SELECT * FROM autonomous_agent_logs 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       ${limitClause}`,
+      [userId],
     );
+  }
 
-    return logs.map((log: any) => ({
-      id: log.id,
-      timestamp: log.timestamp,
-      logLevel: log.log_level,
-      module: log.module,
-      message: log.message,
-      metadata: log.metadata ? JSON.parse(log.metadata) : null,
-    }));
+  /**
+   * Atualiza trades com preços faltantes
+   */
+  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<any> {
+    // Implementação similar à da IA
+    return { updated: 0, deleted: 0, errors: 0 };
   }
 }
 

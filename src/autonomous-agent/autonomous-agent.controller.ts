@@ -43,25 +43,23 @@ export class AutonomousAgentController {
         );
       }
 
-      // ✅ Simplificado: Ativar diretamente no service (sem AgentManager)
       await this.agentService.activateAgent(userId, {
         initialStake: parseFloat(body.initialStake),
         dailyProfitTarget: parseFloat(body.dailyProfitTarget),
         dailyLossLimit: parseFloat(body.dailyLossLimit),
         derivToken: body.derivToken,
         currency: body.currency || 'USD',
-        symbol: body.symbol || 'R_75',
-        initialBalance: parseFloat(body.initialBalance) || 0,
+        symbol: body.symbol,
         strategy: body.strategy,
         riskLevel: body.riskLevel,
         tradingMode: body.tradingMode || 'normal',
         stopLossType: body.stopLossType || 'normal',
-        agentType: body.agentType || body.agent_type || 'sentinel',
+        initialBalance: parseFloat(body.initialBalance) || 0,
       });
 
       return {
         success: true,
-        message: 'Agente autônomo ativado com sucesso (modo simplificado - sem processamento)',
+        message: 'Agente autônomo ativado com sucesso',
       };
     } catch (error) {
       this.logger.error(`[ActivateAgent] Erro:`, error);
@@ -76,74 +74,29 @@ export class AutonomousAgentController {
     }
   }
 
-  @Get('available-agents')
-  @UseGuards(AuthGuard('jwt'))
-  async getAvailableAgents() {
-    try {
-      // ✅ Simplificado: Retornar lista fixa de agentes (sem AgentManager)
-      return {
-        success: true,
-        agents: [
-          { id: 'sentinel', name: 'Sentinel', description: 'Agente Sentinel' },
-          { id: 'falcon', name: 'Falcon', description: 'Agente Falcon' },
-        ],
-      };
-    } catch (error) {
-      this.logger.error(`[GetAvailableAgents] Erro:`, error);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao listar agentes disponíveis',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
   @Post('deactivate')
   @UseGuards(AuthGuard('jwt'))
   async deactivateAgent(@Body() body: any, @Req() req: any) {
     try {
-      // Extrair userId de múltiplas fontes possíveis
-      const userId = req.user?.userId || req.user?.id || body.userId || body.user_id;
-
-      this.logger.log(`[DeactivateAgent] Tentando desativar agente. userId=${userId}, req.user=${JSON.stringify(req.user)}`);
+      const userId = req.user?.userId || body.userId;
 
       if (!userId) {
-        this.logger.error(`[DeactivateAgent] User ID não encontrado. req.user:`, req.user, 'body:', body);
         throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
       }
 
       await this.agentService.deactivateAgent(userId);
-
-      this.logger.log(`[DeactivateAgent] ✅ Agente desativado com sucesso para ${userId}`);
 
       return {
         success: true,
         message: 'Agente autônomo desativado com sucesso',
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      
-      this.logger.error(`[DeactivateAgent] ❌ Erro ao desativar agente:`, {
-        message: errorMessage,
-        stack: errorStack,
-        body,
-        user: req.user,
-      });
-
-      // Se já for HttpException, re-lançar
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
+      this.logger.error(`[DeactivateAgent] Erro:`, error);
       throw new HttpException(
         {
           success: false,
           message: 'Erro ao desativar agente autônomo',
-          error: errorMessage,
+          error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
@@ -163,6 +116,12 @@ export class AutonomousAgentController {
           message: 'Nenhuma configuração encontrada',
         };
       }
+
+      // Atualizar trades com valores faltantes em background (não bloqueante)
+      // Limita a 10 trades por vez para não sobrecarregar
+      this.agentService.updateTradesWithMissingPrices(userId, 10).catch((error) => {
+        this.logger.warn(`[GetConfig] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
+      });
 
       return {
         success: true,
@@ -187,6 +146,20 @@ export class AutonomousAgentController {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 50;
       const history = await this.agentService.getTradeHistory(userId, limitNum);
+
+      // Verificar se há trades com valores zerados no resultado
+      const hasMissingPrices = history.some(
+        (trade: any) =>
+          (trade.entryPrice === 0 || trade.entryPrice === null) ||
+          (trade.exitPrice === 0 || trade.exitPrice === null),
+      );
+
+      // Se houver trades com valores faltantes, atualizar em background (não bloqueante)
+      if (hasMissingPrices) {
+        this.agentService.updateTradesWithMissingPrices(userId, limitNum).catch((error) => {
+          this.logger.warn(`[GetTradeHistory] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
+        });
+      }
 
       return {
         success: true,
@@ -269,6 +242,31 @@ export class AutonomousAgentController {
         {
           success: false,
           message: 'Erro ao buscar logs',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('update-missing-prices/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async updateMissingPrices(@Param('userId') userId: string, @Query('limit') limit?: string) {
+    try {
+      const limitNum = limit ? parseInt(limit, 10) : 10;
+      const result = await this.agentService.updateTradesWithMissingPrices(userId, limitNum);
+
+      return {
+        success: true,
+        message: `Atualização concluída: ${result.updated} trades atualizados, ${result.deleted} deletados, ${result.errors} erros`,
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`[UpdateMissingPrices] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao atualizar trades com preços faltantes',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,

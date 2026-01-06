@@ -219,3 +219,4 @@ Apenas quando necessário
 
 *Documento criado em 2026-01-05*
 
+

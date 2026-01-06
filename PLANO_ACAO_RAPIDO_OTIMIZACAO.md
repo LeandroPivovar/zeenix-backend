@@ -251,3 +251,4 @@ mysql> SHOW PROCESSLIST;
 *Prioridade: MÁXIMA*
 
 
+

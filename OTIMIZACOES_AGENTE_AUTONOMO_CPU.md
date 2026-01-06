@@ -257,3 +257,4 @@ Se necessário, pode-se ajustar:
 *Versão: 2.0 - Otimizações de CPU*
 
 
+

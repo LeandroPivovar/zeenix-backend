@@ -33,11 +33,10 @@ export interface IStrategy {
   activateUser(userId: string, config: any): Promise<void>;
   deactivateUser(userId: string): Promise<void>;
   getUserState(userId: string): any;
-  hasActiveUsers?(): boolean; // ✅ OTIMIZAÇÃO: Método opcional para verificar se há usuários ativos
 }
 
 // Configurações exportadas
-// ✅ Configurações:
+// ✅ CORRIGIDO conforme documentação TRINITY:
 // - Modo VELOZ: Amostra 10 ticks, intervalo 3 ticks, desequilíbrio ≥50%, confiança ≥50%
 // - Modo NORMAL usa 60%/60% (definido em MODERADO_CONFIG)
 export const VELOZ_CONFIG: ModeConfig = {
