@@ -594,7 +594,7 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // ✅ Determinar símbolo baseado no tipo de agente
+      // ✅ Determinar símbolo baseado no tipo de agente (usar strategy que já está normalizado)
       const agentSymbol = config.symbol || (strategy === 'sentinel' ? 'R_75' : 'R_100');
       
       // ✅ Garantir que estamos inscritos no símbolo necessário
