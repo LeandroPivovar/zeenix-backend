@@ -219,6 +219,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
+    // ✅ Log periódico mostrando que está processando (a cada 50 ticks)
+    if (userTicks.length % 50 === 0) {
+      await this.saveLog(userId, 'INFO', 'CORE', 
+        `Agente ativo e processando ticks. Total coletados: ${userTicks.length} | Aguardando sinal...`);
+    }
+
     // Realizar análise
     const analysis = await this.analyze(userId, userTicks);
     
@@ -1160,12 +1166,19 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    * Salva log no sistema (banco de dados e LogQueueService)
    */
   private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
+    // ✅ Formatar mensagem sem duplicar prefixo do módulo
+    // Se a mensagem já começar com [MÓDULO], não adicionar novamente
+    let formattedMessage = message;
+    if (!message.startsWith('[') || !message.includes(']')) {
+      formattedMessage = message; // Mensagem simples, sem prefixo
+    }
+
     // ✅ Salvar no banco de dados (autonomous_agent_logs)
     try {
       await this.dataSource.query(
         `INSERT INTO autonomous_agent_logs (user_id, timestamp, log_level, module, message, metadata)
          VALUES (?, NOW(), ?, ?, ?, NULL)`,
-        [userId, level.toUpperCase(), module.toUpperCase(), message],
+        [userId, level.toUpperCase(), module.toUpperCase(), formattedMessage],
       );
     } catch (error) {
       this.logger.error(`[Sentinel] Erro ao salvar log no banco:`, error);
@@ -1184,14 +1197,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         userId,
         level: level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
         module: normalizedModule,
-        message: `[${module}] - ${message}`,
+        message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
         icon: this.getLogIcon(level),
         details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_75' },
         tableName: 'autonomous_agent_logs',
       });
     }
 
-    this.logger.log(`[Sentinel][${module}][${userId}] ${message}`);
+    this.logger.log(`[Sentinel][${module}][${userId}] ${formattedMessage}`);
   }
 
   private getLogIcon(level: string): string {

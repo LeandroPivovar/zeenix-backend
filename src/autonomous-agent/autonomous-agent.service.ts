@@ -682,13 +682,33 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
-    return await this.dataSource.query(
-      `SELECT * FROM autonomous_agent_logs 
+    const logs = await this.dataSource.query(
+      `SELECT 
+         id,
+         user_id,
+         timestamp,
+         log_level,
+         module,
+         message,
+         metadata
+       FROM autonomous_agent_logs 
        WHERE user_id = ? 
        ORDER BY timestamp DESC 
        ${limitClause}`,
       [userId],
     );
+    
+    // ✅ Converter campos snake_case para camelCase para o frontend
+    return (logs || []).map((log: any) => ({
+      id: log.id,
+      userId: log.user_id,
+      timestamp: log.timestamp,
+      logLevel: log.log_level,
+      level: log.log_level, // Alias para compatibilidade
+      module: log.module,
+      message: log.message,
+      metadata: log.metadata,
+    }));
   }
 
   /**
