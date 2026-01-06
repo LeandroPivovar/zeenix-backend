@@ -26,6 +26,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly maxTicks = 100;
   private readonly appId: string;
   private symbol = 'R_100'; // Símbolo padrão para Orion
+  private activeSymbols = new Set<string>(['R_100']); // ✅ Símbolos ativos (R_100 para Orion, R_75 para Sentinel)
+  private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null;
@@ -116,20 +118,26 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * Inscreve-se nos ticks do símbolo
+   * Inscreve-se nos ticks dos símbolos necessários
+   * ✅ ATUALIZADO: Se inscreve em R_100 e R_75 para suportar Orion e Sentinel
    */
   private subscribeToTicks(): void {
-    this.logger.log(`📡 Inscrevendo-se nos ticks de ${this.symbol}...`);
-    const subscriptionPayload = {
-      ticks_history: this.symbol,
-      adjust_start_time: 1,
-      count: this.maxTicks,
-      end: 'latest',
-      subscribe: 1,
-      style: 'ticks',
-    };
-    this.send(subscriptionPayload);
-    this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
+    // ✅ Sempre se inscrever em R_100 (Orion) e R_75 (Sentinel)
+    const symbolsToSubscribe = ['R_100', 'R_75'];
+    
+    for (const symbol of symbolsToSubscribe) {
+      this.logger.log(`📡 Inscrevendo-se nos ticks de ${symbol}...`);
+      const subscriptionPayload = {
+        ticks_history: symbol,
+        adjust_start_time: 1,
+        count: this.maxTicks,
+        end: 'latest',
+        subscribe: 1,
+        style: 'ticks',
+      };
+      this.send(subscriptionPayload);
+      this.logger.log(`✅ Requisição de inscrição enviada para ${symbol}`);
+    }
   }
 
   /**
@@ -202,19 +210,54 @@ export class AutonomousAgentService implements OnModuleInit {
         const subId = msg.subscription?.id || msg.subscription_id || msg.id;
         if (subId) {
           this.subscriptionId = subId;
-          this.logger.log(`📋 Subscription ID capturado: ${this.subscriptionId}`);
+          // ✅ Tentar identificar o símbolo pela subscription
+          // A API da Deriv pode retornar o símbolo na mensagem (echo contém a requisição original)
+          let symbolFromMsg = this.symbol; // Default
+          
+          // Tentar extrair do echo (requisição original)
+          if (msg.echo?.ticks_history) {
+            symbolFromMsg = msg.echo.ticks_history;
+          } else if (msg.ticks_history) {
+            symbolFromMsg = msg.ticks_history;
+          }
+          
+          // Mapear subscription ID para símbolo
+          this.subscriptions.set(symbolFromMsg, subId);
+          this.logger.log(`📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`);
         }
         if (msg.history?.prices) {
-          this.processHistory(msg.history, subId);
+          // ✅ Passar símbolo para processHistory se disponível
+          const symbolForHistory = subId ? this.getSymbolForSubscription(subId) || this.symbol : this.symbol;
+          this.processHistory(msg.history, subId, symbolForHistory);
         }
         break;
 
       case 'tick':
-        if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
-          this.subscriptionId = msg.subscription.id;
-          this.logger.log(`📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
+        if (msg.tick) {
+          // ✅ Tentar identificar o símbolo pelo subscription ID ou pelo próprio tick
+          let symbolForTick = this.symbol; // Default
+          
+          if (msg.subscription?.id) {
+            // Tentar mapear subscription ID para símbolo
+            const mappedSymbol = this.getSymbolForSubscription(msg.subscription.id);
+            if (mappedSymbol) {
+              symbolForTick = mappedSymbol;
+            } else {
+              // Se não estiver mapeado, tentar usar o símbolo do tick (se disponível)
+              symbolForTick = msg.tick.symbol || this.symbol;
+            }
+            
+            if (this.subscriptionId !== msg.subscription.id) {
+              this.subscriptionId = msg.subscription.id;
+              this.logger.debug(`📋 Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
+            }
+          } else if (msg.tick.symbol) {
+            // Se o tick tiver símbolo, usar ele
+            symbolForTick = msg.tick.symbol;
+          }
+          
+          this.processTick(msg.tick, symbolForTick);
         }
-        this.processTick(msg.tick);
         break;
 
       default:
@@ -261,13 +304,15 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * Processa um tick recebido
+   * ✅ ATUALIZADO: Aceita símbolo como parâmetro para processar ticks de diferentes símbolos
    */
-  private processTick(tick: any): void {
+  private processTick(tick: any, symbol?: string): void {
     if (!tick || !tick.quote) {
       this.logger.debug('⚠️ Tick recebido sem quote');
       return;
     }
 
+    const tickSymbol = symbol || this.symbol;
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
     const parity = this.getParityFromDigit(digit);
@@ -293,19 +338,31 @@ export class AutonomousAgentService implements OnModuleInit {
     // Log a cada 50 ticks
     if (this.ticks.length % 50 === 0) {
       this.logger.debug(
-        `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+        `[Tick][${tickSymbol}] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
       );
     }
 
-    // ✅ Enviar tick para o StrategyManager do agente autônomo
+    // ✅ Enviar tick para o StrategyManager do agente autônomo com o símbolo correto
     if (!this.strategyManager) {
       this.logger.error('[StrategyManager] Indisponível - tick ignorado');
       return;
     }
 
-    this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
-      this.logger.error('[StrategyManager] Erro ao processar tick:', error);
+    this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
+      this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
     });
+  }
+  
+  /**
+   * ✅ NOVO: Obtém o símbolo associado a uma subscription ID
+   */
+  private getSymbolForSubscription(subscriptionId: string): string | null {
+    for (const [symbol, subId] of this.subscriptions.entries()) {
+      if (subId === subscriptionId) {
+        return symbol;
+      }
+    }
+    return null;
   }
 
   /**
@@ -539,7 +596,27 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // Ativar agente na estratégia Orion
+      // ✅ Determinar símbolo baseado no tipo de agente
+      const agentSymbol = config.symbol || (normalizedAgentType === 'sentinel' ? 'R_75' : 'R_100');
+      
+      // ✅ Garantir que estamos inscritos no símbolo necessário
+      if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (!this.subscriptions.has(agentSymbol)) {
+          this.logger.log(`📡 Inscrevendo-se em ${agentSymbol} para usuário ${userId}...`);
+          const subscriptionPayload = {
+            ticks_history: agentSymbol,
+            adjust_start_time: 1,
+            count: this.maxTicks,
+            end: 'latest',
+            subscribe: 1,
+            style: 'ticks',
+          };
+          this.send(subscriptionPayload);
+          this.activeSymbols.add(agentSymbol);
+        }
+      }
+      
+      // Ativar agente na estratégia
       try {
         await this.strategyManager.activateUser(strategy, userId, {
           userId: userId,
@@ -548,7 +625,7 @@ export class AutonomousAgentService implements OnModuleInit {
           dailyLossLimit: config.dailyLossLimit,
           derivToken: config.derivToken,
           currency: config.currency || 'USD',
-          symbol: config.symbol || 'R_100',
+          symbol: agentSymbol,
           tradingMode: config.tradingMode || 'normal',
           initialBalance: config.initialBalance || 0,
         });
@@ -679,21 +756,45 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * Obtém logs do agente
+   * ✅ OTIMIZADO: Cache de session_date para reduzir queries
    */
+  private sessionDateCache: Map<string, { date: Date | null; timestamp: number }> = new Map();
+  private readonly CACHE_TTL = 30000; // 30 segundos
+
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
     
-    // ✅ Buscar session_date para filtrar apenas logs da sessão atual
-    const config = await this.dataSource.query(
-      `SELECT session_date FROM autonomous_agent_config 
-       WHERE user_id = ? AND is_active = TRUE
-       LIMIT 1`,
-      [userId],
-    );
-    
+    // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime = null;
-    if (config && config.length > 0 && config[0].session_date) {
-      sessionStartTime = config[0].session_date;
+    const cached = this.sessionDateCache.get(userId);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+      // Usar cache se ainda válido (menos de 30 segundos)
+      sessionStartTime = cached.date;
+    } else {
+      // Buscar session_date apenas se cache expirou ou não existe
+      const config = await this.dataSource.query(
+        `SELECT session_date FROM autonomous_agent_config 
+         WHERE user_id = ? AND is_active = TRUE
+         LIMIT 1`,
+        [userId],
+      );
+      
+      if (config && config.length > 0 && config[0].session_date) {
+        sessionStartTime = config[0].session_date;
+        // Atualizar cache
+        this.sessionDateCache.set(userId, {
+          date: sessionStartTime,
+          timestamp: now,
+        });
+      } else {
+        // Cachear null também para evitar queries repetidas
+        this.sessionDateCache.set(userId, {
+          date: null,
+          timestamp: now,
+        });
+      }
     }
     
     // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
