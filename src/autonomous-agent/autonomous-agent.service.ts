@@ -421,6 +421,24 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async activateAgent(userId: string, config: any): Promise<void> {
     try {
+      // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
+      // (mantém apenas as transações/trades)
+      try {
+        await this.dataSource.query(
+          `DELETE FROM autonomous_agent_logs 
+           WHERE user_id = ?`,
+          [userId],
+        );
+        this.logger.log(`[ActivateAgent] 🗑️ Logs anteriores deletados para usuário ${userId}`);
+      } catch (error) {
+        this.logger.error(`[ActivateAgent] ⚠️ Erro ao deletar logs do usuário ${userId}:`, error);
+        // Não bloquear a ativação se houver erro ao deletar logs
+      }
+
+      // ✅ Limpar histórico de ticks para este usuário (começar do zero)
+      // Os ticks serão coletados novamente a partir da nova sessão
+      // Nota: ticks são globais, mas podemos filtrar por timestamp da sessão no frontend
+
       // Verificar se já existe configuração (independente de is_active)
       // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
       const existing = await this.dataSource.query(
@@ -607,14 +625,44 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * Obtém histórico de preços para um usuário
+   * Retorna apenas ticks da sessão atual (após session_date)
    */
   async getPriceHistoryForUser(userId: string, limit: number = 100): Promise<any[]> {
-    // Retornar os últimos ticks recebidos
-    return this.ticks.slice(-limit).map((tick) => ({
-      value: tick.value,
-      epoch: tick.epoch,
-      timestamp: tick.timestamp,
-    }));
+    try {
+      // Buscar data da sessão atual do usuário
+      const config = await this.dataSource.query(
+        `SELECT session_date FROM autonomous_agent_config 
+         WHERE user_id = ? AND is_active = TRUE
+         LIMIT 1`,
+        [userId],
+      );
+
+      let sessionStartTime = 0;
+      if (config && config.length > 0 && config[0].session_date) {
+        sessionStartTime = new Date(config[0].session_date).getTime() / 1000;
+      }
+
+      // Filtrar ticks apenas da sessão atual (após session_date)
+      const sessionTicks = this.ticks.filter((tick) => {
+        const tickTime = tick.epoch || (tick.timestamp ? new Date(tick.timestamp).getTime() / 1000 : 0);
+        return tickTime >= sessionStartTime;
+      });
+
+      // Retornar os últimos ticks da sessão atual
+      return sessionTicks.slice(-limit).map((tick) => ({
+        value: tick.value,
+        epoch: tick.epoch,
+        timestamp: tick.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error(`[GetPriceHistoryForUser] Erro ao buscar histórico:`, error);
+      // Em caso de erro, retornar últimos ticks globais
+      return this.ticks.slice(-limit).map((tick) => ({
+        value: tick.value,
+        epoch: tick.epoch,
+        timestamp: tick.timestamp,
+      }));
+    }
   }
 
   /**
