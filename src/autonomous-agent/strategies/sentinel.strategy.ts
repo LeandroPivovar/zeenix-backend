@@ -166,12 +166,13 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Processa um tick recebido
    */
-  async processTick(tick: Tick): Promise<void> {
+  async processTick(tick: Tick, symbol?: string): Promise<void> {
     // Processar para todos os usuários ativos que usam o símbolo do tick
     const promises: Promise<void>[] = [];
+    const tickSymbol = symbol || 'R_75'; // Default para R_75 (Sentinel usa R_75)
 
     for (const [userId, config] of this.userConfigs.entries()) {
-      if (config.symbol === tick.symbol) {
+      if (config.symbol === tickSymbol) {
         promises.push(this.processTickForUser(userId, tick).catch((error) => {
           this.logger.error(`[Sentinel][${userId}] Erro ao processar tick:`, error);
         }));
@@ -406,7 +407,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return 50; // Neutro
     }
 
-    const changes = [];
+    const changes: number[] = [];
     for (let i = 1; i < prices.length; i++) {
       changes.push(prices[i] - prices[i - 1]);
     }
@@ -574,9 +575,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // Stop Loss Blindado
     if (config.stopLossType === 'blindado' && state.currentProfit > 0) {
+      const initialBalance = config.initialBalance || 0;
       const protectedProfit = state.currentProfit * 0.5; // 50% do lucro protegido
-      const protectedBalance = config.initialBalance + protectedProfit;
-      const currentBalance = config.initialBalance + state.currentProfit - state.currentLoss;
+      const protectedBalance = initialBalance + protectedProfit;
+      const currentBalance = initialBalance + state.currentProfit - state.currentLoss;
 
       if (currentBalance <= protectedBalance) {
         await this.saveLog(userId, 'INFO', 'RISK',
@@ -1171,12 +1173,21 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // ✅ Salvar via LogQueueService (para exibição em tempo real)
     if (this.logQueueService) {
-      await this.logQueueService.addLog({
+      // Normalizar módulo para tipo válido
+      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] = 
+        ['CORE', 'API', 'ANALYZER', 'DECISION', 'TRADER', 'RISK', 'HUMANIZER'];
+      const normalizedModule = validModules.includes(module.toUpperCase() as any) 
+        ? (module.toUpperCase() as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')
+        : 'CORE';
+
+      this.logQueueService.saveLogAsync({
         userId,
-        type: level.toLowerCase() as 'info' | 'warn' | 'error' | 'debug',
-        icon: this.getLogIcon(level),
+        level: level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
+        module: normalizedModule,
         message: `[${module}] - ${message}`,
+        icon: this.getLogIcon(level),
         details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_75' },
+        tableName: 'autonomous_agent_logs',
       });
     }
 

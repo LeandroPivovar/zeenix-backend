@@ -76,7 +76,7 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       // Sentinel processa R_75
       if (!symbol || symbol === 'R_75') {
         promises.push(
-          (sentinelStrategy as any).processTick(tick).catch((error: any) => {
+          (sentinelStrategy as any).processTick(tick, symbol || 'R_75').catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Sentinel] Erro:', error);
           })
         );
