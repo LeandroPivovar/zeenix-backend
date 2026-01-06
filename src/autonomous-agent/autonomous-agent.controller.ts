@@ -123,6 +123,31 @@ export class AutonomousAgentController {
         };
       }
 
+      // Converter snake_case para camelCase para o frontend
+      const formattedConfig = {
+        id: config.id,
+        userId: config.user_id,
+        isActive: config.is_active === 1 || config.is_active === true,
+        initialStake: parseFloat(config.initial_stake) || 0,
+        dailyProfitTarget: parseFloat(config.daily_profit_target) || 0,
+        dailyLossLimit: parseFloat(config.daily_loss_limit) || 0,
+        derivToken: config.deriv_token,
+        currency: config.currency,
+        symbol: config.symbol,
+        agentType: config.agent_type,
+        tradingMode: config.trading_mode,
+        initialBalance: parseFloat(config.initial_balance) || 0,
+        sessionStatus: config.session_status,
+        sessionDate: config.session_date,
+        dailyProfit: parseFloat(config.daily_profit) || 0,
+        dailyLoss: parseFloat(config.daily_loss) || 0,
+        totalTrades: parseInt(config.total_trades) || 0,
+        totalWins: parseInt(config.total_wins) || 0,
+        totalLosses: parseInt(config.total_losses) || 0,
+        createdAt: config.created_at,
+        updatedAt: config.updated_at,
+      };
+
       // Atualizar trades com valores faltantes em background (não bloqueante)
       // Limita a 10 trades por vez para não sobrecarregar
       this.agentService.updateTradesWithMissingPrices(userId, 10).catch((error) => {
@@ -131,7 +156,7 @@ export class AutonomousAgentController {
 
       return {
         success: true,
-        data: config,
+        data: formattedConfig,
       };
     } catch (error) {
       this.logger.error(`[GetConfig] Erro:`, error);
