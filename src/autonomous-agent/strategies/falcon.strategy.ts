@@ -129,12 +129,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
 
-    // Log de ativação
-    await this.saveLog(userId, 'INFO', 'CORE', `🦅 Agente FALCON iniciando...`);
+    // Log de ativação (formato igual ao SENTINEL)
+    await this.saveLog(userId, 'INFO', 'CORE', `Agente 1 - Falcon iniciando...`);
     await this.saveLog(userId, 'INFO', 'CORE', 
-      `Carregando configurações: Stake=${falconConfig.initialStake}, Meta=${falconConfig.dailyProfitTarget}, Stop=${falconConfig.dailyLossLimit}`);
+      `Carregando configurações: stake=${falconConfig.initialStake}, meta=${falconConfig.dailyProfitTarget}, stop=${falconConfig.dailyLossLimit}`);
+    await this.saveLog(userId, 'INFO', 'CORE', 
+      `Aguardando 50 ticks para iniciar análise. Símbolo: ${falconConfig.symbol}`);
 
-    this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado`);
+    this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Symbol: ${falconConfig.symbol} | Total configs: ${this.userConfigs.size}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -150,6 +152,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     const promises: Promise<void>[] = [];
     const tickSymbol = symbol || 'R_75';
+
+    // ✅ Log de debug para verificar se está recebendo ticks
+    if (this.userConfigs.size > 0) {
+      this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
+    }
 
     for (const [userId, config] of this.userConfigs.entries()) {
       if (config.symbol === tickSymbol) {
@@ -198,8 +205,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    // ✅ Log quando tiver ticks suficientes para análise
+    if (userTicks.length === 50) {
+      await this.saveLog(userId, 'INFO', 'ANALYZER', 
+        `Ticks coletados: ${userTicks.length}/50. Iniciando análise...`);
+    }
+
     // Realizar análise de mercado
     const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+    
+    // ✅ Log de debug da análise
+    if (marketAnalysis) {
+      this.logger.debug(`[Falcon][${userId}] Análise realizada: prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
+    } else {
+      this.logger.warn(`[Falcon][${userId}] Análise retornou null`);
+    }
     
     if (marketAnalysis) {
       // Processar decisão de trade
@@ -219,11 +239,17 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
     const config = this.userConfigs.get(userId);
-    if (!config) return null;
+    if (!config) {
+      this.logger.warn(`[Falcon][${userId}] Config não encontrada para análise`);
+      return null;
+    }
 
     // Usar últimos 50 ticks para análise
     const recentTicks = ticks.slice(-50);
     const prices = recentTicks.map(t => t.value);
+    
+    // ✅ Log de debug
+    this.logger.debug(`[Falcon][${userId}] Analisando mercado: ${recentTicks.length} ticks, prices=${prices.length}`);
 
     // 1. Análise de Volatilidade
     const volatility = this.calculateVolatility(prices);
@@ -391,10 +417,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
 
-      // ✅ Log consolidado de decisão
-      const modeText = state.mode === 'ALTA_PRECISAO' ? 'ALTA PRECISÃO (>90%)' : 'PRECISO (>80%)';
+      // ✅ Log consolidado de decisão (formato igual ao SENTINEL)
+      const reasons: string[] = [];
+      if (marketAnalysis.details?.volatility) {
+        reasons.push(`Volatilidade: ${(marketAnalysis.details.volatility * 100).toFixed(2)}%`);
+      }
+      if (marketAnalysis.details?.trend) {
+        reasons.push(`Tendência: ${marketAnalysis.details.trend}`);
+      }
+      if (marketAnalysis.details?.digitPattern) {
+        reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
+      }
+      
       await this.saveLog(userId, 'INFO', 'DECISION',
-        `✅ COMPRA APROVADA | Modo: ${modeText} | Probabilidade: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal} | Stake: $${stake.toFixed(2)}`);
+        `✅ COMPRA APROVADA | Direção: ${marketAnalysis.signal} | Score: ${marketAnalysis.probability.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
 
       return {
         action: 'BUY',
@@ -404,14 +440,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         reason: 'HIGH_PROBABILITY',
       };
     } else {
-      // ✅ Log de motivo para não comprar
+      // ✅ Log de motivo para não comprar (formato igual ao SENTINEL)
       const missingProb = requiredProb - marketAnalysis.probability;
       const reasonMsg = marketAnalysis.probability < requiredProb 
-        ? `Probabilidade ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
+        ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
         : 'Sinal indefinido';
       
       await this.saveLog(userId, 'INFO', 'DECISION',
-        `⏸️ COMPRA NEGADA | Modo: ${state.mode} | Probabilidade: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
+        `⏸️ COMPRA NEGADA | Score: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
     }
 
     return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
@@ -443,8 +479,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `[Falcon][${userId}] ⚠️ LOSS DETECTADO: Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`,
       );
       
-      this.saveLog(userId, 'WARN', 'RISK',
-        `⚠️ Perda detectada. Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`);
+      // Não logar ativação de modo (SENTINEL não faz isso)
     }
   }
 
@@ -476,7 +511,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         );
         
         this.saveLog(userId, 'INFO', 'RISK',
-          `🚑 Smart Martingale: Recuperando $${lossToRecover.toFixed(2)} + $${targetProfit.toFixed(2)} lucro = $${totalNeeded.toFixed(2)} | Stake: $${stake.toFixed(2)}`);
+          `Ativando recuperação (Martingale M1). perdas_totais=${lossToRecover.toFixed(2)}, modo=ALTA_PRECISAO`);
       } else {
         // Se estiver no modo Alta Precisão mas sem prejuízo acumulado, usa stake base
         stake = config.initialStake;
@@ -490,13 +525,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
         
         this.saveLog(userId, 'INFO', 'RISK',
-          `🚀 Soros Nível 1: Stake Base (${config.initialStake.toFixed(2)}) + Lucro Anterior (${state.lastProfit.toFixed(2)}) = ${stake.toFixed(2)}`);
+          `Ativando Soros Nível 1. stakeanterior=${config.initialStake.toFixed(2)}, lucro=${state.lastProfit.toFixed(2)}, proximostake=${stake.toFixed(2)}`);
       }
       // Win3 ou mais: volta para Base
       else if (state.consecutiveWins >= 2) {
         stake = config.initialStake;
-        this.saveLog(userId, 'INFO', 'RISK',
-          `🔄 Soros: Voltando para Stake Base após ${state.consecutiveWins} vitórias`);
+        // Não logar reset de Soros (SENTINEL não faz isso)
       }
     }
 
@@ -522,8 +556,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${remainingLossLimit.toFixed(2)}`,
       );
       
-      this.saveLog(userId, 'WARN', 'RISK',
-        `⛔ Stake ajustada pelo Stop Loss: De $${calculatedStake.toFixed(2)} para $${remainingLossLimit.toFixed(2)}`);
+        this.saveLog(userId, 'WARN', 'RISK',
+          `Risco de ultrapassar Stop Loss! perdasatuais=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, proximaentrada_calculada=${calculatedStake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
       
       return remainingLossLimit;
     }
@@ -554,7 +588,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         );
         
         this.saveLog(userId, 'INFO', 'RISK',
-          `🔒 STOP BLINDADO ATIVADO! Lucro atual: $${state.lucroAtual.toFixed(2)} (${((state.lucroAtual / config.dailyProfitTarget) * 100).toFixed(1)}% da meta) | Piso protegido: $${state.pisoBlindado.toFixed(2)}`);
+          `Lucro atual: $${state.lucroAtual.toFixed(2)}. Ativando Stop Loss Blindado em $${(config.initialBalance + state.pisoBlindado).toFixed(2)} (garantindo $${state.pisoBlindado.toFixed(2)} de lucro).`);
       }
     }
     // Atualização Dinâmica (Trailing Stop)
@@ -567,8 +601,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           `[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
         );
         
-        this.saveLog(userId, 'INFO', 'RISK',
-          `🔒 Blindagem atualizada: Novo pico $${state.picoLucro.toFixed(2)} | Novo piso protegido: $${state.pisoBlindado.toFixed(2)}`);
+        // Não logar atualização de blindagem (SENTINEL não faz isso)
       }
 
       // Gatilho de Saída
@@ -576,7 +609,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
         
         this.saveLog(userId, 'WARN', 'RISK',
-          `🛑 STOP BLINDADO ATINGIDO! Lucro caiu para $${state.lucroAtual.toFixed(2)} (piso: $${state.pisoBlindado.toFixed(2)}). Encerrando operações.`);
+          `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`);
         
         return false; // Deve parar
       }
@@ -850,17 +883,17 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Atualizar modo (PRECISO ou ALTA_PRECISAO)
     this.updateMode(userId, result.win);
 
-    // Logs
+    // Logs (formato igual ao SENTINEL)
     if (result.win) {
       await this.saveLog(userId, 'INFO', 'API', 
-        `✅ Operação finalizada. result=WIN, profit=$${result.profit.toFixed(2)}`);
+        `Operação finalizada. result=WIN, profit=${result.profit.toFixed(2)}`);
     } else {
       await this.saveLog(userId, 'ERROR', 'API', 
-        `❌ Operação finalizada. result=LOSS, loss=$${Math.abs(result.profit).toFixed(2)}`);
+        `Operação finalizada. result=LOSS, loss=${Math.abs(result.profit).toFixed(2)}`);
     }
 
     await this.saveLog(userId, 'INFO', 'RISK',
-      `Estado atualizado: lucro_atual=$${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
+      `Estado atualizado: lucro_atual=${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
 
     // Atualizar banco de dados
     await this.updateUserStateInDb(userId, state);
@@ -890,15 +923,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     switch (reason) {
       case 'TAKE_PROFIT':
         status = 'stopped_profit';
-        message = `🎯 META DE LUCRO ATINGIDA! lucro=${state.lucroAtual.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`;
+        message = `META DE LUCRO ATINGIDA! daily_profit=${state.lucroAtual.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`;
         break;
       case 'STOP_LOSS':
         status = 'stopped_loss';
-        message = `🛑 STOP LOSS ATINGIDO! perda=${Math.abs(state.lucroAtual).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`;
+        message = `STOP LOSS ATINGIDO! daily_loss=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`;
         break;
       case 'BLINDADO':
         status = 'stopped_blindado';
-        message = `🔒 STOP BLINDADO ATINGIDO! Lucro protegido: $${state.pisoBlindado.toFixed(2)}. Encerrando operações.`;
+        message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`;
         break;
     }
 
