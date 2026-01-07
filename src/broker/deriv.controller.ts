@@ -1127,6 +1127,26 @@ export class DerivController {
           trade.status = (trade.profit !== null && trade.profit > 0) ? TradeStatus.WON : (trade.profit !== null ? TradeStatus.LOST : TradeStatus.PENDING);
           const savedTrade = await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${savedTrade.id}, exitSpot: ${savedTrade.exitSpot}, exitValue: ${savedTrade.exitValue}, profit: ${savedTrade.profit}`);
+          
+          // Se a operação foi finalizada e o usuário é expert, atualizar operações de copy trading
+          if ((savedTrade.status === TradeStatus.WON || savedTrade.status === TradeStatus.LOST) && savedTrade.profit !== null && savedTrade.entryValue !== null) {
+            try {
+              const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
+              if (isMasterTrader) {
+                const result = savedTrade.status === TradeStatus.WON ? 'win' : 'loss';
+                this.logger.log(`[Trading] Atualizando operações de copy trading para contractId ${data.contractId}, result: ${result}, profit: ${savedTrade.profit}`);
+                await this.copyTradingService.updateCopyTradingOperationsResult(
+                  userId,
+                  data.contractId,
+                  result,
+                  savedTrade.profit,
+                  savedTrade.entryValue,
+                );
+              }
+            } catch (error) {
+              this.logger.error(`[Trading] Erro ao atualizar operações de copy trading: ${error.message}`);
+            }
+          }
         } else {
           this.logger.warn(`[Trading] Operação não encontrada para contractId: ${data.contractId}`);
         }
@@ -1349,6 +1369,26 @@ export class DerivController {
             if (shouldSave) {
               await this.tradeRepository.save(trade);
               this.logger.log(`[Trading] Contrato atualizado no banco: ${trade.id}, status: ${trade.status}, entrySpot: ${trade.entrySpot}, exitSpot: ${trade.exitSpot}, profit: ${trade.profit}`);
+              
+              // Se o contrato foi finalizado e o usuário é expert, atualizar operações de copy trading
+              if (isFinalized && (trade.status === TradeStatus.WON || trade.status === TradeStatus.LOST)) {
+                try {
+                  const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
+                  if (isMasterTrader && trade.profit !== null && trade.entryValue !== null) {
+                    const result = trade.status === TradeStatus.WON ? 'win' : 'loss';
+                    this.logger.log(`[Trading] Atualizando operações de copy trading para contractId ${contractId}, result: ${result}, profit: ${trade.profit}`);
+                    await this.copyTradingService.updateCopyTradingOperationsResult(
+                      userId,
+                      contractId,
+                      result,
+                      trade.profit,
+                      trade.entryValue,
+                    );
+                  }
+                } catch (error) {
+                  this.logger.error(`[Trading] Erro ao atualizar operações de copy trading: ${error.message}`);
+                }
+              }
             }
           }
         } catch (error) {

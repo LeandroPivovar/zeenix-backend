@@ -652,6 +652,140 @@ export class CopyTradingService {
   }
 
   /**
+   * Atualiza o resultado das operações de copy trading quando o contrato do expert é finalizado
+   */
+  async updateCopyTradingOperationsResult(
+    masterUserId: string,
+    contractId: string,
+    result: 'win' | 'loss',
+    expertProfit: number,
+    expertStakeAmount: number,
+  ): Promise<void> {
+    try {
+      this.logger.log(`[UpdateCopyTradingOperationsResult] ========== ATUALIZANDO RESULTADO OPERAÇÕES ==========`);
+      this.logger.log(`[UpdateCopyTradingOperationsResult] Master trader: ${masterUserId}, ContractId: ${contractId}, Result: ${result}, Expert Profit: ${expertProfit}, Expert Stake: ${expertStakeAmount}`);
+
+      // Buscar todas as operações de copy trading com o mesmo trader_operation_id (contractId do expert)
+      const operations = await this.dataSource.query(
+        `SELECT o.*, s.user_id as copier_user_id, s.id as session_id, s.current_balance, s.total_operations, s.total_wins, s.total_losses, s.total_profit
+         FROM copy_trading_operations o
+         INNER JOIN copy_trading_sessions s ON o.session_id = s.id
+         WHERE o.trader_operation_id = ? AND o.result = 'pending'
+         ORDER BY o.executed_at ASC`,
+        [contractId],
+      );
+
+      if (!operations || operations.length === 0) {
+        this.logger.log(`[UpdateCopyTradingOperationsResult] Nenhuma operação de copy trading encontrada para contractId ${contractId}`);
+        return;
+      }
+
+      this.logger.log(`[UpdateCopyTradingOperationsResult] Encontradas ${operations.length} operações para atualizar`);
+
+      // Atualizar cada operação
+      for (const operation of operations) {
+        try {
+          // Calcular profit proporcional baseado no stake do copiador vs stake do expert
+          const copierStakeAmount = parseFloat(operation.stake_amount) || 0;
+          let copierProfit = 0;
+
+          if (expertStakeAmount > 0) {
+            // Calcular proporção: (stake_copiador / stake_expert) * profit_expert
+            const proportion = copierStakeAmount / expertStakeAmount;
+            copierProfit = expertProfit * proportion;
+          } else {
+            // Se stake do expert for 0, usar profit direto (caso especial)
+            copierProfit = expertProfit;
+          }
+
+          // Arredondar para 2 casas decimais
+          copierProfit = Math.round(copierProfit * 100) / 100;
+
+          this.logger.log(
+            `[UpdateCopyTradingOperationsResult] Atualizando operação ${operation.id} - Copier: ${operation.copier_user_id}, Stake: $${copierStakeAmount.toFixed(2)}, Profit: $${copierProfit.toFixed(2)}`,
+          );
+
+          // Atualizar a operação
+          await this.dataSource.query(
+            `UPDATE copy_trading_operations 
+             SET result = ?,
+                 profit = ?,
+                 closed_at = NOW()
+             WHERE id = ?`,
+            [result, copierProfit, operation.id],
+          );
+
+          // Atualizar estatísticas da sessão
+          const sessionId = operation.session_id;
+          const currentBalance = parseFloat(operation.current_balance) || 0;
+          const newBalance = currentBalance + copierProfit;
+          const totalOperations = (operation.total_operations || 0);
+          const totalWins = result === 'win' ? (operation.total_wins || 0) + 1 : (operation.total_wins || 0);
+          const totalLosses = result === 'loss' ? (operation.total_losses || 0) + 1 : (operation.total_losses || 0);
+          const totalProfit = (parseFloat(operation.total_profit) || 0) + copierProfit;
+
+          await this.dataSource.query(
+            `UPDATE copy_trading_sessions 
+             SET current_balance = ?,
+                 total_wins = ?,
+                 total_losses = ?,
+                 total_profit = ?
+             WHERE id = ?`,
+            [newBalance, totalWins, totalLosses, totalProfit, sessionId],
+          );
+
+          // Verificar stop loss e take profit
+          const sessionConfig = await this.dataSource.query(
+            `SELECT stop_loss, take_profit FROM copy_trading_config 
+             WHERE user_id = ? AND is_active = 1 LIMIT 1`,
+            [operation.copier_user_id],
+          );
+
+          if (sessionConfig && sessionConfig.length > 0) {
+            const stopLoss = parseFloat(sessionConfig[0].stop_loss) || 0;
+            const takeProfit = parseFloat(sessionConfig[0].take_profit) || 0;
+
+            // Verificar stop loss (perda acumulada)
+            const lossAmount = Math.abs(totalProfit < 0 ? totalProfit : 0);
+            if (stopLoss > 0 && lossAmount >= stopLoss) {
+              this.logger.warn(
+                `[UpdateCopyTradingOperationsResult] Stop loss atingido para sessão ${sessionId} - Loss: $${lossAmount.toFixed(2)}, Stop Loss: $${stopLoss.toFixed(2)}`,
+              );
+              await this.endSession(sessionId, operation.copier_user_id, 'stop_loss', `Stop loss atingido: $${lossAmount.toFixed(2)}`);
+            }
+
+            // Verificar take profit (lucro acumulado)
+            if (takeProfit > 0 && totalProfit >= takeProfit) {
+              this.logger.log(
+                `[UpdateCopyTradingOperationsResult] Take profit atingido para sessão ${sessionId} - Profit: $${totalProfit.toFixed(2)}, Take Profit: $${takeProfit.toFixed(2)}`,
+              );
+              await this.endSession(sessionId, operation.copier_user_id, 'take_profit', `Take profit atingido: $${totalProfit.toFixed(2)}`);
+            }
+          }
+
+          this.logger.log(
+            `[UpdateCopyTradingOperationsResult] ✅ Operação ${operation.id} atualizada - Result: ${result}, Profit: $${copierProfit.toFixed(2)}, New Balance: $${newBalance.toFixed(2)}`,
+          );
+        } catch (error) {
+          this.logger.error(
+            `[UpdateCopyTradingOperationsResult] Erro ao atualizar operação ${operation.id}: ${error.message}`,
+            error.stack,
+          );
+          // Continuar com as próximas operações mesmo se houver erro
+        }
+      }
+
+      this.logger.log(`[UpdateCopyTradingOperationsResult] ========== FIM ATUALIZAÇÃO RESULTADO OPERAÇÕES ==========`);
+    } catch (error) {
+      this.logger.error(
+        `[UpdateCopyTradingOperationsResult] Erro ao atualizar resultado das operações: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Verifica se um usuário é trader mestre (pode ter operações copiadas)
    */
   async isMasterTrader(userId: string): Promise<boolean> {
