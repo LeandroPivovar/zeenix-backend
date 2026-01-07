@@ -1588,6 +1588,8 @@ export class AtlasStrategy implements IStrategy {
 
     let authResolved = false;
     let connectionTimeout: NodeJS.Timeout | null = null;
+    let authPromiseResolve: (() => void) | null = null;
+    let authPromiseReject: ((error: Error) => void) | null = null;
 
     const connInit = {
       ws: socket,
@@ -1600,11 +1602,20 @@ export class AtlasStrategy implements IStrategy {
     };
     this.wsConnections.set(token, connInit);
 
+    // ✅ Promise para aguardar autorização
+    const authPromise = new Promise<void>((resolve, reject) => {
+      authPromiseResolve = resolve;
+      authPromiseReject = reject;
+    });
+
     connectionTimeout = setTimeout(() => {
       if (!authResolved) {
         authResolved = true;
         socket.close();
         this.wsConnections.delete(token);
+        if (authPromiseReject) {
+          authPromiseReject(new Error('Timeout ao aguardar autorização'));
+        }
       }
     }, 30000);
 
@@ -1623,6 +1634,9 @@ export class AtlasStrategy implements IStrategy {
             this.logger.error(`[ATLAS][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`);
             socket.close();
             this.wsConnections.delete(token);
+            if (authPromiseReject) {
+              authPromiseReject(new Error(errorMsg));
+            }
             return;
           }
 
@@ -1638,6 +1652,11 @@ export class AtlasStrategy implements IStrategy {
               }
             }
           }, 90000);
+
+          // ✅ Resolver promise de autorização
+          if (authPromiseResolve) {
+            authPromiseResolve();
+          }
           return;
         }
 
@@ -1676,11 +1695,14 @@ export class AtlasStrategy implements IStrategy {
       socket.send(JSON.stringify({ authorize: token }));
     });
 
-    socket.on('error', () => {
+    socket.on('error', (error) => {
       if (!authResolved) {
         if (connectionTimeout) clearTimeout(connectionTimeout);
         authResolved = true;
         this.wsConnections.delete(token);
+        if (authPromiseReject) {
+          authPromiseReject(new Error(`Erro no WebSocket: ${error.message || 'Erro desconhecido'}`));
+        }
       }
     });
 
@@ -1698,8 +1720,18 @@ export class AtlasStrategy implements IStrategy {
       if (!authResolved) {
         if (connectionTimeout) clearTimeout(connectionTimeout);
         authResolved = true;
+        if (authPromiseReject) {
+          authPromiseReject(new Error('WebSocket fechado antes da autorização'));
+        }
       }
     });
+
+    // ✅ Aguardar autorização antes de retornar
+    try {
+      await authPromise;
+    } catch (error) {
+      throw new Error(`Falha ao autorizar conexão WebSocket: ${error.message}`);
+    }
 
     const conn = this.wsConnections.get(token)!;
     return {
