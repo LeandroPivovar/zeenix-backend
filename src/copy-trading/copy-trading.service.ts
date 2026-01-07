@@ -824,7 +824,22 @@ export class CopyTradingService {
    */
   async getCopiers(masterUserId: string) {
     try {
-      // Buscar todas as configurações de copy trade onde o trader_id é o masterUserId
+      // Primeiro, buscar o expert.id do master trader usando o user_id
+      // O trader_id na tabela copy_trading_config é o expert.id, não o user.id
+      const expertResult = await this.dataSource.query(
+        `SELECT id FROM experts WHERE user_id = ? AND is_active = 1 LIMIT 1`,
+        [masterUserId],
+      );
+
+      if (!expertResult || expertResult.length === 0) {
+        // Se o usuário não tem um expert associado, retornar array vazio
+        this.logger.log(`[GetCopiers] Usuário ${masterUserId} não possui expert associado`);
+        return [];
+      }
+
+      const expertId = expertResult[0].id;
+
+      // Buscar todas as configurações de copy trade onde o trader_id é o expert.id do master trader
       const copiers = await this.dataSource.query(
         `SELECT 
           c.id,
@@ -858,7 +873,7 @@ export class CopyTradingService {
         INNER JOIN users u ON c.user_id = u.id
         WHERE c.trader_id = ?
         ORDER BY c.created_at DESC`,
-        [masterUserId],
+        [expertId],
       );
 
       // Formatar dados dos copiadores

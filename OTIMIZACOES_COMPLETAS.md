@@ -133,3 +133,4 @@ As otimizações de prioridade baixa podem ser implementadas conforme necessidad
 
 
 
+

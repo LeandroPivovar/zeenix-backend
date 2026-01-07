@@ -244,3 +244,4 @@ O problema de CPU não é o cálculo em si, mas sim **fazer o cálculo múltipla
 
 
 
+
