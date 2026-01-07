@@ -879,7 +879,71 @@ export class CopyTradingService {
         this.logger.log(`[GetCopiers] Nenhum expert associado ao user_id ${masterUserId}`);
       }
 
-      this.logger.log(`[GetCopiers] PASSO 1 - Trader IDs para buscar: ${traderIdsToSearch.join(', ')}`);
+      // NOVO: Buscar TODOS os trader_ids que existem na tabela e verificar se algum corresponde ao master trader
+      // Isso ajuda a descobrir qual é o trader_id correto do master trader
+      this.logger.log(`[GetCopiers] PASSO 1.5: Buscando todos os trader_ids na tabela para verificar relação com master trader`);
+      
+      // Buscar todos os trader_ids únicos na tabela
+      const allTraderIdsInTable = await this.dataSource.query(
+        `SELECT DISTINCT trader_id FROM copy_trading_config`,
+      );
+      this.logger.log(`[GetCopiers] PASSO 1.5 - Trader IDs encontrados na tabela: ${allTraderIdsInTable.length}`);
+      
+      // Para cada trader_id, verificar se é um expert.id do master trader
+      for (const row of allTraderIdsInTable) {
+        const traderId = row.trader_id;
+        this.logger.log(`[GetCopiers] PASSO 1.5 - Verificando trader_id: ${traderId}`);
+        
+        // Verificar se esse trader_id é um expert.id do master trader
+        const expertCheck = await this.dataSource.query(
+          `SELECT id, user_id, name FROM experts WHERE id = ? AND user_id = ?`,
+          [traderId, masterUserId],
+        );
+        
+        if (expertCheck && expertCheck.length > 0) {
+          this.logger.log(`[GetCopiers] PASSO 1.5 - ✅ ENCONTRADO! trader_id ${traderId} é um expert.id do master trader!`);
+          traderIdsToSearch.push(traderId);
+        } else {
+          // Verificar se esse trader_id é o próprio user_id do master (caso especial)
+          if (traderId === masterUserId) {
+            this.logger.log(`[GetCopiers] PASSO 1.5 - ✅ trader_id ${traderId} é o próprio user_id do master trader`);
+            // Já está na lista
+          } else {
+            this.logger.log(`[GetCopiers] PASSO 1.5 - ❌ trader_id ${traderId} não está relacionado ao master trader`);
+          }
+        }
+      }
+
+      // NOVO PASSO 1.6: Verificar nas sessões ativas quais trader_ids têm sessões e se algum corresponde ao master
+      this.logger.log(`[GetCopiers] PASSO 1.6: Verificando trader_ids nas sessões ativas`);
+      const activeSessionsTraderIds = await this.dataSource.query(
+        `SELECT DISTINCT trader_id FROM copy_trading_sessions WHERE status = 'active'`,
+      );
+      this.logger.log(`[GetCopiers] PASSO 1.6 - Trader IDs com sessões ativas: ${activeSessionsTraderIds.length}`);
+      
+      for (const row of activeSessionsTraderIds) {
+        const traderId = row.trader_id;
+        this.logger.log(`[GetCopiers] PASSO 1.6 - Verificando trader_id com sessão ativa: ${traderId}`);
+        
+        // Verificar se é expert.id do master
+        const expertCheck = await this.dataSource.query(
+          `SELECT id, user_id FROM experts WHERE id = ? AND user_id = ?`,
+          [traderId, masterUserId],
+        );
+        
+        if (expertCheck && expertCheck.length > 0) {
+          this.logger.log(`[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é expert.id do master!`);
+          traderIdsToSearch.push(traderId);
+        } else if (traderId === masterUserId) {
+          this.logger.log(`[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é o user_id do master!`);
+          // Já está na lista
+        }
+      }
+
+      // Remover duplicatas
+      traderIdsToSearch = [...new Set(traderIdsToSearch)];
+      
+      this.logger.log(`[GetCopiers] PASSO 1 - Trader IDs FINAIS para buscar: ${traderIdsToSearch.join(', ')}`);
 
       // PASSO 2: Buscar na copy_trading_config todos os copiadores (onde trader_id corresponde ao master)
       this.logger.log(`[GetCopiers] PASSO 2: Buscando copiadores na copy_trading_config onde trader_id IN (${traderIdsToSearch.join(', ')})`);
@@ -1003,6 +1067,146 @@ export class CopyTradingService {
       // PASSO 4: Debug detalhado se não encontrou copiadores
       if (copiers.length === 0) {
         this.logger.log(`[GetCopiers] PASSO 4: DEBUG - Nenhum copiador encontrado, investigando...`);
+        
+        // NOVO: Verificar se algum trader_id que tem copiadores corresponde ao master trader
+        this.logger.log(`[GetCopiers] PASSO 4.1: Verificando trader_ids que têm copiadores e sua relação com o master`);
+        const tradersWithCopiers = await this.dataSource.query(
+          `SELECT DISTINCT c.trader_id, COUNT(*) as total_copiadores
+           FROM copy_trading_config c
+           GROUP BY c.trader_id
+           HAVING total_copiadores > 0
+           ORDER BY total_copiadores DESC`,
+        );
+        
+        for (const traderRow of tradersWithCopiers) {
+          const traderId = traderRow.trader_id;
+          this.logger.log(`[GetCopiers] PASSO 4.1 - Trader ${traderId} tem ${traderRow.total_copiadores} copiador(es)`);
+          
+          // Verificar se esse trader_id é expert.id do master
+          const expertRelation = await this.dataSource.query(
+            `SELECT id, user_id, name FROM experts WHERE id = ? AND user_id = ?`,
+            [traderId, masterUserId],
+          );
+          
+          if (expertRelation && expertRelation.length > 0) {
+            this.logger.log(`[GetCopiers] PASSO 4.1 - ✅ DESCOBERTO! trader_id ${traderId} é expert.id do master trader! Adicionando à busca...`);
+            traderIdsToSearch.push(traderId);
+            
+            // Buscar copiadores com esse trader_id
+            const foundCopiers = await this.dataSource.query(
+              `SELECT c.user_id, u.name, u.email, c.trader_id
+               FROM copy_trading_config c
+               INNER JOIN users u ON c.user_id = u.id
+               WHERE c.trader_id = ?`,
+              [traderId],
+            );
+            this.logger.log(`[GetCopiers] PASSO 4.1 - Copiadores encontrados para trader_id ${traderId}: ${foundCopiers.length}`);
+            foundCopiers.forEach((copier, idx) => {
+              this.logger.log(`[GetCopiers] PASSO 4.1 - Copiador ${idx + 1}: user_id=${copier.user_id}, name=${copier.name}, email=${copier.email}`);
+            });
+          }
+        }
+        
+        // Se encontrou novos trader_ids, buscar novamente
+        if (traderIdsToSearch.length > 0) {
+          const uniqueTraderIds = [...new Set(traderIdsToSearch)];
+          this.logger.log(`[GetCopiers] PASSO 4.2: Buscando novamente com trader_ids atualizados: ${uniqueTraderIds.join(', ')}`);
+          
+          // Buscar copiadores novamente com os trader_ids atualizados
+          const retryCopiersFromConfig = await this.dataSource.query(
+            `SELECT 
+              c.id,
+              c.user_id,
+              c.trader_id,
+              c.trader_name,
+              c.allocation_type,
+              c.allocation_value,
+              c.allocation_percentage,
+              c.leverage,
+              c.stop_loss,
+              c.take_profit,
+              c.blind_stop_loss,
+              c.is_active,
+              c.session_status,
+              c.session_balance,
+              c.total_operations,
+              c.total_wins,
+              c.total_losses,
+              c.activated_at,
+              c.created_at,
+              u.name as user_name,
+              u.email as user_email,
+              COALESCE((
+                SELECT SUM(profit) 
+                FROM copy_trading_operations 
+                WHERE user_id = c.user_id 
+                AND result IN ('win', 'loss')
+              ), 0) as total_profit
+            FROM copy_trading_config c
+            INNER JOIN users u ON c.user_id = u.id
+            WHERE c.trader_id IN (${uniqueTraderIds.map(() => '?').join(',')})
+            ORDER BY c.created_at DESC`,
+            uniqueTraderIds,
+          );
+          
+          const retryCopiersFromSessions = await this.dataSource.query(
+            `SELECT DISTINCT
+              c.id,
+              s.user_id,
+              s.trader_id,
+              s.trader_name,
+              c.allocation_type,
+              c.allocation_value,
+              c.allocation_percentage,
+              c.leverage,
+              c.stop_loss,
+              c.take_profit,
+              c.blind_stop_loss,
+              c.is_active,
+              c.session_status,
+              s.current_balance as session_balance,
+              s.total_operations,
+              s.total_wins,
+              s.total_losses,
+              s.started_at as activated_at,
+              c.created_at,
+              u.name as user_name,
+              u.email as user_email,
+              s.status as session_status_active,
+              COALESCE((
+                SELECT SUM(profit) 
+                FROM copy_trading_operations 
+                WHERE user_id = s.user_id 
+                AND result IN ('win', 'loss')
+              ), 0) as total_profit
+            FROM copy_trading_sessions s
+            INNER JOIN copy_trading_config c ON s.config_id = c.id
+            INNER JOIN users u ON s.user_id = u.id
+            WHERE s.trader_id IN (${uniqueTraderIds.map(() => '?').join(',')})
+              AND s.status = 'active'
+            ORDER BY s.started_at DESC`,
+            uniqueTraderIds,
+          );
+          
+          // Combinar resultados
+          const retryCopiersMap = new Map();
+          retryCopiersFromConfig.forEach(copier => {
+            retryCopiersMap.set(copier.user_id, copier);
+          });
+          retryCopiersFromSessions.forEach(copier => {
+            retryCopiersMap.set(copier.user_id, copier);
+          });
+          
+          const retryCopiers = Array.from(retryCopiersMap.values());
+          this.logger.log(`[GetCopiers] PASSO 4.2 - Após retry, encontrados ${retryCopiers.length} copiadores`);
+          
+          if (retryCopiers.length > 0) {
+            // Substituir o array de copiadores
+            copiers.length = 0;
+            copiers.push(...retryCopiers);
+            this.logger.log(`[GetCopiers] PASSO 4.2 - ✅ SUCESSO! Copiadores encontrados após verificação adicional`);
+          }
+        }
         
         // Verificar TODOS os registros na config (sem filtro de trader_id)
         const allConfigs = await this.dataSource.query(
