@@ -8,12 +8,14 @@ import { DerivWebSocketPoolService } from './deriv-websocket-pool.service';
 import { UserModule } from '../user.module';
 import { SettingsModule } from '../settings/settings.module';
 import { TradeEntity } from '../infrastructure/database/entities/trade.entity';
+import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 
 @Module({
   imports: [
     UserModule, 
     SettingsModule,
     TypeOrmModule.forFeature([TradeEntity]),
+    CopyTradingModule,
   ],
   controllers: [DerivController],
   providers: [

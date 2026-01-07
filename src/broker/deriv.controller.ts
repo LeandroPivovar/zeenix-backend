@@ -34,6 +34,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull } from 'typeorm';
 import { TradeEntity, TradeStatus } from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
+import { CopyTradingService } from '../copy-trading/copy-trading.service';
 
 class ConnectDto {
   @IsString()
@@ -177,6 +178,7 @@ export class DerivController {
     private readonly wsManager: DerivWebSocketManagerService,
     @InjectRepository(TradeEntity)
     private readonly tradeRepository: Repository<TradeEntity>,
+    private readonly copyTradingService: CopyTradingService,
   ) {
     this.defaultAppId = Number(this.configService.get('DERIV_APP_ID') ?? 1089);
     this.oauthRedirectUrl = this.configService.get<string>('DERIV_OAUTH_REDIRECT_URL');
@@ -1053,6 +1055,29 @@ export class DerivController {
         });
         const savedTrade = await this.tradeRepository.save(trade);
         this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}, entrySpot: ${savedTrade.entrySpot}, entryValue: ${savedTrade.entryValue}`);
+        
+        // Verificar se o usuário é expert e replicar operação para copiadores
+        try {
+          const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
+          if (isMasterTrader) {
+            this.logger.log(`[Trading] Usuário ${userId} é expert, replicando operação para copiadores...`);
+            await this.copyTradingService.replicateManualOperation(
+              userId,
+              {
+                contractId: data.contractId,
+                contractType: data.contractType || 'CALL',
+                symbol: data.symbol,
+                duration: data.duration || 1,
+                durationUnit: data.durationUnit || 'm',
+                stakeAmount: data.buyPrice || 0,
+                entrySpot: finalEntrySpot,
+                entryTime: data.entryTime || Math.floor(Date.now() / 1000),
+              },
+            );
+          }
+        } catch (error) {
+          this.logger.error(`[Trading] Erro ao replicar operação para copiadores: ${error.message}`);
+        }
       } catch (error) {
         this.logger.error(`[Trading] Erro ao salvar operação de compra: ${error.message}`);
       }
