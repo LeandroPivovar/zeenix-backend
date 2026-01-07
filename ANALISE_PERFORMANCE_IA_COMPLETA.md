@@ -608,3 +608,4 @@ O sistema de IA está **extremamente ineficiente** devido a:
 
 
 
+

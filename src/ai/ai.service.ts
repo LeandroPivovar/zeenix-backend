@@ -511,6 +511,7 @@ export class AiService implements OnModuleInit {
   private symbol = 'R_100';
   private isConnected = false;
   private subscriptionId: string | null = null;
+  private subscriptionIds = new Map<string, string>(); // Mapeia símbolo para subscriptionId
   private keepAliveInterval: NodeJS.Timeout | null = null; // ✅ Keep-alive para evitar expiração (2 min inatividade)
   private hasReceivedAlreadySubscribed = false; // ✅ Flag para indicar que já recebemos erro "already subscribed"
   private lastAlreadySubscribedTime: number = 0; // ✅ Timestamp da última vez que recebemos "already subscribed"
@@ -575,6 +576,9 @@ export class AiService implements OnModuleInit {
         await this.saveWebSocketState();
 
         this.subscribeToTicks();
+        // ✅ Subscritar também R_10 e R_25 para AtlasStrategy
+        this.subscribeToSymbol('R_10');
+        this.subscribeToSymbol('R_25');
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
         resolve();
@@ -623,6 +627,24 @@ export class AiService implements OnModuleInit {
     this.logger.debug(`[subscribeToTicks] 📤 Payload da subscription: ${JSON.stringify(subscriptionPayload)}`);
     this.send(subscriptionPayload);
     this.logger.log(`✅ Requisição de inscrição enviada para ${this.symbol}`);
+  }
+
+  /**
+   * ✅ Subscritar a um símbolo específico (R_10, R_25)
+   */
+  private subscribeToSymbol(symbol: string) {
+    this.logger.log(`📡 Inscrevendo-se nos ticks de ${symbol}...`);
+    const subscriptionPayload = {
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: this.maxTicks,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    };
+    this.logger.debug(`[subscribeToSymbol] 📤 Payload da subscription: ${JSON.stringify(subscriptionPayload)}`);
+    this.send(subscriptionPayload);
+    this.logger.log(`✅ Requisição de inscrição enviada para ${symbol}`);
   }
 
   /**
@@ -763,10 +785,20 @@ export class AiService implements OnModuleInit {
 
         // Capturar subscription ID (pode estar em diferentes lugares)
         const subId = msg.subscription?.id || msg.subscription_id || msg.id || msg.echo_req?.req_id;
+        // ✅ Tentar identificar o símbolo pelo echo_req
+        const symbolFromReq = msg.echo_req?.ticks_history || msg.echo_req?.subscribe?.ticks_history;
         if (subId) {
-          this.subscriptionId = subId;
-          this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
-          this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
+          // Se for R_100, atualizar subscriptionId principal
+          if (!symbolFromReq || symbolFromReq === 'R_100') {
+            this.subscriptionId = subId;
+            this.hasReceivedAlreadySubscribed = false;
+            this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
+          }
+          // Mapear subscriptionId para símbolo
+          if (symbolFromReq && ['R_10', 'R_25', 'R_100'].includes(symbolFromReq)) {
+            this.subscriptionIds.set(symbolFromReq, subId);
+            this.logger.log(`[AiService] 📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromReq}`);
+          }
         } else {
           this.logger.warn(`[AiService] ⚠️ Subscription ID não encontrado na mensagem ticks_history`);
           this.logger.warn(`[AiService] ⚠️ Tentando extrair de outros campos: subscription=${JSON.stringify(msg.subscription)}, subscription_id=${msg.subscription_id}, id=${msg.id}, echo_req=${JSON.stringify(msg.echo_req)}`);
@@ -787,13 +819,19 @@ export class AiService implements OnModuleInit {
 
       case 'tick':
         // ✅ Tentar capturar subscription ID das mensagens de tick
-        if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
-          this.subscriptionId = msg.subscription.id;
-          this.hasReceivedAlreadySubscribed = false; // ✅ Resetar flag quando subscriptionId for capturado
-          this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
+        const tickSubId = msg.subscription?.id;
+        if (tickSubId) {
+          // Se for R_100, atualizar subscriptionId principal
+          if (!this.subscriptionId || this.subscriptionId !== tickSubId) {
+            this.subscriptionId = tickSubId;
+            this.hasReceivedAlreadySubscribed = false;
+            this.logger.log(`[AiService] 📋 Subscription ID capturado de mensagem tick: ${this.subscriptionId}`);
+          }
         }
-        this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)} | subscription=${msg.subscription?.id || 'N/A'}`);
-        this.processTick(msg.tick);
+        // ✅ Identificar símbolo do tick (pode vir no tick ou na mensagem)
+        const tickSymbol = msg.tick?.symbol || msg.symbol || this.identifySymbolFromSubscription(tickSubId) || this.symbol;
+        this.logger.debug(`[AiService] 📊 Tick recebido: ${JSON.stringify(msg.tick)} | subscription=${tickSubId || 'N/A'} | symbol=${tickSymbol}`);
+        this.processTick(msg.tick, tickSymbol);
         break;
 
       default:
@@ -837,16 +875,19 @@ export class AiService implements OnModuleInit {
     this.logger.log(`✅ ${this.ticks.length} ticks carregados no histórico`);
   }
 
-  private processTick(tick: any) {
+  private processTick(tick: any, symbol?: string) {
     if (!tick || !tick.quote) {
       this.logger.debug('⚠️ Tick recebido sem quote');
       return;
     }
 
+    // ✅ Usar símbolo do tick ou o fornecido como parâmetro
+    const tickSymbol = symbol || tick.symbol || this.symbol;
+
     // Log a cada 50 ticks para diagnóstico
     const currentTickCount = this.ticks.length;
     if (currentTickCount % 50 === 0 || currentTickCount === 0) {
-      this.logger.log(`[AiService] 📊 Processando tick #${currentTickCount + 1} | Quote: ${tick.quote} | WebSocket conectado: ${this.isConnected}`);
+      this.logger.log(`[AiService] 📊 Processando tick #${currentTickCount + 1} | Quote: ${tick.quote} | Symbol: ${tickSymbol} | WebSocket conectado: ${this.isConnected}`);
     }
 
     const value = parseFloat(tick.quote);
@@ -863,19 +904,22 @@ export class AiService implements OnModuleInit {
       parity,
     };
 
-    this.ticks.push(newTick);
-    this.lastTickReceivedTime = Date.now(); // ✅ Atualizar timestamp do último tick
+    // ✅ Manter ticks separados por símbolo (apenas para R_100 manter no array principal para compatibilidade)
+    if (tickSymbol === 'R_100') {
+      this.ticks.push(newTick);
+      this.lastTickReceivedTime = Date.now();
 
-    // Manter apenas os últimos maxTicks
-    if (this.ticks.length > this.maxTicks) {
-      this.ticks.shift();
-    }
+      // Manter apenas os últimos maxTicks
+      if (this.ticks.length > this.maxTicks) {
+        this.ticks.shift();
+      }
 
-    // Log a cada 10 ticks para não poluir muito
-    if (this.ticks.length % 10 === 0) {
-      this.logger.debug(
-        `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
-      );
+      // Log a cada 10 ticks para não poluir muito
+      if (this.ticks.length % 10 === 0) {
+        this.logger.debug(
+          `[Tick] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+        );
+      }
     }
 
     // ✅ Usar StrategyManager para processar tick em todas as estratégias (sem fallback legado)
@@ -885,13 +929,27 @@ export class AiService implements OnModuleInit {
     }
 
     // Log de diagnóstico a cada 50 ticks
-    if (this.ticks.length % 50 === 0) {
-      this.logger.debug(`[AiService] 🔄 Enviando tick para StrategyManager | Total ticks: ${this.ticks.length} | Symbol: ${this.symbol}`);
+    if (tickSymbol === 'R_100' && this.ticks.length % 50 === 0) {
+      this.logger.debug(`[AiService] 🔄 Enviando tick para StrategyManager | Total ticks: ${this.ticks.length} | Symbol: ${tickSymbol}`);
     }
 
-    this.strategyManager.processTick(newTick, this.symbol).catch((error) => {
+    this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
       this.logger.error('[StrategyManager] Erro ao processar tick:', error);
     });
+  }
+
+  /**
+   * ✅ Identifica o símbolo baseado no subscriptionId (fallback)
+   */
+  private identifySymbolFromSubscription(subscriptionId: string | undefined): string | null {
+    if (!subscriptionId) return null;
+    // Se tiver mapeamento, usar
+    for (const [symbol, subId] of this.subscriptionIds.entries()) {
+      if (subId === subscriptionId) {
+        return symbol;
+      }
+    }
+    return null;
   }
 
   private extractLastDigit(value: number): number {

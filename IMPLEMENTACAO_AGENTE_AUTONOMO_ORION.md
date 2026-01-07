@@ -283,3 +283,4 @@ O scheduler sincroniza agentes ativos do banco a cada 5 minutos. Isso garante qu
 **Implementação concluída em:** 2026-01-05  
 **Versão:** 1.0.0
 
+

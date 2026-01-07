@@ -42,3 +42,4 @@ WHERE TABLE_SCHEMA = DATABASE()
     AND COLUMN_NAME IN ('agent_type', 'trading_mode', 'initial_balance', 'session_status', 'session_date')
 ORDER BY ORDINAL_POSITION;
 
+
