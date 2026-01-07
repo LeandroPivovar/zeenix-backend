@@ -363,7 +363,9 @@ export class CopyTradingController {
         );
       }
 
+      this.logger.log(`[GetCopiers] Buscando copiadores para master trader: ${masterUserId}`);
       const copiers = await this.copyTradingService.getCopiers(masterUserId);
+      this.logger.log(`[GetCopiers] Retornando ${copiers.length} copiadores`);
 
       return {
         success: true,

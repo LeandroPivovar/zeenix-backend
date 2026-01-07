@@ -821,25 +821,41 @@ export class CopyTradingService {
 
   /**
    * Busca todos os copiadores (usuários que configuraram copy trade para o trader mestre)
+   * 
+   * Lógica:
+   * - Na tabela copy_trading_config:
+   *   - trader_id = ID do trader mestre (pode ser user_id ou expert.id)
+   *   - user_id = ID do usuário que está copiando (o copiador)
+   * - Buscamos onde trader_id = ID do master trader para encontrar seus copiadores
    */
   async getCopiers(masterUserId: string) {
     try {
-      // Primeiro, buscar o expert.id do master trader usando o user_id
-      // O trader_id na tabela copy_trading_config é o expert.id, não o user.id
+      this.logger.log(`[GetCopiers] Buscando copiadores para master trader (user_id): ${masterUserId}`);
+      
+      // O trader_id na tabela copy_trading_config pode ser:
+      // 1. O user_id do master trader (caso mais comum)
+      // 2. O expert.id do master trader (se ele tem um expert associado)
+      
+      // Primeiro, tentar buscar o expert.id do master trader
       const expertResult = await this.dataSource.query(
         `SELECT id FROM experts WHERE user_id = ? AND is_active = 1 LIMIT 1`,
         [masterUserId],
       );
 
-      if (!expertResult || expertResult.length === 0) {
-        // Se o usuário não tem um expert associado, retornar array vazio
-        this.logger.log(`[GetCopiers] Usuário ${masterUserId} não possui expert associado`);
-        return [];
+      let traderIdsToSearch: string[] = [masterUserId]; // Sempre incluir o user_id diretamente
+
+      if (expertResult && expertResult.length > 0) {
+        const expertId = expertResult[0].id;
+        traderIdsToSearch.push(expertId);
+        this.logger.log(`[GetCopiers] Expert encontrado: ${expertId} para user_id ${masterUserId}`);
+      } else {
+        this.logger.log(`[GetCopiers] Nenhum expert associado ao user_id ${masterUserId}, buscando apenas por user_id`);
       }
 
-      const expertId = expertResult[0].id;
+      this.logger.log(`[GetCopiers] Buscando copiadores onde trader_id IN (${traderIdsToSearch.join(', ')})`);
 
-      // Buscar todas as configurações de copy trade onde o trader_id é o expert.id do master trader
+      // Buscar todas as configurações de copy trade onde o trader_id corresponde ao master trader
+      // O user_id na tabela copy_trading_config é o ID do usuário que está copiando
       const copiers = await this.dataSource.query(
         `SELECT 
           c.id,
@@ -871,10 +887,42 @@ export class CopyTradingService {
           ), 0) as total_profit
         FROM copy_trading_config c
         INNER JOIN users u ON c.user_id = u.id
-        WHERE c.trader_id = ?
+        WHERE c.trader_id IN (${traderIdsToSearch.map(() => '?').join(',')})
         ORDER BY c.created_at DESC`,
-        [expertId],
+        traderIdsToSearch,
       );
+
+      this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores para trader ${masterUserId}`);
+      
+      // Log detalhado dos copiadores encontrados
+      if (copiers.length > 0) {
+        copiers.forEach((copier, index) => {
+          this.logger.log(`[GetCopiers] Copiador ${index + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}`);
+        });
+      }
+
+      // Se não encontrou nenhum copiador, fazer uma busca adicional para debug
+      if (copiers.length === 0) {
+        // Verificar se existe algum registro com esse trader_id
+        const checkTraderId = await this.dataSource.query(
+          `SELECT trader_id, user_id, trader_name, COUNT(*) as total 
+           FROM copy_trading_config 
+           WHERE trader_id = ? OR trader_id = ?
+           GROUP BY trader_id, user_id, trader_name`,
+          [masterUserId, expertResult && expertResult.length > 0 ? expertResult[0].id : null],
+        );
+        this.logger.log(`[GetCopiers] Debug - Verificando trader_id ${masterUserId}:`, JSON.stringify(checkTraderId));
+        
+        // Mostrar todos os trader_ids únicos na tabela
+        const allTraderIds = await this.dataSource.query(
+          `SELECT DISTINCT trader_id, COUNT(*) as total_copiadores
+           FROM copy_trading_config 
+           GROUP BY trader_id 
+           ORDER BY total_copiadores DESC 
+           LIMIT 10`,
+        );
+        this.logger.log(`[GetCopiers] Debug - Top 10 trader_ids na tabela:`, JSON.stringify(allTraderIds));
+      }
 
       // Formatar dados dos copiadores
       return copiers.map((copier) => {
