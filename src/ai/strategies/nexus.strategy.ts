@@ -6,8 +6,14 @@ import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 
 /**
- * ✅ NEXUS Strategy Master
+ * ✅ NEXUS Strategy Master v2 - Sistema Híbrido
  * Price Action + Dynamic Barriers + Zenix Pro Standards.
+ * 
+ * Sistema Híbrido:
+ * - MODO ATAQUE (Base): Higher com Barreira Negativa (Payout ~60%)
+ * - MODO DEFESA (Recuperação): Rise/Fall sem Barreira (Payout ~95%)
+ * 
+ * Reduz multiplicador de recuperação de ~3.3x para ~1.05x
  */
 
 /**
@@ -101,25 +107,40 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.30;
+        
+        // Sistema Híbrido: Payout diferente para Base vs Recuperação
+        const PAYOUT_BASE = 0.30;      // Higher com barreira (~60% payout)
+        const PAYOUT_RECOVERY = 0.95;  // Rise/Fall sem barreira (~95% payout)
 
         if (this.consecutiveLosses > 0) {
+            // MODO DEFESA (Recuperação Híbrida)
+            let target = this.totalLossAccumulated; // Conservador: recupera só o perdido
+            
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
+                    // Target = perda total (100% de recuperação)
+                    target = this.totalLossAccumulated;
+                    nextStake = target / PAYOUT_RECOVERY;
                 } else {
+                    // Trava de Segurança: reseta ciclo após 5 perdas
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
+                    if (userId && symbol && logCallback) {
+                        logCallback(userId, symbol, 'alerta', `🔄 CICLO RESETADO (Nível 5 atingido). Voltando ao contrato base.`);
+                    }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.25);
-                nextStake = targetRecovery / PAYOUT_RATE;
+                // Target = perda + 25% de lucro sobre a perda
+                target = this.totalLossAccumulated * 1.25;
+                nextStake = target / PAYOUT_RECOVERY;
             } else if (this.riskMode === 'AGRESSIVO') {
-                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
-                nextStake = targetRecovery / PAYOUT_RATE;
+                // Target = perda + 50% de lucro sobre a perda
+                target = this.totalLossAccumulated * 1.50;
+                nextStake = target / PAYOUT_RECOVERY;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {
+            // MODO ATAQUE (Base) - mantém lógica de crescimento após vitória
             nextStake = baseStake + lastProfit;
         }
 
@@ -329,19 +350,34 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier = '-0.15';
-        if (riskManager.consecutiveLosses === 1) barrier = '-0.25';
-        else if (riskManager.consecutiveLosses === 2) barrier = '-0.35';
+        // Sistema Híbrido: Escolhe tipo de contrato baseado em perdas consecutivas
+        let contractType: 'CALL' | 'RISE' = 'CALL';
+        let barrier: string | undefined = undefined;
+        let contractDescription = '';
+
+        if (riskManager.consecutiveLosses === 0) {
+            // MODO ATAQUE (Base): Higher com Barreira Negativa (Payout ~60%)
+            contractType = 'CALL';
+            barrier = '-0.35'; // Barreira fixa para máxima vantagem técnica
+            contractDescription = `Higher (Barreira: ${barrier})`;
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `⚡ [MODO ATAQUE] Higher com Barreira | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+        } else {
+            // MODO DEFESA (Recuperação): Rise sem Barreira (Payout ~95%)
+            contractType = 'CALL'; // Rise é um tipo de CALL sem barreira
+            barrier = undefined; // Sem barreira = contrato Rise/Fall padrão
+            contractDescription = `Rise (Sem Barreira)`;
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🛡️ [MODO DEFESA] Rise sem Barreira | Valor: $${stake.toFixed(2)} | Payout: ~95%`);
+        }
 
         state.isOperationActive = true;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: CALL | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: ${contractDescription} | Valor: $${stake.toFixed(2)}`);
 
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
-                contract_type: 'CALL',
+                contract_type: contractType,
                 amount: stake,
                 currency: state.currency,
                 barrier: barrier
@@ -355,10 +391,10 @@ export class NexusStrategy implements IStrategy {
 
                 if (status === 'WON') {
                     state.vitoriasConsecutivas++;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] Resultado Positivo. Lucro: +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] Resultado Positivo. Lucro: +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)} | 🔄 Voltando ao MODO ATAQUE`);
                 } else {
                     state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `📉 [LOSS] Perda de $${Math.abs(result.profit).toFixed(2)}. Iniciando recuperação Dinâmica.`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `📉 [LOSS] Perda de $${Math.abs(result.profit).toFixed(2)}. Iniciando recuperação Híbrida (Rise ~95%).`);
                 }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
@@ -398,7 +434,8 @@ export class NexusStrategy implements IStrategy {
         try {
             const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-            const proposalResponse: any = await connection.sendRequest({
+            // Monta payload base
+            const proposalPayload: any = {
                 proposal: 1,
                 amount: params.amount,
                 basis: 'stake',
@@ -406,9 +443,16 @@ export class NexusStrategy implements IStrategy {
                 currency: params.currency || 'USD',
                 duration: 5,
                 duration_unit: 't',
-                symbol: this.symbol,
-                barrier: params.barrier
-            }, 60000);
+                symbol: this.symbol
+            };
+
+            // Adiciona barreira apenas se estiver definida (Higher com barreira)
+            // Se não houver barreira, será um contrato Rise/Fall padrão (payout ~95%)
+            if (params.barrier !== undefined && params.barrier !== null) {
+                proposalPayload.barrier = params.barrier;
+            }
+
+            const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
 
             if (proposalResponse.error) {
                 const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
