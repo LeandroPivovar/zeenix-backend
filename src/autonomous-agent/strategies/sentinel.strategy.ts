@@ -35,6 +35,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   private readonly userStates = new Map<string, SentinelUserState>();
   private readonly ticks = new Map<string, Tick[]>();
   private readonly maxTicks = 200;
+  private readonly processingLocks = new Map<string, boolean>(); // ✅ Lock para evitar processamento simultâneo
 
   // Configurações por modo de negociação
   // ✅ TEMPORÁRIO: Reduzido para 50% para testes
@@ -200,6 +201,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
+    // ✅ Verificar lock de processamento (evitar múltiplas análises simultâneas)
+    if (this.processingLocks.get(userId)) {
+      return; // Já está processando, ignorar este tick
+    }
+
     // Se está aguardando resultado de contrato, não processar novos ticks
     if (state.isWaitingContract) {
       return;
@@ -236,19 +242,25 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
-    // ✅ Log periódico removido - apenas logs de decisão serão exibidos
+    // ✅ Setar lock de processamento ANTES de fazer análise
+    this.processingLocks.set(userId, true);
 
-    // Realizar análise
-    const analysis = await this.analyze(userId, userTicks);
-    
-    // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
-    if (state.isWaitingContract) {
-      return;
-    }
+    try {
+      // ✅ Log periódico removido - apenas logs de decisão serão exibidos
+
+      // Realizar análise
+      const analysis = await this.analyze(userId, userTicks);
+      
+      // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
+      if (state.isWaitingContract) {
+        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+        return;
+      }
     
     if (analysis) {
       // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
       if (state.isWaitingContract) {
+        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
         return;
       }
 
@@ -258,12 +270,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       
       // ✅ Verificar novamente (state pode ter mudado)
       if (!currentState || currentState.isWaitingContract) {
+        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
         return;
       }
       
       if (analysis.score >= modeConfig.scoreMinimum && analysis.direction) {
         // ✅ Verificar novamente ANTES de tomar decisão
         if (currentState.isWaitingContract) {
+          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
 
@@ -273,6 +287,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         // ✅ Verificar novamente ANTES de executar compra
         const finalState = this.userStates.get(userId);
         if (!finalState || finalState.isWaitingContract) {
+          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
         
@@ -293,6 +308,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           const execState = this.userStates.get(userId);
           if (!execState || execState.isWaitingContract) {
             await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+            this.processingLocks.set(userId, false); // Liberar lock antes de retornar
             return;
           }
           
@@ -336,6 +352,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         await this.saveLog(userId, 'INFO', 'DECISION',
           `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
       }
+    } finally {
+      // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
+      this.processingLocks.set(userId, false);
     }
   }
 

@@ -35,6 +35,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   private readonly ticks = new Map<string, Tick[]>();
   private readonly maxTicks = 200;
   private readonly comissaoPlataforma = 0.03; // 3%
+  private readonly processingLocks = new Map<string, boolean>(); // ✅ Lock para evitar processamento simultâneo
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -182,6 +183,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    // ✅ Verificar lock de processamento (evitar múltiplas análises simultâneas)
+    if (this.processingLocks.get(userId)) {
+      return; // Já está processando, ignorar este tick
+    }
+
     // Se está aguardando resultado de contrato, não processar novos ticks
     if (state.isWaitingContract) {
       return;
@@ -217,46 +223,57 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    // ✅ Log quando tiver ticks suficientes para análise
-    if (userTicks.length === 50) {
-      await this.saveLog(userId, 'INFO', 'ANALYZER', 
-        `Ticks coletados: ${userTicks.length}/50. Iniciando análise...`);
-    }
+    // ✅ Setar lock de processamento ANTES de fazer análise
+    this.processingLocks.set(userId, true);
 
-    // Realizar análise de mercado
-    const marketAnalysis = await this.analyzeMarket(userId, userTicks);
-    
-    // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
-    if (state.isWaitingContract) {
-      return;
-    }
-    
-    // ✅ Log de debug da análise
-    if (marketAnalysis) {
-      this.logger.debug(`[Falcon][${userId}] Análise realizada: prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
-    } else {
-      this.logger.warn(`[Falcon][${userId}] Análise retornou null`);
-    }
-    
-    if (marketAnalysis) {
-      // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
-      if (state.isWaitingContract) {
-        return;
+    try {
+      // ✅ Log quando tiver ticks suficientes para análise
+      if (userTicks.length === 50) {
+        await this.saveLog(userId, 'INFO', 'ANALYZER', 
+          `Ticks coletados: ${userTicks.length}/50. Iniciando análise...`);
       }
 
-      // Processar decisão de trade
-      const decision = await this.processAgent(userId, marketAnalysis);
+      // Realizar análise de mercado
+      const marketAnalysis = await this.analyzeMarket(userId, userTicks);
       
-      // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
+      // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
       if (state.isWaitingContract) {
+        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
         return;
       }
       
-      if (decision.action === 'BUY') {
-        await this.executeTrade(userId, decision, marketAnalysis);
-      } else if (decision.action === 'STOP') {
-        await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
+      // ✅ Log de debug da análise
+      if (marketAnalysis) {
+        this.logger.debug(`[Falcon][${userId}] Análise realizada: prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
+      } else {
+        this.logger.warn(`[Falcon][${userId}] Análise retornou null`);
       }
+      
+      if (marketAnalysis) {
+        // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
+        if (state.isWaitingContract) {
+          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+          return;
+        }
+
+        // Processar decisão de trade
+        const decision = await this.processAgent(userId, marketAnalysis);
+        
+        // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
+        if (state.isWaitingContract) {
+          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+          return;
+        }
+        
+        if (decision.action === 'BUY') {
+          await this.executeTrade(userId, decision, marketAnalysis);
+        } else if (decision.action === 'STOP') {
+          await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
+        }
+      }
+    } finally {
+      // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
+      this.processingLocks.set(userId, false);
     }
   }
 
