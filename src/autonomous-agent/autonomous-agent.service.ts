@@ -696,9 +696,11 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * Obtém estatísticas da sessão
+   * Calcula o lucro do dia baseado nas operações finalizadas do dia atual
    */
   async getSessionStats(userId: string): Promise<any> {
-    const stats = await this.dataSource.query(
+    // ✅ Buscar configuração do agente
+    const config = await this.dataSource.query(
       `SELECT 
          daily_profit,
          daily_loss,
@@ -706,14 +708,115 @@ export class AutonomousAgentService implements OnModuleInit {
          total_wins,
          total_losses,
          session_status,
-         session_date
+         session_date,
+         initial_stake as totalCapital
        FROM autonomous_agent_config 
        WHERE user_id = ? AND is_active = TRUE
        LIMIT 1`,
       [userId],
     );
 
-    return stats && stats.length > 0 ? stats[0] : null;
+    // ✅ Se não houver configuração, retornar valores padrão
+    if (!config || config.length === 0) {
+      return {
+        daily_profit: 0,
+        daily_loss: 0,
+        netProfit: 0,
+        totalTrades: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        totalProfit: 0,
+        totalLoss: 0,
+        totalCapital: 0,
+        operationsToday: 0,
+        session_status: 'inactive',
+        session_date: null,
+      };
+    }
+
+    const configData = config[0];
+
+    // ✅ Buscar operações finalizadas do dia atual
+    // Usar closed_at se disponível (quando a operação foi finalizada), senão usar created_at
+    // ✅ IMPORTANTE: Usar CURDATE() para garantir comparação correta de data (ignora hora)
+    const todayTrades = await this.dataSource.query(
+      `SELECT 
+         status,
+         profit_loss,
+         created_at,
+         closed_at
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND status IN ('WON', 'LOST')
+         AND profit_loss IS NOT NULL
+         AND (
+           (closed_at IS NOT NULL AND DATE(closed_at) = CURDATE())
+           OR (closed_at IS NULL AND DATE(created_at) = CURDATE())
+         )
+       ORDER BY COALESCE(closed_at, created_at) DESC`,
+      [userId],
+    );
+
+    // ✅ Calcular lucro/perda do dia baseado nas operações
+    let dailyProfitFromTrades = 0;
+    let dailyLossFromTrades = 0;
+    let winsToday = 0;
+    let lossesToday = 0;
+
+    this.logger.debug(
+      `[GetSessionStats][${userId}] 📊 Operações encontradas do dia: ${todayTrades?.length || 0}`,
+    );
+
+    if (todayTrades && todayTrades.length > 0) {
+      for (const trade of todayTrades) {
+        const profitLoss = parseFloat(trade.profit_loss) || 0;
+        this.logger.debug(
+          `[GetSessionStats][${userId}] 📊 Trade: status=${trade.status}, profit_loss=${profitLoss}`,
+        );
+        if (trade.status === 'WON') {
+          dailyProfitFromTrades += profitLoss;
+          winsToday++;
+        } else if (trade.status === 'LOST') {
+          dailyLossFromTrades += Math.abs(profitLoss);
+          lossesToday++;
+        }
+      }
+    } else {
+      this.logger.debug(
+        `[GetSessionStats][${userId}] ⚠️ Nenhuma operação finalizada encontrada para o dia atual`,
+      );
+    }
+
+    // ✅ Lucro líquido do dia = lucros - perdas
+    const netProfitToday = dailyProfitFromTrades - dailyLossFromTrades;
+    const totalTradesToday = winsToday + lossesToday;
+    const winRateToday = totalTradesToday > 0 ? (winsToday / totalTradesToday) * 100 : 0;
+
+    // ✅ Log para debug
+    this.logger.debug(
+      `[GetSessionStats][${userId}] 📊 Estatísticas do dia: ` +
+      `trades=${totalTradesToday}, wins=${winsToday}, losses=${lossesToday}, ` +
+      `profit=$${dailyProfitFromTrades.toFixed(2)}, loss=$${dailyLossFromTrades.toFixed(2)}, ` +
+      `netProfit=$${netProfitToday.toFixed(2)}`,
+    );
+
+    // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
+    return {
+      daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
+      daily_loss: Number(dailyLossFromTrades.toFixed(2)),
+      netProfit: Number(netProfitToday.toFixed(2)), // ✅ Lucro líquido do dia
+      totalTrades: totalTradesToday,
+      wins: winsToday,
+      losses: lossesToday,
+      winRate: Number(winRateToday.toFixed(2)),
+      totalProfit: Number(dailyProfitFromTrades.toFixed(2)),
+      totalLoss: Number(dailyLossFromTrades.toFixed(2)),
+      totalCapital: Number(parseFloat(configData.totalCapital || 0).toFixed(2)),
+      operationsToday: totalTradesToday,
+      session_status: configData.session_status || 'active',
+      session_date: configData.session_date || null,
+    };
   }
 
   /**
