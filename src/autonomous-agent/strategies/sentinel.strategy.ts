@@ -657,17 +657,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return { action: 'WAIT', reason: 'INVALID_STAKE' };
     }
 
-    // ✅ Verificar Stop Loss passando o stake já calculado (evita recalcular)
+    // ✅ Verificar Stop Loss passando o stake já calculado (evitar recalcular)
     const stopLossCheck = await this.checkStopLoss(userId, stake);
     if (stopLossCheck.action === 'STOP') {
       return stopLossCheck;
     }
 
+    // ✅ CORREÇÃO CRÍTICA: Usar o stake ajustado (se houver) do checkStopLoss
+    const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
+
     return {
       action: 'BUY',
-      stake,
+      stake: finalStake,
       contractType: analysis.direction === 'CALL' ? 'CALL' : 'PUT',
-      reason: 'SIGNAL_FOUND',
+      reason: stopLossCheck.reason === 'STOP_LOSS_ADJUSTED' ? 'STOP_LOSS_ADJUSTED' : 'SIGNAL_FOUND',
       mode: config.tradingMode,
     };
   }
@@ -763,6 +766,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
         const adjustedStake = Math.round(Math.max(0, config.dailyLossLimit - state.currentLoss) * 100) / 100;
 
+        if (adjustedStake < 0.35) { // Stake mínimo Deriv
+          await this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido (Margem insuficiente para trade mínimo). Parando.`);
+          return { action: 'STOP', reason: 'STOP_LOSS_LIMIT' };
+        }
+
         return {
           action: 'BUY',
           stake: adjustedStake,
@@ -787,7 +795,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         // Parar operações
         state.isActive = false;
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado' WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = 0 WHERE user_id = ?`,
           [userId],
         );
 
@@ -1325,7 +1333,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
       state.isActive = false;
       await this.dataSource.query(
-        `UPDATE autonomous_agent_config SET session_status = 'stopped_profit' WHERE user_id = ?`,
+        `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = 0 WHERE user_id = ?`,
         [userId],
       );
     }
@@ -1337,7 +1345,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
       state.isActive = false;
       await this.dataSource.query(
-        `UPDATE autonomous_agent_config SET session_status = 'stopped_loss' WHERE user_id = ?`,
+        `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = 0 WHERE user_id = ?`,
         [userId],
       );
     }
