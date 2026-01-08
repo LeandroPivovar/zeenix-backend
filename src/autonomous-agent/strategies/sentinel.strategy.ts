@@ -856,7 +856,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           duration_unit: 't',
           symbol: symbol,
         },
-        30000, // timeout 30s (aumentado para evitar timeouts)
+        60000, // timeout 60s (igual Orion)
       );
 
       if (response.error) {
@@ -895,7 +895,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     duration: number,
   ): Promise<string | null> {
     try {
-      // Primeiro, obter proposta
+      // Primeiro, obter proposta (usando timeout de 60s como Orion)
       const proposalResponse = await this.derivPool.sendRequest(
         token,
         {
@@ -908,19 +908,25 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           duration_unit: 't',
           symbol: symbol,
         },
-        10000, // timeout 10s
+        60000, // timeout 60s (igual Orion)
       );
 
-      if (proposalResponse.error) {
-        throw new Error(proposalResponse.error.message || 'Erro ao obter proposta');
+      // ✅ Verificar erros na resposta (pode estar em error ou proposal.error) - igual Orion
+      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
+        throw new Error(errorMessage);
       }
 
-      if (!proposalResponse.proposal || !proposalResponse.proposal.id) {
+      const proposalId = proposalResponse.proposal?.id;
+      const proposalPrice = Number(proposalResponse.proposal?.ask_price || 0);
+
+      if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+        this.logger.error(`[Sentinel][${userId}] ❌ Proposta inválida recebida: ${JSON.stringify(proposalResponse)}`);
         throw new Error('Resposta de proposta inválida');
       }
-
-      const proposalId = proposalResponse.proposal.id;
-      const proposalPrice = Number(proposalResponse.proposal.ask_price || 0);
 
       // Enviar compra
       const buyResponse = await this.derivPool.sendRequest(
@@ -929,18 +935,23 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           buy: proposalId,
           price: proposalPrice,
         },
-        30000, // timeout 30s
+        60000, // timeout 60s (igual Orion)
       );
 
-      if (buyResponse.error) {
-        throw new Error(buyResponse.error.message || 'Erro ao comprar contrato');
+      // ✅ Verificar erros na resposta - igual Orion
+      const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
+      if (buyErrorObj) {
+        const errorCode = buyErrorObj?.code || '';
+        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+        throw new Error(errorMessage);
       }
 
-      if (!buyResponse.buy || !buyResponse.buy.contract_id) {
-        throw new Error('Resposta de compra inválida');
+      const contractId = buyResponse.buy?.contract_id;
+      if (!contractId) {
+        this.logger.error(`[Sentinel][${userId}] ❌ Contrato criado mas sem contract_id: ${JSON.stringify(buyResponse)}`);
+        throw new Error('Resposta de compra inválida - sem contract_id');
       }
-
-      const contractId = buyResponse.buy.contract_id;
 
       // Inscrever para monitorar contrato
       this.derivPool.subscribe(
