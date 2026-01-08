@@ -29,6 +29,9 @@ interface WsConnection {
     requestIdCounter: number;
     pendingRequests: Map<string, { resolve: (data: any) => void; reject: (err: any) => void; timeout: NodeJS.Timeout }>;
     subscriptions: Map<string, (msg: any) => void>;
+    sendRequest?: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe?: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription?: (subId: string) => void;
 }
 
 class RiskManager {
