@@ -248,7 +248,13 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           await this.saveLog(userId, 'INFO', 'DECISION',
             `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
           
-          await this.executeTrade(userId, decision, analysis);
+          // ✅ Verificar se já está aguardando resultado antes de executar
+          const state = this.userStates.get(userId);
+          if (state && !state.isWaitingContract) {
+            await this.executeTrade(userId, decision, analysis);
+          } else if (state && state.isWaitingContract) {
+            await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+          }
         } else {
           // ✅ Log de motivo para não comprar
           const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
@@ -685,6 +691,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
+    // ✅ Verificar se já está aguardando resultado de contrato (dupla verificação de segurança)
+    if (state.isWaitingContract) {
+      this.logger.warn(`[Sentinel][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`);
+      return;
+    }
+
     // Verificar Stop Loss antes de executar
     const stopLossCheck = await this.checkStopLoss(userId);
     if (stopLossCheck.action === 'STOP') {
@@ -705,6 +717,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
       await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
 
+      // ✅ IMPORTANTE: Setar isWaitingContract ANTES de iniciar a compra para evitar múltiplas compras simultâneas
+      state.isWaitingContract = true;
+      
       // Executar compra
       await this.saveLog(userId, 'INFO', 'API', 
         `Comprando contrato ${finalContractType}. stake=${decision.stake?.toFixed(2)}, direction=${analysis.direction}`);
@@ -722,20 +737,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         },
       );
 
-      const contractId = await this.buyContract(
-        userId,
-        config.derivToken,
-        finalContractType,
-        config.symbol,
-        decision.stake || config.initialStake,
-        5, // duration em ticks
-      );
+      try {
+        const contractId = await this.buyContract(
+          userId,
+          config.derivToken,
+          finalContractType,
+          config.symbol,
+          decision.stake || config.initialStake,
+          5, // duration em ticks
+        );
 
-      if (contractId) {
-        state.isWaitingContract = true;
-        state.currentContractId = contractId;
-        state.currentTradeId = tradeId;
-        await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+        if (contractId) {
+          state.currentContractId = contractId;
+          state.currentTradeId = tradeId;
+          await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
         
         // ✅ Atualizar trade com contract_id e entry_price
         await this.updateTradeRecord(tradeId, {
@@ -744,15 +759,19 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           status: 'ACTIVE',
         });
       } else {
-        // Se falhou, atualizar trade com erro
+        // Se falhou, resetar isWaitingContract e atualizar trade com erro
+        state.isWaitingContract = false;
         await this.updateTradeRecord(tradeId, {
           status: 'ERROR',
           errorMessage: 'Falha ao comprar contrato',
         });
+        await this.saveLog(userId, 'ERROR', 'API', 'Falha ao comprar contrato. Aguardando novo sinal...');
       }
     } catch (error) {
+      // Se houve erro, resetar isWaitingContract
+      state.isWaitingContract = false;
       this.logger.error(`[Sentinel][${userId}] Erro ao executar trade:`, error);
-      await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}`);
+      await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}. Aguardando novo sinal...`);
     }
   }
 
@@ -941,9 +960,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       });
     }
 
+    // ✅ Logs detalhados do resultado
     if (result.win) {
       await this.saveLog(userId, 'INFO', 'API', 
-        `Operação finalizada. result=WIN, profit=${result.profit.toFixed(2)}`);
+        `✅ OPERAÇÃO FINALIZADA - WIN | Lucro: $${result.profit.toFixed(2)} | Contract ID: ${result.contractId}`);
       
       state.currentProfit += result.profit;
       state.operationsCount++;
@@ -965,7 +985,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       state.consecutiveLosses = 0;
     } else {
       await this.saveLog(userId, 'ERROR', 'API', 
-        `Operação finalizada. result=LOSS, loss=${Math.abs(result.profit).toFixed(2)}`);
+        `❌ OPERAÇÃO FINALIZADA - LOSS | Perda: $${Math.abs(result.profit).toFixed(2)} | Contract ID: ${result.contractId}`);
       
       state.currentLoss += Math.abs(result.profit);
       state.totalLosses += Math.abs(result.profit);
@@ -1004,6 +1024,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         userId,
       ],
     );
+
+    // ✅ Log de estado atualizado
+    await this.saveLog(userId, 'INFO', 'RISK',
+      `📊 Estado atualizado: lucro_atual=$${state.currentProfit.toFixed(2)}, perda_atual=$${state.currentLoss.toFixed(2)}, ops_count=${state.operationsCount}, mode=${config.tradingMode}`);
+    
+    // ✅ Log final indicando que está pronto para próxima operação
+    await this.saveLog(userId, 'INFO', 'CORE', 
+      `🔄 Aguardando novo sinal para próxima operação...`);
 
     // Verificar meta de lucro
     if (state.currentProfit >= config.dailyProfitTarget) {

@@ -396,6 +396,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return { action: 'WAIT', reason: 'USER_NOT_ACTIVE' };
     }
 
+    // ✅ Verificar se já está aguardando resultado de contrato
+    if (state.isWaitingContract) {
+      return { action: 'WAIT', reason: 'WAITING_CONTRACT_RESULT' };
+    }
+
     // A. Verificações de Segurança (Hard Stops)
     if (state.lucroAtual <= -config.dailyLossLimit) {
       return { action: 'STOP', reason: 'STOP_LOSS' };
@@ -637,6 +642,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    // ✅ Verificar se já está aguardando resultado de contrato (dupla verificação de segurança)
+    if (state.isWaitingContract) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`);
+      return;
+    }
+
     // Verificar Stop Loss antes de executar
     if (!this.checkBlindado(userId)) {
       return;
@@ -653,6 +664,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
 
+      // ✅ IMPORTANTE: Setar isWaitingContract ANTES de iniciar a compra para evitar múltiplas compras simultâneas
+      state.isWaitingContract = true;
+      
       // Executar compra
       await this.saveLog(userId, 'INFO', 'API', 
         `Comprando contrato ${contractType}. stake=${decision.stake?.toFixed(2)}, direction=${marketAnalysis.signal}`);
@@ -670,32 +684,40 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         },
       );
 
-      const contractId = await this.buyContract(
-        userId,
-        config.derivToken,
-        contractType,
-        config.symbol,
-        decision.stake || config.initialStake,
-        5, // duration em ticks
-      );
+      try {
+        const contractId = await this.buyContract(
+          userId,
+          config.derivToken,
+          contractType,
+          config.symbol,
+          decision.stake || config.initialStake,
+          5, // duration em ticks
+        );
 
-      if (contractId) {
-        state.isWaitingContract = true;
-        state.currentContractId = contractId;
-        state.currentTradeId = tradeId;
-        await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
-        
-        // ✅ Atualizar trade com contract_id
-        await this.updateTradeRecord(tradeId, {
-          contractId: contractId,
-          status: 'ACTIVE',
-        });
-      } else {
-        // Se falhou, atualizar trade com erro
-        await this.updateTradeRecord(tradeId, {
-          status: 'ERROR',
-          errorMessage: 'Falha ao comprar contrato',
-        });
+        if (contractId) {
+          state.currentContractId = contractId;
+          state.currentTradeId = tradeId;
+          await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+          
+          // ✅ Atualizar trade com contract_id
+          await this.updateTradeRecord(tradeId, {
+            contractId: contractId,
+            status: 'ACTIVE',
+          });
+        } else {
+          // Se falhou, resetar isWaitingContract e atualizar trade com erro
+          state.isWaitingContract = false;
+          await this.updateTradeRecord(tradeId, {
+            status: 'ERROR',
+            errorMessage: 'Falha ao comprar contrato',
+          });
+          await this.saveLog(userId, 'ERROR', 'API', 'Falha ao comprar contrato. Aguardando novo sinal...');
+        }
+      } catch (error) {
+        // Se houve erro, resetar isWaitingContract
+        state.isWaitingContract = false;
+        this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato:`, error);
+        await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
       }
     } catch (error) {
       this.logger.error(`[Falcon][${userId}] Erro ao executar trade:`, error);
@@ -891,20 +913,24 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Atualizar modo (PRECISO ou ALTA_PRECISAO)
     this.updateMode(userId, result.win);
 
-    // Logs (formato igual ao SENTINEL)
+    // ✅ Logs detalhados do resultado
     if (result.win) {
       await this.saveLog(userId, 'INFO', 'API', 
-        `Operação finalizada. result=WIN, profit=${result.profit.toFixed(2)}`);
+        `✅ OPERAÇÃO FINALIZADA - WIN | Lucro: $${result.profit.toFixed(2)} | Contract ID: ${result.contractId}`);
     } else {
       await this.saveLog(userId, 'ERROR', 'API', 
-        `Operação finalizada. result=LOSS, loss=${Math.abs(result.profit).toFixed(2)}`);
+        `❌ OPERAÇÃO FINALIZADA - LOSS | Perda: $${Math.abs(result.profit).toFixed(2)} | Contract ID: ${result.contractId}`);
     }
 
     await this.saveLog(userId, 'INFO', 'RISK',
-      `Estado atualizado: lucro_atual=${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
+      `📊 Estado atualizado: lucro_atual=$${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
 
     // Atualizar banco de dados
     await this.updateUserStateInDb(userId, state);
+    
+    // ✅ Log final indicando que está pronto para próxima operação
+    await this.saveLog(userId, 'INFO', 'CORE', 
+      `🔄 Aguardando novo sinal para próxima operação...`);
 
     // Verificar se atingiu meta ou stop
     if (state.lucroAtual >= config.dailyProfitTarget) {
