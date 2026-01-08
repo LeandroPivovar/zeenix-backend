@@ -215,6 +215,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     }
     this.ticks.set(userId, userTicks);
 
+    // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
+    if (state.isWaitingContract) {
+      return;
+    }
+
     // Verificar se tem ticks suficientes para análise
     const modeConfig = this.tradingModeConfigs[config.tradingMode];
     if (userTicks.length < modeConfig.ticksToCollect) {
@@ -226,19 +231,50 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
+    // ✅ Verificar novamente ANTES de fazer análise (evitar análise desnecessária)
+    if (state.isWaitingContract) {
+      return;
+    }
+
     // ✅ Log periódico removido - apenas logs de decisão serão exibidos
 
     // Realizar análise
     const analysis = await this.analyze(userId, userTicks);
     
+    // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
+    if (state.isWaitingContract) {
+      return;
+    }
+    
     if (analysis) {
+      // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
+      if (state.isWaitingContract) {
+        return;
+      }
+
       // ✅ Log consolidado da análise e conclusão
       const config = this.userConfigs.get(userId);
-      const state = this.userStates.get(userId);
+      const currentState = this.userStates.get(userId);
+      
+      // ✅ Verificar novamente (state pode ter mudado)
+      if (!currentState || currentState.isWaitingContract) {
+        return;
+      }
       
       if (analysis.score >= modeConfig.scoreMinimum && analysis.direction) {
+        // ✅ Verificar novamente ANTES de tomar decisão
+        if (currentState.isWaitingContract) {
+          return;
+        }
+
         // Tomar decisão de trade
         const decision = await this.makeTradeDecision(userId, analysis);
+        
+        // ✅ Verificar novamente ANTES de executar compra
+        const finalState = this.userStates.get(userId);
+        if (!finalState || finalState.isWaitingContract) {
+          return;
+        }
         
         if (decision.action === 'BUY') {
           // ✅ Log de decisão de compra
@@ -253,13 +289,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           await this.saveLog(userId, 'INFO', 'DECISION',
             `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
           
-          // ✅ Verificar se já está aguardando resultado antes de executar
-          const state = this.userStates.get(userId);
-          if (state && !state.isWaitingContract) {
-            await this.executeTrade(userId, decision, analysis);
-          } else if (state && state.isWaitingContract) {
+          // ✅ Verificar novamente ANTES de executar (última verificação)
+          const execState = this.userStates.get(userId);
+          if (!execState || execState.isWaitingContract) {
             await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+            return;
           }
+          
+          await this.executeTrade(userId, decision, analysis);
         } else {
           // ✅ Log de motivo para não comprar
           const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
@@ -713,6 +750,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // Se está em Martingale, usar Higher/Lower
     const finalContractType = state.martingaleLevel > 0 ? 'HIGHER' : contractType;
 
+    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de consultar payout para bloquear qualquer nova análise/compra
+    state.isWaitingContract = true;
+
     await this.saveLog(userId, 'INFO', 'API', `Consultando payout para contrato ${finalContractType}...`);
 
     try {
@@ -721,9 +761,6 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       const zenixPayout = payout * 0.97; // Markup de 3%
 
       await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
-
-      // ✅ IMPORTANTE: Setar isWaitingContract ANTES de iniciar a compra para evitar múltiplas compras simultâneas
-      state.isWaitingContract = true;
       
       // Executar compra
       await this.saveLog(userId, 'INFO', 'API', 

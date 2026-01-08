@@ -197,6 +197,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
     this.ticks.set(userId, userTicks);
 
+    // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
+    if (state.isWaitingContract) {
+      return;
+    }
+
     // FALCON precisa de pelo menos 50 ticks para análise confiável
     if (userTicks.length < 50) {
       // Log apenas a cada 10 ticks
@@ -204,6 +209,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         await this.saveLog(userId, 'INFO', 'ANALYZER', 
           `Ticks coletados: ${userTicks.length}/50`);
       }
+      return;
+    }
+
+    // ✅ Verificar novamente ANTES de fazer análise (evitar análise desnecessária)
+    if (state.isWaitingContract) {
       return;
     }
 
@@ -216,6 +226,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Realizar análise de mercado
     const marketAnalysis = await this.analyzeMarket(userId, userTicks);
     
+    // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
+    if (state.isWaitingContract) {
+      return;
+    }
+    
     // ✅ Log de debug da análise
     if (marketAnalysis) {
       this.logger.debug(`[Falcon][${userId}] Análise realizada: prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
@@ -224,8 +239,18 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
     
     if (marketAnalysis) {
+      // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
+      if (state.isWaitingContract) {
+        return;
+      }
+
       // Processar decisão de trade
       const decision = await this.processAgent(userId, marketAnalysis);
+      
+      // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
+      if (state.isWaitingContract) {
+        return;
+      }
       
       if (decision.action === 'BUY') {
         await this.executeTrade(userId, decision, marketAnalysis);
@@ -655,6 +680,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL');
 
+    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de consultar payout para bloquear qualquer nova análise/compra
+    state.isWaitingContract = true;
+
     await this.saveLog(userId, 'INFO', 'API', `Consultando payout para contrato ${contractType}...`);
 
     try {
@@ -663,9 +691,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       const zenixPayout = payout * 0.97; // Markup de 3%
 
       await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
-
-      // ✅ IMPORTANTE: Setar isWaitingContract ANTES de iniciar a compra para evitar múltiplas compras simultâneas
-      state.isWaitingContract = true;
       
       // Executar compra
       await this.saveLog(userId, 'INFO', 'API', 
