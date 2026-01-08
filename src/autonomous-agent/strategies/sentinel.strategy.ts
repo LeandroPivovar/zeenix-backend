@@ -737,21 +737,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         },
       );
 
-      try {
-        const contractId = await this.buyContract(
-          userId,
-          config.derivToken,
-          finalContractType,
-          config.symbol,
-          decision.stake || config.initialStake,
-          5, // duration em ticks
-        );
+      const contractId = await this.buyContract(
+        userId,
+        config.derivToken,
+        finalContractType,
+        config.symbol,
+        decision.stake || config.initialStake,
+        5, // duration em ticks
+      );
 
-        if (contractId) {
-          state.currentContractId = contractId;
-          state.currentTradeId = tradeId;
-          await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
-        
+      if (contractId) {
+        state.currentContractId = contractId;
+        state.currentTradeId = tradeId;
+        await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+      
         // ✅ Atualizar trade com contract_id e entry_price
         await this.updateTradeRecord(tradeId, {
           contractId: contractId,
