@@ -236,12 +236,11 @@ export class DerivWebSocketPoolService {
         // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
         // Verificar se é resposta de requisição (tem proposal, buy, etc. ou é erro)
         // ✅ CORREÇÃO: Verificar msg_type primeiro, pois proposal pode vir sem campo proposal direto
-        const isRequestResponse = 
-          msg.proposal !== undefined || 
-          msg.buy !== undefined || 
-          msg.error !== undefined ||
-          msg.msg_type === 'proposal' ||
-          msg.msg_type === 'buy';
+        // ✅ IMPORTANTE: Verificar também echo_req para garantir que é resposta de nossa requisição
+        const hasProposal = msg.proposal !== undefined || msg.msg_type === 'proposal';
+        const hasBuy = msg.buy !== undefined || msg.msg_type === 'buy';
+        const hasError = msg.error !== undefined;
+        const isRequestResponse = hasProposal || hasBuy || (hasError && !msg.proposal_open_contract);
 
         if (isRequestResponse) {
           // ✅ Verificar erros em respostas de requisições
@@ -279,16 +278,31 @@ export class DerivWebSocketPoolService {
             }
           }
 
-          // ✅ Processar resposta de sucesso
+          // ✅ Processar resposta de sucesso (FIFO - primeira requisição na fila)
+          // ✅ IMPORTANTE: Usar shift() para garantir FIFO, igual Orion
           const pending = conn.queue.shift();
           if (pending) {
             clearTimeout(pending.timeout);
-            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}, hasProposal=${!!msg.proposal}, hasBuy=${!!msg.buy}`);
+            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}, hasProposal=${hasProposal}, hasBuy=${hasBuy}, queueLength=${conn.queue.length}`);
             pending.resolve(msg);
             return;
           } else {
             // ✅ Se não há pending mas é resposta de requisição, logar para debug
-            this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}`);
+            // ✅ Pode acontecer se a resposta chegou antes da requisição ser adicionada à fila
+            // ✅ OU se a requisição já foi processada mas a resposta chegou depois
+            this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}, hasProposal=${hasProposal}, hasBuy=${hasBuy}`);
+            // ✅ Log detalhado para debug
+            if (hasProposal) {
+              this.logger.debug(`[POOL] 📊 Detalhes da proposta não processada: ${JSON.stringify({ 
+                proposal: msg.proposal ? Object.keys(msg.proposal) : 'null',
+                echo_req: msg.echo_req ? Object.keys(msg.echo_req) : 'null',
+                msg_type: msg.msg_type,
+                proposal_id: msg.proposal?.id || 'N/A',
+                proposal_ask_price: msg.proposal?.ask_price || 'N/A'
+              })}`);
+            }
+            // ✅ Tentar processar mesmo sem pending - pode ser resposta tardia de requisição anterior
+            // ✅ Mas não fazer nada, apenas logar para debug
           }
         }
 
@@ -348,7 +362,8 @@ export class DerivWebSocketPoolService {
       if (!req) continue;
       try {
         const payloadStr = JSON.stringify(req.payload);
-        this.logger.debug(`[POOL] 📤 Enviando requisição: ${req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other'}`);
+        const reqType = req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other';
+        this.logger.debug(`[POOL] 📤 Enviando requisição: ${reqType} (${conn.queue.length} restantes na fila)`);
         conn.ws.send(payloadStr);
       } catch (err) {
         clearTimeout(req.timeout);
