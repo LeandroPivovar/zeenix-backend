@@ -529,6 +529,8 @@ export class AiService implements OnModuleInit {
     private readonly copyTradingService?: CopyTradingService,
     @Inject(forwardRef(() => StrategyManagerService))
     private readonly strategyManager?: StrategyManagerService, // ✅ Injetar StrategyManager
+    @Inject(forwardRef(() => AutonomousAgentService))
+    private readonly autonomousAgentService?: AutonomousAgentService, // ✅ Injetar AutonomousAgentService para compartilhar ticks
     private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
@@ -936,6 +938,15 @@ export class AiService implements OnModuleInit {
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
       this.logger.error('[StrategyManager] Erro ao processar tick:', error);
     });
+
+    // ✅ Compartilhar tick de R_100 com AutonomousAgentService
+    if (tickSymbol === 'R_100' && this.autonomousAgentService) {
+      try {
+        this.autonomousAgentService.receiveExternalTick(newTick, tickSymbol);
+      } catch (error) {
+        // Ignorar erros silenciosamente (pode não estar inicializado ainda)
+      }
+    }
   }
 
   /**

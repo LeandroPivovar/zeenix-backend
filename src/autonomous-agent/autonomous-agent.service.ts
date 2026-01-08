@@ -336,6 +336,26 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
     });
   }
+
+  /**
+   * ✅ NOVO: Método público para receber ticks externos (do AiService)
+   * Permite que o AiService compartilhe ticks de R_100 com o AutonomousAgentService
+   */
+  public receiveExternalTick(tick: Tick, symbol: string = 'R_100'): void {
+    if (symbol !== 'R_100') {
+      return; // Apenas processar R_100
+    }
+
+    // Processar o tick como se tivesse vindo do WebSocket próprio
+    this.processTick(
+      {
+        quote: tick.value.toString(),
+        epoch: tick.epoch,
+        symbol: symbol,
+      },
+      symbol,
+    );
+  }
   
   /**
    * ✅ NOVO: Obtém o símbolo associado a uma subscription ID

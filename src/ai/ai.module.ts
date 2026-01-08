@@ -13,11 +13,13 @@ import { ApolloStrategy } from './strategies/apollo.strategy';
 import { TitanStrategy } from './strategies/titan.strategy';
 import { NexusStrategy } from './strategies/nexus.strategy';
 import { TradeEventsService } from './trade-events.service';
+import { AutonomousAgentModule } from '../autonomous-agent/autonomous-agent.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([]),
     forwardRef(() => CopyTradingModule),
+    forwardRef(() => AutonomousAgentModule), // ✅ Importar para compartilhar ticks
     BrokerModule,
   ],
   controllers: [AiController],
