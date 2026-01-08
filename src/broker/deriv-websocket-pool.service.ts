@@ -53,7 +53,7 @@ export class DerivWebSocketPoolService {
    */
   async sendRequest(token: string, payload: any, timeoutMs = 30000): Promise<any> {
     const conn = await this.getConnection(token);
-
+    
     // ✅ Verificar saúde da conexão antes de enviar
     if (!conn.ready) {
       throw new Error('Conexão WebSocket não está pronta');
@@ -61,20 +61,20 @@ export class DerivWebSocketPoolService {
     if (conn.ws.readyState !== WebSocket.OPEN) {
       throw new Error(`WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
     }
-
+    
     return new Promise((resolve, reject) => {
       // ✅ Gerar ID único para rastreamento (não adicionar ao payload, a Deriv retorna echo_req automaticamente)
       const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const req: PendingRequest = {
+      const req: PendingRequest = { 
         payload, // ✅ Não modificar payload - a Deriv retorna echo_req automaticamente
-        resolve,
-        reject,
-        timeout: null as any,
+        resolve, 
+        reject, 
+        timeout: null as any, 
         sent: false,
         requestId,
         sentAt: undefined,
       };
-
+      
       req.timeout = setTimeout(() => {
         // ✅ Remover da fila se ainda estiver pendente
         const index = conn.queue.indexOf(req);
@@ -118,7 +118,7 @@ export class DerivWebSocketPoolService {
     // Enfileirar subscribe e aguardar primeira resposta
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs);
-
+      
       // ✅ Interceptar primeira mensagem para capturar subscription.id
       const originalCallback = subscription.callback;
       subscription.callback = (msg: any) => {
@@ -126,20 +126,20 @@ export class DerivWebSocketPoolService {
         if (msg.subscription?.id && !subscription.subscriptionId) {
           subscription.subscriptionId = msg.subscription.id;
           this.logger.debug(`[POOL] 📋 Subscription ID capturado: ${msg.subscription.id} -> ${subId}`);
-
+          
           // ✅ Também mapear pelo subscription.id para facilitar lookup
           if (msg.subscription.id !== subId) {
             conn.subs.set(msg.subscription.id, subscription);
           }
         }
-
+        
         // ✅ Verificar erros na mensagem
         if (msg.error) {
           this.logger.error(`[POOL] ❌ Erro na subscription ${subId}: ${JSON.stringify(msg.error)}`);
           reject(new Error(msg.error.message || JSON.stringify(msg.error)));
           return;
         }
-
+        
         // Chamar callback original
         originalCallback(msg);
       };
@@ -190,15 +190,9 @@ export class DerivWebSocketPoolService {
     }
   }
 
-  private async getConnection(token: string): Promise<PoolConnection> {
+  private async getConnection(token: string) {
     if (this.connections.has(token)) {
-      const existingConn = this.connections.get(token)!;
-      // ✅ Se já existe mas não está pronta, aguardar ficar pronta
-      if (!existingConn.ready) {
-        this.logger.warn(`[POOL] ⏳ Conexão existe mas não está pronta, aguardando autorização...`);
-        await this.waitForReady(existingConn);
-      }
-      return existingConn;
+      return this.connections.get(token)!;
     }
 
     const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
@@ -206,7 +200,7 @@ export class DerivWebSocketPoolService {
       headers: { Origin: 'https://app.deriv.com' },
     });
 
-    const conn: PoolConnection = {
+    const conn = {
       ws,
       ready: false,
       queue: [] as PendingRequest[],
@@ -214,381 +208,268 @@ export class DerivWebSocketPoolService {
     };
     this.connections.set(token, conn);
 
-    // ✅ CORREÇÃO: Aguardar conexão abrir E autorizar antes de retornar
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Timeout aguardando conexão WebSocket abrir e autorizar'));
-      }, 10000); // 10s timeout
+    ws.on('open', () => {
+      this.logger.log(`[POOL] 🔌 Conexão aberta para token`);
+      // Autorizar logo no open para reduzir latência
+      this.sendAuthorize(ws, token);
+    });
 
-      ws.on('open', () => {
-        this.logger.log(`[POOL] 🔌 Conexão aberta para token`);
-        // Autorizar logo no open para reduzir latência
-        this.sendAuthorize(ws, token);
-      });
+    ws.on('message', (data: WebSocket.RawData) => {
+      try {
+        const msg = JSON.parse(data.toString());
 
-      ws.on('message', (data: WebSocket.RawData) => {
-        try {
-          const msg = JSON.parse(data.toString());
-
-          // Falha na autorização
-          if (msg.authorize?.error) {
-            clearTimeout(timeout);
-            this.logger.error(`[POOL] ❌ Erro na autorização: ${msg.authorize.error.message}`);
-            // rejeita todos pendentes
-            while (conn.queue.length) {
-              const req = conn.queue.shift();
-              if (req) {
-                clearTimeout(req.timeout);
-                req.reject(new Error(`Authorize error: ${msg.authorize.error.message}`));
-              }
+        // Falha na autorização
+        if (msg.authorize?.error) {
+          this.logger.error(`[POOL] ❌ Erro na autorização: ${msg.authorize.error.message}`);
+          // rejeita todos pendentes
+          while (conn.queue.length) {
+            const req = conn.queue.shift();
+            if (req) {
+              clearTimeout(req.timeout);
+              req.reject(new Error(`Authorize error: ${msg.authorize.error.message}`));
             }
-            reject(new Error(`Authorize error: ${msg.authorize.error.message}`));
-            return;
           }
-
-          // Autorizado (já verificamos erro acima)
-          if (msg.authorize && !msg.authorize.error) {
-            conn.ready = true;
-            clearTimeout(timeout);
-            this.logger.debug(`[POOL] ✅ Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
-
-            // ✅ Resolver a Promise para liberar getConnection
-            resolve();
-
-            // ✅ Pequeno delay para garantir estabilidade da conexão
-            setTimeout(() => {
-              this.flushQueue(conn);
-            }, 100);
-            return;
-          }
-
-          // ✅ Processar outras mensagens normalmente (subscriptions, responses, etc.)
-          this.handleMessage(conn, msg);
-        } catch (err) {
-          this.logger.error(`[POOL] ❌ Erro ao processar mensagem:`, err);
+          return;
         }
-      });
 
-      // ✅ PRIORIDADE 1: Mensagens de subscribe (proposal_open_contract, ticks, etc.)
-      // Verificar pelo subscription.id retornado pela Deriv
-      const subscriptionId = msg.subscription?.id;
-      if (subscriptionId && conn.subs.has(subscriptionId)) {
-        const sub = conn.subs.get(subscriptionId)!;
-        sub.callback(msg);
-        return;
-      }
+        // Autorizado (já verificamos erro acima)
+        if (msg.authorize && !msg.authorize.error) {
+          conn.ready = true;
+          this.logger.debug(`[POOL] ✅ Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
+          
+          // ✅ Pequeno delay para garantir estabilidade da conexão
+          setTimeout(() => {
+            this.flushQueue(conn);
+          }, 100);
+          return;
+        }
 
-      // ✅ FALLBACK: Para proposal_open_contract, também verificar contract_id
-      // Isso permite usar contractId como subId mesmo que subscription.id seja diferente
-      if (msg.proposal_open_contract) {
-        const contractId = msg.proposal_open_contract.contract_id;
-        if (contractId && conn.subs.has(contractId)) {
-          const sub = conn.subs.get(contractId)!;
+        // ✅ PRIORIDADE 1: Mensagens de subscribe (proposal_open_contract, ticks, etc.)
+        // Verificar pelo subscription.id retornado pela Deriv
+        const subscriptionId = msg.subscription?.id;
+        if (subscriptionId && conn.subs.has(subscriptionId)) {
+          const sub = conn.subs.get(subscriptionId)!;
           sub.callback(msg);
           return;
         }
-      }
 
-      // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
-      // Verificar se é resposta de requisição (tem proposal, buy, etc. ou é erro)
-      // ✅ CORREÇÃO: Verificar msg_type primeiro, pois proposal pode vir sem campo proposal direto
-      // ✅ IMPORTANTE: Verificar também echo_req para garantir que é resposta de nossa requisição
-      const hasProposal = msg.proposal !== undefined || msg.msg_type === 'proposal';
-      const hasBuy = msg.buy !== undefined || msg.msg_type === 'buy';
-      const hasError = msg.error !== undefined;
-      const isRequestResponse = hasProposal || hasBuy || (hasError && !msg.proposal_open_contract);
+        // ✅ FALLBACK: Para proposal_open_contract, também verificar contract_id
+        // Isso permite usar contractId como subId mesmo que subscription.id seja diferente
+        if (msg.proposal_open_contract) {
+          const contractId = msg.proposal_open_contract.contract_id;
+          if (contractId && conn.subs.has(contractId)) {
+            const sub = conn.subs.get(contractId)!;
+            sub.callback(msg);
+            return;
+          }
+        }
 
-      if (isRequestResponse) {
-        // ✅ MELHORIA: Tentar fazer match usando echo_req (a Deriv retorna echo_req com o payload original)
-        // ✅ Comparar echo_req com o payload da requisição para matching preciso
-        let matchedRequest: PendingRequest | null = null;
+        // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
+        // Verificar se é resposta de requisição (tem proposal, buy, etc. ou é erro)
+        // ✅ CORREÇÃO: Verificar msg_type primeiro, pois proposal pode vir sem campo proposal direto
+        // ✅ IMPORTANTE: Verificar também echo_req para garantir que é resposta de nossa requisição
+        const hasProposal = msg.proposal !== undefined || msg.msg_type === 'proposal';
+        const hasBuy = msg.buy !== undefined || msg.msg_type === 'buy';
+        const hasError = msg.error !== undefined;
+        const isRequestResponse = hasProposal || hasBuy || (hasError && !msg.proposal_open_contract);
 
-        if (msg.echo_req) {
-          // ✅ Buscar requisição pendente cujo payload corresponde ao echo_req
-          const matchedIndex = conn.queue.findIndex(req => {
-            if (!req.sent || (req as any).resolved) return false;
-
-            // ✅ Comparar campos principais do payload com echo_req
-            const payloadKeys = Object.keys(req.payload);
-            return payloadKeys.every(key => {
-              // ✅ Comparar valores (ignorar diferenças de tipo se forem equivalentes)
-              const payloadVal = req.payload[key];
-              const echoVal = msg.echo_req[key];
-
-              // ✅ Comparação especial para proposal (pode ser 1 ou true)
-              if (key === 'proposal' && (payloadVal === 1 || payloadVal === true) && (echoVal === 1 || echoVal === true)) {
-                return true;
-              }
-
-              return JSON.stringify(payloadVal) === JSON.stringify(echoVal);
+        if (isRequestResponse) {
+          // ✅ MELHORIA: Tentar fazer match usando echo_req (a Deriv retorna echo_req com o payload original)
+          // ✅ Comparar echo_req com o payload da requisição para matching preciso
+          let matchedRequest: PendingRequest | null = null;
+          
+          if (msg.echo_req) {
+            // ✅ Buscar requisição pendente cujo payload corresponde ao echo_req
+            const matchedIndex = conn.queue.findIndex(req => {
+              if (!req.sent || (req as any).resolved) return false;
+              
+              // ✅ Comparar campos principais do payload com echo_req
+              const payloadKeys = Object.keys(req.payload);
+              return payloadKeys.every(key => {
+                // ✅ Comparar valores (ignorar diferenças de tipo se forem equivalentes)
+                const payloadVal = req.payload[key];
+                const echoVal = msg.echo_req[key];
+                
+                // ✅ Comparação especial para proposal (pode ser 1 ou true)
+                if (key === 'proposal' && (payloadVal === 1 || payloadVal === true) && (echoVal === 1 || echoVal === true)) {
+                  return true;
+                }
+                
+                return JSON.stringify(payloadVal) === JSON.stringify(echoVal);
+              });
             });
-          });
-
-          if (matchedIndex !== -1) {
-            matchedRequest = conn.queue[matchedIndex];
-            (matchedRequest as any).resolved = true;
-            conn.queue.splice(matchedIndex, 1);
-            this.logger.debug(`[POOL] ✅ Match por echo_req (posição ${matchedIndex})`);
+            
+            if (matchedIndex !== -1) {
+              matchedRequest = conn.queue[matchedIndex];
+              (matchedRequest as any).resolved = true;
+              conn.queue.splice(matchedIndex, 1);
+              this.logger.debug(`[POOL] ✅ Match por echo_req (posição ${matchedIndex})`);
+            }
           }
-        }
+          
+          // ✅ FALLBACK: Se não encontrou por echo_req, usar FIFO (primeira requisição enviada e não resolvida)
+          const findPendingRequest = () => {
+            if (matchedRequest) return matchedRequest;
+            
+            const index = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
+            if (index !== -1) {
+              const req = conn.queue[index];
+              (req as any).resolved = true;
+              conn.queue.splice(index, 1);
+              this.logger.debug(`[POOL] ✅ Match por FIFO (posição ${index})`);
+              return req;
+            }
+            return null;
+          };
 
-        // ✅ FALLBACK: Se não encontrou por echo_req, usar FIFO (primeira requisição enviada e não resolvida)
-        const findPendingRequest = () => {
-          if (matchedRequest) return matchedRequest;
-
-          const index = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
-          if (index !== -1) {
-            const req = conn.queue[index];
-            (req as any).resolved = true;
-            conn.queue.splice(index, 1);
-            this.logger.debug(`[POOL] ✅ Match por FIFO (posição ${index})`);
-            return req;
+          // ✅ Verificar erros em respostas de requisições
+          if (msg.error) {
+            const pending = findPendingRequest();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.error.message || JSON.stringify(msg.error);
+              this.logger.error(`[POOL] ❌ Erro em request pendente: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
           }
-          return null;
-        };
 
-        // ✅ Verificar erros em respostas de requisições
-        if (msg.error) {
-          const pending = findPendingRequest();
-          if (pending) {
+          // ✅ Verificar erros específicos em proposal ou buy
+          if (msg.proposal?.error) {
+            const pending = findPendingRequest();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.proposal.error.message || JSON.stringify(msg.proposal.error);
+              this.logger.error(`[POOL] ❌ Erro na proposta: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
+          }
+
+          if (msg.buy?.error) {
+            const pending = findPendingRequest();
+            if (pending) {
+              clearTimeout(pending.timeout);
+              const errorMsg = msg.buy.error.message || JSON.stringify(msg.buy.error);
+              this.logger.error(`[POOL] ❌ Erro na compra: ${errorMsg}`);
+              pending.reject(new Error(errorMsg));
+              return;
+            }
+          }
+
+          // ✅ Processar resposta de sucesso (FIFO - primeira requisição ENVIADA na fila)
+          // ✅ IMPORTANTE: Processar apenas requisições que já foram enviadas (sent = true)
+          const pendingIndex = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
+          if (pendingIndex !== -1) {
+            const pending = conn.queue[pendingIndex];
+            // ✅ Marcar como resolvida para evitar processamento duplicado
+            (pending as any).resolved = true;
+            // ✅ Remover da fila
+            conn.queue.splice(pendingIndex, 1);
             clearTimeout(pending.timeout);
-            const errorMsg = msg.error.message || JSON.stringify(msg.error);
-            this.logger.error(`[POOL] ❌ Erro em request pendente: ${errorMsg}`);
-            pending.reject(new Error(errorMsg));
+            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}, hasProposal=${hasProposal}, hasBuy=${hasBuy}, queueLength=${conn.queue.length}`);
+            pending.resolve(msg);
             return;
+          } else {
+            // ✅ Se não há pending mas é resposta de requisição, logar para debug
+            // ✅ Pode acontecer se a resposta chegou antes da requisição ser enviada
+            // ✅ OU se todas as requisições já foram processadas
+            this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}, sentCount=${conn.queue.filter(r => r.sent).length}, hasProposal=${hasProposal}, hasBuy=${hasBuy}`);
+            // ✅ Log detalhado para debug
+            if (hasProposal) {
+              this.logger.debug(`[POOL] 📊 Detalhes da proposta não processada: ${JSON.stringify({ 
+                proposal: msg.proposal ? Object.keys(msg.proposal) : 'null',
+                echo_req: msg.echo_req ? Object.keys(msg.echo_req) : 'null',
+                msg_type: msg.msg_type,
+                proposal_id: msg.proposal?.id || 'N/A',
+                proposal_ask_price: msg.proposal?.ask_price || 'N/A'
+              })}`);
+            }
           }
         }
 
-        // ✅ Verificar erros específicos em proposal ou buy
-        if (msg.proposal?.error) {
-          const pending = findPendingRequest();
-          if (pending) {
-            clearTimeout(pending.timeout);
-            const errorMsg = msg.proposal.error.message || JSON.stringify(msg.proposal.error);
-            this.logger.error(`[POOL] ❌ Erro na proposta: ${errorMsg}`);
-            pending.reject(new Error(errorMsg));
-            return;
-          }
+        // ✅ Se chegou aqui, mensagem não foi processada
+        if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
+          this.logger.debug(`[POOL] ⚠️ Mensagem não processada: msg_type=${msg.msg_type}, subscription=${subscriptionId || 'N/A'}, hasProposal=${!!msg.proposal}, hasBuy=${!!msg.buy}`);
         }
-
-        if (msg.buy?.error) {
-          const pending = findPendingRequest();
-          if (pending) {
-            clearTimeout(pending.timeout);
-            const errorMsg = msg.buy.error.message || JSON.stringify(msg.buy.error);
-            this.logger.error(`[POOL] ❌ Erro na compra: ${errorMsg}`);
-            pending.reject(new Error(errorMsg));
-            return;
-          }
-        }
-
-        // ✅ Processar resposta de sucesso (FIFO - primeira requisição ENVIADA na fila)
-        // ✅ IMPORTANTE: Processar apenas requisições que já foram enviadas (sent = true)
-        const pendingIndex = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
-        if (pendingIndex !== -1) {
-          const pending = conn.queue[pendingIndex];
-          // ✅ Marcar como resolvida para evitar processamento duplicado
-          (pending as any).resolved = true;
-          // ✅ Remover da fila
-          conn.queue.splice(pendingIndex, 1);
-          clearTimeout(pending.timeout);
-          this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}, hasProposal=${hasProposal}, hasBuy=${hasBuy}, queueLength=${conn.queue.length}`);
-          pending.resolve(msg);
-          return;
-        } else {
-          // ✅ Se não há pending mas é resposta de requisição, logar para debug
-          // ✅ Pode acontecer se a resposta chegou antes da requisição ser enviada
-          // ✅ OU se todas as requisições já foram processadas
-          this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}, sentCount=${conn.queue.filter(r => r.sent).length}, hasProposal=${hasProposal}, hasBuy=${hasBuy}`);
-          // ✅ Log detalhado para debug
-          if (hasProposal) {
-            this.logger.debug(`[POOL] 📊 Detalhes da proposta não processada: ${JSON.stringify({
-              proposal: msg.proposal ? Object.keys(msg.proposal) : 'null',
-              echo_req: msg.echo_req ? Object.keys(msg.echo_req) : 'null',
-              msg_type: msg.msg_type,
-              proposal_id: msg.proposal?.id || 'N/A',
-              proposal_ask_price: msg.proposal?.ask_price || 'N/A'
-            })}`);
-          }
-        }
+      } catch (err) {
+        this.logger.error('[POOL] Erro ao processar mensagem', err as any);
       }
-
-      // ✅ Se chegou aqui, mensagem não foi processada
-      if (msg.msg_type && msg.msg_type !== 'ping' && msg.msg_type !== 'pong') {
-        this.logger.debug(`[POOL] ⚠️ Mensagem não processada: msg_type=${msg.msg_type}, subscription=${subscriptionId || 'N/A'}, hasProposal=${!!msg.proposal}, hasBuy=${!!msg.buy}`);
-      }
-    } catch (err) {
-      this.logger.error('[POOL] Erro ao processar mensagem', err as any);
-    }
-  });
+    });
 
     ws.on('error', (err) => {
-  this.logger.error('[POOL] Erro no WebSocket', err as any);
-  // Rejeitar pendentes
-  while (conn.queue.length) {
-    const req = conn.queue.shift();
-    if (req) {
-      clearTimeout(req.timeout);
-      req.reject(err);
-    }
-  }
-  // Limpar subs
-  conn.subs.clear();
-  this.connections.delete(token);
-});
+      this.logger.error('[POOL] Erro no WebSocket', err as any);
+      // Rejeitar pendentes
+      while (conn.queue.length) {
+        const req = conn.queue.shift();
+        if (req) {
+          clearTimeout(req.timeout);
+          req.reject(err);
+        }
+      }
+      // Limpar subs
+      conn.subs.clear();
+      this.connections.delete(token);
+    });
 
-ws.on('close', () => {
-  this.logger.warn('[POOL] WebSocket fechado');
-  // Rejeitar pendentes
-  while (conn.queue.length) {
-    const req = conn.queue.shift();
-    if (req) {
-      clearTimeout(req.timeout);
-      req.reject(new Error('WebSocket closed'));
-    }
-  }
-  conn.subs.clear();
-  this.connections.delete(token);
-});
+    ws.on('close', () => {
+      this.logger.warn('[POOL] WebSocket fechado');
+      // Rejeitar pendentes
+      while (conn.queue.length) {
+        const req = conn.queue.shift();
+        if (req) {
+          clearTimeout(req.timeout);
+          req.reject(new Error('WebSocket closed'));
+        }
+      }
+      conn.subs.clear();
+      this.connections.delete(token);
+    });
 
-return conn;
+    return conn;
   }
 
   private flushQueue(conn: { ws: WebSocket; ready: boolean; queue: PendingRequest[] }) {
-  if (!conn.ready) {
-    this.logger.debug(`[POOL] ⏳ Aguardando autorização... (${conn.queue.length} requisições na fila)`);
-    return;
-  }
-  if (conn.ws.readyState !== WebSocket.OPEN) {
-    this.logger.warn(`[POOL] ⚠️ WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
-    return;
-  }
-
-  // ✅ IMPORTANTE: Enviar requisições mas NÃO remover da fila
-  // ✅ A remoção acontece quando a resposta chega (no handleMessage)
-  // ✅ Isso garante que a resposta possa ser associada à requisição correta (FIFO)
-  for (const req of conn.queue) {
-    // ✅ Verificar se já foi enviada para não reenviar
-    if (req.sent) continue;
-
-    try {
-      const payloadStr = JSON.stringify(req.payload);
-      const reqType = req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other';
-      this.logger.debug(`[POOL] 📤 Enviando requisição: ${reqType} | RequestId: ${req.requestId} | (${conn.queue.length} na fila, ${conn.queue.filter(r => !r.sent).length} pendentes)`);
-      conn.ws.send(payloadStr);
-      // ✅ Marcar como enviada e registrar timestamp
-      req.sent = true;
-      req.sentAt = Date.now();
-    } catch (err) {
-      // ✅ Se falhar ao enviar, remover da fila e rejeitar
-      const index = conn.queue.indexOf(req);
-      if (index !== -1) {
-        conn.queue.splice(index, 1);
-      }
-      clearTimeout(req.timeout);
-      this.logger.error(`[POOL] ❌ Erro ao enviar requisição:`, err);
-      req.reject(err);
-    }
-  }
-
-  /**
-   * Aguarda conexão ficar pronta (autorizada)
-   */
-  private async waitForReady(conn: PoolConnection, timeoutMs = 10000): Promise < void> {
-    if(conn.ready) return;
-
-    return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Timeout aguardando conexão ficar pronta'));
-      }, timeoutMs);
-
-      const checkReady = setInterval(() => {
-        if (conn.ready) {
-          clearTimeout(timeout);
-          clearInterval(checkReady);
-          resolve();
-        }
-      }, 100);
-    });
-  }
-
-  /**
-   * Processa mensagens recebidas (exceto authorize)
-   */
-  private handleMessage(conn: PoolConnection, msg: any): void {
-    // ✅ PRIORIDADE 1: Mensagens de subscribe (proposal_open_contract, ticks, etc.)
-    // Verificar pelo subscription.id retornado pela Deriv
-    const subscriptionId = msg.subscription?.id;
-    if(subscriptionId && conn.subs.has(subscriptionId)) {
-    const sub = conn.subs.get(subscriptionId)!;
-    sub.callback(msg);
-    return;
-  }
-
-  // ✅ FALLBACK: Para proposal_open_contract, também verificar contract_id
-  // Isso permite usar contractId como subId mesmo que subscription.id seja diferente
-  if (msg.proposal_open_contract) {
-    const contractId = msg.proposal_open_contract.contract_id;
-    if (contractId && conn.subs.has(contractId)) {
-      const sub = conn.subs.get(contractId)!;
-      sub.callback(msg);
+    if (!conn.ready) {
+      this.logger.debug(`[POOL] ⏳ Aguardando autorização... (${conn.queue.length} requisições na fila)`);
       return;
     }
-  }
-
-  // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
-  const hasProposal = msg.proposal !== undefined || msg.msg_type === 'proposal';
-  const hasBuy = msg.buy !== undefined || msg.msg_type === 'buy';
-  const hasError = msg.error !== undefined;
-  const isRequestResponse = hasProposal || hasBuy || (hasError && !msg.proposal_open_contract);
-
-  if (isRequestResponse) {
-    let matchedRequest: PendingRequest | null = null;
-
-    if (msg.echo_req) {
-      const matchedIndex = conn.queue.findIndex(req => {
-        if (!req.sent || (req as any).resolved) return false;
-        const payloadKeys = Object.keys(req.payload);
-        return payloadKeys.every(key => {
-          const payloadVal = req.payload[key];
-          const echoVal = msg.echo_req[key];
-          if (key === 'proposal' && (payloadVal === 1 || payloadVal === true) && (echoVal === 1 || echoVal === true)) {
-            return true;
-          }
-          return JSON.stringify(payloadVal) === JSON.stringify(echoVal);
-        });
-      });
-
-      if (matchedIndex !== -1) {
-        matchedRequest = conn.queue[matchedIndex];
-        (matchedRequest as any).resolved = true;
-        conn.queue.splice(matchedIndex, 1);
-      }
+    if (conn.ws.readyState !== WebSocket.OPEN) {
+      this.logger.warn(`[POOL] ⚠️ WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
+      return;
     }
 
-    if (!matchedRequest) {
-      const index = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
-      if (index !== -1) {
-        matchedRequest = conn.queue[index];
-        (matchedRequest as any).resolved = true;
-        conn.queue.splice(index, 1);
-      }
-    }
-
-    if (matchedRequest) {
-      clearTimeout(matchedRequest.timeout);
-      if (msg.error) {
-        matchedRequest.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-      } else {
-        matchedRequest.resolve(msg);
+    // ✅ IMPORTANTE: Enviar requisições mas NÃO remover da fila
+    // ✅ A remoção acontece quando a resposta chega (no handleMessage)
+    // ✅ Isso garante que a resposta possa ser associada à requisição correta (FIFO)
+    for (const req of conn.queue) {
+      // ✅ Verificar se já foi enviada para não reenviar
+      if (req.sent) continue;
+      
+      try {
+        const payloadStr = JSON.stringify(req.payload);
+        const reqType = req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other';
+        this.logger.debug(`[POOL] 📤 Enviando requisição: ${reqType} | RequestId: ${req.requestId} | (${conn.queue.length} na fila, ${conn.queue.filter(r => !r.sent).length} pendentes)`);
+        conn.ws.send(payloadStr);
+        // ✅ Marcar como enviada e registrar timestamp
+        req.sent = true;
+        req.sentAt = Date.now();
+      } catch (err) {
+        // ✅ Se falhar ao enviar, remover da fila e rejeitar
+        const index = conn.queue.indexOf(req);
+        if (index !== -1) {
+          conn.queue.splice(index, 1);
+        }
+        clearTimeout(req.timeout);
+        this.logger.error(`[POOL] ❌ Erro ao enviar requisição:`, err);
+        req.reject(err);
       }
     }
   }
-}
 
   private sendAuthorize(ws: WebSocket, token: string) {
-  ws.send(JSON.stringify({ authorize: token }));
-}
+    ws.send(JSON.stringify({ authorize: token }));
+  }
 }
 
 
