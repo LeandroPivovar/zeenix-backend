@@ -912,9 +912,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 });
               }
               
-              state.isWaitingContract = false;
-              state.currentContractId = null;
-              state.currentTradeId = null;
+              if (state) {
+                state.isWaitingContract = false;
+                state.currentContractId = null;
+                state.currentTradeId = null;
+              }
               
               // Remover subscription
               this.derivPool.removeSubscription(token, contractId);
