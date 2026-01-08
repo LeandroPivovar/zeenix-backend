@@ -358,7 +358,7 @@ export class NexusStrategy implements IStrategy {
         if (riskManager.consecutiveLosses === 0) {
             // MODO ATAQUE (Base): Higher com Barreira Negativa (Payout ~60-65%)
             contractType = 'CALL';
-            barrier = '-0.60'; // Barreira mais negativa para payout de ~60-65%
+            barrier = '-0.80'; // Barreira mais negativa para payout de ~60-65%
             contractDescription = `Higher (Barreira: ${barrier})`;
             this.saveNexusLog(state.userId, this.symbol, 'operacao', `⚡ [MODO ATAQUE] Higher com Barreira | Valor: $${stake.toFixed(2)} | Barreira: ${barrier} | Payout: ~60-65%`);
         } else {
@@ -376,12 +376,21 @@ export class NexusStrategy implements IStrategy {
 
             this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: ${contractDescription} | Valor: $${stake.toFixed(2)}`);
 
-            const result = await this.executeTradeViaWebSocket(state.derivToken, {
-                contract_type: contractType,
-                amount: stake,
-                currency: state.currency,
-                barrier: barrier
-            }, state.userId);
+            // Adicionar timeout para evitar travamento
+            const tradeTimeout = 120000; // 2 minutos
+            const result = await Promise.race([
+                this.executeTradeViaWebSocket(state.derivToken, {
+                    contract_type: contractType,
+                    amount: stake,
+                    currency: state.currency,
+                    barrier: barrier
+                }, state.userId),
+                new Promise((resolve) => setTimeout(() => {
+                    this.logger.warn(`[NEXUS] ⚠️ Timeout ao executar trade (${tradeTimeout}ms)`);
+                    this.saveNexusLog(state.userId, this.symbol, 'erro', `⏱️ Timeout ao executar trade. Tentando novamente no próximo sinal.`);
+                    resolve(null);
+                }, tradeTimeout))
+            ]) as any;
 
             if (result) {
                 riskManager.updateResult(result.profit, stake);
@@ -469,7 +478,12 @@ export class NexusStrategy implements IStrategy {
             const payoutPercent = proposalPrice > 0 ? ((proposalPayout - proposalPrice) / proposalPrice) * 100 : 0;
             
             if (userId && params.barrier) {
-                this.saveNexusLog(userId, this.symbol, 'analise', `📊 Payout Real: ${payoutPercent.toFixed(2)}% | Preço: $${proposalPrice.toFixed(2)} | Payout: $${proposalPayout.toFixed(2)}`);
+                this.saveNexusLog(userId, this.symbol, 'analise', `📊 Payout Real: ${payoutPercent.toFixed(2)}% | Preço: $${proposalPrice.toFixed(2)} | Payout: $${proposalPayout.toFixed(2)} | Barreira: ${params.barrier}`);
+                
+                // Se o payout estiver muito baixo (< 30%), avisar
+                if (payoutPercent < 30) {
+                    this.saveNexusLog(userId, this.symbol, 'alerta', `⚠️ Payout baixo (${payoutPercent.toFixed(2)}%). Continuando mesmo assim...`);
+                }
             }
             
             if (!proposalId) return null;
@@ -569,11 +583,12 @@ export class NexusStrategy implements IStrategy {
 
             const connectionTimeout = setTimeout(() => {
                 if (!authResolved) {
+                    authResolved = true;
                     socket.close();
                     this.wsConnections.delete(token);
-                    reject(new Error('Timeout ao conectar (20s)'));
+                    reject(new Error('Timeout ao conectar (40s)'));
                 }
-            }, 20000);
+            }, 40000);
 
             socket.on('message', (data: WebSocket.RawData) => {
                 try {
