@@ -143,6 +143,10 @@ export class AtlasStrategy implements IStrategy {
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     if (!symbol || !['R_10', 'R_25'].includes(symbol)) {
+      // ✅ DIAGNÓSTICO: Log quando recebe símbolo inválido
+      if (symbol) {
+        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10 ou R_25)`);
+      }
       return;
     }
 
@@ -162,7 +166,7 @@ export class AtlasStrategy implements IStrategy {
 
     // ✅ DIAGNÓSTICO: Se há usuários mas nenhum fatiado por este ativo
     if (activeUsers.length === 0 && allAtlasUsers.length > 0) {
-      this.logger.debug(`[ATLAS][${assetSymbol}] ⚠️ ${allAtlasUsers.length} usuários Atlas totais, mas nenhum ativo para este símbolo.`);
+      this.logger.warn(`[ATLAS][${assetSymbol}] ⚠️ ${allAtlasUsers.length} usuários Atlas totais, mas nenhum ativo para este símbolo.`);
       // Logar símbolos dos usuários para depuração
       allAtlasUsers.forEach(u => {
         this.logger.debug(`[ATLAS][DEBUG] Usuário ${u.userId}: symbol=${u.symbol}, isStopped=${u.isStopped}`);
@@ -306,11 +310,18 @@ export class AtlasStrategy implements IStrategy {
     if (state.digitBuffer.length < modeConfig.amostraInicial) {
       const keyUser = state.userId;
       const set = this.coletaLogsEnviados.get(keyUser) || new Set<string>();
-      if (!set.has(symbol)) {
+      // ✅ Log mais frequente para diagnóstico (a cada 5 dígitos coletados)
+      const logKey = `${symbol}_coleta`;
+      const shouldLog = !set.has(logKey) || state.digitBuffer.length % 5 === 0;
+      if (shouldLog) {
         this.saveAtlasLog(state.userId, symbol, 'info',
-          `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial}`);
-        set.add(symbol);
+          `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial} | Modo: ${state.mode}`);
+        set.add(logKey);
         this.coletaLogsEnviados.set(keyUser, set);
+        // Resetar após logar para permitir novo log quando necessário
+        if (state.digitBuffer.length % 5 === 0) {
+          set.delete(logKey);
+        }
       }
       return;
     }
@@ -326,6 +337,17 @@ export class AtlasStrategy implements IStrategy {
     const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
     if (canTrade) {
       await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
+    } else {
+      // ✅ Log periódico quando análise bloqueia operação (a cada 20 ticks para não poluir)
+      const key = `${symbol}_${state.userId}_bloqueio`;
+      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 20 === 0) {
+        this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
+        this.intervaloLogsEnviados.set(key, true);
+        // Resetar após 20 ticks
+        if ((state.tickCounter || 0) % 20 === 0) {
+          this.intervaloLogsEnviados.delete(key);
+        }
+      }
     }
   }
 
@@ -340,7 +362,11 @@ export class AtlasStrategy implements IStrategy {
     let analysis = `🔍 [ANÁLISE ATLAS ${state.mode.toUpperCase()}]\n`;
     analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
 
-    if (state.virtualLossCount < requiredLossCount) {
+    // ✅ CORREÇÃO: Permitir primeira operação sem loss virtual (evita deadlock)
+    // Se nunca operou (lastOperationTimestamp é null), permitir operar sem loss virtual
+    const isFirstOperation = state.lastOperationTimestamp === null;
+    
+    if (!isFirstOperation && state.virtualLossCount < requiredLossCount) {
       return { canTrade: false, analysis }; // Ainda não atingiu o gatilho de loss virtual
     }
 
