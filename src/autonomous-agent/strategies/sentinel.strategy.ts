@@ -856,7 +856,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           duration_unit: 't',
           symbol: symbol,
         },
-        10000, // timeout 10s
+        30000, // timeout 30s (aumentado para evitar timeouts)
       );
 
       if (response.error) {

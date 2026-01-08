@@ -235,12 +235,13 @@ export class DerivWebSocketPoolService {
 
         // ✅ PRIORIDADE 2: Respostas de requisições pendentes (proposal, buy, etc.)
         // Verificar se é resposta de requisição (tem proposal, buy, etc. ou é erro)
+        // ✅ CORREÇÃO: Verificar msg_type primeiro, pois proposal pode vir sem campo proposal direto
         const isRequestResponse = 
           msg.proposal !== undefined || 
           msg.buy !== undefined || 
           msg.error !== undefined ||
-          (msg.msg_type === 'proposal' && !subscriptionId) ||
-          (msg.msg_type === 'buy' && !subscriptionId);
+          msg.msg_type === 'proposal' ||
+          msg.msg_type === 'buy';
 
         if (isRequestResponse) {
           // ✅ Verificar erros em respostas de requisições
@@ -282,9 +283,12 @@ export class DerivWebSocketPoolService {
           const pending = conn.queue.shift();
           if (pending) {
             clearTimeout(pending.timeout);
-            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}`);
+            this.logger.debug(`[POOL] ✅ Resposta processada: msg_type=${msg.msg_type || 'N/A'}, hasProposal=${!!msg.proposal}, hasBuy=${!!msg.buy}`);
             pending.resolve(msg);
             return;
+          } else {
+            // ✅ Se não há pending mas é resposta de requisição, logar para debug
+            this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}`);
           }
         }
 
