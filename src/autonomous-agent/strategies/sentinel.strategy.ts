@@ -269,7 +269,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         const currentState = this.userStates.get(userId);
         
         // ✅ Verificar novamente (state pode ter mudado)
-        if (!currentState || currentState.isWaitingContract) {
+        if (!config || !currentState || currentState.isWaitingContract) {
           this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
