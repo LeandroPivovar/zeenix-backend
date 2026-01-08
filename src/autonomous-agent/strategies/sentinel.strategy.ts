@@ -52,11 +52,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   > = new Map();
 
   // Configurações por modo de negociação
-  // ✅ TEMPORÁRIO: Reduzido para 50% para testes
   private readonly tradingModeConfigs = {
-    veloz: { ticksToCollect: 20, emaPeriods: [10, 25], scoreMinimum: 50 }, // era 60
-    normal: { ticksToCollect: 50, emaPeriods: [10, 25, 50], scoreMinimum: 50 }, // era 70
-    lento: { ticksToCollect: 100, emaPeriods: [10, 25, 50], scoreMinimum: 50 }, // era 80
+    veloz: { ticksToCollect: 20, emaPeriods: [10, 25], scoreMinimum: 60 },
+    normal: { ticksToCollect: 50, emaPeriods: [10, 25, 50], scoreMinimum: 70 },
+    lento: { ticksToCollect: 100, emaPeriods: [10, 25, 50], scoreMinimum: 80 },
   };
 
   // Configurações por modo de gerenciamento
@@ -141,6 +140,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       currentTradeId: null,
       isWaitingContract: false,
       lastContractType: undefined,
+      picoLucro: 0,
+      pisoBlindado: 0,
+      stopBlindadoAtivo: false,
     };
 
     this.userStates.set(userId, state);
@@ -779,27 +781,44 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       }
     }
 
-    // Stop Loss Blindado
-    if (config.stopLossType === 'blindado' && state.currentProfit > 0) {
-      const initialBalance = config.initialBalance || 0;
-      const protectedProfit = state.currentProfit * 0.5; // 50% do lucro protegido
-      const protectedBalance = initialBalance + protectedProfit;
-      const currentBalance = initialBalance + state.currentProfit - state.currentLoss;
+    // 2. Stop Loss Blindado (Efeito Catraca - Lógica Atualizada para igualar Falcon)
+    if (config.stopLossType === 'blindado') {
+      if (!state.stopBlindadoAtivo) {
+        // Ativação (40% da Meta)
+        if (state.currentProfit >= config.dailyProfitTarget * 0.40) {
+          state.stopBlindadoAtivo = true;
+          state.picoLucro = state.currentProfit;
+          state.pisoBlindado = state.picoLucro * 0.50; // Piso é 50% do pico
 
-      if (currentBalance <= protectedBalance) {
-        await this.saveLog(userId, 'INFO', 'RISK',
-          `Lucro atual: $${state.currentProfit.toFixed(2)}. Ativando Stop Loss Blindado em $${protectedBalance.toFixed(2)} (garantindo $${protectedProfit.toFixed(2)} de lucro).`);
-        await this.saveLog(userId, 'WARN', 'RISK',
-          `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${currentBalance.toFixed(2)}. Encerrando operações do dia.`);
+          this.logger.log(`[Sentinel][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`);
+          await this.saveLog(userId, 'INFO', 'RISK',
+            `Lucro atual: $${state.currentProfit.toFixed(2)}. Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`);
+        }
+      } else {
+        // Atualização Dinâmica (Trailing Stop)
+        if (state.currentProfit > state.picoLucro) {
+          state.picoLucro = state.currentProfit;
+          state.pisoBlindado = state.picoLucro * 0.50;
 
-        // Parar operações
-        state.isActive = false; // Pausa em memória para o dia
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
-          [userId],
-        );
+          this.logger.log(`[Sentinel][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`);
+        }
 
-        return { action: 'STOP', reason: 'STOP_LOSS_BLINDADO' };
+        // Gatilho de Saída
+        if (state.currentProfit <= state.pisoBlindado) {
+          this.logger.log(`[Sentinel][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
+
+          await this.saveLog(userId, 'WARN', 'RISK',
+            `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.currentProfit.toFixed(2)}. Encerrando operações do dia.`);
+
+          // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
+          state.isActive = false; // Pausa em memória
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
+            [userId],
+          );
+
+          return { action: 'STOP', reason: 'STOP_LOSS_BLINDADO' };
+        }
       }
     }
 
@@ -1918,6 +1937,9 @@ interface SentinelUserState extends AutonomousAgentState {
   currentTradeId: number | null;
   isWaitingContract: boolean;
   lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
+  picoLucro: number;
+  pisoBlindado: number;
+  stopBlindadoAtivo: boolean;
 }
 
 interface SentinelAnalysis {

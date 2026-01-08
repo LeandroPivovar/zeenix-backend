@@ -75,7 +75,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     try {
       const activeUsers = await this.dataSource.query(
         `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
-                initial_balance, deriv_token, currency, symbol, agent_type
+                initial_balance, deriv_token, currency, symbol, agent_type, stop_loss_type
          FROM autonomous_agent_config 
          WHERE is_active = TRUE AND agent_type = 'falcon'`,
       );
@@ -91,6 +91,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           currency: user.currency,
           symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se banco tiver R_75)
           initialBalance: parseFloat(user.initial_balance) || 0,
+          stopLossType: (user.stop_loss_type || 'normal').toLowerCase(),
         };
 
         this.userConfigs.set(userId, config);
@@ -120,6 +121,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       stopBlindadoAtivo: false,
       pisoBlindado: 0,
       lastProfit: 0,
+      // ✅ Inicialização dos novos campos
+      martingaleLevel: 0,
+      sorosLevel: 0,
+      totalLosses: 0,
+      recoveryAttempts: 0,
       currentContractId: null,
       currentTradeId: null,
       isWaitingContract: false,
@@ -140,10 +146,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       currency: config.currency,
       symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se config tiver R_75)
       initialBalance: config.initialBalance || 0,
+      stopLossType: (config as any).stopLossType || 'normal',
     };
 
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
+
+    // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
+    try {
+      this.logger.log(`[Falcon][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`);
+      await this.warmUpConnection(falconConfig.derivToken);
+      this.logger.log(`[Falcon][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`);
+    } catch (error: any) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
+    }
 
     // ✅ Obter modo do estado (inicializado como 'PRECISO')
     const state = this.userStates.get(userId);
@@ -478,28 +494,29 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     // A. Verificações de Segurança (Hard Stops)
-    if (state.lucroAtual <= -config.dailyLossLimit) {
-      return { action: 'STOP', reason: 'STOP_LOSS' };
-    }
-
     if (state.lucroAtual >= config.dailyProfitTarget) {
       return { action: 'STOP', reason: 'TAKE_PROFIT' };
     }
 
-    if (!this.checkBlindado(userId)) {
-      return { action: 'STOP', reason: 'BLINDADO' };
-    }
-
     // B. Filtro de Precisão
-    // ✅ TEMPORÁRIO: Reduzido para 50% para testes
-    const requiredProb = 50; // state.mode === 'ALTA_PRECISAO' ? 90 : 80;
+    const requiredProb = state.mode === 'ALTA_PRECISAO' ? 90 : 80;
 
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
+      // ✅ Calcular stake (sem ajustes ainda)
       const stake = this.calculateStake(userId, marketAnalysis.payout);
 
       if (stake <= 0) {
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
+
+      // ✅ Verificar Stop Loss (Normal e Blindado) usando estrutura do Sentinel
+      const stopLossCheck = await this.checkStopLoss(userId, stake);
+      if (stopLossCheck.action === 'STOP') {
+        return stopLossCheck;
+      }
+
+      // Usar stake ajustado se houver
+      const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
 
       // ✅ Log consolidado de decisão (formato igual ao SENTINEL)
       const reasons: string[] = [];
@@ -523,7 +540,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       return {
         action: 'BUY',
-        stake: stake,
+        stake: finalStake,
         contractType: marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT',
         mode: state.mode,
         reason: 'HIGH_PROBABILITY',
@@ -632,91 +649,103 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
     }
 
-    return this.adjustStakeForStopLoss(userId, stake);
-  }
-
-  /**
-   * Ajusta o stake para respeitar o stop loss restante
-   */
-  private adjustStakeForStopLoss(userId: string, calculatedStake: number): number {
-    const config = this.userConfigs.get(userId);
-    const state = this.userStates.get(userId);
-
-    if (!config || !state) {
-      return calculatedStake;
-    }
-
-    const remainingLossLimit = config.dailyLossLimit + state.lucroAtual;
-    if (remainingLossLimit <= 0) return 0; // Stop já atingido
-
-    if (calculatedStake > remainingLossLimit) {
-      // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
-      const adjustedStake = Math.round(remainingLossLimit * 100) / 100;
-      this.logger.log(
-        `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${adjustedStake.toFixed(2)}`,
-      );
-
-      this.saveLog(userId, 'WARN', 'RISK',
-        `Risco de ultrapassar Stop Loss! perdasatuais=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, proximaentrada_calculada=${calculatedStake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
-
-      return adjustedStake;
-    }
-
     // ✅ Garantir que o stake final esteja arredondado para 2 casas decimais
-    return Math.round(calculatedStake * 100) / 100;
+    return Math.round(stake * 100) / 100;
   }
 
   /**
-   * Verifica e gerencia o Stop Loss Blindado (Efeito Catraca)
+   * Verifica Stop Loss (Normal ou Blindado)
+   * Unifica a lógica de stop loss normal e o stop loss blindado (Catraca do Falcon)
    */
-  private checkBlindado(userId: string): boolean {
+  private async checkStopLoss(userId: string, nextStake?: number): Promise<TradeDecision> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
     if (!config || !state) {
-      return true;
+      return { action: 'WAIT', reason: 'CONFIG_NOT_FOUND' };
     }
 
-    // Verifica Ativação (40% da Meta)
-    if (!state.stopBlindadoAtivo) {
-      if (state.lucroAtual >= config.dailyProfitTarget * 0.40) {
-        state.stopBlindadoAtivo = true;
-        state.picoLucro = state.lucroAtual;
-        state.pisoBlindado = state.picoLucro * 0.50;
+    const stake = nextStake || 0;
 
-        this.logger.log(
-          `[Falcon][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`,
-        );
+    // 1. Stop Loss Normal
+    const currentDrawdown = state.lucroAtual < 0 ? Math.abs(state.lucroAtual) : 0;
 
-        this.saveLog(userId, 'INFO', 'RISK',
-          `Lucro atual: $${state.lucroAtual.toFixed(2)}. Ativando Stop Loss Blindado em $${(config.initialBalance + state.pisoBlindado).toFixed(2)} (garantindo $${state.pisoBlindado.toFixed(2)} de lucro).`);
-      }
-    }
-    // Atualização Dinâmica (Trailing Stop)
-    else {
-      if (state.lucroAtual > state.picoLucro) {
-        state.picoLucro = state.lucroAtual;
-        state.pisoBlindado = state.picoLucro * 0.50;
-
-        this.logger.log(
-          `[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
-        );
-
-        // Não logar atualização de blindagem (SENTINEL não faz isso)
-      }
-
-      // Gatilho de Saída
-      if (state.lucroAtual <= state.pisoBlindado) {
-        this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
-
-        this.saveLog(userId, 'WARN', 'RISK',
-          `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`);
-
-        return false; // Deve parar
-      }
+    // Verificação de limite simples (já estourou?)
+    if (currentDrawdown >= config.dailyLossLimit) {
+      return { action: 'STOP', reason: 'STOP_LOSS' };
     }
 
-    return true; // Pode continuar
+    // Verificação com a próxima stake
+    if (currentDrawdown + stake > config.dailyLossLimit) {
+      const remaining = config.dailyLossLimit - currentDrawdown;
+      // Arredondar para 2 casas e garantir mínimo da Deriv (0.35)
+      const adjustedStake = Math.round(remaining * 100) / 100;
+
+      if (adjustedStake < 0.35) {
+        this.logger.log(`[Falcon][${userId}] 🛑 STOP LOSS ATINGIDO (Margem insuficiente).`);
+        await this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido (Margem insuficiente para trade mínimo). Parando.`);
+        return { action: 'STOP', reason: 'STOP_LOSS_LIMIT' };
+      }
+
+      this.logger.log(`[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${stake.toFixed(2)} para ${adjustedStake.toFixed(2)}`);
+      await this.saveLog(userId, 'WARN', 'RISK',
+        `Risco de ultrapassar Stop Loss! perdas=${currentDrawdown.toFixed(2)}, stake=${stake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Ajustando para ${adjustedStake.toFixed(2)}`);
+
+      return {
+        action: 'BUY',
+        stake: adjustedStake,
+        reason: 'STOP_LOSS_ADJUSTED'
+      };
+    }
+
+    // 2. Stop Loss Blindado (Efeito Catraca - Lógica Falcon Preservada)
+    // ✅ Verifica se o tipo de Stop Loss é 'blindado' antes de aplicar a lógica
+    if (config.stopLossType === 'blindado') {
+      if (!state.stopBlindadoAtivo) {
+        // Ativação (40% da Meta)
+        if (state.lucroAtual >= config.dailyProfitTarget * 0.40) {
+          state.stopBlindadoAtivo = true;
+          state.picoLucro = state.lucroAtual;
+          state.pisoBlindado = state.picoLucro * 0.50; // Piso é 50% do pico
+
+          this.logger.log(`[Falcon][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`);
+          await this.saveLog(userId, 'INFO', 'RISK',
+            `Lucro atual: $${state.lucroAtual.toFixed(2)}. Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`);
+        }
+      } else {
+        // Atualização Dinâmica (Trailing Stop)
+        if (state.lucroAtual > state.picoLucro) {
+          state.picoLucro = state.lucroAtual;
+          state.pisoBlindado = state.picoLucro * 0.50;
+
+          this.logger.log(`[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`);
+        }
+
+        // Gatilho de Saída
+        if (state.lucroAtual <= state.pisoBlindado) {
+          this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
+
+          await this.saveLog(userId, 'WARN', 'RISK',
+            `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.lucroAtual.toFixed(2)}. Encerrando operações do dia.`);
+
+          // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
+          state.isActive = false; // Pausa em memória
+          await this.dataSource.query(
+            `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
+            [userId],
+          );
+
+          return { action: 'STOP', reason: 'BLINDADO' };
+        }
+      }
+    }
+
+    // Se passou por todas as verificações, pode comprar
+    return {
+      action: 'BUY',
+      stake: stake,
+      reason: 'RiskCheckOK'
+    };
   }
 
   /**
@@ -736,8 +765,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    // Verificar Stop Loss antes de executar
-    if (!this.checkBlindado(userId)) {
+    // Verificar Stop Loss antes de executar (dupla verificações)
+    const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
+    if (stopLossCheck.action === 'STOP') {
       return;
     }
 
@@ -858,6 +888,18 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
+   * Pré-aquece conexão WebSocket para garantir que esteja pronta
+   * Envia um ping simples para forçar criação e autorização da conexão
+   */
+  async warmUpConnection(token: string): Promise<void> {
+    try {
+      await this.getOrCreateWebSocketConnection(token, 'warmup');
+    } catch (error: any) {
+      this.logger.warn(`[Falcon] Falha no warm-up: ${error.message}`);
+    }
+  }
+
+  /**
    * Compra contrato na Deriv via WebSocket Pool Interno com retry automático
    */
   private async buyContract(
@@ -871,6 +913,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   ): Promise<string | null> {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
+
+    // ✅ CORREÇÃO: Delay inicial de 3000ms antes da primeira tentativa
+    // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1759,8 +1805,9 @@ interface FalconUserConfig {
   dailyLossLimit: number;
   derivToken: string;
   currency: string;
-  symbol: string;
+  symbol: 'R_100';
   initialBalance: number;
+  stopLossType?: 'normal' | 'blindado';
 }
 
 /**
@@ -1783,4 +1830,9 @@ interface FalconUserState {
   currentTradeId: number | null;
   isWaitingContract: boolean;
   lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
+  // ✅ Campos adicionados para compatibilidade com Sentinel/Estrutura Padrão
+  martingaleLevel: number;
+  sorosLevel: number;
+  totalLosses: number;
+  recoveryAttempts: number;
 }
