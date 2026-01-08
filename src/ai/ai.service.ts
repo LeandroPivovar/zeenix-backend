@@ -6,6 +6,7 @@ import { StatsIAsService } from './stats-ias.service';
 import { CopyTradingService } from '../copy-trading/copy-trading.service';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
+import { AutonomousAgentService } from '../autonomous-agent/autonomous-agent.service';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
