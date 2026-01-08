@@ -661,7 +661,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // Se está em Soros, usar stake de Soros
     if (state.sorosLevel > 0 && state.lastTradeResult?.win) {
-      const sorosStake = state.lastTradeResult.profit + config.initialStake;
+      const sorosStake = Math.round((state.lastTradeResult.profit + config.initialStake) * 100) / 100;
       await this.saveLog(userId, 'INFO', 'RISK',
         `Ativando Soros Nível ${state.sorosLevel}. stakeanterior=${config.initialStake}, lucro=${state.lastTradeResult.profit.toFixed(2)}, proximostake=${sorosStake.toFixed(2)}`);
       return sorosStake;
@@ -672,9 +672,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return await this.calculateRecoveryStake(userId);
     }
 
-    // Stake inicial
-    await this.saveLog(userId, 'INFO', 'RISK', `Verificando entrada normal (M0). Stake inicial: $${config.initialStake.toFixed(2)}`);
-    return config.initialStake;
+    // Stake inicial (já deve estar arredondado, mas garantir)
+    const initialStake = Math.round(config.initialStake * 100) / 100;
+    await this.saveLog(userId, 'INFO', 'RISK', `Verificando entrada normal (M0). Stake inicial: $${initialStake.toFixed(2)}`);
+    return initialStake;
   }
 
   /**
@@ -693,7 +694,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const payout = 0.95; // Payout Higher/Lower (95%)
 
     // Fórmula: stake = target / payout
-    const recoveryStake = target / payout;
+    // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
+    const recoveryStake = Math.round((target / payout) * 100) / 100;
 
     await this.saveLog(userId, 'WARN', 'RISK',
       `Ativando recuperação (Martingale M${state.martingaleLevel}). perdas_totais=${state.totalLosses.toFixed(2)}, modo=${config.managementMode}`);
@@ -731,9 +733,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         state.martingaleLevel = 0;
         state.recoveryAttempts = 0;
         
+        // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
+        const adjustedStake = Math.round(Math.max(0, config.dailyLossLimit - state.currentLoss) * 100) / 100;
+        
         return {
           action: 'BUY',
-          stake: Math.max(0, config.dailyLossLimit - state.currentLoss),
+          stake: adjustedStake,
           reason: 'STOP_LOSS_ADJUSTED',
         };
       }
@@ -914,12 +919,15 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     duration: number,
   ): Promise<string | null> {
     try {
+      // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
+      const roundedStake = Math.round(stake * 100) / 100;
+      
       // Primeiro, obter proposta (usando timeout de 60s como Orion)
       const proposalResponse = await this.derivPool.sendRequest(
         token,
         {
           proposal: 1,
-          amount: stake,
+          amount: roundedStake,
           basis: 'stake',
           contract_type: contractType,
           currency: 'USD',

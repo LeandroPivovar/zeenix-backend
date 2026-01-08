@@ -682,13 +682,18 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * Obtém histórico de trades
+   * Obtém histórico de trades da sessão atual (dia atual)
    */
   async getTradeHistory(userId: string, limit: number = 50): Promise<any[]> {
+    // ✅ Filtrar apenas operações do dia atual (sessão atual)
     return await this.dataSource.query(
       `SELECT * FROM autonomous_agent_trades 
        WHERE user_id = ? 
-       ORDER BY created_at DESC 
+         AND (
+           (closed_at IS NOT NULL AND DATE(closed_at) = CURDATE())
+           OR (closed_at IS NULL AND DATE(created_at) = CURDATE())
+         )
+       ORDER BY COALESCE(closed_at, created_at) DESC 
        LIMIT ?`,
       [userId, limit],
     );
@@ -709,7 +714,8 @@ export class AutonomousAgentService implements OnModuleInit {
          total_losses,
          session_status,
          session_date,
-         initial_stake as totalCapital
+         initial_stake as totalCapital,
+         initial_balance
        FROM autonomous_agent_config 
        WHERE user_id = ? AND is_active = TRUE
        LIMIT 1`,
@@ -729,6 +735,7 @@ export class AutonomousAgentService implements OnModuleInit {
         totalProfit: 0,
         totalLoss: 0,
         totalCapital: 0,
+        initialBalance: 0,
         operationsToday: 0,
         session_status: 'inactive',
         session_date: null,
@@ -801,6 +808,9 @@ export class AutonomousAgentService implements OnModuleInit {
       `netProfit=$${netProfitToday.toFixed(2)}`,
     );
 
+    // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
+    const initialBalance = parseFloat(configData.initial_balance) || parseFloat(configData.totalCapital) || 0;
+    
     // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
     return {
       daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
@@ -813,6 +823,7 @@ export class AutonomousAgentService implements OnModuleInit {
       totalProfit: Number(dailyProfitFromTrades.toFixed(2)),
       totalLoss: Number(dailyLossFromTrades.toFixed(2)),
       totalCapital: Number(parseFloat(configData.totalCapital || 0).toFixed(2)),
+      initialBalance: Number(initialBalance.toFixed(2)), // ✅ Saldo inicial para cálculo de porcentagem
       operationsToday: totalTradesToday,
       session_status: configData.session_status || 'active',
       session_date: configData.session_date || null,

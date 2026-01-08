@@ -583,6 +583,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const targetProfit = lossToRecover * 0.25;
         const totalNeeded = lossToRecover + targetProfit;
         stake = totalNeeded / realPayout;
+        // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
+        stake = Math.round(stake * 100) / 100;
         
         this.logger.log(
           `[Falcon][${userId}] 🚑 RECUPERAÇÃO: Buscando ${totalNeeded.toFixed(2)} (Stake: ${stake.toFixed(2)})`,
@@ -604,13 +606,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (state.consecutiveWins === 2) {
         // Win2: Aplicar Soros (Base + Lucro Anterior)
         stake = config.initialStake + state.lastProfit;
+        // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
+        stake = Math.round(stake * 100) / 100;
         this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
         
         this.saveLog(userId, 'INFO', 'RISK',
           `Ativando Soros Nível 1. stakeanterior=${config.initialStake.toFixed(2)}, lucro=${state.lastProfit.toFixed(2)}, proximostake=${stake.toFixed(2)}`);
       } else {
-        // Win1 ou Win3+: usa Base
-        stake = config.initialStake;
+        // Win1 ou Win3+: usa Base (já deve estar arredondado, mas garantir)
+        stake = Math.round(config.initialStake * 100) / 100;
       }
     }
 
@@ -632,17 +636,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (remainingLossLimit <= 0) return 0; // Stop já atingido
 
     if (calculatedStake > remainingLossLimit) {
+      // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
+      const adjustedStake = Math.round(remainingLossLimit * 100) / 100;
       this.logger.log(
-        `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${remainingLossLimit.toFixed(2)}`,
+        `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${adjustedStake.toFixed(2)}`,
       );
       
         this.saveLog(userId, 'WARN', 'RISK',
           `Risco de ultrapassar Stop Loss! perdasatuais=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, proximaentrada_calculada=${calculatedStake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
       
-      return remainingLossLimit;
+      return adjustedStake;
     }
 
-    return calculatedStake;
+    // ✅ Garantir que o stake final esteja arredondado para 2 casas decimais
+    return Math.round(calculatedStake * 100) / 100;
   }
 
   /**
@@ -846,12 +853,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     duration: number,
   ): Promise<string | null> {
     try {
+      // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
+      const roundedStake = Math.round(stake * 100) / 100;
+      
       // Primeiro, obter proposta (usando timeout de 60s como Orion)
       const proposalResponse = await this.derivPool.sendRequest(
         token,
         {
           proposal: 1,
-          amount: stake,
+          amount: roundedStake,
           basis: 'stake',
           contract_type: contractType,
           currency: 'USD',
