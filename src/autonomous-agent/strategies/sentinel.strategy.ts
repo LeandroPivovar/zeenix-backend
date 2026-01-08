@@ -959,9 +959,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
 
-    // ✅ CORREÇÃO: Delay inicial de 500ms antes da primeira tentativa
-    // Isso dá tempo para a conexão WebSocket se estabilizar se foi recém-criada
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // ✅ CORREÇÃO: Delay inicial de 3000ms antes da primeira tentativa
+    // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
