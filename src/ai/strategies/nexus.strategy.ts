@@ -356,11 +356,11 @@ export class NexusStrategy implements IStrategy {
         let contractDescription = '';
 
         if (riskManager.consecutiveLosses === 0) {
-            // MODO ATAQUE (Base): Higher com Barreira Negativa (Payout ~60%)
+            // MODO ATAQUE (Base): Higher com Barreira Negativa (Payout ~60-65%)
             contractType = 'CALL';
-            barrier = '-0.35'; // Barreira fixa para máxima vantagem técnica
+            barrier = '-0.60'; // Barreira mais negativa para payout de ~60-65%
             contractDescription = `Higher (Barreira: ${barrier})`;
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', `⚡ [MODO ATAQUE] Higher com Barreira | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `⚡ [MODO ATAQUE] Higher com Barreira | Valor: $${stake.toFixed(2)} | Barreira: ${barrier} | Payout: ~60-65%`);
         } else {
             // MODO DEFESA (Recuperação): Rise sem Barreira (Payout ~95%)
             contractType = 'CALL'; // Rise é um tipo de CALL sem barreira
@@ -463,6 +463,15 @@ export class NexusStrategy implements IStrategy {
 
             const proposalId = proposalResponse.proposal?.id;
             const proposalPrice = Number(proposalResponse.proposal?.ask_price);
+            const proposalPayout = Number(proposalResponse.proposal?.payout || 0);
+            
+            // Calcular payout percentual real
+            const payoutPercent = proposalPrice > 0 ? ((proposalPayout - proposalPrice) / proposalPrice) * 100 : 0;
+            
+            if (userId && params.barrier) {
+                this.saveNexusLog(userId, this.symbol, 'analise', `📊 Payout Real: ${payoutPercent.toFixed(2)}% | Preço: $${proposalPrice.toFixed(2)} | Payout: $${proposalPayout.toFixed(2)}`);
+            }
+            
             if (!proposalId) return null;
 
             const buyResponse: any = await connection.sendRequest({
