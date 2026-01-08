@@ -886,6 +886,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const contract = contractMsg.proposal_open_contract;
             const state = this.userStates.get(userId);
             
+            // ✅ Log de debug para rastrear atualizações do contrato
+            this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+            
             // ✅ Atualizar entry_price quando disponível
             if (contract.entry_spot && state?.currentTradeId) {
               this.updateTradeRecord(state.currentTradeId, {
@@ -895,11 +898,40 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               });
             }
             
-            // Verificar se contrato foi finalizado
-            if (contract.is_sold === 1) {
+            // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
+            if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
+              const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
+              this.logger.error(`[Falcon][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`);
+              
+              if (state?.currentTradeId) {
+                this.updateTradeRecord(state.currentTradeId, {
+                  status: 'ERROR',
+                  errorMessage: errorMsg,
+                }).catch((error) => {
+                  this.logger.error(`[Falcon][${userId}] Erro ao atualizar trade com status ERROR:`, error);
+                });
+              }
+              
+              state.isWaitingContract = false;
+              state.currentContractId = null;
+              state.currentTradeId = null;
+              
+              // Remover subscription
+              this.derivPool.removeSubscription(token, contractId);
+              return;
+            }
+            
+            // ✅ Verificar se contrato foi finalizado (igual Orion)
+            // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
+            const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
+              contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
+            
+            if (isFinalized) {
               const profit = Number(contract.profit || 0);
               const win = profit > 0;
               const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              
+              this.logger.log(`[Falcon][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
               
               // Processar resultado
               this.onContractFinish(
@@ -935,6 +967,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const state = this.userStates.get(userId);
 
     if (!config || !state) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`);
       return;
     }
 
@@ -943,14 +976,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     state.currentContractId = null;
     state.currentTradeId = null;
 
+    this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+
     // ✅ Atualizar trade no banco com resultado
     if (tradeId) {
-      await this.updateTradeRecord(tradeId, {
-        status: result.win ? 'WON' : 'LOST',
-        exitPrice: result.exitPrice || 0,
-        profitLoss: result.profit,
-        closedAt: new Date(),
-      });
+      try {
+        await this.updateTradeRecord(tradeId, {
+          status: result.win ? 'WON' : 'LOST',
+          exitPrice: result.exitPrice || 0,
+          profitLoss: result.profit,
+          closedAt: new Date(),
+        });
+        this.logger.log(`[Falcon][${userId}] ✅ Trade ${tradeId} atualizado no banco de dados`);
+      } catch (error) {
+        this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+      }
+    } else {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
     }
 
     // Atualizar estado
@@ -1163,18 +1205,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     if (updateFields.length === 0) {
+      this.logger.warn(`[Falcon] ⚠️ Tentativa de atualizar trade ${tradeId} sem campos para atualizar`);
       return;
     }
 
     updateValues.push(tradeId);
 
     try {
+      this.logger.debug(`[Falcon] 📝 Atualizando trade ${tradeId}: ${updateFields.join(', ')}`);
       await this.dataSource.query(
         `UPDATE autonomous_agent_trades SET ${updateFields.join(', ')} WHERE id = ?`,
         updateValues,
       );
+      this.logger.debug(`[Falcon] ✅ Trade ${tradeId} atualizado com sucesso`);
     } catch (error) {
-      this.logger.error(`[Falcon] Erro ao atualizar trade ${tradeId}:`, error);
+      this.logger.error(`[Falcon] ❌ Erro ao atualizar trade ${tradeId}:`, error);
+      throw error; // ✅ Re-throw para que o erro seja visível
     }
   }
 
