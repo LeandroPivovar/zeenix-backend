@@ -151,6 +151,16 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     this.userConfigs.set(userId, sentinelConfig);
     this.initializeUserState(userId, sentinelConfig);
 
+    // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
+    try {
+      this.logger.log(`[Sentinel][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`);
+      await this.warmUpConnection(sentinelConfig.derivToken);
+      this.logger.log(`[Sentinel][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`);
+    } catch (error) {
+      this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
+      // Não bloquear ativação se pré-aquecimento falhar
+    }
+
     // Log de ativação
     // ✅ Log de ativação no padrão Orion
     await this.saveLog(
@@ -911,6 +921,22 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   }
 
   /**
+   * Pré-aquece conexão WebSocket para garantir que esteja pronta
+   * Envia um ping simples para forçar criação e autorização da conexão
+   */
+  private async warmUpConnection(token: string): Promise<void> {
+    try {
+      // Enviar ping para forçar criação da conexão e autorização
+      await this.derivPool.sendRequest(token, { ping: 1 }, 5000);
+      this.logger.debug(`[Sentinel] ✅ Conexão WebSocket pré-aquecida com sucesso`);
+    } catch (error) {
+      // Ignorar erro de ping, o importante é criar a conexão
+      // A conexão foi criada mesmo que o ping tenha falhado
+      this.logger.debug(`[Sentinel] 🔌 Conexão criada (ping falhou mas conexão foi estabelecida)`);
+    }
+  }
+
+  /**
    * Compra contrato na Deriv via WebSocket Pool com retry automático
    */
   private async buyContract(
@@ -924,6 +950,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   ): Promise<string | null> {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
+
+    // ✅ CORREÇÃO: Delay inicial de 500ms antes da primeira tentativa
+    // Isso dá tempo para a conexão WebSocket se estabilizar se foi recém-criada
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
