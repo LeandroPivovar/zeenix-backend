@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import WebSocket from 'ws';
 import {
   IAutonomousAgentStrategy,
   AutonomousAgentConfig,
@@ -10,7 +11,6 @@ import {
 } from './common.types';
 import { Tick, DigitParity } from '../../ai/ai.service';
 import { LogQueueService } from '../../utils/log-queue.service';
-import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
 
 /**
  * 🛡️ SENTINEL Strategy para Agente Autônomo
@@ -36,6 +36,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   private readonly ticks = new Map<string, Tick[]>();
   private readonly maxTicks = 200;
   private readonly processingLocks = new Map<string, boolean>(); // ✅ Lock para evitar processamento simultâneo
+  private readonly appId: string;
+
+  // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
+  private wsConnections: Map<
+    string,
+    {
+      ws: WebSocket;
+      authorized: boolean;
+      keepAliveInterval: NodeJS.Timeout | null;
+      requestIdCounter: number;
+      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      subscriptions: Map<string, (msg: any) => void>;
+    }
+  > = new Map();
 
   // Configurações por modo de negociação
   // ✅ TEMPORÁRIO: Reduzido para 50% para testes
@@ -54,11 +68,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => DerivWebSocketPoolService))
-    private readonly derivPool: DerivWebSocketPoolService,
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
-  ) { }
+  ) {
+    this.appId = process.env.DERIV_APP_ID || '111346';
+  }
 
   async onModuleInit() {
     this.logger.log('🛡️ SENTINEL Strategy inicializado');
@@ -1567,6 +1581,296 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       case 'ERROR': return '❌';
       case 'DEBUG': return '🔍';
       default: return '📝';
+    }
+  }
+
+  // ============================================
+  // MÉTODOS DE GERENCIAMENTO DE WEBSOCKET (Pool Interno)
+  // Copiados da Orion Strategy
+  // ============================================
+
+  /**
+   * ✅ Obtém ou cria conexão WebSocket reutilizável por token
+   */
+  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+    ws: WebSocket;
+    sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription: (subId: string) => void;
+  }> {
+    // ✅ Verificar se já existe conexão para este token
+    const existing = this.wsConnections.get(token);
+    if (existing) {
+      const readyState = existing.ws.readyState;
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
+        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+          readyState === WebSocket.CLOSING ? 'CLOSING' :
+            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
+
+      this.logger.debug(`[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+
+      if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+        this.logger.debug(`[SENTINEL] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+
+        return {
+          ws: existing.ws,
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        };
+      } else {
+        this.logger.warn(`[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
+        if (existing.keepAliveInterval) {
+          clearInterval(existing.keepAliveInterval);
+        }
+        existing.ws.close();
+        this.wsConnections.delete(token);
+      }
+    } else {
+      this.logger.debug(`[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
+    }
+
+    // ✅ Criar nova conexão
+    this.logger.debug(`[SENTINEL] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
+
+      let authResolved = false;
+      const connectionTimeout = setTimeout(() => {
+        if (!authResolved) {
+          this.logger.error(`[SENTINEL] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
+          socket.close();
+          this.wsConnections.delete(token);
+          reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
+        }
+      }, 20000);
+
+      // ✅ Listener de mensagens para capturar autorização e outras respostas
+      socket.on('message', (data: WebSocket.RawData) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          // ✅ Ignorar ping/pong
+          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
+            return;
+          }
+
+          const conn = this.wsConnections.get(token);
+          if (!conn) {
+            this.logger.warn(`[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
+            return;
+          }
+
+          // ✅ Processar autorização (apenas durante inicialização)
+          if (msg.msg_type === 'authorize' && !authResolved) {
+            this.logger.debug(`[SENTINEL] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
+            authResolved = true;
+            clearTimeout(connectionTimeout);
+
+            if (msg.error || (msg.authorize && msg.authorize.error)) {
+              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+              this.logger.error(`[SENTINEL] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+              socket.close();
+              this.wsConnections.delete(token);
+              reject(new Error(`Erro na autorização: ${errorMsg}`));
+              return;
+            }
+
+            conn.authorized = true;
+            this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+
+            // ✅ Iniciar keep-alive
+            conn.keepAliveInterval = setInterval(() => {
+              if (socket.readyState === WebSocket.OPEN) {
+                try {
+                  socket.send(JSON.stringify({ ping: 1 }));
+                  this.logger.debug(`[SENTINEL][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
+                } catch (error) {
+                  // Ignorar erros
+                }
+              }
+            }, 90000);
+
+            resolve(socket);
+            return;
+          }
+
+          // ✅ Processar mensagens de subscription (proposal_open_contract) - PRIORIDADE 1
+          if (msg.proposal_open_contract) {
+            const contractId = msg.proposal_open_contract.contract_id;
+            if (contractId && conn.subscriptions.has(contractId)) {
+              const callback = conn.subscriptions.get(contractId)!;
+              callback(msg);
+              return;
+            }
+          }
+
+          // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
+          if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+            // Processar primeira requisição pendente (FIFO)
+            const firstKey = conn.pendingRequests.keys().next().value;
+            if (firstKey) {
+              const pending = conn.pendingRequests.get(firstKey);
+              if (pending) {
+                clearTimeout(pending.timeout);
+                conn.pendingRequests.delete(firstKey);
+                if (msg.error) {
+                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                } else {
+                  pending.resolve(msg);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Continuar processando
+        }
+      });
+
+      socket.on('open', () => {
+        this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
+
+        // ✅ Criar entrada no pool
+        const conn = {
+          ws: socket,
+          authorized: false,
+          keepAliveInterval: null,
+          requestIdCounter: 0,
+          pendingRequests: new Map(),
+          subscriptions: new Map(),
+        };
+        this.wsConnections.set(token, conn);
+
+        // ✅ Enviar autorização
+        const authPayload = { authorize: token };
+        this.logger.debug(`[SENTINEL] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
+        socket.send(JSON.stringify(authPayload));
+      });
+
+      socket.on('error', (error) => {
+        if (!authResolved) {
+          clearTimeout(connectionTimeout);
+          authResolved = true;
+          this.wsConnections.delete(token);
+          reject(error);
+        }
+      });
+
+      socket.on('close', () => {
+        this.logger.debug(`[SENTINEL] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`);
+        const conn = this.wsConnections.get(token);
+        if (conn) {
+          if (conn.keepAliveInterval) {
+            clearInterval(conn.keepAliveInterval);
+          }
+          // Rejeitar todas as requisições pendentes
+          conn.pendingRequests.forEach(pending => {
+            clearTimeout(pending.timeout);
+            pending.reject(new Error('WebSocket fechado'));
+          });
+          conn.subscriptions.clear();
+        }
+        this.wsConnections.delete(token);
+
+        if (!authResolved) {
+          clearTimeout(connectionTimeout);
+          authResolved = true;
+          reject(new Error('WebSocket fechado antes da autorização'));
+        }
+      });
+    });
+
+    const conn = this.wsConnections.get(token)!;
+    return {
+      ws: conn.ws,
+      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+    };
+  }
+
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      const timeout = setTimeout(() => {
+        conn.pendingRequests.delete(requestId);
+        reject(new Error(`Timeout após ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Inscreve-se para atualizações via conexão existente
+   */
+  private async subscribeViaConnection(
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    // ✅ Aguardar primeira resposta para confirmar subscription
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        conn.subscriptions.delete(subId);
+        reject(new Error(`Timeout ao inscrever ${subId}`));
+      }, timeoutMs);
+
+      // ✅ Callback wrapper que confirma subscription na primeira mensagem
+      const wrappedCallback = (msg: any) => {
+        // ✅ Primeira mensagem confirma subscription
+        if (msg.proposal_open_contract || msg.error) {
+          clearTimeout(timeout);
+          if (msg.error) {
+            conn.subscriptions.delete(subId);
+            reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            return;
+          }
+          // ✅ Subscription confirmada, substituir por callback original
+          conn.subscriptions.set(subId, callback);
+          resolve();
+          // ✅ Chamar callback original com primeira mensagem
+          callback(msg);
+          return;
+        }
+        // ✅ Se não for primeira mensagem, já deve estar usando callback original
+        callback(msg);
+      };
+
+      conn.subscriptions.set(subId, wrappedCallback);
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Remove subscription da conexão
+   */
+  private removeSubscriptionFromConnection(token: string, subId: string): void {
+    const conn = this.wsConnections.get(token);
+    if (conn) {
+      conn.subscriptions.delete(subId);
     }
   }
 }

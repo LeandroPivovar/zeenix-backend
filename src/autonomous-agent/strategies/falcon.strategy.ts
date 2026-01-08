@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import WebSocket from 'ws';
 import {
   IAutonomousAgentStrategy,
   AutonomousAgentConfig,
@@ -10,7 +11,6 @@ import {
 } from './common.types';
 import { Tick, DigitParity } from '../../ai/ai.service';
 import { LogQueueService } from '../../utils/log-queue.service';
-import { DerivWebSocketPoolService } from '../../broker/deriv-websocket-pool.service';
 
 /**
  * 🦅 FALCON Strategy para Agente Autônomo
@@ -36,14 +36,28 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   private readonly maxTicks = 200;
   private readonly comissaoPlataforma = 0.03; // 3%
   private readonly processingLocks = new Map<string, boolean>(); // ✅ Lock para evitar processamento simultâneo
+  private readonly appId: string;
+
+  // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
+  private wsConnections: Map<
+    string,
+    {
+      ws: WebSocket;
+      authorized: boolean;
+      keepAliveInterval: NodeJS.Timeout | null;
+      requestIdCounter: number;
+      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      subscriptions: Map<string, (msg: any) => void>;
+    }
+  > = new Map();
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => DerivWebSocketPoolService))
-    private readonly derivPool: DerivWebSocketPoolService,
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
-  ) {}
+  ) {
+    this.appId = process.env.DERIV_APP_ID || '111346';
+  }
 
   async onModuleInit() {
     this.logger.log('🦅 FALCON Strategy inicializado');
@@ -208,7 +222,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Adicionar tick à coleção
     const userTicks = this.ticks.get(userId) || [];
     userTicks.push(tick);
-    
+
     // Manter apenas os últimos maxTicks
     if (userTicks.length > this.maxTicks) {
       userTicks.shift();
@@ -255,20 +269,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // Realizar análise de mercado
       const marketAnalysis = await this.analyzeMarket(userId, userTicks);
-      
+
       // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
       if (state.isWaitingContract) {
         this.processingLocks.set(userId, false); // Liberar lock antes de retornar
         return;
       }
-      
+
       // ✅ Log de debug da análise
       if (marketAnalysis) {
         this.logger.debug(`[Falcon][${userId}] Análise realizada: prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
       } else {
         this.logger.warn(`[Falcon][${userId}] Análise retornou null`);
       }
-      
+
       if (marketAnalysis) {
         // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
         if (state.isWaitingContract) {
@@ -278,13 +292,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Processar decisão de trade
         const decision = await this.processAgent(userId, marketAnalysis);
-        
+
         // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
         if (state.isWaitingContract) {
           this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
-        
+
         if (decision.action === 'BUY') {
           await this.executeTrade(userId, decision, marketAnalysis);
         } else if (decision.action === 'STOP') {
@@ -311,46 +325,46 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Usar últimos 50 ticks para análise
     const recentTicks = ticks.slice(-50);
     const prices = recentTicks.map(t => t.value);
-    
+
     // ✅ Log de debug
     this.logger.debug(`[Falcon][${userId}] Analisando mercado: ${recentTicks.length} ticks, prices=${prices.length}`);
 
     // 1. Análise de Volatilidade
     const volatility = this.calculateVolatility(prices);
-    
+
     // 2. Análise de Tendência (EMA)
     const emaFast = this.calculateEMA(prices, 10);
     const emaSlow = this.calculateEMA(prices, 25);
     const trend = emaFast > emaSlow ? 'CALL' : 'PUT';
-    
+
     // 3. Análise de Padrões de Dígitos
     const digitAnalysis = this.analyzeDigits(recentTicks);
-    
+
     // 4. Calcular Probabilidade Combinada
     let probability = 50; // Base
-    
+
     // Volatilidade: Alta volatilidade = maior confiança em tendências
     if (volatility > 0.5) {
       probability += 15;
     }
-    
+
     // Tendência: EMA rápida acima da lenta = CALL, abaixo = PUT
     const trendStrength = Math.abs(emaFast - emaSlow) / emaSlow;
     if (trendStrength > 0.001) {
       probability += 10;
     }
-    
+
     // Padrões de dígitos: Se há padrão forte, aumenta probabilidade
     if (digitAnalysis.patternStrength > 0.6) {
       probability += 15;
     }
-    
+
     // Limitar entre 0 e 100
     probability = Math.min(100, Math.max(0, probability));
 
     // Determinar sinal
     let signal: 'CALL' | 'PUT' | null = trend;
-    
+
     // Se análise de dígitos sugere direção oposta e tem força, considerar
     if (digitAnalysis.direction && digitAnalysis.patternStrength > 0.7) {
       // Se digitAnalysis sugere direção diferente, reduzir probabilidade
@@ -386,12 +400,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   private calculateVolatility(prices: number[]): number {
     if (prices.length < 2) return 0;
-    
+
     const returns: number[] = [];
     for (let i = 1; i < prices.length; i++) {
       returns.push(Math.abs((prices[i] - prices[i - 1]) / prices[i - 1]));
     }
-    
+
     const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
     return avgReturn;
   }
@@ -479,10 +493,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // B. Filtro de Precisão
     // ✅ TEMPORÁRIO: Reduzido para 50% para testes
     const requiredProb = 50; // state.mode === 'ALTA_PRECISAO' ? 90 : 80;
-    
+
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
       const stake = this.calculateStake(userId, marketAnalysis.payout);
-      
+
       if (stake <= 0) {
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
@@ -498,7 +512,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (marketAnalysis.details?.digitPattern) {
         reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
       }
-      
+
       // ✅ Log de sinal no padrão Orion
       await this.saveLog(
         userId,
@@ -517,10 +531,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     } else {
       // ✅ Log de motivo para não comprar (formato igual ao SENTINEL)
       const missingProb = requiredProb - marketAnalysis.probability;
-      const reasonMsg = marketAnalysis.probability < requiredProb 
+      const reasonMsg = marketAnalysis.probability < requiredProb
         ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
         : 'Sinal indefinido';
-      
+
       await this.saveLog(userId, 'INFO', 'DECISION',
         `⏸️ COMPRA NEGADA | Score: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
     }
@@ -539,7 +553,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveWins++;
       state.consecutiveLosses = 0;
       state.mode = 'PRECISO'; // Reseta para modo normal após vitória
-      
+
       // Soros: Resetar após Win3 (quando consecutiveWins = 3)
       // Win1: consecutiveWins = 1 → Base
       // Win2: consecutiveWins = 2 → Base + Lucro (Soros)
@@ -552,11 +566,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses++;
       // ✅ RECUPERAÇÃO IMEDIATA: Qualquer perda ativa o modo Sniper
       state.mode = 'ALTA_PRECISAO';
-      
+
       this.logger.log(
         `[Falcon][${userId}] ⚠️ LOSS DETECTADO: Ativando Modo ALTA PRECISÃO (>90%) para recuperação imediata.`,
       );
-      
+
       // Não logar ativação de modo (SENTINEL não faz isso)
     }
   }
@@ -585,11 +599,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         stake = totalNeeded / realPayout;
         // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
         stake = Math.round(stake * 100) / 100;
-        
+
         this.logger.log(
           `[Falcon][${userId}] 🚑 RECUPERAÇÃO: Buscando ${totalNeeded.toFixed(2)} (Stake: ${stake.toFixed(2)})`,
         );
-        
+
         this.saveLog(userId, 'INFO', 'RISK',
           `Ativando recuperação (Martingale M1). perdas_totais=${lossToRecover.toFixed(2)}, modo=ALTA_PRECISAO`);
       } else {
@@ -609,7 +623,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
         stake = Math.round(stake * 100) / 100;
         this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
-        
+
         this.saveLog(userId, 'INFO', 'RISK',
           `Ativando Soros Nível 1. stakeanterior=${config.initialStake.toFixed(2)}, lucro=${state.lastProfit.toFixed(2)}, proximostake=${stake.toFixed(2)}`);
       } else {
@@ -641,10 +655,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.logger.log(
         `[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${calculatedStake.toFixed(2)} para ${adjustedStake.toFixed(2)}`,
       );
-      
-        this.saveLog(userId, 'WARN', 'RISK',
-          `Risco de ultrapassar Stop Loss! perdasatuais=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, proximaentrada_calculada=${calculatedStake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
-      
+
+      this.saveLog(userId, 'WARN', 'RISK',
+        `Risco de ultrapassar Stop Loss! perdasatuais=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, proximaentrada_calculada=${calculatedStake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
+
       return adjustedStake;
     }
 
@@ -669,11 +683,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.stopBlindadoAtivo = true;
         state.picoLucro = state.lucroAtual;
         state.pisoBlindado = state.picoLucro * 0.50;
-        
+
         this.logger.log(
           `[Falcon][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`,
         );
-        
+
         this.saveLog(userId, 'INFO', 'RISK',
           `Lucro atual: $${state.lucroAtual.toFixed(2)}. Ativando Stop Loss Blindado em $${(config.initialBalance + state.pisoBlindado).toFixed(2)} (garantindo $${state.pisoBlindado.toFixed(2)} de lucro).`);
       }
@@ -683,21 +697,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (state.lucroAtual > state.picoLucro) {
         state.picoLucro = state.lucroAtual;
         state.pisoBlindado = state.picoLucro * 0.50;
-        
+
         this.logger.log(
           `[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
         );
-        
+
         // Não logar atualização de blindagem (SENTINEL não faz isso)
       }
 
       // Gatilho de Saída
       if (state.lucroAtual <= state.pisoBlindado) {
         this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
-        
+
         this.saveLog(userId, 'WARN', 'RISK',
           `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`);
-        
+
         return false; // Deve parar
       }
     }
@@ -765,7 +779,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (contractId) {
           state.currentContractId = contractId;
           state.currentTradeId = tradeId;
-          
+
           // ✅ Log de operação no padrão Orion
           await this.saveLog(
             userId,
@@ -773,7 +787,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             'TRADER',
             `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)}`,
           );
-          
+
           // ✅ Atualizar trade com contract_id
           await this.updateTradeRecord(tradeId, {
             contractId: contractId,
@@ -805,8 +819,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   private async getPayout(token: string, contractType: string, symbol: string, duration: number): Promise<number> {
     try {
-      const response = await this.derivPool.sendRequest(
-        token,
+      // ✅ Obter conexão do pool interno
+      const connection = await this.getOrCreateWebSocketConnection(token);
+
+      const response = await connection.sendRequest(
         {
           proposal: 1,
           amount: 1,
@@ -827,7 +843,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (response.proposal) {
         const payout = Number(response.proposal.payout || 0);
         const askPrice = Number(response.proposal.ask_price || 0);
-        
+
         // Calcular payout percentual: (payout - askPrice) / askPrice
         const payoutPercent = askPrice > 0 ? (payout - askPrice) / askPrice : 0;
         return payoutPercent;
@@ -842,7 +858,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Compra contrato na Deriv via WebSocket Pool com retry automático
+   * Compra contrato na Deriv via WebSocket Pool Interno com retry automático
    */
   private async buyContract(
     userId: string,
@@ -855,7 +871,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   ): Promise<string | null> {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
-    
+
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -865,10 +881,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           this.logger.warn(`[Falcon][${userId}] 🔄 Tentativa ${attempt + 1}/${maxRetries + 1} após ${delayMs}ms | Erro anterior: ${lastError?.message}`);
           await new Promise(resolve => setTimeout(resolve, delayMs));
         }
-        
+
+        // ✅ Obter conexão do pool interno
+        const connection = await this.getOrCreateWebSocketConnection(token, userId);
+
         // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
-        const proposalResponse = await this.derivPool.sendRequest(
-          token,
+        const proposalResponse = await connection.sendRequest(
           {
             proposal: 1,
             amount: roundedStake,
@@ -887,21 +905,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (errorObj) {
           const errorCode = errorObj?.code || '';
           const errorMessage = errorObj?.message || JSON.stringify(errorObj);
-          
+
           // ✅ Alguns erros não devem ser retentados (ex: saldo insuficiente, parâmetros inválidos)
           const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol'];
           if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
             this.logger.error(`[Falcon][${userId}] ❌ Erro não retentável na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
             throw new Error(errorMessage);
           }
-          
+
           // ✅ Erros retentáveis: tentar novamente
           lastError = new Error(errorMessage);
           if (attempt < maxRetries) {
             this.logger.warn(`[Falcon][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
             continue;
           }
-          
+
           this.logger.error(`[Falcon][${userId}] ❌ Erro na proposta após ${maxRetries + 1} tentativas: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
           throw lastError;
         }
@@ -920,8 +938,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // ✅ Enviar compra (usando timeout de 60s como Orion)
-        const buyResponse = await this.derivPool.sendRequest(
-          token,
+        const buyResponse = await connection.sendRequest(
           {
             buy: proposalId,
             price: proposalPrice,
@@ -934,21 +951,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (buyErrorObj) {
           const errorCode = buyErrorObj?.code || '';
           const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
-          
+
           // ✅ Alguns erros não devem ser retentados
           const nonRetryableErrors = ['InvalidProposal', 'ProposalExpired', 'InsufficientBalance'];
           if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
             this.logger.error(`[Falcon][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
             throw new Error(errorMessage);
           }
-          
+
           // ✅ Erros retentáveis: tentar novamente (mas precisa obter nova proposta)
           lastError = new Error(errorMessage);
           if (attempt < maxRetries) {
             this.logger.warn(`[Falcon][${userId}] ⚠️ Erro retentável ao comprar (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
             continue;
           }
-          
+
           this.logger.error(`[Falcon][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
           throw lastError;
         }
@@ -964,102 +981,102 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           throw lastError;
         }
 
-      // Inscrever para monitorar contrato
-      this.derivPool.subscribe(
-        token,
-        {
-          proposal_open_contract: 1,
-          contract_id: contractId,
-          subscribe: 1,
-        },
-        (contractMsg: any) => {
-          if (contractMsg.proposal_open_contract) {
-            const contract = contractMsg.proposal_open_contract;
-            const state = this.userStates.get(userId);
-            
-            // ✅ Log de debug para rastrear atualizações do contrato
-            this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
-            
-            // ✅ Atualizar entry_price quando disponível
-            if (contract.entry_spot && state?.currentTradeId) {
-              this.updateTradeRecord(state.currentTradeId, {
-                entryPrice: Number(contract.entry_spot),
-              }).catch((error) => {
-                this.logger.error(`[Falcon][${userId}] Erro ao atualizar entry_price:`, error);
-              });
-            }
-            
-            // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
-            if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
-              const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
-              this.logger.error(`[Falcon][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`);
-              
-              if (state?.currentTradeId) {
+        // ✅ Inscrever para monitorar contrato usando pool interno
+        await connection.subscribe(
+          {
+            proposal_open_contract: 1,
+            contract_id: contractId,
+            subscribe: 1,
+          },
+          (contractMsg: any) => {
+            if (contractMsg.proposal_open_contract) {
+              const contract = contractMsg.proposal_open_contract;
+              const state = this.userStates.get(userId);
+
+              // ✅ Log de debug para rastrear atualizações do contrato
+              this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+
+              // ✅ Atualizar entry_price quando disponível
+              if (contract.entry_spot && state?.currentTradeId) {
                 this.updateTradeRecord(state.currentTradeId, {
-                  status: 'ERROR',
-                  errorMessage: errorMsg,
+                  entryPrice: Number(contract.entry_spot),
                 }).catch((error) => {
-                  this.logger.error(`[Falcon][${userId}] Erro ao atualizar trade com status ERROR:`, error);
+                  this.logger.error(`[Falcon][${userId}] Erro ao atualizar entry_price:`, error);
                 });
               }
-              
-              if (state) {
-                state.isWaitingContract = false;
-                state.currentContractId = null;
-                state.currentTradeId = null;
+
+              // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
+              if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
+                const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
+                this.logger.error(`[Falcon][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`);
+
+                if (state?.currentTradeId) {
+                  this.updateTradeRecord(state.currentTradeId, {
+                    status: 'ERROR',
+                    errorMessage: errorMsg,
+                  }).catch((error) => {
+                    this.logger.error(`[Falcon][${userId}] Erro ao atualizar trade com status ERROR:`, error);
+                  });
+                }
+
+                if (state) {
+                  state.isWaitingContract = false;
+                  state.currentContractId = null;
+                  state.currentTradeId = null;
+                }
+
+                // Remover subscription usando pool interno
+                connection.removeSubscription(contractId);
+                return;
               }
-              
-              // Remover subscription
-              this.derivPool.removeSubscription(token, contractId);
-              return;
+
+              // ✅ Verificar se contrato foi finalizado (igual Orion)
+              // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
+              const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
+                contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
+
+              if (isFinalized) {
+                const profit = Number(contract.profit || 0);
+                const win = profit > 0;
+                const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+
+                this.logger.log(`[Falcon][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
+
+                // Processar resultado
+                this.onContractFinish(
+                  userId,
+                  { win, profit, contractId, exitPrice },
+                ).catch((error) => {
+                  this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
+                });
+
+                // Remover subscription usando pool interno
+                connection.removeSubscription(contractId);
+              }
             }
-            
-            // ✅ Verificar se contrato foi finalizado (igual Orion)
-            // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
-            const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
-              contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
-            
-            if (isFinalized) {
-              const profit = Number(contract.profit || 0);
-              const win = profit > 0;
-              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
-              
-              this.logger.log(`[Falcon][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
-              
-              // Processar resultado
-              this.onContractFinish(
-                userId,
-                { win, profit, contractId, exitPrice },
-              ).catch((error) => {
-                this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
-              });
-              
-              // Remover subscription
-              this.derivPool.removeSubscription(token, contractId);
-            }
-          }
-        },
-        contractId,
-      );
+          },
+          contractId,
+          90000, // timeout 90s
+        );
 
         // ✅ Se chegou aqui, sucesso!
         return contractId;
       } catch (error: any) {
         lastError = error;
         const errorMessage = error?.message || JSON.stringify(error);
-        
+
         // ✅ Verificar se é erro de timeout ou conexão (retentável)
-        const isRetryableError = errorMessage.includes('Timeout') || 
-                                 errorMessage.includes('WebSocket') || 
-                                 errorMessage.includes('Conexão') ||
-                                 errorMessage.includes('not ready') ||
-                                 errorMessage.includes('not open');
-        
+        const isRetryableError = errorMessage.includes('Timeout') ||
+          errorMessage.includes('WebSocket') ||
+          errorMessage.includes('Conexão') ||
+          errorMessage.includes('not ready') ||
+          errorMessage.includes('not open');
+
         if (isRetryableError && attempt < maxRetries) {
           this.logger.warn(`[Falcon][${userId}] ⚠️ Erro retentável (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
           continue;
         }
-        
+
         // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
         if (attempt >= maxRetries) {
           this.logger.error(`[Falcon][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
@@ -1069,7 +1086,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return null;
       }
     }
-    
+
     // ✅ Se chegou aqui, todas as tentativas falharam
     this.logger.error(`[Falcon][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
     return null;
@@ -1129,7 +1146,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const status = result.win ? 'WON' : 'LOST';
     const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
     const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
-    
+
     // ✅ Log de resultado no padrão Orion: ✅ GANHOU ou ❌ PERDEU | direção | P&L: $+X.XX
     await this.saveLog(
       userId,
@@ -1137,7 +1154,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       'TRADER',
       `${result.win ? '✅ GANHOU' : '❌ PERDEU'} | ${contractType} | P&L: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}`,
     );
-    
+
     this.logger.log(`[FALCON][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`);
 
     // Verificar se atingiu meta ou stop
@@ -1296,7 +1313,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (updates.status !== undefined) {
       updateFields.push('status = ?');
       updateValues.push(updates.status);
-      
+
       if (updates.status === 'ACTIVE') {
         updateFields.push('started_at = NOW()');
       }
@@ -1375,9 +1392,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // O LogQueueService já salva no banco de dados automaticamente
     if (this.logQueueService) {
       // Normalizar módulo para tipo válido
-      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] = 
+      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] =
         ['CORE', 'API', 'ANALYZER', 'DECISION', 'TRADER', 'RISK', 'HUMANIZER'];
-      const normalizedModule = validModules.includes(module.toUpperCase() as any) 
+      const normalizedModule = validModules.includes(module.toUpperCase() as any)
         ? (module.toUpperCase() as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')
         : 'CORE';
 
@@ -1438,6 +1455,296 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.stopBlindadoAtivo = false;
       state.pisoBlindado = 0;
       state.lastProfit = 0;
+    }
+  }
+
+  // ============================================
+  // MÉTODOS DE GERENCIAMENTO DE WEBSOCKET (Pool Interno)
+  // Copiados da Orion Strategy
+  // ============================================
+
+  /**
+   * ✅ Obtém ou cria conexão WebSocket reutilizável por token
+   */
+  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+    ws: WebSocket;
+    sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription: (subId: string) => void;
+  }> {
+    // ✅ Verificar se já existe conexão para este token
+    const existing = this.wsConnections.get(token);
+    if (existing) {
+      const readyState = existing.ws.readyState;
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
+        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+          readyState === WebSocket.CLOSING ? 'CLOSING' :
+            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
+
+      this.logger.debug(`[FALCON] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+
+      if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+        this.logger.debug(`[FALCON] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+
+        return {
+          ws: existing.ws,
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        };
+      } else {
+        this.logger.warn(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
+        if (existing.keepAliveInterval) {
+          clearInterval(existing.keepAliveInterval);
+        }
+        existing.ws.close();
+        this.wsConnections.delete(token);
+      }
+    } else {
+      this.logger.debug(`[FALCON] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
+    }
+
+    // ✅ Criar nova conexão
+    this.logger.debug(`[FALCON] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(endpoint, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
+
+      let authResolved = false;
+      const connectionTimeout = setTimeout(() => {
+        if (!authResolved) {
+          this.logger.error(`[FALCON] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
+          socket.close();
+          this.wsConnections.delete(token);
+          reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
+        }
+      }, 20000);
+
+      // ✅ Listener de mensagens para capturar autorização e outras respostas
+      socket.on('message', (data: WebSocket.RawData) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          // ✅ Ignorar ping/pong
+          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
+            return;
+          }
+
+          const conn = this.wsConnections.get(token);
+          if (!conn) {
+            this.logger.warn(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
+            return;
+          }
+
+          // ✅ Processar autorização (apenas durante inicialização)
+          if (msg.msg_type === 'authorize' && !authResolved) {
+            this.logger.debug(`[FALCON] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
+            authResolved = true;
+            clearTimeout(connectionTimeout);
+
+            if (msg.error || (msg.authorize && msg.authorize.error)) {
+              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+              this.logger.error(`[FALCON] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+              socket.close();
+              this.wsConnections.delete(token);
+              reject(new Error(`Erro na autorização: ${errorMsg}`));
+              return;
+            }
+
+            conn.authorized = true;
+            this.logger.log(`[FALCON] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+
+            // ✅ Iniciar keep-alive
+            conn.keepAliveInterval = setInterval(() => {
+              if (socket.readyState === WebSocket.OPEN) {
+                try {
+                  socket.send(JSON.stringify({ ping: 1 }));
+                  this.logger.debug(`[FALCON][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
+                } catch (error) {
+                  // Ignorar erros
+                }
+              }
+            }, 90000);
+
+            resolve(socket);
+            return;
+          }
+
+          // ✅ Processar mensagens de subscription (proposal_open_contract) - PRIORIDADE 1
+          if (msg.proposal_open_contract) {
+            const contractId = msg.proposal_open_contract.contract_id;
+            if (contractId && conn.subscriptions.has(contractId)) {
+              const callback = conn.subscriptions.get(contractId)!;
+              callback(msg);
+              return;
+            }
+          }
+
+          // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
+          if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+            // Processar primeira requisição pendente (FIFO)
+            const firstKey = conn.pendingRequests.keys().next().value;
+            if (firstKey) {
+              const pending = conn.pendingRequests.get(firstKey);
+              if (pending) {
+                clearTimeout(pending.timeout);
+                conn.pendingRequests.delete(firstKey);
+                if (msg.error) {
+                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                } else {
+                  pending.resolve(msg);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Continuar processando
+        }
+      });
+
+      socket.on('open', () => {
+        this.logger.log(`[FALCON] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
+
+        // ✅ Criar entrada no pool
+        const conn = {
+          ws: socket,
+          authorized: false,
+          keepAliveInterval: null,
+          requestIdCounter: 0,
+          pendingRequests: new Map(),
+          subscriptions: new Map(),
+        };
+        this.wsConnections.set(token, conn);
+
+        // ✅ Enviar autorização
+        const authPayload = { authorize: token };
+        this.logger.debug(`[FALCON] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
+        socket.send(JSON.stringify(authPayload));
+      });
+
+      socket.on('error', (error) => {
+        if (!authResolved) {
+          clearTimeout(connectionTimeout);
+          authResolved = true;
+          this.wsConnections.delete(token);
+          reject(error);
+        }
+      });
+
+      socket.on('close', () => {
+        this.logger.debug(`[FALCON] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`);
+        const conn = this.wsConnections.get(token);
+        if (conn) {
+          if (conn.keepAliveInterval) {
+            clearInterval(conn.keepAliveInterval);
+          }
+          // Rejeitar todas as requisições pendentes
+          conn.pendingRequests.forEach(pending => {
+            clearTimeout(pending.timeout);
+            pending.reject(new Error('WebSocket fechado'));
+          });
+          conn.subscriptions.clear();
+        }
+        this.wsConnections.delete(token);
+
+        if (!authResolved) {
+          clearTimeout(connectionTimeout);
+          authResolved = true;
+          reject(new Error('WebSocket fechado antes da autorização'));
+        }
+      });
+    });
+
+    const conn = this.wsConnections.get(token)!;
+    return {
+      ws: conn.ws,
+      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+    };
+  }
+
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      const timeout = setTimeout(() => {
+        conn.pendingRequests.delete(requestId);
+        reject(new Error(`Timeout após ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Inscreve-se para atualizações via conexão existente
+   */
+  private async subscribeViaConnection(
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    // ✅ Aguardar primeira resposta para confirmar subscription
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        conn.subscriptions.delete(subId);
+        reject(new Error(`Timeout ao inscrever ${subId}`));
+      }, timeoutMs);
+
+      // ✅ Callback wrapper que confirma subscription na primeira mensagem
+      const wrappedCallback = (msg: any) => {
+        // ✅ Primeira mensagem confirma subscription
+        if (msg.proposal_open_contract || msg.error) {
+          clearTimeout(timeout);
+          if (msg.error) {
+            conn.subscriptions.delete(subId);
+            reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            return;
+          }
+          // ✅ Subscription confirmada, substituir por callback original
+          conn.subscriptions.set(subId, callback);
+          resolve();
+          // ✅ Chamar callback original com primeira mensagem
+          callback(msg);
+          return;
+        }
+        // ✅ Se não for primeira mensagem, já deve estar usando callback original
+        callback(msg);
+      };
+
+      conn.subscriptions.set(subId, wrappedCallback);
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Remove subscription da conexão
+   */
+  private removeSubscriptionFromConnection(token: string, subId: string): void {
+    const conn = this.wsConnections.get(token);
+    if (conn) {
+      conn.subscriptions.delete(subId);
     }
   }
 }
