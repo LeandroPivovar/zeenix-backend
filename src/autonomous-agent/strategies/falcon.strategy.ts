@@ -938,20 +938,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Atualizar modo (PRECISO ou ALTA_PRECISAO)
     this.updateMode(userId, result.win);
 
-    // ✅ Logs detalhados do resultado
+    // ✅ Atualizar banco de dados PRIMEIRO (antes dos logs)
+    await this.updateUserStateInDb(userId, state);
+
+    // ✅ Logs detalhados do resultado (formato igual à Orion)
+    const status = result.win ? 'WON' : 'LOST';
+    const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
+    
+    this.logger.log(`[FALCON][${userId}] ✅ Contrato ${result.contractId} finalizado: ${status} | P&L: ${pnl} | Exit: ${result.exitPrice || 0}`);
+    
     if (result.win) {
       await this.saveLog(userId, 'INFO', 'API', 
-        `✅ OPERAÇÃO FINALIZADA - WIN | Lucro: $${result.profit.toFixed(2)} | Contract ID: ${result.contractId}`);
+        `✅ OPERAÇÃO FINALIZADA - WIN | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
     } else {
       await this.saveLog(userId, 'ERROR', 'API', 
-        `❌ OPERAÇÃO FINALIZADA - LOSS | Perda: $${Math.abs(result.profit).toFixed(2)} | Contract ID: ${result.contractId}`);
+        `❌ OPERAÇÃO FINALIZADA - LOSS | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
     }
 
     await this.saveLog(userId, 'INFO', 'RISK',
       `📊 Estado atualizado: lucro_atual=$${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
-
-    // Atualizar banco de dados
-    await this.updateUserStateInDb(userId, state);
     
     // ✅ Log final indicando que está pronto para próxima operação
     await this.saveLog(userId, 'INFO', 'CORE', 

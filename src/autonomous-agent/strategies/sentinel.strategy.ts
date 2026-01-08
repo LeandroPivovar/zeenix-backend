@@ -1001,11 +1001,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       });
     }
 
-    // ✅ Logs detalhados do resultado
+    // Atualizar estado primeiro
     if (result.win) {
-      await this.saveLog(userId, 'INFO', 'API', 
-        `✅ OPERAÇÃO FINALIZADA - WIN | Lucro: $${result.profit.toFixed(2)} | Contract ID: ${result.contractId}`);
-      
       state.currentProfit += result.profit;
       state.operationsCount++;
       state.lastTradeResult = { win: true, profit: result.profit };
@@ -1025,9 +1022,6 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       state.recoveryAttempts = 0;
       state.consecutiveLosses = 0;
     } else {
-      await this.saveLog(userId, 'ERROR', 'API', 
-        `❌ OPERAÇÃO FINALIZADA - LOSS | Perda: $${Math.abs(result.profit).toFixed(2)} | Contract ID: ${result.contractId}`);
-      
       state.currentLoss += Math.abs(result.profit);
       state.totalLosses += Math.abs(result.profit);
       state.consecutiveLosses++;
@@ -1048,7 +1042,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       }
     }
 
-    // Atualizar estado no banco (incluindo total_trades, total_wins, total_losses)
+    // ✅ Atualizar estado no banco PRIMEIRO (incluindo total_trades, total_wins, total_losses)
     await this.dataSource.query(
       `UPDATE autonomous_agent_config 
        SET daily_profit = ?, 
@@ -1065,6 +1059,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         userId,
       ],
     );
+
+    // ✅ Logs detalhados do resultado (formato igual à Orion)
+    const status = result.win ? 'WON' : 'LOST';
+    const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
+    
+    this.logger.log(`[SENTINEL][${userId}] ✅ Contrato ${result.contractId} finalizado: ${status} | P&L: ${pnl} | Exit: ${result.exitPrice || 0}`);
+    
+    if (result.win) {
+      await this.saveLog(userId, 'INFO', 'API', 
+        `✅ OPERAÇÃO FINALIZADA - WIN | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
+    } else {
+      await this.saveLog(userId, 'ERROR', 'API', 
+        `❌ OPERAÇÃO FINALIZADA - LOSS | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
+    }
 
     // ✅ Log de estado atualizado
     await this.saveLog(userId, 'INFO', 'RISK',
