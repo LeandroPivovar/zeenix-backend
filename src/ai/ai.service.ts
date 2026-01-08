@@ -518,6 +518,7 @@ export class AiService implements OnModuleInit {
   private lastAlreadySubscribedTime: number = 0; // ✅ Timestamp da última vez que recebemos "already subscribed"
   private lastTickReceivedTime: number = 0; // ✅ Timestamp do último tick recebido
   private websocketReconnectAttempts: number = 0; // ✅ Contador de tentativas de reconexão
+  private isRecreating = false; // ✅ Lock para evitar múltiplas recriações simultâneas
   private velozUsers = new Map<string, VelozUserState>();
   private moderadoUsers = new Map<string, ModeradoUserState>();
   private precisoUsers = new Map<string, PrecisoUserState>();
@@ -3298,7 +3299,15 @@ export class AiService implements OnModuleInit {
    */
   private async saveWebSocketState(): Promise<void> {
     try {
-      const ticksData = this.ticks.slice(-50); // Salvar apenas os últimos 50 ticks
+      let ticksData = this.ticks.slice(-50); // Salvar apenas os últimos 50 ticks
+      
+      // ✅ Garantir que ticksData é um array válido antes de stringificar
+      if (!Array.isArray(ticksData)) {
+        this.logger.warn(`[saveWebSocketState] ⚠️ ticksData não é um array, usando array vazio`);
+        ticksData = [];
+      }
+      
+      // ✅ Sempre stringificar (ticksData sempre será array aqui)
       const ticksJson = JSON.stringify(ticksData);
 
       await this.dataSource.query(`
@@ -3352,10 +3361,50 @@ export class AiService implements OnModuleInit {
 
       if (state.ticks_data) {
         try {
-          ticks = JSON.parse(state.ticks_data);
-          this.logger.debug(`[loadWebSocketState] ✅ Estado recuperado: ${ticks.length} ticks, subscriptionId=${state.subscription_id || 'N/A'}`);
+          // ✅ Verificar se ticks_data é string antes de parsear
+          let ticksDataStr = state.ticks_data;
+          if (typeof ticksDataStr !== 'string') {
+            // Se não é string, pode ser objeto corrompido - tentar stringificar primeiro
+            this.logger.warn(`[loadWebSocketState] ⚠️ ticks_data não é string, tentando converter...`);
+            if (typeof ticksDataStr === 'object' && ticksDataStr !== null) {
+              ticksDataStr = JSON.stringify(ticksDataStr);
+            } else {
+              // Se é [object Object] ou similar, limpar e usar array vazio
+              this.logger.warn(`[loadWebSocketState] ⚠️ ticks_data corrompido, limpando...`);
+              await this.dataSource.query(
+                `UPDATE ai_websocket_state SET ticks_data = '[]' WHERE symbol = ?`,
+                [this.symbol]
+              );
+              ticksDataStr = '[]';
+            }
+          }
+          
+          ticks = JSON.parse(ticksDataStr);
+          
+          // ✅ Validar que o resultado é um array
+          if (!Array.isArray(ticks)) {
+            this.logger.warn(`[loadWebSocketState] ⚠️ ticks_data parseado não é array, usando array vazio`);
+            ticks = [];
+            // Limpar dados corrompidos
+            await this.dataSource.query(
+              `UPDATE ai_websocket_state SET ticks_data = '[]' WHERE symbol = ?`,
+              [this.symbol]
+            );
+          } else {
+            this.logger.debug(`[loadWebSocketState] ✅ Estado recuperado: ${ticks.length} ticks, subscriptionId=${state.subscription_id || 'N/A'}`);
+          }
         } catch (error) {
           this.logger.warn(`[loadWebSocketState] ⚠️ Erro ao parsear ticks_data:`, error);
+          // ✅ Limpar dados corrompidos
+          try {
+            await this.dataSource.query(
+              `UPDATE ai_websocket_state SET ticks_data = '[]' WHERE symbol = ?`,
+              [this.symbol]
+            );
+          } catch (cleanupError) {
+            this.logger.error(`[loadWebSocketState] ❌ Erro ao limpar dados corrompidos:`, cleanupError);
+          }
+          ticks = [];
         }
       }
 
@@ -3373,10 +3422,18 @@ export class AiService implements OnModuleInit {
    * ✅ Recria o WebSocket quando a subscription não está funcionando
    */
   private async recreateWebSocket(): Promise<void> {
+    // ✅ Verificar se já está recriando (evitar múltiplas recriações simultâneas)
+    if (this.isRecreating) {
+      this.logger.warn(`[recreateWebSocket] ⚠️ Já está recriando WebSocket, ignorando nova tentativa...`);
+      return;
+    }
+
+    this.isRecreating = true;
     this.websocketReconnectAttempts++;
     this.logger.warn(`[recreateWebSocket] 🔄 Tentativa ${this.websocketReconnectAttempts}: Recriando WebSocket...`);
 
-    // ✅ Cancelar subscription antiga se existir antes de fechar
+    try {
+      // ✅ Cancelar subscription antiga se existir antes de fechar
     if (this.subscriptionId && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.logger.log(`[recreateWebSocket] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
       this.cancelSubscription(this.subscriptionId);
@@ -3428,6 +3485,9 @@ export class AiService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`[recreateWebSocket] ❌ Erro ao criar nova conexão:`, error);
       throw error;
+    } finally {
+      // ✅ Sempre liberar lock, mesmo em caso de erro
+      this.isRecreating = false;
     }
   }
 
