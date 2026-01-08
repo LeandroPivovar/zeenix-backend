@@ -1332,10 +1332,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       await this.saveLog(userId, 'INFO', 'CORE', `Agente em modo de espera. Retornando amanhã.`);
 
       state.isActive = false;
-      await this.dataSource.query(
-        `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = 0 WHERE user_id = ?`,
-        [userId],
-      );
+      try {
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = FALSE WHERE user_id = ?`,
+          [userId],
+        );
+      } catch (error) {
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_profit:`, error);
+      }
     }
 
     // Verificar limite de perda
@@ -1344,10 +1348,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         `LIMITE DE PERDA ATINGIDO! daily_loss=${state.currentLoss.toFixed(2)}, limit=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`);
 
       state.isActive = false;
-      await this.dataSource.query(
-        `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = 0 WHERE user_id = ?`,
-        [userId],
-      );
+      try {
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = FALSE WHERE user_id = ?`,
+          [userId],
+        );
+      } catch (error) {
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_loss:`, error);
+      }
     }
   }
 
