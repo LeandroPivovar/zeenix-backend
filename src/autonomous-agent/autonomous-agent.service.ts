@@ -682,20 +682,33 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * Obtém histórico de trades da sessão atual (dia atual)
+   * Obtém histórico de trades da sessão atual (após session_date)
    */
   async getTradeHistory(userId: string, limit: number = 50): Promise<any[]> {
-    // ✅ Filtrar apenas operações do dia atual (sessão atual)
+    // ✅ Buscar session_date da configuração do agente
+    const config = await this.dataSource.query(
+      `SELECT session_date 
+       FROM autonomous_agent_config 
+       WHERE user_id = ? AND is_active = TRUE
+       LIMIT 1`,
+      [userId],
+    );
+
+    // ✅ Se não houver configuração ou session_date, retornar vazio
+    if (!config || config.length === 0 || !config[0].session_date) {
+      return [];
+    }
+
+    const sessionDate = config[0].session_date;
+
+    // ✅ Filtrar apenas operações criadas após o início da sessão atual
     return await this.dataSource.query(
       `SELECT * FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND (
-           (closed_at IS NOT NULL AND DATE(closed_at) = CURDATE())
-           OR (closed_at IS NULL AND DATE(created_at) = CURDATE())
-         )
+         AND created_at >= ?
        ORDER BY COALESCE(closed_at, created_at) DESC 
        LIMIT ?`,
-      [userId, limit],
+      [userId, sessionDate, limit],
     );
   }
 
@@ -744,10 +757,31 @@ export class AutonomousAgentService implements OnModuleInit {
 
     const configData = config[0];
 
-    // ✅ Buscar operações finalizadas do dia atual
-    // Usar closed_at se disponível (quando a operação foi finalizada), senão usar created_at
-    // ✅ IMPORTANTE: Usar CURDATE() para garantir comparação correta de data (ignora hora)
-    const todayTrades = await this.dataSource.query(
+    // ✅ Buscar operações finalizadas da sessão atual (após session_date)
+    const sessionDate = configData.session_date;
+    
+    // ✅ Se não houver session_date, retornar valores zerados
+    if (!sessionDate) {
+      return {
+        daily_profit: 0,
+        daily_loss: 0,
+        netProfit: 0,
+        totalTrades: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        totalProfit: 0,
+        totalLoss: 0,
+        totalCapital: Number(parseFloat(configData.totalCapital || 0).toFixed(2)),
+        initialBalance: Number(parseFloat(configData.initial_balance || configData.totalCapital || 0).toFixed(2)),
+        operationsToday: 0,
+        session_status: configData.session_status || 'active',
+        session_date: null,
+      };
+    }
+
+    // ✅ Filtrar apenas operações criadas após o início da sessão atual
+    const sessionTrades = await this.dataSource.query(
       `SELECT 
          status,
          profit_loss,
@@ -757,12 +791,9 @@ export class AutonomousAgentService implements OnModuleInit {
        WHERE user_id = ? 
          AND status IN ('WON', 'LOST')
          AND profit_loss IS NOT NULL
-         AND (
-           (closed_at IS NOT NULL AND DATE(closed_at) = CURDATE())
-           OR (closed_at IS NULL AND DATE(created_at) = CURDATE())
-         )
+         AND created_at >= ?
        ORDER BY COALESCE(closed_at, created_at) DESC`,
-      [userId],
+      [userId, sessionDate],
     );
 
     // ✅ Calcular lucro/perda do dia baseado nas operações
@@ -772,11 +803,11 @@ export class AutonomousAgentService implements OnModuleInit {
     let lossesToday = 0;
 
     this.logger.debug(
-      `[GetSessionStats][${userId}] 📊 Operações encontradas do dia: ${todayTrades?.length || 0}`,
+      `[GetSessionStats][${userId}] 📊 Operações encontradas da sessão (após ${sessionDate}): ${sessionTrades?.length || 0}`,
     );
 
-    if (todayTrades && todayTrades.length > 0) {
-      for (const trade of todayTrades) {
+    if (sessionTrades && sessionTrades.length > 0) {
+      for (const trade of sessionTrades) {
         const profitLoss = parseFloat(trade.profit_loss) || 0;
         this.logger.debug(
           `[GetSessionStats][${userId}] 📊 Trade: status=${trade.status}, profit_loss=${profitLoss}`,
@@ -791,7 +822,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
     } else {
       this.logger.debug(
-        `[GetSessionStats][${userId}] ⚠️ Nenhuma operação finalizada encontrada para o dia atual`,
+        `[GetSessionStats][${userId}] ⚠️ Nenhuma operação finalizada encontrada para a sessão atual (após ${sessionDate})`,
       );
     }
 
