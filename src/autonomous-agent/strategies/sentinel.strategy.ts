@@ -793,9 +793,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${currentBalance.toFixed(2)}. Encerrando operações do dia.`);
 
         // Parar operações
-        state.isActive = false;
+        state.isActive = false; // Pausa em memória para o dia
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = 0 WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
           [userId],
         );
 
@@ -1331,10 +1331,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         `META DE LUCRO ATINGIDA! daily_profit=${state.currentProfit.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`);
       await this.saveLog(userId, 'INFO', 'CORE', `Agente em modo de espera. Retornando amanhã.`);
 
-      state.isActive = false;
+      state.isActive = false; // Pausa em memória para o dia
       try {
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = FALSE WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = TRUE WHERE user_id = ?`,
           [userId],
         );
       } catch (error) {
@@ -1345,12 +1345,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // Verificar limite de perda
     if (state.currentLoss >= config.dailyLossLimit) {
       await this.saveLog(userId, 'WARN', 'RISK',
-        `LIMITE DE PERDA ATINGIDO! daily_loss=${state.currentLoss.toFixed(2)}, limit=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`);
+        `LIMITE DE PERDA ATINGIDO! daily_loss=${state.currentLoss.toFixed(2)}, limit=${config.dailyLossLimit.toFixed(2)}. Pausando operações até amanhã.`);
 
-      state.isActive = false;
+      state.isActive = false; // Pausa em memória para o dia
       try {
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = FALSE WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = TRUE WHERE user_id = ?`,
           [userId],
         );
       } catch (error) {
