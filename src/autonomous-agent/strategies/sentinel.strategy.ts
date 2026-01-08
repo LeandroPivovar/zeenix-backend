@@ -257,7 +257,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         return;
       }
     
-    if (analysis) {
+      if (analysis) {
       // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
       if (state.isWaitingContract) {
         this.processingLocks.set(userId, false); // Liberar lock antes de retornar
