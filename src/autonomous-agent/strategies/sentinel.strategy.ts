@@ -88,7 +88,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           dailyLossLimit: parseFloat(user.daily_loss_limit),
           derivToken: user.deriv_token,
           currency: user.currency,
-          symbol: user.symbol || 'R_75',
+          symbol: user.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
           tradingMode: (user.trading_mode || 'normal').toLowerCase() as 'veloz' | 'normal' | 'lento',
           managementMode: 'moderado', // Default, pode ser configurado
           stopLossType: 'normal', // Default, pode ser configurado
@@ -138,7 +138,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: config.symbol || 'R_75',
+      symbol: config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
       tradingMode: ((config as any).tradingMode || 'normal').toLowerCase() as 'veloz' | 'normal' | 'lento',
       managementMode: ((config as any).managementMode || 'moderado').toLowerCase() as 'conservador' | 'moderado' | 'agressivo',
       stopLossType: ((config as any).stopLossType || 'normal').toLowerCase() as 'normal' | 'blindado',
@@ -169,7 +169,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     // Processar para todos os usuários ativos que usam o símbolo do tick
     const promises: Promise<void>[] = [];
-    const tickSymbol = symbol || 'R_75'; // Default para R_75 (Sentinel usa R_75)
+    const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
     for (const [userId, config] of this.userConfigs.entries()) {
       if (config.symbol === tickSymbol) {
@@ -1254,7 +1254,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         module: normalizedModule,
         message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
         icon: this.getLogIcon(level),
-        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_75' },
+        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_100' },
         tableName: 'autonomous_agent_logs',
       });
     }

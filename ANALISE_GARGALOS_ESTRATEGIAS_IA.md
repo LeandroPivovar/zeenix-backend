@@ -392,3 +392,4 @@ Implementando processamento paralelo, esperamos:
 
 
 
+

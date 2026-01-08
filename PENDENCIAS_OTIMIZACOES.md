@@ -296,3 +296,4 @@ Todas as otimizações de prioridade alta foram implementadas:
 
 
 
+

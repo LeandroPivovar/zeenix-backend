@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS autonomous_agent_config (
     -- Configurações técnicas
     deriv_token TEXT NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'USD',
-    symbol VARCHAR(20) NOT NULL DEFAULT 'R_75' COMMENT 'Índice de Volatilidade 75',
+    symbol VARCHAR(20) NOT NULL DEFAULT 'R_100' COMMENT 'Índice de Volatilidade 100 (todos os agentes autônomos usam R_100)',
     
     -- Controle de execução
     last_trade_at TIMESTAMP NULL,

@@ -48,16 +48,16 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
    * Similar ao StrategyManager da IA - processamento REATIVO
    * 
    * @param tick - Tick recebido do WebSocket
-   * @param symbol - Símbolo do mercado (R_75, R_100, etc.)
+   * @param symbol - Símbolo do mercado (sempre R_100 para agentes autônomos)
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     const promises: Promise<void>[] = [];
+    const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
-    // ✅ ORION: Processa R_100 (ou símbolo padrão)
+    // ✅ ORION: Processa R_100
     const orionStrategy = this.strategies.get('orion');
     if (orionStrategy && typeof (orionStrategy as any).processTick === 'function') {
-      // Orion processa R_100 ou símbolo compatível
-      if (!symbol || symbol === 'R_100' || symbol === 'R_75') {
+      if (tickSymbol === 'R_100') {
         promises.push(
           (orionStrategy as any).processTick(tick).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Orion] Erro:', error);
@@ -66,26 +66,24 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ SENTINEL: Processa R_75
+    // ✅ SENTINEL: Processa R_100
     const sentinelStrategy = this.strategies.get('sentinel');
     if (sentinelStrategy && typeof (sentinelStrategy as any).processTick === 'function') {
-      // Sentinel processa R_75
-      if (!symbol || symbol === 'R_75') {
+      if (tickSymbol === 'R_100') {
         promises.push(
-          (sentinelStrategy as any).processTick(tick, symbol || 'R_75').catch((error: any) => {
+          (sentinelStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Sentinel] Erro:', error);
           })
         );
       }
     }
 
-    // ✅ FALCON: Processa R_75
+    // ✅ FALCON: Processa R_100
     const falconStrategy = this.strategies.get('falcon');
     if (falconStrategy && typeof (falconStrategy as any).processTick === 'function') {
-      // Falcon processa R_75
-      if (!symbol || symbol === 'R_75') {
+      if (tickSymbol === 'R_100') {
         promises.push(
-          (falconStrategy as any).processTick(tick, symbol || 'R_75').catch((error: any) => {
+          (falconStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
           })
         );

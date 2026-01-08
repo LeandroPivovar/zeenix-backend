@@ -25,8 +25,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private ticks: Tick[] = [];
   private readonly maxTicks = 100;
   private readonly appId: string;
-  private symbol = 'R_100'; // Símbolo padrão para Orion
-  private activeSymbols = new Set<string>(['R_100']); // ✅ Símbolos ativos (R_100 para Orion, R_75 para Sentinel)
+  private symbol = 'R_100'; // Símbolo padrão para todos os agentes autônomos
+  private activeSymbols = new Set<string>(['R_100']); // ✅ Todos os agentes autônomos usam R_100
   private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
@@ -118,26 +118,23 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * Inscreve-se nos ticks dos símbolos necessários
-   * ✅ ATUALIZADO: Se inscreve em R_100 e R_75 para suportar Orion e Sentinel
+   * Inscreve-se nos ticks do símbolo R_100
+   * ✅ ATUALIZADO: Todos os agentes autônomos operam apenas em R_100
    */
   private subscribeToTicks(): void {
-    // ✅ Sempre se inscrever em R_100 (Orion) e R_75 (Sentinel)
-    const symbolsToSubscribe = ['R_100', 'R_75'];
-    
-    for (const symbol of symbolsToSubscribe) {
-      this.logger.log(`📡 Inscrevendo-se nos ticks de ${symbol}...`);
-      const subscriptionPayload = {
-        ticks_history: symbol,
-        adjust_start_time: 1,
-        count: this.maxTicks,
-        end: 'latest',
-        subscribe: 1,
-        style: 'ticks',
-      };
-      this.send(subscriptionPayload);
-      this.logger.log(`✅ Requisição de inscrição enviada para ${symbol}`);
-    }
+    // ✅ Todos os agentes autônomos usam R_100
+    const symbol = 'R_100';
+    this.logger.log(`📡 Inscrevendo-se nos ticks de ${symbol}...`);
+    const subscriptionPayload = {
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: this.maxTicks,
+      end: 'latest',
+      subscribe: 1,
+      style: 'ticks',
+    };
+    this.send(subscriptionPayload);
+    this.logger.log(`✅ Requisição de inscrição enviada para ${symbol}`);
   }
 
   /**
@@ -232,26 +229,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
       case 'tick':
         if (msg.tick) {
-          // ✅ Tentar identificar o símbolo pelo subscription ID ou pelo próprio tick
-          let symbolForTick = this.symbol; // Default
+          // ✅ Todos os agentes autônomos usam R_100
+          const symbolForTick = 'R_100';
           
-          if (msg.subscription?.id) {
-            // Tentar mapear subscription ID para símbolo
-            const mappedSymbol = this.getSymbolForSubscription(msg.subscription.id);
-            if (mappedSymbol) {
-              symbolForTick = mappedSymbol;
-            } else {
-              // Se não estiver mapeado, tentar usar o símbolo do tick (se disponível)
-              symbolForTick = msg.tick.symbol || this.symbol;
-            }
-            
-            if (this.subscriptionId !== msg.subscription.id) {
-              this.subscriptionId = msg.subscription.id;
-              this.logger.debug(`📋 Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
-            }
-          } else if (msg.tick.symbol) {
-            // Se o tick tiver símbolo, usar ele
-            symbolForTick = msg.tick.symbol;
+          if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
+            this.subscriptionId = msg.subscription.id;
+            this.logger.debug(`📋 Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
           }
           
           this.processTick(msg.tick, symbolForTick);
@@ -302,7 +285,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
   /**
    * Processa um tick recebido
-   * ✅ ATUALIZADO: Aceita símbolo como parâmetro para processar ticks de diferentes símbolos
+   * ✅ ATUALIZADO: Todos os agentes autônomos usam R_100
    */
   private processTick(tick: any, symbol?: string): void {
     if (!tick || !tick.quote) {
@@ -310,7 +293,8 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    const tickSymbol = symbol || this.symbol;
+    // ✅ Todos os agentes autônomos usam R_100
+    const tickSymbol = symbol || 'R_100';
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
     const parity = this.getParityFromDigit(digit);
@@ -540,7 +524,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || (normalizedAgentType === 'sentinel' || normalizedAgentType === 'falcon' ? 'R_75' : 'R_100'),
+            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
@@ -567,7 +551,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyLossLimit,
             config.derivToken,
             config.currency || 'USD',
-            config.symbol || (normalizedAgentType === 'sentinel' || normalizedAgentType === 'falcon' ? 'R_75' : 'R_100'),
+            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,
@@ -594,8 +578,8 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // ✅ Determinar símbolo baseado no tipo de agente (usar strategy que já está normalizado)
-      const agentSymbol = config.symbol || (strategy === 'sentinel' || strategy === 'falcon' ? 'R_75' : 'R_100');
+      // ✅ Todos os agentes autônomos usam R_100
+      const agentSymbol = config.symbol || 'R_100';
       
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {

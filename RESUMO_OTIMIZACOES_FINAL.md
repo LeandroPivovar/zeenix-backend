@@ -140,3 +140,4 @@ As otimizações de **Prioridade Baixa** podem ser implementadas conforme necess
 
 
 
+

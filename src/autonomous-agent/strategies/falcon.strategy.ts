@@ -74,7 +74,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           dailyLossLimit: parseFloat(user.daily_loss_limit),
           derivToken: user.deriv_token,
           currency: user.currency,
-          symbol: user.symbol || 'R_75',
+          symbol: user.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
           initialBalance: parseFloat(user.initial_balance) || 0,
         };
 
@@ -122,7 +122,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: config.symbol || 'R_75',
+      symbol: config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
       initialBalance: config.initialBalance || 0,
     };
 
@@ -151,7 +151,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     const promises: Promise<void>[] = [];
-    const tickSymbol = symbol || 'R_75';
+    const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
     // ✅ Log de debug para verificar se está recebendo ticks
     if (this.userConfigs.size > 0) {
@@ -465,9 +465,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses = 0;
       state.mode = 'PRECISO'; // Reseta para modo normal após vitória
       
-      // Soros: Se ganhou 2 vezes seguidas, volta para stake inicial na próxima
-      if (state.consecutiveWins >= 2) {
-        state.consecutiveWins = 0; // Resetar contador
+      // Soros: Resetar após Win3 (quando consecutiveWins = 3)
+      // Win1: consecutiveWins = 1 → Base
+      // Win2: consecutiveWins = 2 → Base + Lucro (Soros)
+      // Win3: consecutiveWins = 3 → Resetar para 0 → Base
+      if (state.consecutiveWins >= 3) {
+        state.consecutiveWins = 0; // Resetar contador após Win3
       }
     } else {
       state.consecutiveWins = 0;
@@ -520,17 +523,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Lógica para Modo PRECISO (Soros Nível 1)
     else {
       // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
-      if (state.consecutiveWins === 1) {
+      // consecutiveWins = 1 → Win1 (próxima compra usa Base)
+      // consecutiveWins = 2 → Win2 (próxima compra usa Base + Lucro = Soros)
+      // consecutiveWins = 0 ou >= 3 → Win3+ (próxima compra usa Base)
+      if (state.consecutiveWins === 2) {
+        // Win2: Aplicar Soros (Base + Lucro Anterior)
         stake = config.initialStake + state.lastProfit;
         this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
         
         this.saveLog(userId, 'INFO', 'RISK',
           `Ativando Soros Nível 1. stakeanterior=${config.initialStake.toFixed(2)}, lucro=${state.lastProfit.toFixed(2)}, proximostake=${stake.toFixed(2)}`);
-      }
-      // Win3 ou mais: volta para Base
-      else if (state.consecutiveWins >= 2) {
+      } else {
+        // Win1 ou Win3+: usa Base
         stake = config.initialStake;
-        // Não logar reset de Soros (SENTINEL não faz isso)
       }
     }
 
@@ -1141,7 +1146,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         module: normalizedModule,
         message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
         icon: this.getLogIcon(level),
-        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_75' },
+        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_100' },
         tableName: 'autonomous_agent_logs',
       });
     }
