@@ -172,6 +172,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const promises: Promise<void>[] = [];
     const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
+    // ✅ Log de debug para verificar se está recebendo ticks
+    if (this.userConfigs.size > 0) {
+      this.logger.debug(`[Sentinel] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
+    }
+
     for (const [userId, config] of this.userConfigs.entries()) {
       // Sempre processar se o tick for R_100 (todos os agentes autônomos usam R_100)
       if (tickSymbol === 'R_100') {

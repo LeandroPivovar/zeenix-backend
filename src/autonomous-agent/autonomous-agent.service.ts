@@ -74,7 +74,7 @@ export class AutonomousAgentService implements OnModuleInit {
       this.ws = new WebSocket(endpoint);
 
       this.ws.on('open', async () => {
-        this.logger.log('✅ Conexão WebSocket aberta com sucesso');
+        this.logger.log('✅ [AutonomousAgent] Conexão WebSocket aberta com sucesso');
         this.isConnected = true;
         this.subscribeToTicks();
         this.startKeepAlive();
@@ -124,7 +124,7 @@ export class AutonomousAgentService implements OnModuleInit {
   private subscribeToTicks(): void {
     // ✅ Todos os agentes autônomos usam R_100
     const symbol = 'R_100';
-    this.logger.log(`📡 Inscrevendo-se nos ticks de ${symbol}...`);
+    this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
     const subscriptionPayload = {
       ticks_history: symbol,
       adjust_start_time: 1,
@@ -134,7 +134,7 @@ export class AutonomousAgentService implements OnModuleInit {
       style: 'ticks',
     };
     this.send(subscriptionPayload);
-    this.logger.log(`✅ Requisição de inscrição enviada para ${symbol}`);
+    this.logger.log(`✅ [AutonomousAgent] Requisição de inscrição enviada para ${symbol}`);
   }
 
   /**
@@ -234,8 +234,11 @@ export class AutonomousAgentService implements OnModuleInit {
           
           if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
             this.subscriptionId = msg.subscription.id;
-            this.logger.debug(`📋 Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
+            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
           }
+          
+          // ✅ Log de debug para verificar se está recebendo ticks
+          this.logger.debug(`[AutonomousAgent] 📥 Tick recebido: quote=${msg.tick.quote}, symbol=${symbolForTick}`);
           
           this.processTick(msg.tick, symbolForTick);
         }
@@ -317,12 +320,10 @@ export class AutonomousAgentService implements OnModuleInit {
       this.ticks.shift();
     }
 
-    // Log a cada 50 ticks
-    if (this.ticks.length % 50 === 0) {
-      this.logger.debug(
-        `[Tick][${tickSymbol}] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
-      );
-    }
+    // ✅ Log a cada tick para debug (temporário)
+    this.logger.debug(
+      `[AutonomousAgent][Tick][${tickSymbol}] Total: ${this.ticks.length} | Último: valor=${newTick.value} | dígito=${digit} | paridade=${parity}`,
+    );
 
     // ✅ Enviar tick para o StrategyManager do agente autônomo com o símbolo correto
     if (!this.strategyManager) {
@@ -330,6 +331,7 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
+    this.logger.debug(`[AutonomousAgent] Enviando tick para StrategyManager (symbol=${tickSymbol})`);
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
       this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
     });
