@@ -168,13 +168,14 @@ class RiskManager {
             // --- SOROS (Progressão após Vitórias) ---
             // Nível 1: Após 1 vitória, aumenta stake em 50%
             // Nível 2+: Reseta para stake base
-            if (vitoriasConsecutivas === 1) {
+            // Ciclo Soros (Ativa em vitórias ímpares: 1, 3, 5...)
+            if (vitoriasConsecutivas % 2 !== 0) {
                 nextStake = baseStake * 1.5; // Soros Nível 1
                 if (userId && symbol && logCallback) {
-                    logCallback(userId, symbol, 'analise', `📈 [SOROS] Nível 1 ativado (+50% stake)`);
+                    logCallback(userId, symbol, 'analise', `📈 [SOROS] Nível 1 ativado (+50% stake) - Ciclo ${Math.ceil(vitoriasConsecutivas / 2)}`);
                 }
             } else {
-                nextStake = baseStake; // Reseta após 2+ vitórias
+                nextStake = baseStake; // Reseta após completar o ciclo (2, 4, 6...)
             }
         }
 
