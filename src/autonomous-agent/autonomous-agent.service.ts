@@ -536,10 +536,12 @@ export class AutonomousAgentService implements OnModuleInit {
                agent_type = ?,
                trading_mode = ?,
                initial_balance = ?,
-               session_status = 'active',
+                session_status = 'active',
                session_date = NOW(),
                daily_profit = 0,
                daily_loss = 0,
+               total_losses = 0,
+               total_wins = 0,
                updated_at = NOW()
            WHERE user_id = ?`,
           [
