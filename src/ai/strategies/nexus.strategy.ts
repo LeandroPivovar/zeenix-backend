@@ -98,14 +98,14 @@ class RiskManager {
 
     /**
      * Retorna o offset da barreira.
-     * MODO ATAQUE (0 perdas): Barreira Negativa (-0.45) para Payout ~60%.
+     * MODO ATAQUE (0 perdas): Barreira Negativa (-0.15) para Payout ~60%.
      * MODO DEFESA (>0 perdas): Sem Barreira (undefined) para Payout ~95% (Rise/Fall).
      */
     getBarrierOffset(): string | undefined {
         if (this.consecutiveLosses > 0) {
             return undefined; // Defense Mode: Standard Rise (No Barrier)
         }
-        return "-0.45"; // Attack Mode: Negative Barrier (Target ~60%)
+        return "-0.15"; // Attack Mode: Negative Barrier (Target ~60%)
     }
 
     /**
