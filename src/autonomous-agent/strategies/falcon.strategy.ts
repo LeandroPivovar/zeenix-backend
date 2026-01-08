@@ -131,18 +131,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
 
+    // ✅ Obter modo do estado (inicializado como 'PRECISO')
+    const state = this.userStates.get(userId);
+    const mode = state?.mode || 'PRECISO';
+
     // ✅ Log de ativação no padrão Orion
     await this.saveLog(
       userId,
       'INFO',
       'CORE',
-      `Usuário ATIVADO | Modo: ${falconConfig.mode || 'ALTA_PRECISAO'} | Capital: $${falconConfig.initialStake.toFixed(2)} | Meta: $${falconConfig.dailyProfitTarget.toFixed(2)} | Stop: $${falconConfig.dailyLossLimit.toFixed(2)}`,
+      `Usuário ATIVADO | Modo: ${mode} | Capital: $${falconConfig.initialStake.toFixed(2)} | Meta: $${falconConfig.dailyProfitTarget.toFixed(2)} | Stop: $${falconConfig.dailyLossLimit.toFixed(2)}`,
     );
     await this.saveLog(
       userId,
       'INFO',
       'ANALYZER',
-      `📊 Aguardando 50 ticks para análise | Modo: ${falconConfig.mode || 'ALTA_PRECISAO'} | Coleta inicial iniciada.`,
+      `📊 Aguardando 50 ticks para análise | Modo: ${mode} | Coleta inicial iniciada.`,
     );
 
     this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Symbol: ${falconConfig.symbol} | Total configs: ${this.userConfigs.size}`);
