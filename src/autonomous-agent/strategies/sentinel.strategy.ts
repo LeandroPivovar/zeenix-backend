@@ -258,99 +258,103 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       }
     
       if (analysis) {
-      // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
-      if (state.isWaitingContract) {
-        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-        return;
-      }
-
-      // ✅ Log consolidado da análise e conclusão
-      const config = this.userConfigs.get(userId);
-      const currentState = this.userStates.get(userId);
-      
-      // ✅ Verificar novamente (state pode ter mudado)
-      if (!currentState || currentState.isWaitingContract) {
-        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-        return;
-      }
-      
-      if (analysis.score >= modeConfig.scoreMinimum && analysis.direction) {
-        // ✅ Verificar novamente ANTES de tomar decisão
-        if (currentState.isWaitingContract) {
+        // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
+        if (state.isWaitingContract) {
           this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
 
-        // Tomar decisão de trade
-        const decision = await this.makeTradeDecision(userId, analysis);
+        // ✅ Log consolidado da análise e conclusão
+        const config = this.userConfigs.get(userId);
+        const currentState = this.userStates.get(userId);
         
-        // ✅ Verificar novamente ANTES de executar compra
-        const finalState = this.userStates.get(userId);
-        if (!finalState || finalState.isWaitingContract) {
+        // ✅ Verificar novamente (state pode ter mudado)
+        if (!currentState || currentState.isWaitingContract) {
           this.processingLocks.set(userId, false); // Liberar lock antes de retornar
           return;
         }
         
-        if (decision.action === 'BUY') {
-          // ✅ Log de decisão de compra
-          const reasons: string[] = [];
-          if (analysis.technical.direction === analysis.direction) {
-            reasons.push(`Técnica: ${analysis.technical.direction} (Score: ${analysis.technical.score.toFixed(1)}%)`);
+        // Obter configuração do modo de negociação
+        const modeConfig = this.tradingModeConfigs[config.tradingMode];
+        
+        if (analysis.score >= modeConfig.scoreMinimum && analysis.direction) {
+          // ✅ Verificar novamente ANTES de tomar decisão
+          if (currentState.isWaitingContract) {
+            this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+            return;
           }
-          if (analysis.statistical.direction === analysis.direction) {
-            reasons.push(`Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`);
-          }
+
+          // Tomar decisão de trade
+          const decision = await this.makeTradeDecision(userId, analysis);
           
-          await this.saveLog(userId, 'INFO', 'DECISION',
-            `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
-          
-          // ✅ Verificar novamente ANTES de executar (última verificação)
-          const execState = this.userStates.get(userId);
-          if (!execState || execState.isWaitingContract) {
-            await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+          // ✅ Verificar novamente ANTES de executar compra
+          const finalState = this.userStates.get(userId);
+          if (!finalState || finalState.isWaitingContract) {
             this.processingLocks.set(userId, false); // Liberar lock antes de retornar
             return;
           }
           
-          await this.executeTrade(userId, decision, analysis);
+          if (decision.action === 'BUY') {
+            // ✅ Log de decisão de compra
+            const reasons: string[] = [];
+            if (analysis.technical.direction === analysis.direction) {
+              reasons.push(`Técnica: ${analysis.technical.direction} (Score: ${analysis.technical.score.toFixed(1)}%)`);
+            }
+            if (analysis.statistical.direction === analysis.direction) {
+              reasons.push(`Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`);
+            }
+            
+            await this.saveLog(userId, 'INFO', 'DECISION',
+              `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
+            
+            // ✅ Verificar novamente ANTES de executar (última verificação)
+            const execState = this.userStates.get(userId);
+            if (!execState || execState.isWaitingContract) {
+              await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+              this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+              return;
+            }
+            
+            await this.executeTrade(userId, decision, analysis);
+          } else {
+            // ✅ Log de motivo para não comprar
+            const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
+                             decision.reason === 'STOP_LOSS_BLINDADO' ? 'Stop Loss Blindado ativado' :
+                             decision.reason === 'INVALID_STAKE' ? 'Stake inválido' :
+                             'Aguardando condições ideais';
+            
+            await this.saveLog(userId, 'INFO', 'DECISION',
+              `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
+          }
         } else {
-          // ✅ Log de motivo para não comprar
-          const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
-                           decision.reason === 'STOP_LOSS_BLINDADO' ? 'Stop Loss Blindado ativado' :
-                           decision.reason === 'INVALID_STAKE' ? 'Stake inválido' :
-                           'Aguardando condições ideais';
+          // ✅ Log de análise insuficiente com detalhes
+          const missingScore = modeConfig.scoreMinimum - analysis.score;
+          const reasons: string[] = [];
+          
+          // Verificar motivo de direção N/A
+          if (!analysis.direction) {
+            const techDir = analysis.technical.direction || 'N/A';
+            const statDir = analysis.statistical.direction || 'N/A';
+            
+            if (techDir === 'N/A' && statDir === 'N/A') {
+              reasons.push('Nenhuma análise indicou direção');
+            } else if (techDir !== statDir && techDir !== 'N/A' && statDir !== 'N/A') {
+              reasons.push(`Análises divergem: Técnica=${techDir}, Estatística=${statDir} (priorizando técnica)`);
+            } else {
+              reasons.push('Direção indefinida');
+            }
+          }
+          
+          // Verificar score
+          if (analysis.score < modeConfig.scoreMinimum) {
+            reasons.push(`Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)`);
+          }
+          
+          const reasonMsg = reasons.length > 0 ? reasons.join(' | ') : 'Análise insuficiente';
           
           await this.saveLog(userId, 'INFO', 'DECISION',
             `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
         }
-      } else {
-        // ✅ Log de análise insuficiente com detalhes
-        const missingScore = modeConfig.scoreMinimum - analysis.score;
-        const reasons: string[] = [];
-        
-        // Verificar motivo de direção N/A
-        if (!analysis.direction) {
-          const techDir = analysis.technical.direction || 'N/A';
-          const statDir = analysis.statistical.direction || 'N/A';
-          
-          if (techDir === 'N/A' && statDir === 'N/A') {
-            reasons.push('Nenhuma análise indicou direção');
-          } else if (techDir !== statDir && techDir !== 'N/A' && statDir !== 'N/A') {
-            reasons.push(`Análises divergem: Técnica=${techDir}, Estatística=${statDir} (priorizando técnica)`);
-          } else {
-            reasons.push('Direção indefinida');
-          }
-        }
-        
-        // Verificar score
-        if (analysis.score < modeConfig.scoreMinimum) {
-          reasons.push(`Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)`);
-        }
-        
-        const reasonMsg = reasons.length > 0 ? reasons.join(' | ') : 'Análise insuficiente';
-        
-        await this.saveLog(userId, 'INFO', 'DECISION',
-          `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
       }
     } finally {
       // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
