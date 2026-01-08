@@ -98,14 +98,14 @@ class RiskManager {
 
     /**
      * Retorna o offset da barreira.
-     * MODO ATAQUE (0 perdas): Barreira Negativa (-0.28) para Payout ~60%.
+     * MODO ATAQUE (0 perdas): Barreira Negativa (-0.45) para Payout ~60%.
      * MODO DEFESA (>0 perdas): Sem Barreira (undefined) para Payout ~95% (Rise/Fall).
      */
     getBarrierOffset(): string | undefined {
         if (this.consecutiveLosses > 0) {
             return undefined; // Defense Mode: Standard Rise (No Barrier)
         }
-        return "-0.28"; // Attack Mode: Negative Barrier (Target ~60%)
+        return "-0.45"; // Attack Mode: Negative Barrier (Target ~60%)
     }
 
     /**
@@ -164,10 +164,18 @@ class RiskManager {
                 nextStake = targetProfit / RECOVERY_PAYOUT;
             }
 
-        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 2) {
-            // Soros leve? (Opcional, documento não especifica Soros, apenas Payout menor)
-            // Manter stake fixo no modo ataque por enquanto, focando na consistência.
-            nextStake = baseStake;
+        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0) {
+            // --- SOROS (Progressão após Vitórias) ---
+            // Nível 1: Após 1 vitória, aumenta stake em 50%
+            // Nível 2+: Reseta para stake base
+            if (vitoriasConsecutivas === 1) {
+                nextStake = baseStake * 1.5; // Soros Nível 1
+                if (userId && symbol && logCallback) {
+                    logCallback(userId, symbol, 'analise', `📈 [SOROS] Nível 1 ativado (+50% stake)`);
+                }
+            } else {
+                nextStake = baseStake; // Reseta após 2+ vitórias
+            }
         }
 
         // --- PROTEÇÃO DE CAPITAL ---
