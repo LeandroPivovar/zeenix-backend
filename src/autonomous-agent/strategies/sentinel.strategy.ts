@@ -37,10 +37,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   private readonly maxTicks = 200;
 
   // Configurações por modo de negociação
+  // ✅ TEMPORÁRIO: Reduzido para 50% para testes
   private readonly tradingModeConfigs = {
-    veloz: { ticksToCollect: 20, emaPeriods: [10, 25], scoreMinimum: 60 },
-    normal: { ticksToCollect: 50, emaPeriods: [10, 25, 50], scoreMinimum: 70 },
-    lento: { ticksToCollect: 100, emaPeriods: [10, 25, 50], scoreMinimum: 80 },
+    veloz: { ticksToCollect: 20, emaPeriods: [10, 25], scoreMinimum: 50 }, // era 60
+    normal: { ticksToCollect: 50, emaPeriods: [10, 25, 50], scoreMinimum: 50 }, // era 70
+    lento: { ticksToCollect: 100, emaPeriods: [10, 25, 50], scoreMinimum: 50 }, // era 80
   };
 
   // Configurações por modo de gerenciamento

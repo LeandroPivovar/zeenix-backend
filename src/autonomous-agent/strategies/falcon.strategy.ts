@@ -410,7 +410,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     // B. Filtro de Precisão
-    const requiredProb = state.mode === 'ALTA_PRECISAO' ? 90 : 80;
+    // ✅ TEMPORÁRIO: Reduzido para 50% para testes
+    const requiredProb = 50; // state.mode === 'ALTA_PRECISAO' ? 90 : 80;
     
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
       const stake = this.calculateStake(userId, marketAnalysis.payout);
