@@ -355,9 +355,14 @@ export class AtlasStrategy implements IStrategy {
    * ✅ ATLAS: Verifica gatilhos ultrarrápidos
    */
   private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): { canTrade: boolean; analysis: string } {
+    // ✅ CORREÇÃO: Normalizar modo para mapeamento correto
+    const modeLower = (state.mode || 'veloz').toLowerCase();
+    const normalizedMode = modeLower === 'moderado' ? 'normal' : 
+                          (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
+    
     // Mapeamento de loss virtual por modo
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
-    const requiredLossCount = requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
+    const requiredLossCount = requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
 
     let analysis = `🔍 [ANÁLISE ATLAS ${state.mode.toUpperCase()}]\n`;
     analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
@@ -374,7 +379,7 @@ export class AtlasStrategy implements IStrategy {
     analysis += ` • Últimos Dígitos: [${lastDigits.join(', ')}]\n`;
 
     // ✅ ATLAS VELOZ: Análise mínima - apenas verificar sequência imediata
-    if (state.mode === 'veloz') {
+    if (normalizedMode === 'veloz') {
       // Se os últimos 3 dígitos foram todos Over (> 3), evitar entrada
       const last3 = state.digitBuffer.slice(-3);
       if (last3.length === 3 && last3.every(d => d > 3)) {
@@ -387,7 +392,7 @@ export class AtlasStrategy implements IStrategy {
     }
 
     // ✅ ATLAS NORMAL/LENTO: Análise de desequilíbrio
-    if (state.mode === 'normal' || state.mode === 'lento') {
+    if (normalizedMode === 'normal' || normalizedMode === 'lento') {
       const over3Count = lastDigits.filter(d => d > 3).length;
       const over3Ratio = over3Count / lastDigits.length;
       const over3Percent = Math.round(over3Ratio * 100);
