@@ -126,6 +126,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       currentContractId: null,
       currentTradeId: null,
       isWaitingContract: false,
+      lastContractType: undefined,
     };
 
     this.userStates.set(userId, state);
@@ -151,9 +152,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     this.initializeUserState(userId, sentinelConfig);
 
     // Log de ativação
-    await this.saveLog(userId, 'INFO', 'CORE', `Agente 1 - Sentinel iniciando...`);
-    await this.saveLog(userId, 'INFO', 'CORE', 
-      `Carregando configurações: tradingmode=${sentinelConfig.tradingMode}, managementmode=${sentinelConfig.managementMode}, stoplosstype=${sentinelConfig.stopLossType}`);
+    // ✅ Log de ativação no padrão Orion
+    await this.saveLog(
+      userId,
+      'INFO',
+      'CORE',
+      `Usuário ATIVADO | Modo: ${sentinelConfig.tradingMode || 'normal'} | Capital: $${sentinelConfig.initialStake.toFixed(2)} | Meta: $${sentinelConfig.dailyProfitTarget.toFixed(2)} | Stop: $${sentinelConfig.dailyLossLimit.toFixed(2)}`,
+    );
+    const modeConfig = this.tradingModeConfigs[sentinelConfig.tradingMode || 'normal'];
+    await this.saveLog(
+      userId,
+      'INFO',
+      'ANALYZER',
+      `📊 Aguardando ${modeConfig.ticksToCollect} ticks para análise | Modo: ${sentinelConfig.tradingMode || 'normal'} | Coleta inicial iniciada.`,
+    );
 
     this.logger.log(`[Sentinel] ✅ Usuário ${userId} ativado`);
   }
@@ -231,8 +243,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     if (userTicks.length < modeConfig.ticksToCollect) {
       // ✅ Log apenas a cada 10 ticks para não poluir (mantido para feedback de progresso)
       if (userTicks.length % 10 === 0) {
-        await this.saveLog(userId, 'INFO', 'ANALYZER', 
-          `Ticks coletados: ${userTicks.length}/${modeConfig.ticksToCollect}`);
+        await this.saveLog(
+          userId,
+          'INFO',
+          'ANALYZER',
+          `📊 Aguardando ${modeConfig.ticksToCollect - userTicks.length} ticks para análise | Coleta: ${userTicks.length}/${modeConfig.ticksToCollect}`,
+        );
       }
       return;
     }
@@ -304,8 +320,13 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
               reasons.push(`Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`);
             }
             
-            await this.saveLog(userId, 'INFO', 'DECISION',
-              `✅ COMPRA APROVADA | Direção: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
+            // ✅ Log de sinal no padrão Orion
+            await this.saveLog(
+              userId,
+              'INFO',
+              'DECISION',
+              `🎯 SINAL GERADO: ${analysis.direction} | Score: ${analysis.score.toFixed(1)}%`,
+            );
             
             // ✅ Verificar novamente ANTES de executar (última verificação)
             const execState = this.userStates.get(userId);
@@ -773,6 +794,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // ✅ Para R_100, sempre usar CALL/PUT (não HIGHER/LOWER)
     const finalContractType = contractType;
 
+    // ✅ Salvar tipo de contrato para usar no log de resultado
+    state.lastContractType = finalContractType;
+
     // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
 
@@ -780,10 +804,6 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const zenixPayout = 0.9215;
 
     try {
-      // Executar compra diretamente (sem consultar payout)
-      await this.saveLog(userId, 'INFO', 'API', 
-        `Comprando contrato ${finalContractType}. stake=${decision.stake?.toFixed(2)}, direction=${analysis.direction}`);
-
       // ✅ Criar registro de trade ANTES de executar
       const tradeId = await this.createTradeRecord(
         userId,
@@ -809,7 +829,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       if (contractId) {
         state.currentContractId = contractId;
         state.currentTradeId = tradeId;
-        await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+        
+        // ✅ Log de operação no padrão Orion
+        await this.saveLog(
+          userId,
+          'INFO',
+          'TRADER',
+          `⚡ ENTRADA CONFIRMADA: ${finalContractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)}`,
+        );
       
         // ✅ Atualizar trade com contract_id e entry_price
         await this.updateTradeRecord(tradeId, {
@@ -1132,25 +1159,18 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // ✅ Logs detalhados do resultado (formato igual à Orion)
     const status = result.win ? 'WON' : 'LOST';
+    const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
     const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
     
-    this.logger.log(`[SENTINEL][${userId}] ✅ Contrato ${result.contractId} finalizado: ${status} | P&L: ${pnl} | Exit: ${result.exitPrice || 0}`);
+    // ✅ Log de resultado no padrão Orion: ✅ GANHOU ou ❌ PERDEU | direção | P&L: $+X.XX
+    await this.saveLog(
+      userId,
+      'INFO',
+      'TRADER',
+      `${result.win ? '✅ GANHOU' : '❌ PERDEU'} | ${contractType} | P&L: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}`,
+    );
     
-    if (result.win) {
-      await this.saveLog(userId, 'INFO', 'API', 
-        `✅ OPERAÇÃO FINALIZADA - WIN | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
-    } else {
-      await this.saveLog(userId, 'ERROR', 'API', 
-        `❌ OPERAÇÃO FINALIZADA - LOSS | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
-    }
-
-    // ✅ Log de estado atualizado
-    await this.saveLog(userId, 'INFO', 'RISK',
-      `📊 Estado atualizado: lucro_atual=$${state.currentProfit.toFixed(2)}, perda_atual=$${state.currentLoss.toFixed(2)}, ops_count=${state.operationsCount}, mode=${config.tradingMode}`);
-    
-    // ✅ Log final indicando que está pronto para próxima operação
-    await this.saveLog(userId, 'INFO', 'CORE', 
-      `🔄 Aguardando novo sinal para próxima operação...`);
+    this.logger.log(`[SENTINEL][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`);
 
     // Verificar meta de lucro
     if (state.currentProfit >= config.dailyProfitTarget) {
@@ -1446,6 +1466,7 @@ interface SentinelUserState extends AutonomousAgentState {
   currentContractId: string | null;
   currentTradeId: number | null;
   isWaitingContract: boolean;
+  lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
 }
 
 interface SentinelAnalysis {

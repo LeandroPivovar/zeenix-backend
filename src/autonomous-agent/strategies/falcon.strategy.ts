@@ -109,6 +109,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       currentContractId: null,
       currentTradeId: null,
       isWaitingContract: false,
+      lastContractType: undefined,
     };
 
     this.userStates.set(userId, state);
@@ -130,12 +131,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
 
-    // Log de ativação (formato igual ao SENTINEL)
-    await this.saveLog(userId, 'INFO', 'CORE', `Agente 1 - Falcon iniciando...`);
-    await this.saveLog(userId, 'INFO', 'CORE', 
-      `Carregando configurações: stake=${falconConfig.initialStake}, meta=${falconConfig.dailyProfitTarget}, stop=${falconConfig.dailyLossLimit}`);
-    await this.saveLog(userId, 'INFO', 'CORE', 
-      `Aguardando 50 ticks para iniciar análise. Símbolo: ${falconConfig.symbol}`);
+    // ✅ Log de ativação no padrão Orion
+    await this.saveLog(
+      userId,
+      'INFO',
+      'CORE',
+      `Usuário ATIVADO | Modo: ${falconConfig.mode || 'ALTA_PRECISAO'} | Capital: $${falconConfig.initialStake.toFixed(2)} | Meta: $${falconConfig.dailyProfitTarget.toFixed(2)} | Stop: $${falconConfig.dailyLossLimit.toFixed(2)}`,
+    );
+    await this.saveLog(
+      userId,
+      'INFO',
+      'ANALYZER',
+      `📊 Aguardando 50 ticks para análise | Modo: ${falconConfig.mode || 'ALTA_PRECISAO'} | Coleta inicial iniciada.`,
+    );
 
     this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Symbol: ${falconConfig.symbol} | Total configs: ${this.userConfigs.size}`);
   }
@@ -212,8 +220,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (userTicks.length < 50) {
       // Log apenas a cada 10 ticks
       if (userTicks.length % 10 === 0) {
-        await this.saveLog(userId, 'INFO', 'ANALYZER', 
-          `Ticks coletados: ${userTicks.length}/50`);
+        await this.saveLog(
+          userId,
+          'INFO',
+          'ANALYZER',
+          `📊 Aguardando ${50 - userTicks.length} ticks para análise | Coleta: ${userTicks.length}/50`,
+        );
       }
       return;
     }
@@ -229,8 +241,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     try {
       // ✅ Log quando tiver ticks suficientes para análise
       if (userTicks.length === 50) {
-        await this.saveLog(userId, 'INFO', 'ANALYZER', 
-          `Ticks coletados: ${userTicks.length}/50. Iniciando análise...`);
+        await this.saveLog(
+          userId,
+          'INFO',
+          'ANALYZER',
+          `🔍 Iniciando análise de mercado | Ticks coletados: ${userTicks.length}/50`,
+        );
       }
 
       // Realizar análise de mercado
@@ -479,8 +495,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
       }
       
-      await this.saveLog(userId, 'INFO', 'DECISION',
-        `✅ COMPRA APROVADA | Direção: ${marketAnalysis.signal} | Score: ${marketAnalysis.probability.toFixed(1)}% | Motivos: ${reasons.join(', ')}`);
+      // ✅ Log de sinal no padrão Orion
+      await this.saveLog(
+        userId,
+        'INFO',
+        'DECISION',
+        `🎯 SINAL GERADO: ${marketAnalysis.signal} | Score: ${marketAnalysis.probability.toFixed(1)}%`,
+      );
 
       return {
         action: 'BUY',
@@ -704,9 +725,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const zenixPayout = 0.9215;
 
     try {
-      // Executar compra diretamente (sem consultar payout)
-      await this.saveLog(userId, 'INFO', 'API', 
-        `Comprando contrato ${contractType}. stake=${decision.stake?.toFixed(2)}, direction=${marketAnalysis.signal}`);
+      // ✅ Salvar tipo de contrato para usar no log de resultado
+      state.lastContractType = contractType;
 
       // ✅ Criar registro de trade ANTES de executar
       const tradeId = await this.createTradeRecord(
@@ -734,7 +754,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (contractId) {
           state.currentContractId = contractId;
           state.currentTradeId = tradeId;
-          await this.saveLog(userId, 'INFO', 'API', `Contrato comprado. contract_id=${contractId}, trade_id=${tradeId}`);
+          
+          // ✅ Log de operação no padrão Orion
+          await this.saveLog(
+            userId,
+            'INFO',
+            'TRADER',
+            `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)}`,
+          );
           
           // ✅ Atualizar trade com contract_id
           await this.updateTradeRecord(tradeId, {
@@ -1010,24 +1037,18 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // ✅ Logs detalhados do resultado (formato igual à Orion)
     const status = result.win ? 'WON' : 'LOST';
+    const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
     const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
     
-    this.logger.log(`[FALCON][${userId}] ✅ Contrato ${result.contractId} finalizado: ${status} | P&L: ${pnl} | Exit: ${result.exitPrice || 0}`);
+    // ✅ Log de resultado no padrão Orion: ✅ GANHOU ou ❌ PERDEU | direção | P&L: $+X.XX
+    await this.saveLog(
+      userId,
+      'INFO',
+      'TRADER',
+      `${result.win ? '✅ GANHOU' : '❌ PERDEU'} | ${contractType} | P&L: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}`,
+    );
     
-    if (result.win) {
-      await this.saveLog(userId, 'INFO', 'API', 
-        `✅ OPERAÇÃO FINALIZADA - WIN | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
-    } else {
-      await this.saveLog(userId, 'ERROR', 'API', 
-        `❌ OPERAÇÃO FINALIZADA - LOSS | P&L: ${pnl} | Exit Price: ${result.exitPrice || 0} | Contract ID: ${result.contractId}`);
-    }
-
-    await this.saveLog(userId, 'INFO', 'RISK',
-      `📊 Estado atualizado: lucro_atual=$${state.lucroAtual.toFixed(2)}, ops_count=${state.opsCount}, mode=${state.mode}`);
-    
-    // ✅ Log final indicando que está pronto para próxima operação
-    await this.saveLog(userId, 'INFO', 'CORE', 
-      `🔄 Aguardando novo sinal para próxima operação...`);
+    this.logger.log(`[FALCON][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`);
 
     // Verificar se atingiu meta ou stop
     if (state.lucroAtual >= config.dailyProfitTarget) {
@@ -1364,4 +1385,5 @@ interface FalconUserState {
   currentContractId: string | null;
   currentTradeId: number | null;
   isWaitingContract: boolean;
+  lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
 }
