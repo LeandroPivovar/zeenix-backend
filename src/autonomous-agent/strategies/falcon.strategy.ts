@@ -485,7 +485,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return {
         action: 'BUY',
         stake: stake,
-        contractType: marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL',
+        contractType: marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT',
         mode: state.mode,
         reason: 'HIGH_PROBABILITY',
       };
@@ -695,7 +695,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL');
+    const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT');
 
     // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;

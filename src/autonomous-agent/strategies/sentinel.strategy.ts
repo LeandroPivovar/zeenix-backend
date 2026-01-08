@@ -621,7 +621,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     return {
       action: 'BUY',
       stake,
-      contractType: analysis.direction === 'CALL' ? 'RISE' : 'FALL',
+      contractType: analysis.direction === 'CALL' ? 'CALL' : 'PUT',
       reason: 'SIGNAL_FOUND',
       mode: config.tradingMode,
     };
@@ -768,10 +768,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
-    const contractType = decision.contractType || (analysis.direction === 'CALL' ? 'RISE' : 'FALL');
+    const contractType = decision.contractType || (analysis.direction === 'CALL' ? 'CALL' : 'PUT');
     
-    // Se está em Martingale, usar Higher/Lower
-    const finalContractType = state.martingaleLevel > 0 ? 'HIGHER' : contractType;
+    // ✅ Para R_100, sempre usar CALL/PUT (não HIGHER/LOWER)
+    const finalContractType = contractType;
 
     // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
@@ -870,11 +870,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       throw new Error('Resposta de proposal inválida');
     } catch (error) {
       this.logger.error(`[Sentinel] Erro ao obter payout:`, error);
-      // Retornar valores padrão em caso de erro
-      if (contractType === 'HIGHER' || contractType === 'LOWER') {
-        return 0.98; // 98% para Higher/Lower
-      }
-      return 0.95; // 95% para Rise/Fall
+      // ✅ Para R_100, sempre retornar 92.15% (payout fixo)
+      return 0.9215;
     }
   }
 
