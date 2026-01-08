@@ -519,6 +519,7 @@ export class NexusStrategy implements IStrategy {
                 proposalPayload.barrier = params.barrier;
             }
 
+            if (!connection.sendRequest) throw new Error('WebSocket sendRequest not available');
             const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
 
             if (proposalResponse.error) {
@@ -539,6 +540,7 @@ export class NexusStrategy implements IStrategy {
 
             if (!proposalId) return null;
 
+            if (!connection.sendRequest) throw new Error('WebSocket sendRequest not available');
             const buyResponse: any = await connection.sendRequest({
                 buy: proposalId,
                 price: proposalPrice
@@ -558,26 +560,28 @@ export class NexusStrategy implements IStrategy {
                 const timeout = setTimeout(() => {
                     if (!hasResolved) {
                         hasResolved = true;
-                        connection.removeSubscription(contractId);
+                        if (connection.removeSubscription) connection.removeSubscription(contractId);
                         resolve(null);
                     }
                 }, 90000);
 
-                connection.subscribe(
-                    { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
-                    (msg: any) => {
-                        const c = msg.proposal_open_contract;
-                        if (c && c.is_sold) {
-                            if (!hasResolved) {
-                                hasResolved = true;
-                                clearTimeout(timeout);
-                                connection.removeSubscription(contractId);
-                                resolve({ contractId: c.contract_id, profit: Number(c.profit), exitSpot: c.exit_tick });
+                if (connection.subscribe) {
+                    connection.subscribe(
+                        { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
+                        (msg: any) => {
+                            const c = msg.proposal_open_contract;
+                            if (c && c.is_sold) {
+                                if (!hasResolved) {
+                                    hasResolved = true;
+                                    clearTimeout(timeout);
+                                    if (connection.removeSubscription) connection.removeSubscription(contractId);
+                                    resolve({ contractId: c.contract_id, profit: Number(c.profit), exitSpot: c.exit_tick });
+                                }
                             }
-                        }
-                    },
-                    contractId
-                ).catch(() => { });
+                        },
+                        String(contractId)
+                    ).catch(() => { });
+                }
             });
 
         } catch (error) {
