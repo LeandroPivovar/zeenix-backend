@@ -791,7 +791,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
+    this.logger.log(`[Sentinel][${userId}] 🎬 executeTrade chamado: action=${decision.action}, stake=$${decision.stake?.toFixed(2) || '0.00'}`);
+
     if (!config || !state || decision.action !== 'BUY') {
+      this.logger.warn(`[Sentinel][${userId}] ⚠️ executeTrade abortado: config=${!!config}, state=${!!state}, action=${decision.action}`);
       return;
     }
 
@@ -804,6 +807,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // ✅ Verificar Stop Loss antes de executar, passando o stake já calculado
     const stopLossCheck = await this.checkStopLoss(userId, decision.stake || config.initialStake);
     if (stopLossCheck.action === 'STOP') {
+      this.logger.warn(`[Sentinel][${userId}] 🛑 executeTrade bloqueado por Stop Loss: ${stopLossCheck.reason}`);
       return;
     }
 
@@ -835,6 +839,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         },
       );
 
+      this.logger.log(`[Sentinel][${userId}] 🛒 Chamando buyContract: ${finalContractType} | Stake: $${(decision.stake || config.initialStake).toFixed(2)} | Duration: 5 ticks`);
+
       const contractId = await this.buyContract(
         userId,
         config.derivToken,
@@ -843,6 +849,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         decision.stake || config.initialStake,
         5, // duration em ticks
       );
+
+      this.logger.log(`[Sentinel][${userId}] ${contractId ? '✅' : '❌'} buyContract retornou: ${contractId || 'NULL'}`);
 
       if (contractId) {
         state.currentContractId = contractId;
