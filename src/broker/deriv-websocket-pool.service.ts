@@ -8,6 +8,8 @@ interface PendingRequest {
   reject: (error: any) => void;
   timeout: NodeJS.Timeout;
   sent?: boolean; // ✅ Flag para indicar se já foi enviada
+  requestId?: string; // ✅ ID único para matching com echo_req
+  sentAt?: number; // ✅ Timestamp de quando foi enviada
 }
 
 // Assinatura ativa (ex.: proposal_open_contract / ticks)
@@ -51,8 +53,27 @@ export class DerivWebSocketPoolService {
    */
   async sendRequest(token: string, payload: any, timeoutMs = 30000): Promise<any> {
     const conn = await this.getConnection(token);
+    
+    // ✅ Verificar saúde da conexão antes de enviar
+    if (!conn.ready) {
+      throw new Error('Conexão WebSocket não está pronta');
+    }
+    if (conn.ws.readyState !== WebSocket.OPEN) {
+      throw new Error(`WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
+    }
+    
     return new Promise((resolve, reject) => {
-      const req: PendingRequest = { payload, resolve, reject, timeout: null as any, sent: false };
+      // ✅ Gerar ID único para rastreamento (não adicionar ao payload, a Deriv retorna echo_req automaticamente)
+      const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const req: PendingRequest = { 
+        payload, // ✅ Não modificar payload - a Deriv retorna echo_req automaticamente
+        resolve, 
+        reject, 
+        timeout: null as any, 
+        sent: false,
+        requestId,
+        sentAt: undefined,
+      };
       
       req.timeout = setTimeout(() => {
         // ✅ Remover da fila se ainda estiver pendente
@@ -60,6 +81,8 @@ export class DerivWebSocketPoolService {
         if (index !== -1) {
           conn.queue.splice(index, 1);
         }
+        const elapsed = req.sentAt ? Date.now() - req.sentAt : 0;
+        this.logger.warn(`[POOL] ⏱️ Timeout após ${timeoutMs}ms (enviado há ${elapsed}ms) | RequestId: ${requestId} | Tipo: ${payload.proposal ? 'proposal' : payload.buy ? 'buy' : 'other'}`);
         reject(new Error(`Timeout após ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -251,13 +274,49 @@ export class DerivWebSocketPoolService {
         const isRequestResponse = hasProposal || hasBuy || (hasError && !msg.proposal_open_contract);
 
         if (isRequestResponse) {
-          // ✅ Encontrar primeira requisição enviada e não resolvida
+          // ✅ MELHORIA: Tentar fazer match usando echo_req (a Deriv retorna echo_req com o payload original)
+          // ✅ Comparar echo_req com o payload da requisição para matching preciso
+          let matchedRequest: PendingRequest | null = null;
+          
+          if (msg.echo_req) {
+            // ✅ Buscar requisição pendente cujo payload corresponde ao echo_req
+            const matchedIndex = conn.queue.findIndex(req => {
+              if (!req.sent || (req as any).resolved) return false;
+              
+              // ✅ Comparar campos principais do payload com echo_req
+              const payloadKeys = Object.keys(req.payload);
+              return payloadKeys.every(key => {
+                // ✅ Comparar valores (ignorar diferenças de tipo se forem equivalentes)
+                const payloadVal = req.payload[key];
+                const echoVal = msg.echo_req[key];
+                
+                // ✅ Comparação especial para proposal (pode ser 1 ou true)
+                if (key === 'proposal' && (payloadVal === 1 || payloadVal === true) && (echoVal === 1 || echoVal === true)) {
+                  return true;
+                }
+                
+                return JSON.stringify(payloadVal) === JSON.stringify(echoVal);
+              });
+            });
+            
+            if (matchedIndex !== -1) {
+              matchedRequest = conn.queue[matchedIndex];
+              (matchedRequest as any).resolved = true;
+              conn.queue.splice(matchedIndex, 1);
+              this.logger.debug(`[POOL] ✅ Match por echo_req (posição ${matchedIndex})`);
+            }
+          }
+          
+          // ✅ FALLBACK: Se não encontrou por echo_req, usar FIFO (primeira requisição enviada e não resolvida)
           const findPendingRequest = () => {
+            if (matchedRequest) return matchedRequest;
+            
             const index = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
             if (index !== -1) {
               const req = conn.queue[index];
               (req as any).resolved = true;
               conn.queue.splice(index, 1);
+              this.logger.debug(`[POOL] ✅ Match por FIFO (posição ${index})`);
               return req;
             }
             return null;
@@ -390,10 +449,11 @@ export class DerivWebSocketPoolService {
       try {
         const payloadStr = JSON.stringify(req.payload);
         const reqType = req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other';
-        this.logger.debug(`[POOL] 📤 Enviando requisição: ${reqType} (${conn.queue.length} na fila, ${conn.queue.filter(r => !r.sent).length} pendentes)`);
+        this.logger.debug(`[POOL] 📤 Enviando requisição: ${reqType} | RequestId: ${req.requestId} | (${conn.queue.length} na fila, ${conn.queue.filter(r => !r.sent).length} pendentes)`);
         conn.ws.send(payloadStr);
-        // ✅ Marcar como enviada para não reenviar
+        // ✅ Marcar como enviada e registrar timestamp
         req.sent = true;
+        req.sentAt = Date.now();
       } catch (err) {
         // ✅ Se falhar ao enviar, remover da fila e rejeitar
         const index = conn.queue.indexOf(req);

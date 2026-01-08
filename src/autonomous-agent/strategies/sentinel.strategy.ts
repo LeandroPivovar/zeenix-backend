@@ -908,7 +908,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   }
 
   /**
-   * Compra contrato na Deriv via WebSocket Pool
+   * Compra contrato na Deriv via WebSocket Pool com retry automático
    */
   private async buyContract(
     userId: string,
@@ -917,68 +917,118 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     symbol: string,
     stake: number,
     duration: number,
+    maxRetries = 2,
   ): Promise<string | null> {
-    try {
-      // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
-      const roundedStake = Math.round(stake * 100) / 100;
-      
-      // Primeiro, obter proposta (usando timeout de 60s como Orion)
-      const proposalResponse = await this.derivPool.sendRequest(
-        token,
-        {
-          proposal: 1,
-          amount: roundedStake,
-          basis: 'stake',
-          contract_type: contractType,
-          currency: 'USD',
-          duration: duration,
-          duration_unit: 't',
-          symbol: symbol,
-        },
-        60000, // timeout 60s (igual Orion)
-      );
+    const roundedStake = Math.round(stake * 100) / 100;
+    let lastError: Error | null = null;
+    
+    // ✅ Retry com backoff exponencial
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          // ✅ Backoff exponencial: 1s, 2s, 4s...
+          const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          this.logger.warn(`[Sentinel][${userId}] 🔄 Tentativa ${attempt + 1}/${maxRetries + 1} após ${delayMs}ms | Erro anterior: ${lastError?.message}`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+        
+        // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
+        const proposalResponse = await this.derivPool.sendRequest(
+          token,
+          {
+            proposal: 1,
+            amount: roundedStake,
+            basis: 'stake',
+            contract_type: contractType,
+            currency: 'USD',
+            duration: duration,
+            duration_unit: 't',
+            symbol: symbol,
+          },
+          60000, // timeout 60s (igual Orion)
+        );
 
-      // ✅ Verificar erros na resposta (pode estar em error ou proposal.error) - igual Orion
-      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
-      if (errorObj) {
-        const errorCode = errorObj?.code || '';
-        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
-        throw new Error(errorMessage);
-      }
+        // ✅ Verificar erros na resposta (pode estar em error ou proposal.error) - igual Orion
+        const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+        if (errorObj) {
+          const errorCode = errorObj?.code || '';
+          const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+          
+          // ✅ Alguns erros não devem ser retentados (ex: saldo insuficiente, parâmetros inválidos)
+          const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol'];
+          if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
+            this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
+            throw new Error(errorMessage);
+          }
+          
+          // ✅ Erros retentáveis: tentar novamente
+          lastError = new Error(errorMessage);
+          if (attempt < maxRetries) {
+            this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+            continue;
+          }
+          
+          this.logger.error(`[Sentinel][${userId}] ❌ Erro na proposta após ${maxRetries + 1} tentativas: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
+          throw lastError;
+        }
 
-      const proposalId = proposalResponse.proposal?.id;
-      const proposalPrice = Number(proposalResponse.proposal?.ask_price || 0);
+        const proposalId = proposalResponse.proposal?.id;
+        const proposalPrice = Number(proposalResponse.proposal?.ask_price || 0);
 
-      if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Proposta inválida recebida: ${JSON.stringify(proposalResponse)}`);
-        throw new Error('Resposta de proposta inválida');
-      }
+        if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
+          lastError = new Error('Resposta de proposta inválida');
+          if (attempt < maxRetries) {
+            this.logger.warn(`[Sentinel][${userId}] ⚠️ Proposta inválida (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(proposalResponse)}`);
+            continue;
+          }
+          this.logger.error(`[Sentinel][${userId}] ❌ Proposta inválida recebida após ${maxRetries + 1} tentativas: ${JSON.stringify(proposalResponse)}`);
+          throw lastError;
+        }
 
-      // Enviar compra
-      const buyResponse = await this.derivPool.sendRequest(
-        token,
-        {
-          buy: proposalId,
-          price: proposalPrice,
-        },
-        60000, // timeout 60s (igual Orion)
-      );
+        // ✅ Enviar compra
+        const buyResponse = await this.derivPool.sendRequest(
+          token,
+          {
+            buy: proposalId,
+            price: proposalPrice,
+          },
+          60000, // timeout 60s (igual Orion)
+        );
 
-      // ✅ Verificar erros na resposta - igual Orion
-      const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
-      if (buyErrorObj) {
-        const errorCode = buyErrorObj?.code || '';
-        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
-        throw new Error(errorMessage);
-      }
+        // ✅ Verificar erros na resposta - igual Orion
+        const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
+        if (buyErrorObj) {
+          const errorCode = buyErrorObj?.code || '';
+          const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
+          
+          // ✅ Alguns erros não devem ser retentados
+          const nonRetryableErrors = ['InvalidProposal', 'ProposalExpired', 'InsufficientBalance'];
+          if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
+            this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+            throw new Error(errorMessage);
+          }
+          
+          // ✅ Erros retentáveis: tentar novamente (mas precisa obter nova proposta)
+          lastError = new Error(errorMessage);
+          if (attempt < maxRetries) {
+            this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável ao comprar (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+            continue;
+          }
+          
+          this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+          throw lastError;
+        }
 
-      const contractId = buyResponse.buy?.contract_id;
-      if (!contractId) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Contrato criado mas sem contract_id: ${JSON.stringify(buyResponse)}`);
-        throw new Error('Resposta de compra inválida - sem contract_id');
-      }
+        const contractId = buyResponse.buy?.contract_id;
+        if (!contractId) {
+          lastError = new Error('Resposta de compra inválida - sem contract_id');
+          if (attempt < maxRetries) {
+            this.logger.warn(`[Sentinel][${userId}] ⚠️ Contrato sem contract_id (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(buyResponse)}`);
+            continue;
+          }
+          this.logger.error(`[Sentinel][${userId}] ❌ Contrato criado mas sem contract_id após ${maxRetries + 1} tentativas: ${JSON.stringify(buyResponse)}`);
+          throw lastError;
+        }
 
       // Inscrever para monitorar contrato
       this.derivPool.subscribe(
@@ -1058,11 +1108,37 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         contractId,
       );
 
-      return contractId;
-    } catch (error) {
-      this.logger.error(`[Sentinel][${userId}] Erro ao comprar contrato:`, error);
-      return null;
+        // ✅ Se chegou aqui, sucesso!
+        return contractId;
+      } catch (error: any) {
+        lastError = error;
+        const errorMessage = error?.message || JSON.stringify(error);
+        
+        // ✅ Verificar se é erro de timeout ou conexão (retentável)
+        const isRetryableError = errorMessage.includes('Timeout') || 
+                                 errorMessage.includes('WebSocket') || 
+                                 errorMessage.includes('Conexão') ||
+                                 errorMessage.includes('not ready') ||
+                                 errorMessage.includes('not open');
+        
+        if (isRetryableError && attempt < maxRetries) {
+          this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+          continue;
+        }
+        
+        // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
+        if (attempt >= maxRetries) {
+          this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
+        } else {
+          this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`, error?.stack);
+        }
+        return null;
+      }
     }
+    
+    // ✅ Se chegou aqui, todas as tentativas falharam
+    this.logger.error(`[Sentinel][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
+    return null;
   }
 
   async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {

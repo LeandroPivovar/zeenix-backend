@@ -371,7 +371,26 @@ export class AtlasStrategy implements IStrategy {
     // Se nunca operou (lastOperationTimestamp é null), permitir operar sem loss virtual
     const isFirstOperation = state.lastOperationTimestamp === null;
     
-    if (!isFirstOperation && state.virtualLossCount < requiredLossCount) {
+    // ✅ CORREÇÃO: Se ganhou recentemente (virtualLossCount = 0), permitir operar após intervalo
+    // Isso evita que o sistema fique travado após uma vitória
+    // O intervalo já é verificado em canProcessAtlasAsset, então aqui apenas verificamos se passou
+    const hasRecentWin = state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
+    const timeSinceLastOp = state.lastOperationTimestamp 
+      ? (Date.now() - state.lastOperationTimestamp.getTime()) / 1000 
+      : 0;
+    const intervalPassed = !modeConfig.intervaloSegundos || timeSinceLastOp >= modeConfig.intervaloSegundos;
+    
+    // ✅ Permitir operar se:
+    // 1. É a primeira operação, OU
+    // 2. Ganhou recentemente (virtualLossCount = 0) E passou intervalo mínimo, OU
+    // 3. Atingiu o loss virtual necessário (virtualLossCount >= requiredLossCount)
+    const canBypassVirtualLoss = isFirstOperation || (hasRecentWin && intervalPassed);
+    
+    if (!canBypassVirtualLoss && state.virtualLossCount < requiredLossCount) {
+      // ✅ Log mais informativo sobre por que não pode operar
+      if (hasRecentWin && !intervalPassed) {
+        analysis += ` • Aguardando intervalo: ${timeSinceLastOp.toFixed(1)}s / ${modeConfig.intervaloSegundos}s ⏱️\n`;
+      }
       return { canTrade: false, analysis }; // Ainda não atingiu o gatilho de loss virtual
     }
 
@@ -970,6 +989,10 @@ export class AtlasStrategy implements IStrategy {
       }
       // ✅ Soros: verificar ciclo (Apenas se NÃO estava em recuperação)
       else if (!state.isInRecovery) {
+        // ✅ CORREÇÃO: Resetar loss virtual também quando ganha sem estar em recuperação
+        state.virtualLossCount = 0;
+        state.virtualLossActive = false;
+        
         if (state.vitoriasConsecutivas === 0) {
           // Primeira vitória: ativar Soros Nível 1
           state.vitoriasConsecutivas = 1;
@@ -991,6 +1014,11 @@ export class AtlasStrategy implements IStrategy {
       // ✅ O profit da API Deriv já é lucro líquido (ganho bruto - aposta)
       // Para exibir o ganho bruto, somamos a aposta de volta
       const ganhoBruto = lucro + stakeAmount;
+      
+      // ✅ CORREÇÃO: Resetar loss virtual ao ganhar (permite próxima operação)
+      state.virtualLossCount = 0;
+      state.virtualLossActive = false;
+      
       this.saveAtlasLog(state.userId, symbol, 'resultado',
         `✅ VITÓRIA! | Dígito: ${digitoResultado} (${digitoResultado > 3 ? 'OVER' : 'UNDER'}) ✅ | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
