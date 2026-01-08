@@ -906,8 +906,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    */
   private async getPayout(token: string, contractType: string, symbol: string, duration: number): Promise<number> {
     try {
-      const response = await this.derivPool.sendRequest(
-        token,
+      // ✅ Obter conexão do pool interno
+      const connection = await this.getOrCreateWebSocketConnection(token);
+
+      const response = await connection.sendRequest(
         {
           proposal: 1,
           amount: 1,
@@ -948,8 +950,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    */
   private async warmUpConnection(token: string): Promise<void> {
     try {
-      // Enviar ping para forçar criação da conexão e autorização
-      await this.derivPool.sendRequest(token, { ping: 1 }, 5000);
+      // ✅ Obter conexão do pool interno (isso já cria e autoriza a conexão)
+      const connection = await this.getOrCreateWebSocketConnection(token);
+
+      // Enviar ping para confirmar que está funcionando
+      await connection.sendRequest({ ping: 1 }, 5000);
       this.logger.debug(`[Sentinel] ✅ Conexão WebSocket pré-aquecida com sucesso`);
     } catch (error) {
       // Ignorar erro de ping, o importante é criar a conexão
@@ -959,7 +964,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   }
 
   /**
-   * Compra contrato na Deriv via WebSocket Pool com retry automático
+   * Compra contrato na Deriv via WebSocket Pool Interno com retry automático
    */
   private async buyContract(
     userId: string,
@@ -987,9 +992,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           await new Promise(resolve => setTimeout(resolve, delayMs));
         }
 
+        // ✅ Obter conexão do pool interno
+        const connection = await this.getOrCreateWebSocketConnection(token, userId);
+
         // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
-        const proposalResponse = await this.derivPool.sendRequest(
-          token,
+        const proposalResponse = await connection.sendRequest(
           {
             proposal: 1,
             amount: roundedStake,
@@ -1041,8 +1048,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         }
 
         // ✅ Enviar compra
-        const buyResponse = await this.derivPool.sendRequest(
-          token,
+        const buyResponse = await connection.sendRequest(
           {
             buy: proposalId,
             price: proposalPrice,
@@ -1085,9 +1091,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           throw lastError;
         }
 
-        // Inscrever para monitorar contrato
-        this.derivPool.subscribe(
-          token,
+        // ✅ Inscrever para monitorar contrato usando pool interno
+        await connection.subscribe(
           {
             proposal_open_contract: 1,
             contract_id: contractId,
@@ -1130,8 +1135,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
                   state.currentTradeId = null;
                 }
 
-                // Remover subscription
-                this.derivPool.removeSubscription(token, contractId);
+                // Remover subscription usando pool interno
+                connection.removeSubscription(contractId);
                 return;
               }
 
@@ -1155,12 +1160,13 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
                   this.logger.error(`[Sentinel][${userId}] Erro ao processar resultado:`, error);
                 });
 
-                // Remover subscription
-                this.derivPool.removeSubscription(token, contractId);
+                // Remover subscription usando pool interno
+                connection.removeSubscription(contractId);
               }
             }
           },
           contractId,
+          90000, // timeout 90s
         );
 
         // ✅ Se chegou aqui, sucesso!
