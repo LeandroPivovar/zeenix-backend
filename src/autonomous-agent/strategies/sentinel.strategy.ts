@@ -773,19 +773,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // Se está em Martingale, usar Higher/Lower
     const finalContractType = state.martingaleLevel > 0 ? 'HIGHER' : contractType;
 
-    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de consultar payout para bloquear qualquer nova análise/compra
+    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
 
-    await this.saveLog(userId, 'INFO', 'API', `Consultando payout para contrato ${finalContractType}...`);
+    // Payout fixo: 92.15%
+    const zenixPayout = 0.9215;
 
     try {
-      // Obter payout via proposal
-      const payout = await this.getPayout(config.derivToken, finalContractType, config.symbol, 5);
-      const zenixPayout = payout * 0.97; // Markup de 3%
-
-      await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
-      
-      // Executar compra
+      // Executar compra diretamente (sem consultar payout)
       await this.saveLog(userId, 'INFO', 'API', 
         `Comprando contrato ${finalContractType}. stake=${decision.stake?.toFixed(2)}, direction=${analysis.direction}`);
 
@@ -798,7 +793,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           duration: 5,
           analysis: analysis,
           payout: zenixPayout,
-          entryPrice: 0, // Será atualizado após proposta
+          entryPrice: 0, // Será atualizado via proposal_open_contract
         },
       );
 

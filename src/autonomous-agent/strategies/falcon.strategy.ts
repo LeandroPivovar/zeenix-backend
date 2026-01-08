@@ -697,19 +697,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'RISE' : 'FALL');
 
-    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de consultar payout para bloquear qualquer nova análise/compra
+    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
 
-    await this.saveLog(userId, 'INFO', 'API', `Consultando payout para contrato ${contractType}...`);
+    // Payout fixo: 92.15%
+    const zenixPayout = 0.9215;
 
     try {
-      // Obter payout via proposal
-      const payout = await this.getPayout(config.derivToken, contractType, config.symbol, 5);
-      const zenixPayout = payout * 0.97; // Markup de 3%
-
-      await this.saveLog(userId, 'DEBUG', 'API', `Payout Deriv: ${(payout * 100).toFixed(2)}%, Payout ZENIX: ${(zenixPayout * 100).toFixed(2)}%`);
-      
-      // Executar compra
+      // Executar compra diretamente (sem consultar payout)
       await this.saveLog(userId, 'INFO', 'API', 
         `Comprando contrato ${contractType}. stake=${decision.stake?.toFixed(2)}, direction=${marketAnalysis.signal}`);
 
