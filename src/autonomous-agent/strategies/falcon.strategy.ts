@@ -74,7 +74,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           dailyLossLimit: parseFloat(user.daily_loss_limit),
           derivToken: user.deriv_token,
           currency: user.currency,
-          symbol: user.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
+          symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se banco tiver R_75)
           initialBalance: parseFloat(user.initial_balance) || 0,
         };
 
@@ -122,7 +122,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
+      symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se config tiver R_75)
       initialBalance: config.initialBalance || 0,
     };
 
@@ -158,8 +158,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
     }
 
+    // ✅ Processar para todos os usuários ativos (sempre R_100, ignorar símbolo do banco se for R_75)
     for (const [userId, config] of this.userConfigs.entries()) {
-      if (config.symbol === tickSymbol) {
+      // Sempre processar se o tick for R_100 (todos os agentes autônomos usam R_100)
+      if (tickSymbol === 'R_100') {
         promises.push(this.processTickForUser(userId, tick).catch((error) => {
           this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
         }));
