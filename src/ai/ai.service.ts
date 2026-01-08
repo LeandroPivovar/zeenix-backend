@@ -3434,51 +3434,50 @@ export class AiService implements OnModuleInit {
 
     try {
       // ✅ Cancelar subscription antiga se existir antes de fechar
-    if (this.subscriptionId && this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.logger.log(`[recreateWebSocket] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
-      this.cancelSubscription(this.subscriptionId);
-      // Aguardar um pouco para o comando forget ser processado
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+      if (this.subscriptionId && this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.logger.log(`[recreateWebSocket] 🔄 Cancelando subscription antiga: ${this.subscriptionId}`);
+        this.cancelSubscription(this.subscriptionId);
+        // Aguardar um pouco para o comando forget ser processado
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
 
-    // ✅ Salvar estado atual antes de fechar
-    await this.saveWebSocketState();
+      // ✅ Salvar estado atual antes de fechar
+      await this.saveWebSocketState();
 
-    // ✅ Fechar conexão atual
-    if (this.ws) {
-      try {
-        this.ws.removeAllListeners();
-        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
-          this.ws.close();
+      // ✅ Fechar conexão atual
+      if (this.ws) {
+        try {
+          this.ws.removeAllListeners();
+          if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+            this.ws.close();
+          }
+        } catch (error) {
+          this.logger.warn(`[recreateWebSocket] ⚠️ Erro ao fechar WebSocket antigo:`, error);
         }
-      } catch (error) {
-        this.logger.warn(`[recreateWebSocket] ⚠️ Erro ao fechar WebSocket antigo:`, error);
+        this.ws = null;
       }
-      this.ws = null;
-    }
 
-    this.isConnected = false;
-    this.subscriptionId = null;
-    this.hasReceivedAlreadySubscribed = false; // Resetar flag
-    this.lastAlreadySubscribedTime = 0; // Resetar timestamp
-    this.stopKeepAlive();
+      this.isConnected = false;
+      this.subscriptionId = null;
+      this.hasReceivedAlreadySubscribed = false; // Resetar flag
+      this.lastAlreadySubscribedTime = 0; // Resetar timestamp
+      this.stopKeepAlive();
 
-    // ✅ Aguardar um pouco antes de reconectar
-    await new Promise(resolve => setTimeout(resolve, 2000));
+      // ✅ Aguardar um pouco antes de reconectar
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // ✅ Tentar recuperar estado salvo
-    const savedState = await this.loadWebSocketState();
-    if (savedState && savedState.ticks.length > 0) {
-      this.ticks = savedState.ticks;
-      this.logger.log(`[recreateWebSocket] ✅ Recuperados ${savedState.ticks.length} ticks do estado salvo`);
-      if (savedState.subscriptionId) {
-        this.subscriptionId = savedState.subscriptionId;
-        this.logger.log(`[recreateWebSocket] ✅ Subscription ID recuperado: ${savedState.subscriptionId}`);
+      // ✅ Tentar recuperar estado salvo
+      const savedState = await this.loadWebSocketState();
+      if (savedState && savedState.ticks.length > 0) {
+        this.ticks = savedState.ticks;
+        this.logger.log(`[recreateWebSocket] ✅ Recuperados ${savedState.ticks.length} ticks do estado salvo`);
+        if (savedState.subscriptionId) {
+          this.subscriptionId = savedState.subscriptionId;
+          this.logger.log(`[recreateWebSocket] ✅ Subscription ID recuperado: ${savedState.subscriptionId}`);
+        }
       }
-    }
 
-    // ✅ Criar nova conexão
-    try {
+      // ✅ Criar nova conexão
       await this.initialize();
       this.logger.log(`[recreateWebSocket] ✅ Nova conexão WebSocket criada com sucesso`);
       this.websocketReconnectAttempts = 0; // Resetar contador após sucesso
