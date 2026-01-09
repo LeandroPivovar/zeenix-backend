@@ -50,7 +50,7 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
       await this.initialize();
       this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
-
+      
       // Sincronizar agentes ativos do banco
       await this.syncActiveAgentsFromDb();
     } catch (error) {
@@ -210,14 +210,14 @@ export class AutonomousAgentService implements OnModuleInit {
           // ✅ Tentar identificar o símbolo pela subscription
           // A API da Deriv pode retornar o símbolo na mensagem (echo contém a requisição original)
           let symbolFromMsg = this.symbol; // Default
-
+          
           // Tentar extrair do echo (requisição original)
           if (msg.echo?.ticks_history) {
             symbolFromMsg = msg.echo.ticks_history;
           } else if (msg.ticks_history) {
             symbolFromMsg = msg.ticks_history;
           }
-
+          
           // Mapear subscription ID para símbolo
           this.subscriptions.set(symbolFromMsg, subId);
           this.logger.log(`📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`);
@@ -231,15 +231,15 @@ export class AutonomousAgentService implements OnModuleInit {
         if (msg.tick) {
           // ✅ Todos os agentes autônomos usam R_100
           const symbolForTick = 'R_100';
-
+          
           if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
             this.subscriptionId = msg.subscription.id;
             this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
           }
-
+          
           // ✅ Log de debug para verificar se está recebendo ticks
           this.logger.debug(`[AutonomousAgent] 📥 Tick recebido: quote=${msg.tick.quote}, symbol=${symbolForTick}`);
-
+          
           this.processTick(msg.tick, symbolForTick);
         }
         break;
@@ -356,7 +356,7 @@ export class AutonomousAgentService implements OnModuleInit {
       symbol,
     );
   }
-
+  
   /**
    * ✅ NOVO: Obtém o símbolo associado a uma subscription ID
    */
@@ -417,10 +417,10 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Buscar agentes que pararam no dia anterior
       const agentsToReset = await this.dataSource.query(
-        `SELECT user_id, session_status, session_date, agent_type
+        `SELECT user_id, session_status, session_date
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND agent_type IN ('orion', 'sentinel')
+           AND agent_type = 'orion'
            AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
            AND (session_date IS NULL OR DATE(session_date) < ?)`,
         [todayStr],
@@ -428,7 +428,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       for (const agent of agentsToReset) {
         this.logger.log(
-          `[ResetDailySession] Resetando sessão diária para usuário ${agent.user_id} (status anterior: ${agent.session_status}, tipo: ${agent.agent_type})`,
+          `[ResetDailySession] Resetando sessão diária para usuário ${agent.user_id} (status anterior: ${agent.session_status})`,
         );
 
         // Resetar sessão diária
@@ -442,7 +442,7 @@ export class AutonomousAgentService implements OnModuleInit {
           [agent.user_id],
         );
 
-        // Reativar agente na estratégia correta
+        // Reativar agente na estratégia Orion
         const config = await this.dataSource.query(
           `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
                   deriv_token, currency, symbol, trading_mode, initial_balance
@@ -455,9 +455,7 @@ export class AutonomousAgentService implements OnModuleInit {
         if (config && config.length > 0) {
           const agentConfig = config[0];
           const userId = agent.user_id.toString();
-          const strategyName = agent.agent_type || 'orion';
-
-          await this.strategyManager.activateUser(strategyName, userId, {
+          await this.strategyManager.activateUser('orion', userId, {
             userId: userId,
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
@@ -536,12 +534,10 @@ export class AutonomousAgentService implements OnModuleInit {
                agent_type = ?,
                trading_mode = ?,
                initial_balance = ?,
-                session_status = 'active',
+               session_status = 'active',
                session_date = NOW(),
                daily_profit = 0,
                daily_loss = 0,
-               total_losses = 0,
-               total_wins = 0,
                updated_at = NOW()
            WHERE user_id = ?`,
           [
@@ -592,7 +588,7 @@ export class AutonomousAgentService implements OnModuleInit {
       if (strategy === 'arion') {
         strategy = 'orion';
       }
-
+      
       // ✅ Suportar Orion, Sentinel e Falcon
       if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon') {
         this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel' e 'falcon' estão disponíveis. Usando 'orion'.`);
@@ -606,7 +602,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // ✅ Todos os agentes autônomos usam R_100
       const agentSymbol = config.symbol || 'R_100';
-
+      
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
         if (!this.subscriptions.has(agentSymbol)) {
@@ -623,7 +619,7 @@ export class AutonomousAgentService implements OnModuleInit {
           this.activeSymbols.add(agentSymbol);
         }
       }
-
+      
       // Ativar agente na estratégia
       try {
         await this.strategyManager.activateUser(strategy, userId, {
@@ -722,7 +718,7 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getSessionStats(userId: string): Promise<any> {
     // ✅ Buscar configuração do agente
-    const config = await this.dataSource.query(
+    const config = await this.dataSource.query( 
       `SELECT 
          daily_profit,
          daily_loss,
@@ -763,7 +759,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Buscar operações finalizadas da sessão atual (após session_date)
     const sessionDate = configData.session_date;
-
+    
     // ✅ Se não houver session_date, retornar valores zerados
     if (!sessionDate) {
       return {
@@ -845,7 +841,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
     const initialBalance = parseFloat(configData.initial_balance) || parseFloat(configData.totalCapital) || 0;
-
+    
     // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
     return {
       daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
@@ -916,12 +912,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
-
+    
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;
     const cached = this.sessionDateCache.get(userId);
     const now = Date.now();
-
+    
     if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
       // Usar cache se ainda válido (menos de 30 segundos)
       sessionStartTime = cached.date;
@@ -933,7 +929,7 @@ export class AutonomousAgentService implements OnModuleInit {
          LIMIT 1`,
         [userId],
       );
-
+      
       if (config && config.length > 0 && config[0].session_date) {
         sessionStartTime = config[0].session_date;
         // Atualizar cache
@@ -949,15 +945,15 @@ export class AutonomousAgentService implements OnModuleInit {
         });
       }
     }
-
+    
     // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
-    const whereClause = sessionStartTime
+    const whereClause = sessionStartTime 
       ? `WHERE user_id = ? AND timestamp >= ?`
       : `WHERE user_id = ?`;
-    const params = sessionStartTime
+    const params = sessionStartTime 
       ? [userId, sessionStartTime]
       : [userId];
-
+    
     const logs = await this.dataSource.query(
       `SELECT 
          id,
@@ -973,7 +969,7 @@ export class AutonomousAgentService implements OnModuleInit {
        ${limitClause}`,
       params,
     );
-
+    
     // ✅ Converter campos snake_case para camelCase para o frontend
     return (logs || []).map((log: any) => ({
       id: log.id,

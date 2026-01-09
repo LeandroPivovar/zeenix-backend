@@ -14,3 +14,4 @@ SELECT
     COUNT(CASE WHEN symbol != 'R_100' THEN 1 END) as outros_count
 FROM autonomous_agent_config;
 
+

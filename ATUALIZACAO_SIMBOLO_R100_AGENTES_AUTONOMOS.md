@@ -195,3 +195,4 @@ WHERE symbol != 'R_100' OR symbol IS NULL;
 
 **Status:** ✅ **CONCLUÍDO**
 
+

@@ -22,3 +22,4 @@ SELECT symbol,
        LEFT(ticks_data, 50) as preview
 FROM ai_websocket_state;
 
+

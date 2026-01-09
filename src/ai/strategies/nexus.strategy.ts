@@ -6,22 +6,13 @@ import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 
 /**
- * ✅ NEXUS Strategy Master v4.0 - Price Action & Barriers
- * 
- * Visão Geral:
- * A IA NEXUS opera baseada no comportamento real do preço (Price Action),
- * utilizando contratos Higher com Barreira Negativa para aumentar assertividade.
- * 
- * Modos:
- * 1. Veloz (Momentum): 3 ticks de alta.
- * 2. Balanceado (Pullback): Tendência de Alta + 3 ticks de queda (correção).
- * 3. Preciso (RSI Sniper): RSI < 30 (Sobrevendido).
- * 
- * Gestão de Risco:
- * - Barreira Dinâmica: Ajusta o offset para controlar Payout vs Segurança.
- * - Perfis de Recuperação: Conservador, Moderado, Agressivo.
+ * ✅ NEXUS Strategy Master
+ * Price Action + Dynamic Barriers + Zenix Pro Standards.
  */
 
+/**
+ * ✅ Interface para Conexão WebSocket reutilizável
+ */
 interface WsConnection {
     ws: WebSocket;
     authorized: boolean;
@@ -29,9 +20,6 @@ interface WsConnection {
     requestIdCounter: number;
     pendingRequests: Map<string, { resolve: (data: any) => void; reject: (err: any) => void; timeout: NodeJS.Timeout }>;
     subscriptions: Map<string, (msg: any) => void>;
-    sendRequest?: (payload: any, timeoutMs?: number) => Promise<any>;
-    subscribe?: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
-    removeSubscription?: (subId: string) => void;
 }
 
 class RiskManager {
@@ -45,9 +33,6 @@ class RiskManager {
     private totalLossAccumulated: number;
     private lastResultWasWin: boolean;
     private _blindadoActive: boolean;
-
-    // Level 0 (Ataque): -0.28 (Target ~60% Payout)
-    // Level 1+ (Defesa): Sem barreira (Target ~95% Payout)
 
     constructor(
         initialBalance: number,
@@ -88,33 +73,17 @@ class RiskManager {
         return this.maxBalance - this.initialBalance;
     }
 
+    get guaranteedProfit(): number {
+        if (!this._blindadoActive) return 0;
+        return this.profitAccumulatedAtPeak * 0.5;
+    }
+
     getInitialBalance(): number {
         return this.initialBalance;
     }
 
     getProfitTarget(): number {
         return this.profitTarget;
-    }
-
-    /**
-     * Retorna o offset da barreira.
-     * MODO ATAQUE (0 perdas): Barreira Negativa (-0.12) para Payout ~60%.
-     * MODO DEFESA (>0 perdas): Sem Barreira (undefined) para Payout ~95% (Rise/Fall).
-     */
-    getBarrierOffset(): string | undefined {
-        if (this.consecutiveLosses > 0) {
-            return undefined; // Defense Mode: Standard Rise (No Barrier)
-        }
-        return "-0.12"; // Attack Mode: Negative Barrier (Target ~60%)
-    }
-
-    /**
-     * Retorna o Payout ESTIMADO (decimal) para o nível atual.
-     * Usado para calcular o Martingale.
-     */
-    private getEstimatedPayout(): number {
-        if (this.consecutiveLosses === 0) return 0.60;
-        return 0.95;
     }
 
     calculateStake(
@@ -132,58 +101,33 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const payoutRate = this.getEstimatedPayout();
+        const PAYOUT_RATE = 0.30;
 
         if (this.consecutiveLosses > 0) {
-            // --- MODO DEFESA (RECUPERAÇÃO HÍBRIDA) ---
-            // Usa Payout de ~95% (Rise Padrão) para reduzir multiplicador
-            const RECOVERY_PAYOUT = 0.95;
-            let targetProfit = 0;
-
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    // Objetivo: Recuperar apenas o valor perdido ("Zero a Zero")
-                    targetProfit = this.totalLossAccumulated;
-                    nextStake = targetProfit / RECOVERY_PAYOUT;
+                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
                 } else {
-                    // Trava de Segurança: Se perder o nível 5, aceita prejuízo e reseta
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
-                    if (userId && symbol && logCallback) {
-                        logCallback(userId, symbol, 'alerta', `🛡️ [CONSERVADOR] Limite de Nível 5 atingido. Aceitando prejuízo e reiniciando ciclo.`);
-                    }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                // Objetivo: Recuperar Perda + 25% de Lucro sobre a perda
-                targetProfit = this.totalLossAccumulated * 1.25;
-                nextStake = targetProfit / RECOVERY_PAYOUT;
+                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.25);
+                nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                // Objetivo: Recuperar Perda + 50% de Lucro sobre a perda
-                targetProfit = this.totalLossAccumulated * 1.50;
-                nextStake = targetProfit / RECOVERY_PAYOUT;
+                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
+                nextStake = targetRecovery / PAYOUT_RATE;
             }
-
-        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0) {
-            // --- SOROS (Progressão após Vitórias) ---
-            // Nível 1: Após 1 vitória, aumenta stake em 50%
-            // Nível 2+: Reseta para stake base
-            // Ciclo Soros (Ativa em vitórias ímpares: 1, 3, 5...)
-            if (vitoriasConsecutivas % 2 !== 0) {
-                nextStake = baseStake * 1.5; // Soros Nível 1
-                if (userId && symbol && logCallback) {
-                    logCallback(userId, symbol, 'analise', `📈 [SOROS] Nível 1 ativado (+50% stake) - Ciclo ${Math.ceil(vitoriasConsecutivas / 2)}`);
-                }
-            } else {
-                nextStake = baseStake; // Reseta após completar o ciclo (2, 4, 6...)
-            }
+        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {
+            nextStake = baseStake + lastProfit;
         }
 
-        // --- PROTEÇÃO DE CAPITAL ---
+        nextStake = Math.round(nextStake * 100) / 100;
 
-        // Ativação do Stop Loss Blindado
         const profitAccumulatedAtPeak = this.maxBalance - this.initialBalance;
         const activationTrigger = this.profitTarget * 0.50;
+        let minAllowedBalance = 0.0;
 
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
@@ -192,26 +136,18 @@ class RiskManager {
             }
         }
 
-        // Definir saldo mínimo permitido
-        let minAllowedBalance = 0.0;
         if (this._blindadoActive) {
-            minAllowedBalance = this.initialBalance + (profitAccumulatedAtPeak * 0.5);
+            const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
+            minAllowedBalance = this.initialBalance + guaranteedProfit;
         } else {
             minAllowedBalance = this.initialBalance - this.stopLossLimit;
         }
 
-        // Pouso Suave (Soft Landing)
         const potentialBalanceAfterLoss = currentBalance - nextStake;
         if (potentialBalanceAfterLoss < minAllowedBalance) {
-            // Se o próximo stake quebrar o stop, reduz a mão para o máximo permitido
             let adjustedStake = currentBalance - minAllowedBalance;
             adjustedStake = Math.round(adjustedStake * 100) / 100;
-
-            if (adjustedStake < 0.35) return 0.0; // Se não der nem pra entrada mínima, stop.
-
-            if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `🛬 [SOFT LANDING] Stake reduzido de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar o Stop.`);
-            }
+            if (adjustedStake < 0.35) return 0.0;
             return adjustedStake;
         }
 
@@ -227,10 +163,12 @@ interface NexusUserState {
     apostaInicial: number;
     modoMartingale: ModoMartingale;
     mode: 'VELOZ' | 'BALANCEADO' | 'PRECISO';
-    ticksColetados: number;
+    originalMode: 'VELOZ' | 'BALANCEADO' | 'PRECISO';
+    lastDirection: DigitParity | null;
     isOperationActive: boolean;
     vitoriasConsecutivas: number;
     ultimoLucro: number;
+    ticksColetados: number;
 }
 
 @Injectable()
@@ -240,7 +178,7 @@ export class NexusStrategy implements IStrategy {
     private users = new Map<string, NexusUserState>();
     private riskManagers = new Map<string, RiskManager>();
     private ticks: Tick[] = [];
-    private symbol = 'R_100'; // Padrão Nexus
+    private symbol = 'R_100';
     private appId: string;
 
     private wsConnections: Map<string, WsConnection> = new Map();
@@ -255,20 +193,17 @@ export class NexusStrategy implements IStrategy {
     }
 
     async initialize(): Promise<void> {
-        this.logger.log('[NEXUS] Estratégia NEXUS v4.0 inicializada');
+        this.logger.log('[NEXUS] Estratégia NEXUS inicializada');
     }
 
     async processTick(tick: Tick, symbol?: string): Promise<void> {
         if (symbol && symbol !== this.symbol) return;
-
-        // Manter histórico de ticks para análise técnica
         this.ticks.push(tick);
-        if (this.ticks.length > 200) this.ticks.shift(); // Manter buffers suficientes para SMA/RSI
+        if (this.ticks.length > 100) this.ticks.shift();
 
         for (const state of this.users.values()) {
             state.ticksColetados++;
-            // ✅ Non-blocking call to prevent locking the main loop
-            this.processUser(state).catch(e => this.logger.error(`[NEXUS] Erro ao processar usuário ${state.userId}: ${e.message}`));
+            await this.processUser(state);
         }
     }
 
@@ -277,75 +212,48 @@ export class NexusStrategy implements IStrategy {
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
-        const signal = this.check_signal(state);
+        const signal = this.check_signal(state, riskManager);
         if (!signal) return;
 
-        // Nexus v4 sempre opera HIGHER (CALL), a proteção vem da barreira
-        await this.executeOperation(state, 'PAR'); // 'PAR' aqui é apenas placeholder para direção positiva
+        await this.executeOperation(state, signal);
     }
 
-    private check_signal(state: NexusUserState): boolean {
-        // Quantidade mínima de ticks para cada análise
-        const requiredTicks = state.mode === 'VELOZ' ? 5 : state.mode === 'BALANCEADO' ? 55 : 20;
+    private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
+        let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
+        if (state.ticksColetados < requiredTicks) return null;
 
-        if (this.ticks.length < requiredTicks) return false;
-        if (state.ticksColetados < 5) return false; // Warmup do usuário
+        const lastTicks = this.ticks.slice(-requiredTicks);
+        if (lastTicks.length < 5) return null;
 
-        const lastTicks = this.ticks;
-        const currentPrice = lastTicks[lastTicks.length - 1].value;
+        let signal: DigitParity | null = null;
 
-        // 1. MODO VELOZ (Momentum)
-        // Gatilho: 3 ticks consecutivos de alta
         if (state.mode === 'VELOZ') {
-            const t = lastTicks.slice(-4); // Pegar os últimos 4 para comparar 3 intervalos
-            // t[0] -> t[1] (Alta) -> t[2] (Alta) -> t[3] (Alta)
-            if (t.length >= 4) {
-                const isUp1 = t[1].value > t[0].value;
-                const isUp2 = t[2].value > t[1].value;
-                const isUp3 = t[3].value > t[2].value;
-
-                if (isUp1 && isUp2 && isUp3) {
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', `⚡ [VELOZ] Momentum detectado (3 ticks de alta).`);
-                    return true;
-                }
+            const t = lastTicks.slice(-3);
+            if (t[2].value > t[1].value && t[1].value > t[0].value) {
+                signal = 'PAR';
+                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (3 subidas consecutivas)`);
             }
-        }
-
-        // 2. MODO BALANCEADO (Pullback)
-        // Gatilho: Tendência Alta (Preço > SMA50) + 3 ticks de QUEDA (Correção)
-        else if (state.mode === 'BALANCEADO') {
+        } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
+            const currentPrice = lastTicks[lastTicks.length - 1].value;
 
-            if (currentPrice > sma50) { // Tendência Macro de Alta
+            if (currentPrice > sma50) {
                 const t = lastTicks.slice(-4);
-                // t[0] -> t[1] (Queda) -> t[2] (Queda) -> t[3] (Queda)
-                if (t.length >= 4) {
-                    const isDown1 = t[1].value < t[0].value;
-                    const isDown2 = t[2].value < t[1].value;
-                    const isDown3 = t[3].value < t[2].value;
-
-                    if (isDown1 && isDown2 && isDown3) {
-                        this.saveNexusLog(state.userId, this.symbol, 'analise', `⚖️ [BALANCEADO] Pullback em tendência de alta detectado.`);
-                        return true;
-                    }
+                if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
+                    signal = 'PAR';
+                    this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE BALANCEADO] Pullback detectado em Tendência de Alta`);
                 }
             }
-        }
-
-        // 3. MODO PRECISO (RSI Sniper)
-        // Gatilho: RSI(14) < 30 (Sobrevendido - Reversão iminente)
-        else if (state.mode === 'PRECISO') {
+        } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
-            if (rsi < 30) {
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🎯 [PRECISO] RSI Sobrevendido (${rsi.toFixed(2)} < 30).`);
-                return true;
+            if (rsi < 20) {
+                signal = 'PAR';
+                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO] RSI em exaustão (${rsi.toFixed(2)})`);
             }
         }
 
-        return false;
+        return signal;
     }
-
-    // --- Indicadores Técnicos ---
 
     private calculateSMA(period: number): number {
         if (this.ticks.length < period) return this.ticks[this.ticks.length - 1]?.value || 0;
@@ -359,7 +267,6 @@ export class NexusStrategy implements IStrategy {
         let gains = 0;
         let losses = 0;
 
-        // Cálculo simples de RSI para performance
         for (let i = this.ticks.length - period; i < this.ticks.length; i++) {
             const diff = this.ticks[i].value - this.ticks[i - 1].value;
             if (diff >= 0) gains += diff;
@@ -374,8 +281,6 @@ export class NexusStrategy implements IStrategy {
         return 100 - (100 / (1 + rs));
     }
 
-    // --- Gestão de Usuários ---
-
     async activateUser(userId: string, config: any): Promise<void> {
         const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, stopLossBlindado, profitTarget, lossLimit } = config;
         const nexusMode = (mode || 'VELOZ').toUpperCase() as any;
@@ -384,8 +289,8 @@ export class NexusStrategy implements IStrategy {
             userId, derivToken, currency: currency || 'USD',
             capital: stakeAmount, apostaInicial: entryValue || 0.35,
             modoMartingale: modoMartingale || 'conservador',
-            mode: nexusMode,
-            isOperationActive: false,
+            mode: nexusMode, originalMode: nexusMode,
+            lastDirection: null, isOperationActive: false,
             vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
         });
 
@@ -395,7 +300,7 @@ export class NexusStrategy implements IStrategy {
         ));
 
         this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode}`);
-        this.saveNexusLog(userId, 'SISTEMA', 'info', `IA NEXUS v4.0 ATIVADA | Modo: ${nexusMode} | Capital: $${stakeAmount.toFixed(2)}`);
+        this.saveNexusLog(userId, 'SISTEMA', 'info', `IA NEXUS ATIVADA | Modo: ${nexusMode} | Capital: $${stakeAmount.toFixed(2)}`);
     }
 
     async deactivateUser(userId: string): Promise<void> {
@@ -404,8 +309,6 @@ export class NexusStrategy implements IStrategy {
     }
 
     getUserState(userId: string) { return this.users.get(userId); }
-
-    // --- Execução de Trade ---
 
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
         const riskManager = this.riskManagers.get(state.userId)!;
@@ -426,38 +329,23 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        // Configuração do Contrato NEXUS
-        const barrierOffset = riskManager.getBarrierOffset();
-        const contractType = 'CALL'; // Sempre CALL (Higher)
-        const isRecovery = riskManager.consecutiveLosses > 0;
-
-        let logMessage = '';
-        if (barrierOffset) {
-            logMessage = `🚀 Entrada Higher (Barreira ${barrierOffset})`;
-        } else {
-            logMessage = `🛡️ Entrada Rise (Sem Barreira) - Recuperação`;
-        }
+        let barrier = '-0.15';
+        if (riskManager.consecutiveLosses === 1) barrier = '-0.25';
+        else if (riskManager.consecutiveLosses === 2) barrier = '-0.35';
 
         state.isOperationActive = true;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
-            const tradeId = await this.createTradeRecord(state, contractType, stake, currentPrice);
+            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', `${logMessage} | Valor: $${stake.toFixed(2)}`);
+            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: CALL | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
 
-            const tradeTimeout = 120000;
-            const result = await Promise.race([
-                this.executeTradeViaWebSocket(state.derivToken, {
-                    contract_type: contractType,
-                    amount: stake,
-                    currency: state.currency,
-                    barrier: barrierOffset
-                }, state.userId),
-                new Promise((resolve) => setTimeout(() => {
-                    this.saveNexusLog(state.userId, this.symbol, 'erro', `⏱️ Timeout ao executar trade.`);
-                    resolve(null);
-                }, tradeTimeout))
-            ]) as any;
+            const result = await this.executeTradeViaWebSocket(state.derivToken, {
+                contract_type: 'CALL',
+                amount: stake,
+                currency: state.currency,
+                barrier: barrier
+            }, state.userId);
 
             if (result) {
                 riskManager.updateResult(result.profit, stake);
@@ -467,10 +355,10 @@ export class NexusStrategy implements IStrategy {
 
                 if (status === 'WON') {
                     state.vitoriasConsecutivas++;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] Resultado Positivo. Lucro: +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
                 } else {
                     state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `📉 [LOSS] -$${Math.abs(result.profit).toFixed(2)} | Iniciando nível ${riskManager.consecutiveLosses} de recuperação.`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `📉 [LOSS] Perda de $${Math.abs(result.profit).toFixed(2)}. Iniciando recuperação Dinâmica.`);
                 }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
@@ -490,43 +378,27 @@ export class NexusStrategy implements IStrategy {
     }
 
     private async stopUser(state: NexusUserState, reason: 'stopped_blindado' | 'stopped_loss' | 'stopped_profit') {
-        const msg = reason === 'stopped_profit' ? 'Meta Batida! 🏆' : 'Stop Loss Atingido 🛑';
-        this.saveNexusLog(state.userId, this.symbol, 'alerta', `Sessão encerrada: ${msg}`);
+        this.saveNexusLog(state.userId, this.symbol, 'alerta', `🛑 Sessão encerrada: ${reason}`);
         this.tradeEvents.emit({ userId: state.userId, type: reason, strategy: 'nexus' });
-
-        // Remove da memória (para de operar agora)
         await this.deactivateUser(state.userId);
-
-        // Atualiza no banco para "Pausado no Dia" (is_active=1 mas com status stopped_X)
-        // Isso permite que o AutonomousAgentService reinicie o agente no dia seguinte
-        await this.dataSource.query(
-            `UPDATE autonomous_agent_config 
-             SET is_active = TRUE, 
-                 session_status = ?,
-                 updated_at = NOW() 
-             WHERE user_id = ?`,
-            [reason, state.userId]
-        );
+        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [reason, state.userId]);
     }
 
-    private async createTradeRecord(state: NexusUserState, contractType: string, stake: number, entryPrice: number): Promise<number> {
-        const analysisData = { strategy: 'nexus', mode: state.mode };
+    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
+        const analysisData = { strategy: 'nexus', mode: state.mode, direction };
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5)`,
-            [state.userId, contractType, entryPrice, stake, contractType, JSON.stringify(analysisData), this.symbol]
+             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
+            [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
         );
         return r.insertId || r[0]?.insertId;
     }
-
-    // --- WebSocket ---
-    // (Mantendo lógica de conexão existente, simplificada)
 
     private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<any> {
         try {
             const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-            const proposalPayload: any = {
+            const proposalResponse: any = await connection.sendRequest({
                 proposal: 1,
                 amount: params.amount,
                 basis: 'stake',
@@ -534,43 +406,30 @@ export class NexusStrategy implements IStrategy {
                 currency: params.currency || 'USD',
                 duration: 5,
                 duration_unit: 't',
-                symbol: this.symbol
-            };
-
-            if (params.barrier) {
-                proposalPayload.barrier = params.barrier;
-            }
-
-            if (!connection.sendRequest) throw new Error('WebSocket sendRequest not available');
-            const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
+                symbol: this.symbol,
+                barrier: params.barrier
+            }, 60000);
 
             if (proposalResponse.error) {
                 const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
-                if (userId) this.saveNexusLog(userId, this.symbol, 'erro', `❌ Proposta falhou: ${errorMsg}`);
+                this.logger.error(`[NEXUS] ❌ Erro na proposta: ${errorMsg}`);
+                if (userId) this.saveNexusLog(userId, this.symbol, 'erro', `❌ Erro na proposta: ${errorMsg}`);
                 return null;
             }
 
             const proposalId = proposalResponse.proposal?.id;
             const proposalPrice = Number(proposalResponse.proposal?.ask_price);
-            const proposalPayout = Number(proposalResponse.proposal?.payout || 0);
-
-            // Log do Payout Real para calibração
-            if (userId && params.barrier) {
-                const payoutPercent = proposalPrice > 0 ? ((proposalPayout - proposalPrice) / proposalPrice) * 100 : 0;
-                this.saveNexusLog(userId, this.symbol, 'analise', `📊 Payout Ofertado: ${payoutPercent.toFixed(2)}% | Barreira: ${params.barrier}`);
-            }
-
             if (!proposalId) return null;
 
-            if (!connection.sendRequest) throw new Error('WebSocket sendRequest not available');
             const buyResponse: any = await connection.sendRequest({
                 buy: proposalId,
                 price: proposalPrice
             }, 60000);
 
             if (buyResponse.error) {
-                const errorMsg = buyResponse.error.message;
-                if (userId) this.saveNexusLog(userId, this.symbol, 'erro', `❌ Compra falhou: ${errorMsg}`);
+                const errorMsg = buyResponse.error.message || JSON.stringify(buyResponse.error);
+                this.logger.error(`[NEXUS] ❌ Erro na compra: ${errorMsg}`);
+                if (userId) this.saveNexusLog(userId, this.symbol, 'erro', `❌ Erro na compra: ${errorMsg}`);
                 return null;
             }
 
@@ -582,150 +441,271 @@ export class NexusStrategy implements IStrategy {
                 const timeout = setTimeout(() => {
                     if (!hasResolved) {
                         hasResolved = true;
-                        if (connection.removeSubscription) connection.removeSubscription(contractId);
+                        connection.removeSubscription(contractId);
                         resolve(null);
                     }
                 }, 90000);
 
-                if (connection.subscribe) {
-                    connection.subscribe(
-                        { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
-                        (msg: any) => {
-                            const c = msg.proposal_open_contract;
-                            if (c && c.is_sold) {
-                                if (!hasResolved) {
-                                    hasResolved = true;
-                                    clearTimeout(timeout);
-                                    if (connection.removeSubscription) connection.removeSubscription(contractId);
-                                    resolve({ contractId: c.contract_id, profit: Number(c.profit), exitSpot: c.exit_tick });
-                                }
+                connection.subscribe(
+                    { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
+                    (msg: any) => {
+                        if (msg.error) {
+                            if (!hasResolved) {
+                                hasResolved = true;
+                                clearTimeout(timeout);
+                                connection.removeSubscription(contractId);
+                                resolve(null);
                             }
-                        },
-                        String(contractId)
-                    ).catch(() => { });
-                }
+                            return;
+                        }
+
+                        const c = msg.proposal_open_contract;
+                        if (c && c.is_sold) {
+                            if (!hasResolved) {
+                                hasResolved = true;
+                                clearTimeout(timeout);
+                                connection.removeSubscription(contractId);
+                                resolve({ contractId: c.contract_id, profit: Number(c.profit), exitSpot: c.exit_tick });
+                            }
+                        }
+                    },
+                    contractId
+                ).catch(() => {
+                    if (!hasResolved) {
+                        hasResolved = true;
+                        clearTimeout(timeout);
+                        resolve(null);
+                    }
+                });
             });
 
         } catch (error) {
-            this.logger.error(`[NEXUS] WS Error: ${error.message}`);
+            this.logger.error(`[NEXUS] ❌ Erro ao executar trade via WS: ${error.message}`);
             return null;
         }
     }
 
-    private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<WsConnection> {
+    private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+        ws: WebSocket;
+        sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+        removeSubscription: (subId: string) => void;
+    }> {
         const existing = this.wsConnections.get(token);
-        if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) return existing;
+
+        if (existing) {
+            if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+                return {
+                    ws: existing.ws,
+                    sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+                    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+                        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+                    removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+                };
+            } else {
+                if (existing.keepAliveInterval) clearInterval(existing.keepAliveInterval);
+                existing.ws.close();
+                this.wsConnections.delete(token);
+            }
+        }
 
         const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
         const ws = await new Promise<WebSocket>((resolve, reject) => {
             const socket = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
             let authResolved = false;
 
-            // Timeout para conexão/autorização
             const connectionTimeout = setTimeout(() => {
                 if (!authResolved) {
-                    socket.terminate(); // Kill connection
-                    reject(new Error('Timeout conectando/autorizando WebSocket (30000ms)'));
+                    socket.close();
+                    this.wsConnections.delete(token);
+                    reject(new Error('Timeout ao conectar (20s)'));
                 }
-            }, 30000);
+            }, 20000);
 
-            socket.on('message', (data: any) => {
+            socket.on('message', (data: WebSocket.RawData) => {
                 try {
                     const msg = JSON.parse(data.toString());
+                    if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) return;
+
+                    const conn = this.wsConnections.get(token);
+                    if (!conn) return;
+
                     if (msg.msg_type === 'authorize' && !authResolved) {
                         authResolved = true;
                         clearTimeout(connectionTimeout);
+
+                        if (msg.error) {
+                            socket.close();
+                            this.wsConnections.delete(token);
+                            reject(new Error(msg.error.message));
+                            return;
+                        }
+
+                        conn.authorized = true;
+                        conn.keepAliveInterval = setInterval(() => {
+                            if (socket.readyState === WebSocket.OPEN) {
+                                try { socket.send(JSON.stringify({ ping: 1 })); } catch (e) { }
+                            }
+                        }, 30000);
+
                         resolve(socket);
+                        return;
+                    }
+
+                    if (msg.proposal_open_contract) {
+                        const contractId = msg.proposal_open_contract.contract_id;
+                        if (contractId && conn.subscriptions.has(contractId)) {
+                            conn.subscriptions.get(contractId)!(msg);
+                            return;
+                        }
+                    }
+
+                    const firstKey = conn.pendingRequests.keys().next().value;
+                    if (firstKey) {
+                        const pending = conn.pendingRequests.get(firstKey);
+                        if (pending) {
+                            clearTimeout(pending.timeout);
+                            conn.pendingRequests.delete(firstKey);
+                            if (msg.error) pending.reject(new Error(msg.error.message));
+                            else pending.resolve(msg);
+                        }
                     }
                 } catch (e) { }
             });
 
-            socket.on('open', () => socket.send(JSON.stringify({ authorize: token })));
+            socket.on('open', () => {
+                const conn: WsConnection = {
+                    ws: socket,
+                    authorized: false,
+                    keepAliveInterval: null,
+                    requestIdCounter: 0,
+                    pendingRequests: new Map(),
+                    subscriptions: new Map(),
+                };
+                this.wsConnections.set(token, conn);
+                socket.send(JSON.stringify({ authorize: token }));
+            });
 
             socket.on('error', (err) => {
-                clearTimeout(connectionTimeout);
-                reject(err);
+                if (!authResolved) {
+                    clearTimeout(connectionTimeout);
+                    authResolved = true;
+                    this.wsConnections.delete(token);
+                    reject(err);
+                }
+            });
+
+            socket.on('close', () => {
+                const conn = this.wsConnections.get(token);
+                if (conn) {
+                    if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval as any);
+                    conn.pendingRequests.forEach(p => { clearTimeout(p.timeout); p.reject(new Error('WS closed')); });
+                    conn.subscriptions.clear();
+                }
+                this.wsConnections.delete(token);
+                if (!authResolved) {
+                    clearTimeout(connectionTimeout);
+                    reject(new Error('WS closed before auth'));
+                }
             });
         });
 
-        const conn: WsConnection = {
-            ws, authorized: true, keepAliveInterval: null, requestIdCounter: 0,
-            pendingRequests: new Map(), subscriptions: new Map()
+        return {
+            ws: ws,
+            sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+            subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+                this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+            removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
-
-        // Implementação correta de sendRequest com timeout
-        conn.sendRequest = (payload, timeoutMs = 60000) => new Promise((resolve) => {
-            const id = ++conn.requestIdCounter;
-            const reqPayload = { ...payload, req_id: id };
-
-            // Definição do listener para remoção posterior
-            const listener = (data: any) => {
-                try {
-                    const msg = JSON.parse(data.toString());
-                    if ((msg.req_id === id) ||
-                        (msg.proposal && payload.proposal && (!msg.req_id || msg.req_id === id)) ||
-                        (msg.buy && payload.buy && (!msg.req_id || msg.req_id === id))) {
-
-                        ws.removeListener('message', listener);
-                        clearTimeout(timeoutTimer);
-                        resolve(msg);
-                    }
-                } catch (e) { }
-            };
-
-            // Timeout de segurança
-            const timeoutTimer = setTimeout(() => {
-                ws.removeListener('message', listener);
-                resolve({ error: { message: `Timeout aguardando resposta (${timeoutMs}ms)`, code: 'Timeout' } });
-            }, timeoutMs);
-
-            ws.on('message', listener);
-            ws.send(JSON.stringify(reqPayload));
-        });
-
-        conn.subscribe = (payload, cb, subId) => new Promise((resolve) => {
-            ws.send(JSON.stringify(payload));
-            const listener = (data: any) => {
-                const msg = JSON.parse(data.toString());
-                if (msg.proposal_open_contract && msg.proposal_open_contract.contract_id == payload.contract_id) {
-                    cb(msg);
-                }
-            };
-            conn.subscriptions.set(String(payload.contract_id), listener as any);
-            ws.on('message', listener);
-            resolve();
-        });
-
-        conn.removeSubscription = (subId) => {
-            // Limpeza básica
-        };
-
-        this.wsConnections.set(token, conn);
-        return conn;
     }
 
-    // --- Logging ---
+    private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+        const conn = this.wsConnections.get(token);
+        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+            throw new Error('Conexão WebSocket indisponível');
+        }
+
+        return new Promise((resolve, reject) => {
+            const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+            const timeout = setTimeout(() => {
+                conn.pendingRequests.delete(requestId);
+                reject(new Error(`Timeout ${timeoutMs}ms`));
+            }, timeoutMs);
+            conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+            conn.ws.send(JSON.stringify(payload));
+        });
+    }
+
+    private async subscribeViaConnection(token: string, payload: any, callback: (msg: any) => void, subId: string, timeoutMs: number): Promise<void> {
+        const conn = this.wsConnections.get(token);
+        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+            throw new Error('Conexão WebSocket indisponível');
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                conn.subscriptions.delete(subId);
+                reject(new Error(`Timeout ao inscrever ${subId}`));
+            }, timeoutMs);
+
+            const wrappedCallback = (msg: any) => {
+                if (msg.proposal_open_contract || msg.error) {
+                    clearTimeout(timeout);
+                    if (msg.error) {
+                        conn.subscriptions.delete(subId);
+                        reject(new Error(msg.error.message));
+                        return;
+                    }
+                    conn.subscriptions.set(subId, callback);
+                    resolve();
+                    callback(msg);
+                    return;
+                }
+                callback(msg);
+            };
+
+            conn.subscriptions.set(subId, wrappedCallback);
+            conn.ws.send(JSON.stringify(payload));
+        });
+    }
+
+    private removeSubscriptionFromConnection(token: string, subId: string): void {
+        const conn = this.wsConnections.get(token);
+        if (conn) conn.subscriptions.delete(subId);
+    }
+
     private saveNexusLog(userId: string, symbol: string, type: any, message: string) {
-        if (!userId) return;
-        this.logQueue.push({ userId, symbol, type, message });
+        if (!userId || !type || !message) return;
+        this.logQueue.push({ userId, symbol, type, message, timestamp: new Date() });
         this.processQueue();
     }
 
     private async processQueue() {
         if (this.logProcessing || this.logQueue.length === 0) return;
         this.logProcessing = true;
+
         try {
             const logs = this.logQueue.splice(0, 50);
+            const icons: Record<string, string> = {
+                'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
+            };
+
             for (const log of logs) {
-                const icon = { 'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'erro': '❌' }[log.type] || '🎯';
+                const icon = icons[log.type] || '🎯';
                 await this.dataSource.query(
                     `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
                     [log.userId, log.type, icon, log.message, JSON.stringify({ strategy: 'nexus' })]
                 );
+
+                if (log.type === 'alerta' && log.message.includes('BLINDADO ATIVADO')) {
+                    this.tradeEvents.emit({ userId: log.userId, type: 'blindado_activated', strategy: 'nexus' });
+                }
             }
         } catch (e) {
+            this.logger.error(`[NEXUS][LOG] ${e.message}`);
         } finally {
             this.logProcessing = false;
+            if (this.logQueue.length > 0) this.processQueue();
         }
     }
 }
