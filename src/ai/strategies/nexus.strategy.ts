@@ -267,7 +267,8 @@ export class NexusStrategy implements IStrategy {
 
         for (const state of this.users.values()) {
             state.ticksColetados++;
-            await this.processUser(state);
+            // ✅ Non-blocking call to prevent locking the main loop
+            this.processUser(state).catch(e => this.logger.error(`[NEXUS] Erro ao processar usuário ${state.userId}: ${e.message}`));
         }
     }
 
@@ -608,18 +609,31 @@ export class NexusStrategy implements IStrategy {
             const socket = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
             let authResolved = false;
 
+            // Timeout para conexão/autorização
+            const connectionTimeout = setTimeout(() => {
+                if (!authResolved) {
+                    socket.terminate(); // Kill connection
+                    reject(new Error('Timeout conectando/autorizando WebSocket (30000ms)'));
+                }
+            }, 30000);
+
             socket.on('message', (data: any) => {
                 try {
                     const msg = JSON.parse(data.toString());
                     if (msg.msg_type === 'authorize' && !authResolved) {
                         authResolved = true;
+                        clearTimeout(connectionTimeout);
                         resolve(socket);
                     }
                 } catch (e) { }
             });
 
             socket.on('open', () => socket.send(JSON.stringify({ authorize: token })));
-            socket.on('error', reject);
+
+            socket.on('error', (err) => {
+                clearTimeout(connectionTimeout);
+                reject(err);
+            });
         });
 
         const conn: WsConnection = {
@@ -627,19 +641,34 @@ export class NexusStrategy implements IStrategy {
             pendingRequests: new Map(), subscriptions: new Map()
         };
 
-        // Implementação simplificada de sendRequest/subscribe para brevidade, mas funcional
-        // (Na prática copiaríamos a lógica robusta da versão anterior)
-        conn.sendRequest = (payload) => new Promise((resolve) => {
+        // Implementação correta de sendRequest com timeout
+        conn.sendRequest = (payload, timeoutMs = 60000) => new Promise((resolve) => {
             const id = ++conn.requestIdCounter;
-            ws.send(JSON.stringify({ ...payload, req_id: id }));
+            const reqPayload = { ...payload, req_id: id };
+
+            // Definição do listener para remoção posterior
             const listener = (data: any) => {
-                const msg = JSON.parse(data.toString());
-                if ((msg.req_id === id) || (msg.proposal && payload.proposal) || (msg.buy && payload.buy)) {
-                    ws.removeListener('message', listener);
-                    resolve(msg);
-                }
+                try {
+                    const msg = JSON.parse(data.toString());
+                    if ((msg.req_id === id) ||
+                        (msg.proposal && payload.proposal && (!msg.req_id || msg.req_id === id)) ||
+                        (msg.buy && payload.buy && (!msg.req_id || msg.req_id === id))) {
+
+                        ws.removeListener('message', listener);
+                        clearTimeout(timeoutTimer);
+                        resolve(msg);
+                    }
+                } catch (e) { }
             };
+
+            // Timeout de segurança
+            const timeoutTimer = setTimeout(() => {
+                ws.removeListener('message', listener);
+                resolve({ error: { message: `Timeout aguardando resposta (${timeoutMs}ms)`, code: 'Timeout' } });
+            }, timeoutMs);
+
             ws.on('message', listener);
+            ws.send(JSON.stringify(reqPayload));
         });
 
         conn.subscribe = (payload, cb, subId) => new Promise((resolve) => {
