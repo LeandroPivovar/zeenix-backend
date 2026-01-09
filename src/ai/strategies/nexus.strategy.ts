@@ -301,6 +301,8 @@ export class NexusStrategy implements IStrategy {
             capital: stakeAmount, apostaInicial: entryValue || 0.35,
             modoMartingale: modoMartingale || 'conservador',
             mode: nexusMode,
+            originalMode: nexusMode,
+            lastDirection: null,
             isOperationActive: false,
             vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
         });
