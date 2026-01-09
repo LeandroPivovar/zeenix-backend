@@ -215,7 +215,7 @@ export class AtlasStrategy implements IStrategy {
     } = config;
 
     // ✅ Determinar símbolo: R_10 (vol10), R_25 (vol25) ou R_100 (vol100)
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' = 'R_10'; // Default
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' = 'R_100'; // Default agora é R_100 (Solicitado: APENAS R_100)
     if (symbol && ['R_10', 'R_25', 'R_100'].includes(symbol)) {
       atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100';
     } else if (selectedMarket) {
