@@ -44,7 +44,8 @@ export interface AtlasUserState {
   maxBalance: number; // ✅ ATLAS: High Water Mark para Stop Blindado
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
-  symbol: 'R_10' | 'R_25';
+  mode: string; // 'veloz' | 'normal' | 'lento'
+  symbol: 'R_10' | 'R_25' | 'R_100';
 
   // Estado de operação
   isOperationActive: boolean;
@@ -93,10 +94,13 @@ export class AtlasStrategy implements IStrategy {
   private atlasUsers = new Map<string, AtlasUserState>();
   private atlasTicks: {
     R_10: Tick[];
+    R_10: Tick[];
     R_25: Tick[];
+    R_100: Tick[];
   } = {
       R_10: [],
       R_25: [],
+      R_100: [],
     };
 
   private appId: string;
@@ -105,7 +109,7 @@ export class AtlasStrategy implements IStrategy {
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
     userId: string;
-    symbol: 'R_10' | 'R_25' | 'SISTEMA';
+    symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA';
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
     message: string;
     details?: any;
@@ -138,19 +142,19 @@ export class AtlasStrategy implements IStrategy {
 
   async initialize(): Promise<void> {
     this.logger.log('[ATLAS] 🔵 Estratégia ATLAS v2.0 (EHF) inicializada');
-    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25)...');
+    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100)...');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    if (!symbol || !['R_10', 'R_25'].includes(symbol)) {
+    if (!symbol || !['R_10', 'R_25', 'R_100'].includes(symbol)) {
       // ✅ DIAGNÓSTICO: Log quando recebe símbolo inválido
       if (symbol) {
-        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10 ou R_25)`);
+        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25 ou R_100)`);
       }
       return;
     }
 
-    const assetSymbol = symbol as 'R_10' | 'R_25';
+    const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100';
     this.logger.debug(`[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`);
 
     // Atualizar ticks globais
@@ -210,20 +214,24 @@ export class AtlasStrategy implements IStrategy {
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    // ✅ Determinar símbolo: R_10 (vol10) ou R_25 (vol25)
-    let atlasSymbol: 'R_10' | 'R_25' = 'R_10'; // Default
-    if (symbol && ['R_10', 'R_25'].includes(symbol)) {
-      atlasSymbol = symbol as 'R_10' | 'R_25';
+    // ✅ Determinar símbolo: R_10 (vol10), R_25 (vol25) ou R_100 (vol100)
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' = 'R_10'; // Default
+    if (symbol && ['R_10', 'R_25', 'R_100'].includes(symbol)) {
+      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100';
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
       // Mapeamento preciso: evitar que 'vol100' combine com 'vol10'
-      if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
+      if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
+        atlasSymbol = 'R_100';
+      } else if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
         atlasSymbol = 'R_10';
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
       } else {
-        // Fallback robusto se for apenas substring mas não exato
-        if ((marketLower.includes('vol10') && !marketLower.includes('vol100')) || marketLower.includes('r_10')) {
+        // Fallback robusto
+        if (marketLower.includes('vol100') || marketLower.includes('r_100')) {
+          atlasSymbol = 'R_100';
+        } else if (marketLower.includes('vol10') || marketLower.includes('r_10')) {
           atlasSymbol = 'R_10';
         } else if (marketLower.includes('vol25') || marketLower.includes('r_25')) {
           atlasSymbol = 'R_25';
@@ -357,9 +365,9 @@ export class AtlasStrategy implements IStrategy {
   private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): { canTrade: boolean; analysis: string } {
     // ✅ CORREÇÃO: Normalizar modo para mapeamento correto
     const modeLower = (state.mode || 'veloz').toLowerCase();
-    const normalizedMode = modeLower === 'moderado' ? 'normal' : 
-                          (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
-    
+    const normalizedMode = modeLower === 'moderado' ? 'normal' :
+      (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
+
     // Mapeamento de loss virtual por modo
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
     const requiredLossCount = requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
@@ -370,22 +378,22 @@ export class AtlasStrategy implements IStrategy {
     // ✅ CORREÇÃO: Permitir primeira operação sem loss virtual (evita deadlock)
     // Se nunca operou (lastOperationTimestamp é null), permitir operar sem loss virtual
     const isFirstOperation = state.lastOperationTimestamp === null;
-    
+
     // ✅ CORREÇÃO: Se ganhou recentemente (virtualLossCount = 0), permitir operar após intervalo
     // Isso evita que o sistema fique travado após uma vitória
     // O intervalo já é verificado em canProcessAtlasAsset, então aqui apenas verificamos se passou
     const hasRecentWin = state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
-    const timeSinceLastOp = state.lastOperationTimestamp 
-      ? (Date.now() - state.lastOperationTimestamp.getTime()) / 1000 
+    const timeSinceLastOp = state.lastOperationTimestamp
+      ? (Date.now() - state.lastOperationTimestamp.getTime()) / 1000
       : 0;
     const intervalPassed = !modeConfig.intervaloSegundos || timeSinceLastOp >= modeConfig.intervaloSegundos;
-    
+
     // ✅ Permitir operar se:
     // 1. É a primeira operação, OU
     // 2. Ganhou recentemente (virtualLossCount = 0) E passou intervalo mínimo, OU
     // 3. Atingiu o loss virtual necessário (virtualLossCount >= requiredLossCount)
     const canBypassVirtualLoss = isFirstOperation || (hasRecentWin && intervalPassed);
-    
+
     if (!canBypassVirtualLoss && state.virtualLossCount < requiredLossCount) {
       // ✅ Log mais informativo sobre por que não pode operar
       if (hasRecentWin && !intervalPassed) {
@@ -477,7 +485,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasOperation(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25',
+    symbol: 'R_10' | 'R_25' | 'R_100',
     operation: 'OVER' | 'UNDER',
     analysis?: string,
   ): Promise<void> {
@@ -782,7 +790,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasTradeDirect(
     userId: string,
-    symbol: 'R_10' | 'R_25',
+    symbol: 'R_10' | 'R_25' | 'R_100',
     token: string,
     contractParams: any,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
@@ -947,7 +955,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async processAtlasResult(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25',
+    symbol: 'R_10' | 'R_25' | 'R_100',
     isWin: boolean,
     stakeAmount: number,
     operation: 'OVER' | 'UNDER',
@@ -992,7 +1000,7 @@ export class AtlasStrategy implements IStrategy {
         // ✅ CORREÇÃO: Resetar loss virtual também quando ganha sem estar em recuperação
         state.virtualLossCount = 0;
         state.virtualLossActive = false;
-        
+
         if (state.vitoriasConsecutivas === 0) {
           // Primeira vitória: ativar Soros Nível 1
           state.vitoriasConsecutivas = 1;
@@ -1014,11 +1022,11 @@ export class AtlasStrategy implements IStrategy {
       // ✅ O profit da API Deriv já é lucro líquido (ganho bruto - aposta)
       // Para exibir o ganho bruto, somamos a aposta de volta
       const ganhoBruto = lucro + stakeAmount;
-      
+
       // ✅ CORREÇÃO: Resetar loss virtual ao ganhar (permite próxima operação)
       state.virtualLossCount = 0;
       state.virtualLossActive = false;
-      
+
       this.saveAtlasLog(state.userId, symbol, 'resultado',
         `✅ VITÓRIA! | Dígito: ${digitoResultado} (${digitoResultado > 3 ? 'OVER' : 'UNDER'}) ✅ | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
@@ -1240,7 +1248,7 @@ export class AtlasStrategy implements IStrategy {
     profitTarget?: number | null;
     lossLimit?: number | null;
     stopLossBlindado?: boolean | null;
-    symbol: 'R_10' | 'R_25';
+    symbol: 'R_10' | 'R_25' | 'R_100';
   }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.atlasUsers.get(params.userId);
     const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
@@ -1346,7 +1354,7 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasTrade(trade: {
     userId: string;
     contractId: string | null;
-    symbol: 'R_10' | 'R_25';
+    symbol: 'R_10' | 'R_25' | 'R_100';
     contractType: string;
     entryPrice: number;
     stakeAmount: number;
@@ -1497,7 +1505,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private saveAtlasLog(
     userId: string,
-    symbol: 'R_10' | 'R_25' | 'SISTEMA',
+    symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA',
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
     message: string,
     details?: any,
@@ -1559,7 +1567,7 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasLogsBatch(
     userId: string,
     logs: Array<{
-      symbol: 'R_10' | 'R_25' | 'SISTEMA';
+      symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA';
       type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
       message: string;
       details?: any;
