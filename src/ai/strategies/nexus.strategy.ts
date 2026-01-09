@@ -86,6 +86,10 @@ class RiskManager {
         return this.profitTarget;
     }
 
+    getStopLossLimit(): number {
+        return this.stopLossLimit;
+    }
+
     calculateStake(
         currentBalance: number,
         baseStake: number,
@@ -288,9 +292,9 @@ export class NexusStrategy implements IStrategy {
         let nexusMode: 'VELOZ' | 'BALANCEADO' | 'PRECISO' = 'VELOZ';
         const inputMode = (mode || '').toUpperCase();
 
-        if (inputMode === 'MODERADO') {
+        if (inputMode === 'MODERADO' || inputMode === 'MODERATE' || inputMode === 'BALANCEADO') {
             nexusMode = 'BALANCEADO';
-        } else if (inputMode === 'LENTO' || inputMode === 'PRECISO') {
+        } else if (inputMode === 'LENTO' || inputMode === 'PRECISO' || inputMode === 'DEVAGAR' || inputMode === 'SLOW') {
             nexusMode = 'PRECISO';
         } else {
             nexusMode = 'VELOZ';
@@ -391,10 +395,57 @@ export class NexusStrategy implements IStrategy {
     }
 
     private async stopUser(state: NexusUserState, reason: 'stopped_blindado' | 'stopped_loss' | 'stopped_profit') {
-        this.saveNexusLog(state.userId, this.symbol, 'alerta', `🛑 Sessão encerrada: ${reason}`);
+        const riskManager = this.riskManagers.get(state.userId);
+        if (!riskManager) {
+            await this.deactivateUser(state.userId);
+            return;
+        }
+
+        const initialBalance = riskManager.getInitialBalance();
+        const currentBalance = state.capital;
+        const profit = currentBalance - initialBalance;
+        const profitTarget = riskManager.getProfitTarget();
+        const stopLossLimit = riskManager.getStopLossLimit();
+
+        let logMessage = '';
+        let logType = 'info';
+
+        switch (reason) {
+            case 'stopped_profit':
+                logMessage = `🎯 META DE LUCRO ATINGIDA! Lucro: +$${profit.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`;
+                logType = 'info';
+                break;
+            case 'stopped_loss':
+                logMessage = `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(profit).toFixed(2)} | Limite: $${stopLossLimit.toFixed(2)} - IA DESATIVADA`;
+                logType = 'alerta';
+                break;
+            case 'stopped_blindado':
+                logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${currentBalance.toFixed(2)} | Lucro protegido: +$${profit.toFixed(2)}`;
+                logType = 'alerta';
+                break;
+        }
+
+        // 1. Salvar Log
+        this.saveNexusLog(state.userId, this.symbol, logType, logMessage);
+
+        // 2. Emitir Evento
         this.tradeEvents.emit({ userId: state.userId, type: reason, strategy: 'nexus' });
+
+        // 3. Atualizar Banco de Dados (autonomous_agent_config)
+        // Mantemos is_active = 1 (TRUE) para permitir o reset diário, mas mudamos o status para stopped_X
+        await this.dataSource.query(
+            `UPDATE autonomous_agent_config 
+             SET is_active = TRUE, 
+                 session_status = ?, 
+                 updated_at = NOW() 
+             WHERE user_id = ? AND agent_type = 'nexus'`,
+            [reason, state.userId]
+        );
+
+        // 4. Remover da Memória (Pausar execução imediata)
         await this.deactivateUser(state.userId);
-        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [reason, state.userId]);
+
+        this.logger.log(`[NEXUS] ${state.userId} parado por ${reason}. Status salvo no banco.`);
     }
 
     private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
