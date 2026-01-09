@@ -44,7 +44,6 @@ export interface AtlasUserState {
   maxBalance: number; // ✅ ATLAS: High Water Mark para Stop Blindado
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
-  mode: string; // 'veloz' | 'normal' | 'lento'
   symbol: 'R_10' | 'R_25' | 'R_100';
 
   // Estado de operação
@@ -93,7 +92,6 @@ export class AtlasStrategy implements IStrategy {
 
   private atlasUsers = new Map<string, AtlasUserState>();
   private atlasTicks: {
-    R_10: Tick[];
     R_10: Tick[];
     R_25: Tick[];
     R_100: Tick[];
