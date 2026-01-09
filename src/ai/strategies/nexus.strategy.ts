@@ -231,7 +231,7 @@ export class NexusStrategy implements IStrategy {
             const t = lastTicks.slice(-3);
             if (t[2].value > t[1].value && t[1].value > t[0].value) {
                 signal = 'PAR';
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (3 subidas consecutivas)`);
+                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (2 subidas consecutivas)`);
             }
         } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
