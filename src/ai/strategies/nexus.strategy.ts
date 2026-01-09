@@ -493,8 +493,20 @@ export class NexusStrategy implements IStrategy {
         const msg = reason === 'stopped_profit' ? 'Meta Batida! 🏆' : 'Stop Loss Atingido 🛑';
         this.saveNexusLog(state.userId, this.symbol, 'alerta', `Sessão encerrada: ${msg}`);
         this.tradeEvents.emit({ userId: state.userId, type: reason, strategy: 'nexus' });
+
+        // Remove da memória (para de operar agora)
         await this.deactivateUser(state.userId);
-        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [reason, state.userId]);
+
+        // Atualiza no banco para "Pausado no Dia" (is_active=1 mas com status stopped_X)
+        // Isso permite que o AutonomousAgentService reinicie o agente no dia seguinte
+        await this.dataSource.query(
+            `UPDATE autonomous_agent_config 
+             SET is_active = TRUE, 
+                 session_status = ?,
+                 updated_at = NOW() 
+             WHERE user_id = ?`,
+            [reason, state.userId]
+        );
     }
 
     private async createTradeRecord(state: NexusUserState, contractType: string, stake: number, entryPrice: number): Promise<number> {
