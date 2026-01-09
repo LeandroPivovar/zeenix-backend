@@ -283,14 +283,25 @@ export class NexusStrategy implements IStrategy {
 
     async activateUser(userId: string, config: any): Promise<void> {
         const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, stopLossBlindado, profitTarget, lossLimit } = config;
-        const nexusMode = (mode || 'VELOZ').toUpperCase() as any;
+
+        // Mapeamento de Modos (Frontend -> Backend)
+        let nexusMode: 'VELOZ' | 'BALANCEADO' | 'PRECISO' = 'VELOZ';
+        const inputMode = (mode || '').toUpperCase();
+
+        if (inputMode === 'MODERADO') {
+            nexusMode = 'BALANCEADO';
+        } else if (inputMode === 'LENTO' || inputMode === 'PRECISO') {
+            nexusMode = 'PRECISO';
+        } else {
+            nexusMode = 'VELOZ';
+        }
 
         this.users.set(userId, {
             userId, derivToken, currency: currency || 'USD',
             capital: stakeAmount, apostaInicial: entryValue || 0.35,
             modoMartingale: modoMartingale || 'conservador',
-            mode: nexusMode, originalMode: nexusMode,
-            lastDirection: null, isOperationActive: false,
+            mode: nexusMode,
+            isOperationActive: false,
             vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
         });
 
@@ -299,8 +310,8 @@ export class NexusStrategy implements IStrategy {
             modoMartingale.toUpperCase(), stopLossBlindado !== false
         ));
 
-        this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode}`);
-        this.saveNexusLog(userId, 'SISTEMA', 'info', `IA NEXUS ATIVADA | Modo: ${nexusMode} | Capital: $${stakeAmount.toFixed(2)}`);
+        this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode} (Input: ${inputMode})`);
+        this.saveNexusLog(userId, 'SISTEMA', 'info', `IA NEXUS v4.0 ATIVADA | Modo: ${nexusMode} | Capital: $${stakeAmount.toFixed(2)}`);
     }
 
     async deactivateUser(userId: string): Promise<void> {
