@@ -252,7 +252,8 @@ export class NexusStrategy implements IStrategy {
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
-            if (rsi < 20) {
+            // Relaxed from 20 to 30 to ensure execution
+            if (rsi < 30) {
                 signal = 'PAR';
                 this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO] RSI em exaustão (${rsi.toFixed(2)})`);
             }
