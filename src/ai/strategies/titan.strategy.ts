@@ -161,6 +161,7 @@ interface TitanUserState {
     sorosActive: boolean;
     sorosStake: number;
     capitalInicial: number;
+    defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
 }
 
 @Injectable()
@@ -233,37 +234,45 @@ export class TitanStrategy implements IStrategy {
     }
 
     private check_signal(state: TitanUserState, riskManager: RiskManager): DigitParity | null {
-        if (riskManager.consecutiveLosses > 0 && state.lastDirection !== null) {
-            this.logger.log(`[TITAN][PERSISTÊNCIA] Recuperação ativa (${riskManager.consecutiveLosses}x Loss). Mantendo: ${state.lastDirection}`);
-            return state.lastDirection;
-        }
+        // ✅ 1. Defesa Automática (Auto-Defense) - Cópia da Orion
+        // Se tiver 3 ou mais losses, força o modo PRECISO temporariamente (sem alterar o state.mode original de forma permanente)
+        let effectiveMode = state.mode;
 
         if (riskManager.consecutiveLosses >= 3) {
-            if (state.mode !== 'PRECISO') {
-                this.logger.log(`🚨 [TITAN][DEFESA ATIVA] Forçando modo PRECISO.`);
-                state.mode = 'PRECISO';
+            effectiveMode = 'PRECISO';
+
+            // ✅ Logar apenas uma vez quando a defesa é ativada
+            if (!state.defesaAtivaLogged) {
+                this.logger.log(`🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`);
+                this.saveTitanLog(state.userId, this.symbol, 'alerta', `🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`);
+                state.defesaAtivaLogged = true;
             }
-        } else if (riskManager.consecutiveLosses === 0) {
-            if (state.mode !== state.originalMode) {
+        } else {
+            // ✅ Resetar flag quando a defesa não está mais ativa
+            if (state.defesaAtivaLogged) {
                 this.logger.log(`✅ [TITAN][RECUPERAÇÃO] Voltando ao modo ${state.originalMode}.`);
-                state.mode = state.originalMode;
+                state.defesaAtivaLogged = false;
             }
+            // Garante que volta ao modo configurado (pode ter sido alterado manualmente, então usamos state.mode)
+            effectiveMode = state.mode;
         }
 
-        let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'NORMAL' ? 20 : 50;
+        // ✅ 2. Definição de Ticks Necessários baseada no Modo Efetivo
+        let requiredTicks = effectiveMode === 'VELOZ' ? 10 : effectiveMode === 'NORMAL' ? 20 : 50;
         if (state.ticksColetados < requiredTicks) return null;
 
         const window = this.ticks.slice(-requiredTicks).map(t => t.digit);
         let signal: DigitParity | null = null;
 
-        if (state.mode === 'VELOZ') {
+        // ✅ 3. Lógica de Análise baseada no Modo Efetivo
+        if (effectiveMode === 'VELOZ') {
             const evens = window.slice(-10).filter(d => d % 2 === 0).length;
             signal = evens > 5 ? 'PAR' : evens < 5 ? 'IMPAR' : null;
             if (signal) {
                 const criterio = signal === 'PAR' ? `Maioria PAR (${evens}/10)` : `Maioria ÍMPAR (${10 - evens}/10)`;
                 this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ]\n• Critério: ${criterio}`);
             }
-        } else if (state.mode === 'NORMAL') {
+        } else if (effectiveMode === 'NORMAL') {
             const last3 = window.slice(-3).map(d => d % 2);
             if (last3.every(v => v === 0)) signal = 'PAR';
             else if (last3.every(v => v === 1)) signal = 'IMPAR';
@@ -271,7 +280,7 @@ export class TitanStrategy implements IStrategy {
                 const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
                 this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE NORMAL]\n• Critério: Sequência 3x ${tipo} detectada`);
             }
-        } else if (state.mode === 'PRECISO') {
+        } else if (effectiveMode === 'PRECISO') {
             const last5 = window.slice(-5).map(d => d % 2);
             if (last5.every(v => v === 0)) signal = 'PAR';
             else if (last5.every(v => v === 1)) signal = 'IMPAR';
@@ -297,7 +306,8 @@ export class TitanStrategy implements IStrategy {
             lastDirection: null, isOperationActive: false,
             vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0,
             sorosActive: false, sorosStake: 0,
-            capitalInicial: stakeAmount
+            capitalInicial: stakeAmount,
+            defesaAtivaLogged: false
         });
 
         this.riskManagers.set(userId, new RiskManager(
