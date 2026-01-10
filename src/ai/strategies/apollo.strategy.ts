@@ -330,12 +330,12 @@ export class ApolloStrategy implements IStrategy {
   private calculateMartingaleStake(riskMode: ModoMartingale, lossAccumulated: number, consecutiveLosses: number): number {
     const PAYOUT_RATE = 0.95;
 
-    if (riskMode === 'CONSERVADOR') {
+    if (riskMode === 'conservador') {
       if (consecutiveLosses > 5) return 0;
       return lossAccumulated / PAYOUT_RATE;
-    } else if (riskMode === 'MODERADO') {
+    } else if (riskMode === 'moderado') {
       return (lossAccumulated * 1.25) / PAYOUT_RATE;
-    } else { // AGRESSIVO
+    } else { // agressivo
       return (lossAccumulated * 1.50) / PAYOUT_RATE;
     }
   }
@@ -354,7 +354,7 @@ export class ApolloStrategy implements IStrategy {
       capitalInicial: config.stakeAmount,
       mode: mode as ApolloMode,
       originalMode: mode as ApolloMode,
-      modoMartingale: (config.modoMartingale || 'moderado').toUpperCase() as ModoMartingale,
+      modoMartingale: (config.modoMartingale || 'moderado').toLowerCase() as ModoMartingale,
       apostaInicial: config.entryValue || 0.35,
       stopLoss: config.lossLimit || 50,
       profitTarget: config.profitTarget || 10,
