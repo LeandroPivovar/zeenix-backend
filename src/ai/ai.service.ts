@@ -1648,6 +1648,25 @@ export class AiService implements OnModuleInit {
       currentPrice,
     );
 
+    // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
+    if (this.copyTradingService) {
+      this.copyTradingService.replicateAIOperation(
+        state.userId,
+        {
+          tradeId: tradeId,
+          contractId: '', // Será preenchido quando o contrato for criado
+          contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          symbol: this.symbol,
+          duration: 1,
+          stakeAmount: stakeAmount,
+          entrySpot: currentPrice,
+          entryTime: Math.floor(Date.now() / 1000),
+        }
+      ).catch(error => {
+        this.logger.error(`[Veloz][CopyTrading] Erro ao replicar operação: ${error.message}`);
+      });
+    }
+
     this.logger.log(
       `[Veloz][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
     );
@@ -1952,6 +1971,25 @@ export class AiService implements OnModuleInit {
                 this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
               });
             }
+
+            // ✅ COPY TRADING (NOVO): Atualizar resultado para copiadores usando método correto
+            if (tradeData && tradeData.length > 0 && this.copyTradingService) {
+              const trade = tradeData[0];
+              const finalContractId = contract.contract_id || contractId;
+
+              if (finalContractId) {
+                this.copyTradingService.updateCopyTradingOperationsResult(
+                  trade.user_id,
+                  finalContractId,
+                  status === 'WON' ? 'win' : 'loss',
+                  profit,
+                  parseFloat(trade.stake_amount) || 0,
+                ).catch((error: any) => {
+                  this.logger.error(`[Veloz][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
+                });
+              }
+            }
+
 
             finalize(undefined, {
               profitLoss: profit,

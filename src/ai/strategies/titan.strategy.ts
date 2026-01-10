@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 /**
  * ✅ TITAN Strategy Master Blueprint
@@ -113,8 +114,17 @@ class RiskManager {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
                 const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
-                logCallback(userId, symbol, 'alerta',
-                    `🛡️ [BLINDADO] Gatilho de 40% da Meta atingido!\n• Stop Loss Normal: DESATIVADO ❌\n• Stop Loss Blindado: ATIVADO ✅\n• Novo Piso de Proteção: Saldo Inicial + $${guaranteedProfit.toFixed(2)} (50% do Lucro Atual)`);
+                logCallback(userId, symbol, 'info',
+                    `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
+            }
+        }
+
+        // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+        if (this.useBlindado && !this._blindadoActive && profitAccumulatedAtPeak > 0 && profitAccumulatedAtPeak < activationTrigger) {
+            const percentualProgresso = (profitAccumulatedAtPeak / activationTrigger) * 100;
+            if (userId && symbol && logCallback) {
+                logCallback(userId, symbol, 'info',
+                    `ℹ️🛡️ Stop Blindado: Lucro $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
             }
         }
 
@@ -203,6 +213,7 @@ export class TitanStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
+        private copyTradingService: CopyTradingService,
     ) {
         this.appId = process.env.DERIV_APP_ID || '111346';
     }
@@ -352,7 +363,7 @@ export class TitanStrategy implements IStrategy {
 
         if (stake <= 0) {
             const blindadoMsg = riskManager.blindadoActive
-                ? `🛑 [STOP BLINDADO (LUCRO GARANTIDO)] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${riskManager.guaranteedProfit.toFixed(2)}.`
+                ? `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${riskManager.guaranteedProfit.toFixed(2)} para proteger o seu capital.`
                 : `🛑 [STOP LOSS ATINGIDO] Limite de perda atingido.\n• Sessão Encerrada para proteção do capital.`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
@@ -438,8 +449,8 @@ export class TitanStrategy implements IStrategy {
                         if (!this.blindadoActivatedUsers.has(state.userId)) {
                             this.blindadoActivatedUsers.add(state.userId);
 
-                            this.saveTitanLog(state.userId, this.symbol, 'alerta',
-                                `🛡️ [BLINDADO] Gatilho de 40% da Meta atingido!\n• Stop Loss Normal: DESATIVADO ❌\n• Stop Loss Blindado: ATIVADO ✅\n• Novo Piso de Proteção: Saldo Inicial + $${protectedAmount.toFixed(2)} (50% do Lucro Atual)`);
+                            this.saveTitanLog(state.userId, this.symbol, 'info',
+                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
 
                             // Emit event for frontend
                             this.tradeEvents.emit({
@@ -451,10 +462,18 @@ export class TitanStrategy implements IStrategy {
                             });
                         }
 
+                        // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+                        if (!this.blindadoActivatedUsers.has(state.userId) && lucroAtual > 0 && lucroAtual < (profitTarget * 0.40)) {
+                            const activationTrigger = profitTarget * 0.40;
+                            const percentualProgresso = (lucroAtual / activationTrigger) * 100;
+                            this.saveTitanLog(state.userId, this.symbol, 'info',
+                                `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
+                        }
+
                         // Log profit peak update (if already activated and peak increased)
                         if (this.blindadoActivatedUsers.has(state.userId) && lucroAtual > (parseFloat(config.profit_peak) || 0)) {
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`);
+                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
                         }
 
                         // Check if capital fell below protected level -> TRIGGER BLINDADO
@@ -468,7 +487,7 @@ export class TitanStrategy implements IStrategy {
                             );
 
                             this.saveTitanLog(state.userId, this.symbol, 'alerta',
-                                `🛑 [STOP BLINDADO (LUCRO GARANTIDO)] O lucro devolveu 50% do pico.\n• Sessão Encerrada com LUCRO GARANTIDO de $${lucroProtegido.toFixed(2)}.`);
+                                `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`);
 
                             const deactivationReason =
                                 `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +
@@ -603,6 +622,32 @@ export class TitanStrategy implements IStrategy {
                 }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
+
+                // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
+                if (this.copyTradingService) {
+                    const tradeData = await this.dataSource.query(
+                        `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
+                        [tradeId]
+                    );
+
+                    if (tradeData && tradeData.length > 0) {
+                        const trade = tradeData[0];
+                        const contractId = trade.contract_id || result.contractId;
+
+                        if (contractId) {
+                            this.copyTradingService.updateCopyTradingOperationsResult(
+                                trade.user_id,
+                                contractId,
+                                status === 'WON' ? 'win' : 'loss',
+                                result.profit,
+                                parseFloat(trade.stake_amount) || 0,
+                            ).catch((error: any) => {
+                                this.logger.error(`[Titan][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
+                            });
+                        }
+                    }
+                }
+
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'titan', profitLoss: result.profit });
             } else {
                 // Se falhou ao executar, marcar como falha ou remover o trade pendente
@@ -623,7 +668,28 @@ export class TitanStrategy implements IStrategy {
        VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, ?)`,
             [state.userId, direction, entryPrice, stake, direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD', JSON.stringify(analysisData), this.symbol, 1]
         );
-        return r.insertId || r[0]?.insertId;
+        const tradeId = r.insertId || r[0]?.insertId;
+
+        // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
+        if (tradeId && this.copyTradingService) {
+            this.copyTradingService.replicateAIOperation(
+                state.userId,
+                {
+                    tradeId: tradeId,
+                    contractId: '',
+                    contractType: direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+                    symbol: this.symbol,
+                    duration: 1,
+                    stakeAmount: stake,
+                    entrySpot: entryPrice,
+                    entryTime: Math.floor(Date.now() / 1000),
+                }
+            ).catch(error => {
+                this.logger.error(`[Titan][CopyTrading] Erro ao replicar operação: ${error.message}`);
+            });
+        }
+
+        return tradeId;
     }
 
     /**

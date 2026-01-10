@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 /**
  * ✅ NEXUS Strategy Master
@@ -138,7 +139,15 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `🛡️ STOP-LOSS BLINDADO ATIVADO! Lucro Garantido: $${(profitAccumulatedAtPeak * 0.5).toFixed(2)}`);
+                logCallback(userId, symbol, 'info', `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${(profitAccumulatedAtPeak * 0.5).toFixed(2)}`);
+            }
+        }
+
+        // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+        if (this.useBlindado && !this._blindadoActive && profitAccumulatedAtPeak > 0 && profitAccumulatedAtPeak < activationTrigger) {
+            const percentualProgresso = (profitAccumulatedAtPeak / activationTrigger) * 100;
+            if (userId && symbol && logCallback) {
+                logCallback(userId, symbol, 'info', `ℹ️🛡️ Stop Blindado: Lucro $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
             }
         }
 
@@ -195,6 +204,7 @@ export class NexusStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
+        private copyTradingService: CopyTradingService,
     ) {
         this.appId = (process as any).env.DERIV_APP_ID || '111346';
     }
@@ -416,6 +426,32 @@ export class NexusStrategy implements IStrategy {
                 }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
+
+                // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
+                if (this.copyTradingService) {
+                    const tradeData = await this.dataSource.query(
+                        `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
+                        [tradeId]
+                    );
+
+                    if (tradeData && tradeData.length > 0) {
+                        const trade = tradeData[0];
+                        const contractId = trade.contract_id || result.contractId;
+
+                        if (contractId) {
+                            this.copyTradingService.updateCopyTradingOperationsResult(
+                                trade.user_id,
+                                contractId,
+                                status === 'WON' ? 'win' : 'loss',
+                                result.profit,
+                                parseFloat(trade.stake_amount) || 0,
+                            ).catch((error: any) => {
+                                this.logger.error(`[Nexus][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
+                            });
+                        }
+                    }
+                }
+
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
 
                 if (state.ultimoLucro > 0 && (state.capital - riskManager.getInitialBalance()) >= riskManager.getProfitTarget()) {
@@ -457,7 +493,7 @@ export class NexusStrategy implements IStrategy {
                 logType = 'alerta';
                 break;
             case 'stopped_blindado':
-                logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${currentBalance.toFixed(2)} | Lucro protegido: +$${profit.toFixed(2)}`;
+                logMessage = `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
                 break;
         }
@@ -492,7 +528,28 @@ export class NexusStrategy implements IStrategy {
              VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
             [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
         );
-        return r.insertId || r[0]?.insertId;
+        const tradeId = r.insertId || r[0]?.insertId;
+
+        // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
+        if (tradeId && this.copyTradingService) {
+            this.copyTradingService.replicateAIOperation(
+                state.userId,
+                {
+                    tradeId: tradeId,
+                    contractId: '',
+                    contractType: 'CALL',
+                    symbol: this.symbol,
+                    duration: 5,
+                    stakeAmount: stake,
+                    entrySpot: entryPrice,
+                    entryTime: Math.floor(Date.now() / 1000),
+                }
+            ).catch(error => {
+                this.logger.error(`[Nexus][CopyTrading] Erro ao replicar operação: ${error.message}`);
+            });
+        }
+
+        return tradeId;
     }
 
     private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<any> {

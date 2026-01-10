@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
 
@@ -427,6 +428,7 @@ export class OrionStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
+    private copyTradingService: CopyTradingService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -1310,28 +1312,39 @@ export class OrionStrategy implements IStrategy {
         // Ativar se atingir 40% da meta. Proteger 50% do lucro máximo (PICO).
         if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           let profitPeak = parseFloat(config.profitPeak) || 0;
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          const activationThreshold = profitTarget * 0.40;
+
+          // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+          if (lucroAtual > 0 && lucroAtual < activationThreshold) {
+            const percentualProgresso = (lucroAtual / activationThreshold) * 100;
+            this.saveOrionLog(
+              state.userId,
+              this.symbol,
+              'info',
+              `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationThreshold.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`
+            );
+          }
 
           // Auto-healing: se lucro atual superou o pico registrado, atualizar pico
           if (lucroAtual > profitPeak) {
             const profitPeakAnterior = profitPeak;
             profitPeak = lucroAtual;
 
-            // ✅ Log quando profit peak aumenta
-            if (profitPeak >= profitTarget * 0.40) {
-              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+            // ✅ Log quando profit peak aumenta (após ativação)
+            if (profitPeak >= activationThreshold) {
               const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
               const stopBlindado = capitalInicial + protectedAmount;
 
               this.logger.log(
-                `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
+                `[ORION][${mode}][${state.userId}] ℹ️🛡️ Stop Blindado Atualizado | ` +
+                `Lucro: $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
+                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
             }
 
@@ -1356,18 +1369,15 @@ export class OrionStrategy implements IStrategy {
             if (!this.defesaDirecaoInvalidaLogsEnviados.has(stopBlindadoKey)) {
               this.defesaDirecaoInvalidaLogsEnviados.set(stopBlindadoKey, true);
               this.logger.log(
-                `[ORION][${mode}][${state.userId}] 🛡️✅ STOP BLINDADO ATIVADO! | ` +
-                `Meta: $${profitTarget.toFixed(2)} | ` +
-                `40% Meta: $${(profitTarget * 0.40).toFixed(2)} | ` +
-                `Pico Atual: $${profitPeak.toFixed(2)} | ` +
-                `Protegendo: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) | ` +
-                `Stop Level: $${stopBlindado.toFixed(2)}`
+                `[ORION][${mode}][${state.userId}] ℹ️🛡️ Stop Blindado Ativado | ` +
+                `Lucro: $${profitPeak.toFixed(2)} | ` +
+                `Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}% do pico $${profitPeak.toFixed(2)}) | Stop: $${stopBlindado.toFixed(2)}`
+                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
             }
 
@@ -1385,7 +1395,7 @@ export class OrionStrategy implements IStrategy {
                 state.userId,
                 this.symbol,
                 'alerta',
-                `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`,
+                `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`,
               );
 
               const deactivationReason =
@@ -1464,8 +1474,8 @@ export class OrionStrategy implements IStrategy {
               // Usuário pediu "reajuste seu valor".
               // Se houver saldo positivo (> 0.35), usamos o saldo restante. Senão reiniciamos.
               if (saldoDisponivel >= 0.35) {
-                this.logger.warn(`[ORION] 🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel.toFixed(2)}`);
-                this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ Ajustando martingale para respeitar Stop Blindado: $${stakeMartingale.toFixed(2)} ➔ $${saldoDisponivel.toFixed(2)}`);
+                this.logger.warn(`[ORION] ⚠️🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel.toFixed(2)}`);
+                this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️🛡️ Ajustando martingale para respeitar Stop Blindado: $${stakeMartingale.toFixed(2)} ➔ $${saldoDisponivel.toFixed(2)}`);
 
                 // ✅ NÃO resetar o estado do martingale, apenas limitar o valor da aposta
                 // Isso garante que se ganhar, o sistema reconheça como vitória de martingale e reset para aposta inicial

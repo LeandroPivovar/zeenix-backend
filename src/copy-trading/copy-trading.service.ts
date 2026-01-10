@@ -27,7 +27,7 @@ export class CopyTradingService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(ExpertEntity)
     private readonly expertRepository: Repository<ExpertEntity>,
-  ) {}
+  ) { }
 
   async activateCopyTrading(
     userId: string,
@@ -400,15 +400,15 @@ export class CopyTradingService {
         // Assumindo lucro médio de 80% e perda média de 100% do stake
         const winRate = expert.winRate ? parseFloat(expert.winRate.toString()) : 0;
         const roi = winRate > 0 ? (winRate * 0.8) - ((100 - winRate) * 1.0) : 0;
-        
+
         // Calcular drawdown aproximado baseado no winRate
         // Drawdown menor quando winRate maior
         const dd = winRate > 0 ? Math.max(0, (100 - winRate) * 0.12) : 10;
-        
+
         // Converter followers para formato "k" (milhares)
         const totalFollowers = expert.totalFollowers || 0;
-        const followersK = totalFollowers >= 1000 
-          ? (totalFollowers / 1000).toFixed(1) 
+        const followersK = totalFollowers >= 1000
+          ? (totalFollowers / 1000).toFixed(1)
           : totalFollowers.toString();
 
         return {
@@ -547,7 +547,7 @@ export class CopyTradingService {
 
       // Buscar todos os copiadores ativos do master trader
       const copiers = await this.getCopiers(masterUserId);
-      
+
       if (copiers.length === 0) {
         this.logger.log(`[ReplicateManualOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`);
         return;
@@ -565,7 +565,7 @@ export class CopyTradingService {
         try {
           // Buscar sessão ativa do copiador
           const activeSession = await this.getActiveSession(copier.userId);
-          
+
           if (!activeSession) {
             this.logger.warn(`[ReplicateManualOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`);
             continue;
@@ -573,7 +573,7 @@ export class CopyTradingService {
 
           // Calcular valor proporcional baseado na alocação
           let followerStakeAmount = 0;
-          
+
           if (copier.allocationType === 'fixed') {
             // Alocação fixa: usar o valor definido
             followerStakeAmount = copier.allocationValue || 0;
@@ -620,7 +620,7 @@ export class CopyTradingService {
 
           // Atualizar estatísticas da sessão
           const newTotalOperations = (activeSession.totalOperations || 0) + 1;
-          
+
           await this.dataSource.query(
             `UPDATE copy_trading_sessions 
              SET total_operations = ?,
@@ -645,6 +645,126 @@ export class CopyTradingService {
     } catch (error) {
       this.logger.error(
         `[ReplicateManualOperation] Erro ao replicar operação manual: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Replica uma operação de IA do trader mestre para todos os copiadores ativos
+   * Mesma lógica de replicateManualOperation(), mas adaptada para operações de IA
+   */
+  async replicateAIOperation(
+    masterUserId: string,
+    operationData: {
+      tradeId: number;        // ID do ai_trades
+      contractId: string;     // ID do contrato Deriv (pode estar vazio inicialmente)
+      contractType: string;
+      symbol: string;
+      duration: number;
+      stakeAmount: number;
+      entrySpot: number | null;
+      entryTime: number;
+    },
+  ): Promise<void> {
+    try {
+      this.logger.log(`[ReplicateAIOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO IA ==========`);
+      this.logger.log(`[ReplicateAIOperation] Master trader: ${masterUserId}`);
+      this.logger.log(`[ReplicateAIOperation] TradeId: ${operationData.tradeId}, ContractId: ${operationData.contractId}`);
+
+      // Verificar se é trader mestre
+      const isMaster = await this.isMasterTrader(masterUserId);
+      if (!isMaster) {
+        this.logger.debug(`[ReplicateAIOperation] Usuário ${masterUserId} não é trader mestre, ignorando replicação`);
+        return;
+      }
+
+      // Buscar todos os copiadores ativos do master trader
+      const copiers = await this.getCopiers(masterUserId);
+
+      if (copiers.length === 0) {
+        this.logger.log(`[ReplicateAIOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`);
+        return;
+      }
+
+      this.logger.log(`[ReplicateAIOperation] Encontrados ${copiers.length} copiadores ativos`);
+
+      // Para cada copiador, replicar a operação
+      for (const copier of copiers) {
+        if (!copier.isActive) {
+          this.logger.log(`[ReplicateAIOperation] Pulando copiador ${copier.userId} - não está ativo`);
+          continue;
+        }
+
+        try {
+          // Buscar sessão ativa do copiador
+          const activeSession = await this.getActiveSession(copier.userId);
+
+          if (!activeSession) {
+            this.logger.warn(`[ReplicateAIOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`);
+            continue;
+          }
+
+          // Calcular valor usando MESMO VALOR do mestre (conforme solicitado)
+          let followerStakeAmount = operationData.stakeAmount;
+
+          this.logger.log(
+            `[ReplicateAIOperation] Replicando para copiador ${copier.userId} - Stake: $${followerStakeAmount.toFixed(2)} (mesmo valor do mestre)`,
+          );
+
+          // Gravar operação na tabela copy_trading_operations
+          // Usar contractId como trader_operation_id (mesmo que esteja vazio, será atualizado depois)
+          await this.dataSource.query(
+            `INSERT INTO copy_trading_operations 
+             (session_id, user_id, trader_operation_id, operation_type, symbol, duration,
+              stake_amount, result, profit, leverage, allocation_type, allocation_value,
+              executed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
+            [
+              activeSession.id,
+              copier.userId,
+              operationData.contractId || `ai_trade_${operationData.tradeId}`, // Usar tradeId como fallback
+              operationData.contractType,
+              operationData.symbol || null,
+              operationData.duration || null,
+              followerStakeAmount,
+              'pending', // Resultado será atualizado quando o contrato for fechado
+              0, // Profit será atualizado quando o contrato for fechado
+              '1x', // Sem leverage para IA
+              'fixed', // Sempre fixo (mesmo valor)
+              followerStakeAmount,
+              operationData.entryTime,
+            ],
+          );
+
+          // Atualizar estatísticas da sessão
+          const newTotalOperations = (activeSession.totalOperations || 0) + 1;
+
+          await this.dataSource.query(
+            `UPDATE copy_trading_sessions 
+             SET total_operations = ?,
+                 last_operation_at = NOW()
+             WHERE id = ?`,
+            [newTotalOperations, activeSession.id],
+          );
+
+          this.logger.log(
+            `[ReplicateAIOperation] ✅ Operação IA replicada para copiador ${copier.userId} - Session: ${activeSession.id}, Stake: $${followerStakeAmount.toFixed(2)}`,
+          );
+        } catch (error) {
+          this.logger.error(
+            `[ReplicateAIOperation] Erro ao replicar para copiador ${copier.userId}: ${error.message}`,
+            error.stack,
+          );
+          // Continuar com os próximos copiadores mesmo se houver erro
+        }
+      }
+
+      this.logger.log(`[ReplicateAIOperation] ========== FIM REPLICAÇÃO OPERAÇÃO IA ==========`);
+    } catch (error) {
+      this.logger.error(
+        `[ReplicateAIOperation] Erro ao replicar operação IA: ${error.message}`,
         error.stack,
       );
       throw error;
@@ -816,7 +936,7 @@ export class CopyTradingService {
           `SELECT email FROM users WHERE id = ? LIMIT 1`,
           [userId],
         );
-        
+
         if (userEmailResult && userEmailResult.length > 0) {
           const userEmail = userEmailResult[0].email;
           expertResult = await this.dataSource.query(
@@ -1091,25 +1211,25 @@ export class CopyTradingService {
     try {
       this.logger.log(`[GetCopiers] ========== INÍCIO BUSCA COPIADORES ==========`);
       this.logger.log(`[GetCopiers] Master trader user_id: ${masterUserId}`);
-      
+
       // PASSO 1: Buscar na copy_trading_config para encontrar trader_ids associados ao master trader
       // Primeiro, verificar se o user_id do master trader aparece como trader_id na config
       this.logger.log(`[GetCopiers] PASSO 1: Buscando na copy_trading_config onde trader_id = ${masterUserId}`);
-      
+
       const configsWithMasterAsTrader = await this.dataSource.query(
         `SELECT DISTINCT trader_id, user_id, trader_name, is_active, session_status
          FROM copy_trading_config 
          WHERE trader_id = ?`,
         [masterUserId],
       );
-      
+
       this.logger.log(`[GetCopiers] PASSO 1 - Resultado: ${configsWithMasterAsTrader.length} registros encontrados na config com trader_id = ${masterUserId}`);
       if (configsWithMasterAsTrader.length > 0) {
         configsWithMasterAsTrader.forEach((config, idx) => {
           this.logger.log(`[GetCopiers] PASSO 1 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`);
         });
       }
-      
+
       // Buscar também se há expert associado
       const expertResult = await this.dataSource.query(
         `SELECT id FROM experts WHERE user_id = ? AND is_active = 1 LIMIT 1`,
@@ -1122,7 +1242,7 @@ export class CopyTradingService {
         const expertId = expertResult[0].id;
         traderIdsToSearch.push(expertId);
         this.logger.log(`[GetCopiers] Expert encontrado: ${expertId} para user_id ${masterUserId}`);
-        
+
         // Verificar se esse expert.id aparece como trader_id
         const configsWithExpertAsTrader = await this.dataSource.query(
           `SELECT DISTINCT trader_id, user_id, trader_name, is_active, session_status
@@ -1143,24 +1263,24 @@ export class CopyTradingService {
       // NOVO: Buscar TODOS os trader_ids que existem na tabela e verificar se algum corresponde ao master trader
       // Isso ajuda a descobrir qual é o trader_id correto do master trader
       this.logger.log(`[GetCopiers] PASSO 1.5: Buscando todos os trader_ids na tabela para verificar relação com master trader`);
-      
+
       // Buscar todos os trader_ids únicos na tabela
       const allTraderIdsInTable = await this.dataSource.query(
         `SELECT DISTINCT trader_id FROM copy_trading_config`,
       );
       this.logger.log(`[GetCopiers] PASSO 1.5 - Trader IDs encontrados na tabela: ${allTraderIdsInTable.length}`);
-      
+
       // Para cada trader_id, verificar se é um expert.id do master trader
       for (const row of allTraderIdsInTable) {
         const traderId = row.trader_id;
         this.logger.log(`[GetCopiers] PASSO 1.5 - Verificando trader_id: ${traderId}`);
-        
+
         // Verificar se esse trader_id é um expert.id do master trader
         const expertCheck = await this.dataSource.query(
           `SELECT id, user_id, name FROM experts WHERE id = ? AND user_id = ?`,
           [traderId, masterUserId],
         );
-        
+
         if (expertCheck && expertCheck.length > 0) {
           this.logger.log(`[GetCopiers] PASSO 1.5 - ✅ ENCONTRADO! trader_id ${traderId} é um expert.id do master trader!`);
           traderIdsToSearch.push(traderId);
@@ -1181,17 +1301,17 @@ export class CopyTradingService {
         `SELECT DISTINCT trader_id FROM copy_trading_sessions WHERE status = 'active'`,
       );
       this.logger.log(`[GetCopiers] PASSO 1.6 - Trader IDs com sessões ativas: ${activeSessionsTraderIds.length}`);
-      
+
       for (const row of activeSessionsTraderIds) {
         const traderId = row.trader_id;
         this.logger.log(`[GetCopiers] PASSO 1.6 - Verificando trader_id com sessão ativa: ${traderId}`);
-        
+
         // Verificar se é expert.id do master
         const expertCheck = await this.dataSource.query(
           `SELECT id, user_id FROM experts WHERE id = ? AND user_id = ?`,
           [traderId, masterUserId],
         );
-        
+
         if (expertCheck && expertCheck.length > 0) {
           this.logger.log(`[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é expert.id do master!`);
           traderIdsToSearch.push(traderId);
@@ -1203,12 +1323,12 @@ export class CopyTradingService {
 
       // Remover duplicatas
       traderIdsToSearch = [...new Set(traderIdsToSearch)];
-      
+
       this.logger.log(`[GetCopiers] PASSO 1 - Trader IDs FINAIS para buscar: ${traderIdsToSearch.join(', ')}`);
 
       // PASSO 2: Buscar na copy_trading_config todos os copiadores (onde trader_id corresponde ao master)
       this.logger.log(`[GetCopiers] PASSO 2: Buscando copiadores na copy_trading_config onde trader_id IN (${traderIdsToSearch.join(', ')})`);
-      
+
       const copiersFromConfig = await this.dataSource.query(
         `SELECT 
           c.id,
@@ -1254,7 +1374,7 @@ export class CopyTradingService {
 
       // PASSO 3: Buscar nas copy_trading_sessions usando o trader_id encontrado
       this.logger.log(`[GetCopiers] PASSO 3: Buscando copiadores nas copy_trading_sessions onde trader_id IN (${traderIdsToSearch.join(', ')}) E status = 'active'`);
-      
+
       const copiersFromSessions = await this.dataSource.query(
         `SELECT DISTINCT
           c.id,
@@ -1303,12 +1423,12 @@ export class CopyTradingService {
 
       // Combinar resultados, evitando duplicatas (priorizando dados da sessão se existir)
       const copiersMap = new Map();
-      
+
       // Primeiro adicionar da config
       copiersFromConfig.forEach(copier => {
         copiersMap.set(copier.user_id, copier);
       });
-      
+
       // Depois atualizar/sobrescrever com dados das sessões ativas (mais atualizados)
       copiersFromSessions.forEach(copier => {
         copiersMap.set(copier.user_id, copier);
@@ -1317,7 +1437,7 @@ export class CopyTradingService {
       const copiers = Array.from(copiersMap.values());
 
       this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores para trader ${masterUserId}`);
-      
+
       // Log detalhado dos copiadores encontrados
       if (copiers.length > 0) {
         copiers.forEach((copier, index) => {
@@ -1328,7 +1448,7 @@ export class CopyTradingService {
       // PASSO 4: Debug detalhado se não encontrou copiadores
       if (copiers.length === 0) {
         this.logger.log(`[GetCopiers] PASSO 4: DEBUG - Nenhum copiador encontrado, investigando...`);
-        
+
         // NOVO: Verificar se algum trader_id que tem copiadores corresponde ao master trader
         this.logger.log(`[GetCopiers] PASSO 4.1: Verificando trader_ids que têm copiadores e sua relação com o master`);
         const tradersWithCopiers = await this.dataSource.query(
@@ -1338,21 +1458,21 @@ export class CopyTradingService {
            HAVING total_copiadores > 0
            ORDER BY total_copiadores DESC`,
         );
-        
+
         for (const traderRow of tradersWithCopiers) {
           const traderId = traderRow.trader_id;
           this.logger.log(`[GetCopiers] PASSO 4.1 - Trader ${traderId} tem ${traderRow.total_copiadores} copiador(es)`);
-          
+
           // Verificar se esse trader_id é expert.id do master
           const expertRelation = await this.dataSource.query(
             `SELECT id, user_id, name FROM experts WHERE id = ? AND user_id = ?`,
             [traderId, masterUserId],
           );
-          
+
           if (expertRelation && expertRelation.length > 0) {
             this.logger.log(`[GetCopiers] PASSO 4.1 - ✅ DESCOBERTO! trader_id ${traderId} é expert.id do master trader! Adicionando à busca...`);
             traderIdsToSearch.push(traderId);
-            
+
             // Buscar copiadores com esse trader_id
             const foundCopiers = await this.dataSource.query(
               `SELECT c.user_id, u.name, u.email, c.trader_id
@@ -1367,12 +1487,12 @@ export class CopyTradingService {
             });
           }
         }
-        
+
         // Se encontrou novos trader_ids, buscar novamente
         if (traderIdsToSearch.length > 0) {
           const uniqueTraderIds = [...new Set(traderIdsToSearch)];
           this.logger.log(`[GetCopiers] PASSO 4.2: Buscando novamente com trader_ids atualizados: ${uniqueTraderIds.join(', ')}`);
-          
+
           // Buscar copiadores novamente com os trader_ids atualizados
           const retryCopiersFromConfig = await this.dataSource.query(
             `SELECT 
@@ -1409,7 +1529,7 @@ export class CopyTradingService {
             ORDER BY c.created_at DESC`,
             uniqueTraderIds,
           );
-          
+
           const retryCopiersFromSessions = await this.dataSource.query(
             `SELECT DISTINCT
               c.id,
@@ -1448,7 +1568,7 @@ export class CopyTradingService {
             ORDER BY s.started_at DESC`,
             uniqueTraderIds,
           );
-          
+
           // Combinar resultados
           const retryCopiersMap = new Map();
           retryCopiersFromConfig.forEach(copier => {
@@ -1457,10 +1577,10 @@ export class CopyTradingService {
           retryCopiersFromSessions.forEach(copier => {
             retryCopiersMap.set(copier.user_id, copier);
           });
-          
+
           const retryCopiers = Array.from(retryCopiersMap.values());
           this.logger.log(`[GetCopiers] PASSO 4.2 - Após retry, encontrados ${retryCopiers.length} copiadores`);
-          
+
           if (retryCopiers.length > 0) {
             // Substituir o array de copiadores
             copiers.length = 0;
@@ -1468,7 +1588,7 @@ export class CopyTradingService {
             this.logger.log(`[GetCopiers] PASSO 4.2 - ✅ SUCESSO! Copiadores encontrados após verificação adicional`);
           }
         }
-        
+
         // Verificar TODOS os registros na config (sem filtro de trader_id)
         const allConfigs = await this.dataSource.query(
           `SELECT trader_id, user_id, trader_name, is_active, session_status, created_at
@@ -1480,7 +1600,7 @@ export class CopyTradingService {
         allConfigs.forEach((config, idx) => {
           this.logger.log(`[GetCopiers] PASSO 4 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`);
         });
-        
+
         // Verificar TODAS as sessões ativas
         const allActiveSessions = await this.dataSource.query(
           `SELECT trader_id, user_id, trader_name, status, started_at
@@ -1493,7 +1613,7 @@ export class CopyTradingService {
         allActiveSessions.forEach((session, idx) => {
           this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: trader_id=${session.trader_id}, user_id=${session.user_id}, trader_name=${session.trader_name}, status=${session.status}`);
         });
-        
+
         // Verificar se o masterUserId aparece em algum lugar
         const masterInConfig = await this.dataSource.query(
           `SELECT * FROM copy_trading_config WHERE user_id = ? OR trader_id = ?`,
@@ -1505,7 +1625,7 @@ export class CopyTradingService {
             this.logger.log(`[GetCopiers] PASSO 4 - Registro ${idx + 1}: id=${record.id}, user_id=${record.user_id}, trader_id=${record.trader_id}, trader_name=${record.trader_name}`);
           });
         }
-        
+
         // Verificar se o masterUserId aparece nas sessões
         const masterInSessions = await this.dataSource.query(
           `SELECT * FROM copy_trading_sessions WHERE user_id = ? OR trader_id = ?`,
@@ -1517,7 +1637,7 @@ export class CopyTradingService {
             this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: id=${session.id}, user_id=${session.user_id}, trader_id=${session.trader_id}, status=${session.status}`);
           });
         }
-        
+
         // Mostrar todos os trader_ids únicos na tabela config
         const allTraderIdsConfig = await this.dataSource.query(
           `SELECT DISTINCT trader_id, COUNT(*) as total_copiadores
@@ -1527,7 +1647,7 @@ export class CopyTradingService {
            LIMIT 10`,
         );
         this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids na config:`, JSON.stringify(allTraderIdsConfig));
-        
+
         // Mostrar todos os trader_ids únicos na tabela sessions
         const allTraderIdsSessions = await this.dataSource.query(
           `SELECT DISTINCT trader_id, COUNT(*) as total_sessoes
@@ -1539,7 +1659,7 @@ export class CopyTradingService {
         );
         this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids nas sessões ativas:`, JSON.stringify(allTraderIdsSessions));
       }
-      
+
       this.logger.log(`[GetCopiers] ========== FIM BUSCA COPIADORES ==========`);
 
       // Formatar dados dos copiadores

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 /**
  * 🛡️ APOLLO v3 (AIGIS) - Strategy Logic
@@ -88,6 +89,7 @@ export class ApolloStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
+    private copyTradingService: CopyTradingService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -260,7 +262,7 @@ export class ApolloStrategy implements IStrategy {
       state.blindadoAtivo = true;
       state.picoLucro = currentProfit;
       state.pisoBlindado = currentProfit * 0.50; // Protect 50%
-      this.saveLog(state.userId, 'alerta', `🛡️ [BLINDADO] Meta 40% atingida! Proteção de $${state.pisoBlindado.toFixed(2)} ativada.`);
+      this.saveLog(state.userId, 'info', `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${currentProfit.toFixed(2)} | Protegendo 50%: $${state.pisoBlindado.toFixed(2)}`);
 
       // Emit event
       this.tradeEvents.emit({
@@ -270,6 +272,13 @@ export class ApolloStrategy implements IStrategy {
         profitPeak: state.picoLucro,
         protectedAmount: state.pisoBlindado
       });
+    }
+
+    // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+    if (!state.blindadoAtivo && currentProfit > 0 && currentProfit < (profitTarget * 0.40)) {
+      const activationTrigger = profitTarget * 0.40;
+      const percentualProgresso = (currentProfit / activationTrigger) * 100;
+      this.saveLog(state.userId, 'info', `ℹ️🛡️ Stop Blindado: Lucro $${currentProfit.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
     }
 
     // Trailing Stop Blindado updates
@@ -345,6 +354,31 @@ export class ApolloStrategy implements IStrategy {
         `UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`,
         [win ? 'WON' : 'LOST', profit, result.exitSpot, tradeId]
       );
+
+      // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
+      if (this.copyTradingService) {
+        const tradeData = await this.dataSource.query(
+          `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
+          [tradeId]
+        );
+
+        if (tradeData && tradeData.length > 0) {
+          const trade = tradeData[0];
+          const contractId = trade.contract_id || result.contractId;
+
+          if (contractId) {
+            this.copyTradingService.updateCopyTradingOperationsResult(
+              trade.user_id,
+              contractId,
+              win ? 'win' : 'loss',
+              profit,
+              parseFloat(trade.stake_amount) || 0,
+            ).catch((error: any) => {
+              this.logger.error(`[Apollo][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
+            });
+          }
+        }
+      }
     } catch (e) {
       this.logger.error(`[APOLLO] Failed to update trade ${tradeId}: ${e}`);
     }
@@ -467,7 +501,7 @@ export class ApolloStrategy implements IStrategy {
       msg = `🏆 [META] Atingida: $${secureAmount.toFixed(2)}`;
       type = 'stopped_profit';
     } else if (reason === 'blindado') {
-      msg = `🛡️ [BLINDADO] Lucro garantido de $${secureAmount.toFixed(2)} preservado.`;
+      msg = `�✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${secureAmount.toFixed(2)} para proteger o seu capital.`;
       type = 'stopped_blindado';
     } else {
       msg = `🛑 [STOP LOSS] Limite de perda atingido.`;
@@ -654,7 +688,28 @@ export class ApolloStrategy implements IStrategy {
         `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
         [state.userId, shortSignal, 0, stake, 'PENDING', 1, `Apollo V3 - ${shortSignal}`, type, JSON.stringify(analysisData), this.symbol]
       );
-      return result.insertId;
+      const tradeId = result.insertId;
+
+      // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
+      if (tradeId && this.copyTradingService) {
+        this.copyTradingService.replicateAIOperation(
+          state.userId,
+          {
+            tradeId: tradeId,
+            contractId: '',
+            contractType: type,
+            symbol: this.symbol,
+            duration: 1,
+            stakeAmount: stake,
+            entrySpot: 0,
+            entryTime: Math.floor(Date.now() / 1000),
+          }
+        ).catch(error => {
+          this.logger.error(`[Apollo][CopyTrading] Erro ao replicar operação: ${error.message}`);
+        });
+      }
+
+      return tradeId;
     } catch (e) {
       this.logger.error(`[APOLLO] DB Insert Error: ${e}`);
       return 0;

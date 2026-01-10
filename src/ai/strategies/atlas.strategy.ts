@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
@@ -134,6 +135,7 @@ export class AtlasStrategy implements IStrategy {
   constructor(
     private readonly dataSource: DataSource,
     private readonly tradeEvents: TradeEventsService,
+    private readonly copyTradingService: CopyTradingService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -512,7 +514,15 @@ export class AtlasStrategy implements IStrategy {
       const protectedAmount = profitPeak * 0.5;
       // Log de ativação
       this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
-        `🛡️✅ STOP BLINDADO ATIVADO! Protegendo $${protectedAmount.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) | Stop: $${pisoGarantido.toFixed(2)}`
+        `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`
+      );
+    }
+
+    // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
+    if (state.stopLossBlindado && !state.blindadoActive && profitTarget > 0 && lucroAtualRisco > 0 && lucroAtualRisco < activationTrigger) {
+      const percentualProgresso = (lucroAtualRisco / activationTrigger) * 100;
+      this.saveAtlasLog(state.userId, 'SISTEMA', 'info',
+        `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtualRisco.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`
       );
     }
 
@@ -535,11 +545,11 @@ export class AtlasStrategy implements IStrategy {
     // 4. STOP-LOSS BLINDADO
     if (state.stopLossBlindado && state.blindadoActive) {
       const stopBlindado = state.capitalInicial + (profitPeak * 0.5); // 50% do pico
-      const lucroProtegido = profitPeak * 0.5;
+      const lucroProtegido = capitalSessao - state.capitalInicial; // ✅ Lucro REAL atual
 
       if (capitalSessao <= stopBlindado) {
         this.saveAtlasLog(state.userId, 'SISTEMA', 'alerta',
-          `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
+          `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`
         );
 
         await this.dataSource.query(
@@ -673,7 +683,7 @@ export class AtlasStrategy implements IStrategy {
 
         if (state.blindadoActive) {
           const lucroProtegido = state.capital - state.capitalInicial;
-          logMsg = `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`;
+          logMsg = `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`;
         } else {
           // Calcular perda atual para exibição (simulando que atingiu o limite, já que não pode mais operar)
           const perdaAtual = state.capitalInicial - state.capital;
@@ -1148,7 +1158,7 @@ export class AtlasStrategy implements IStrategy {
               state.userId,
               symbol,
               'info',
-              `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
+              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
             );
           }
 
@@ -1179,7 +1189,7 @@ export class AtlasStrategy implements IStrategy {
 
             // ✅ Log padronizado para o Frontend
             this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO! Protegido: $${lucroProtegido.toFixed(2)} (50% do pico $${profitPeak.toFixed(2)}) - IA DESATIVADA`
+              `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`
             );
 
             await this.dataSource.query(
@@ -1199,7 +1209,7 @@ export class AtlasStrategy implements IStrategy {
               state.userId,
               symbol,
               'info',
-              `🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualAteAtivacao.toFixed(1)}%)`
+              `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualAteAtivacao.toFixed(1)}%)`
             );
           }
         }
@@ -1426,6 +1436,25 @@ export class AtlasStrategy implements IStrategy {
       const tradeId = result?.insertId || null;
 
       if (tradeId) {
+        // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
+        if (this.copyTradingService) {
+          this.copyTradingService.replicateAIOperation(
+            trade.userId,
+            {
+              tradeId: tradeId,
+              contractId: trade.contractId || '',
+              contractType: trade.contractType,
+              symbol: trade.symbol,
+              duration: 1,
+              stakeAmount: trade.stakeAmount,
+              entrySpot: trade.entryPrice,
+              entryTime: Math.floor(Date.now() / 1000),
+            }
+          ).catch(error => {
+            this.logger.error(`[Atlas][CopyTrading] Erro ao replicar operação: ${error.message}`);
+          });
+        }
+
         this.tradeEvents.emit({
           userId: trade.userId,
           type: 'created',
@@ -1491,6 +1520,31 @@ export class AtlasStrategy implements IStrategy {
         `UPDATE ai_trades SET ${updates.join(', ')} WHERE id = ?`,
         values
       );
+
+      // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
+      if ((update.status === 'WON' || update.status === 'LOST') && this.copyTradingService) {
+        const tradeData = await this.dataSource.query(
+          `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
+          [tradeId]
+        );
+
+        if (tradeData && tradeData.length > 0) {
+          const trade = tradeData[0];
+          const contractId = trade.contract_id;
+
+          if (contractId) {
+            this.copyTradingService.updateCopyTradingOperationsResult(
+              trade.user_id,
+              contractId,
+              update.status === 'WON' ? 'win' : 'loss',
+              update.profitLoss || 0,
+              parseFloat(trade.stake_amount) || 0,
+            ).catch((error: any) => {
+              this.logger.error(`[Atlas][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
+            });
+          }
+        }
+      }
 
       if (update.status || update.profitLoss !== undefined) {
         this.tradeEvents.emit({
