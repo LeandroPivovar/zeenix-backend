@@ -181,11 +181,11 @@ export class ApolloStrategy implements IStrategy {
       this.logger.debug(`[APOLLO][${state.userId}] 🎯 SIGNAL: ${analysisMsg}`);
     } else if (state.ticksColetados <= 5 || state.ticksColetados % 20 === 0) {
       // Log early ticks and then every 20 ticks to show it's alive
-      this.logger.debug(`[APOLLO][${state.userId}] 🔍 Analysis: ${analysisMsg} | Mode: ${effectiveMode}`);
-      // Optional: Save to DB logs if user explicitly requested "logs avisando"
-      if (state.ticksColetados <= 5) {
-        this.saveLog(state.userId, 'info', `🔍 [ANÁLISE] ${analysisMsg} | Aguardando padrão...`);
-      }
+      const logMsg = `🔍 [ANÁLISE] ${analysisMsg} | Aguardando gatilho...`;
+      this.logger.debug(`[APOLLO][${state.userId}] ${logMsg}`);
+
+      // Save to DB so user sees it in the dashboard
+      this.saveLog(state.userId, 'info', logMsg);
     }
 
     if (signal) {
