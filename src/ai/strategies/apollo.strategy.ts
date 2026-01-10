@@ -67,6 +67,7 @@ export class ApolloStrategy implements IStrategy {
   private readonly logger = new Logger(ApolloStrategy.name);
   private users = new Map<string, ApolloInternalState>();
   private ticks: Tick[] = [];
+  private lastLogTime = 0; // Control global log frequency
   private symbol = 'R_100';
   private appId: string;
 
@@ -98,6 +99,13 @@ export class ApolloStrategy implements IStrategy {
     if (symbol && symbol !== this.symbol) return;
     this.ticks.push(tick);
     if (this.ticks.length > 50) this.ticks.shift();
+
+    // 1. Global Heartbeat (Every 100 ticks or 10s)
+    const now = Date.now();
+    if (this.ticks.length % 50 === 0 || now - this.lastLogTime > 10000) {
+      this.logger.debug(`[APOLLO] 📊 Ticks: ${this.ticks.length}/50 (Buffer) | Users: ${this.users.size}`);
+      this.lastLogTime = now;
+    }
 
     for (const state of this.users.values()) {
       state.ticksColetados++;
@@ -139,17 +147,45 @@ export class ApolloStrategy implements IStrategy {
     const isHigh = (d: number) => d >= 6;
 
     let signal = false;
+    let analysisMsg = '';
 
     if (effectiveMode === 'veloz') {
       // 1 High Digit
-      if (isHigh(window[0])) signal = true;
+      if (isHigh(window[0])) {
+        signal = true;
+        analysisMsg = `Digit ${window[0]} >= 6`;
+      } else {
+        analysisMsg = `Digit ${window[0]} < 6`;
+      }
     } else if (effectiveMode === 'normal') {
       // 2 High Digits, 2nd <= 1st (Loss of strength)
       const [prev, last] = window;
-      if (isHigh(prev) && isHigh(last) && last <= prev) signal = true;
+      if (isHigh(prev) && isHigh(last) && last <= prev) {
+        signal = true;
+        analysisMsg = `Sequence ${window.join(', ')} (Decay Detected)`;
+      } else {
+        analysisMsg = `Sequence ${window.join(', ')} (No Pattern)`;
+      }
     } else { // lento
       // 3 High Digits
-      if (window.every(isHigh)) signal = true;
+      if (window.every(isHigh)) {
+        signal = true;
+        analysisMsg = `Sequence ${window.join(', ')} (All High)`;
+      } else {
+        analysisMsg = `Sequence ${window.join(', ')} (Mixed)`;
+      }
+    }
+
+    // Log Analysis (Periodic or on Signal)
+    if (signal) {
+      this.logger.debug(`[APOLLO][${state.userId}] 🎯 SIGNAL: ${analysisMsg}`);
+    } else if (state.ticksColetados <= 5 || state.ticksColetados % 20 === 0) {
+      // Log early ticks and then every 20 ticks to show it's alive
+      this.logger.debug(`[APOLLO][${state.userId}] 🔍 Analysis: ${analysisMsg} | Mode: ${effectiveMode}`);
+      // Optional: Save to DB logs if user explicitly requested "logs avisando"
+      if (state.ticksColetados <= 5) {
+        this.saveLog(state.userId, 'info', `🔍 [ANÁLISE] ${analysisMsg} | Aguardando padrão...`);
+      }
     }
 
     if (signal) {
