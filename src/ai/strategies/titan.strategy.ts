@@ -571,6 +571,7 @@ export class TitanStrategy implements IStrategy {
                         // Soros cycle completed (won with Soros stake)
                         state.sorosActive = false;
                         state.sorosStake = 0;
+                        state.vitoriasConsecutivas = 0; // ✅ RESET PARA REINICIAR CICLO SOROS
                         this.saveTitanLog(state.userId, this.symbol, 'info',
                             `🔄 [SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base ($${state.apostaInicial.toFixed(2)}).`);
                     }
