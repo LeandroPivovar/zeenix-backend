@@ -175,6 +175,7 @@ interface NexusUserState {
     vitoriasConsecutivas: number;
     ultimoLucro: number;
     ticksColetados: number;
+    rejectedAnalysisCount: number;
 }
 
 @Injectable()
@@ -232,12 +233,15 @@ export class NexusStrategy implements IStrategy {
         if (lastTicks.length < 5) return null;
 
         let signal: DigitParity | null = null;
+        let analysisMsg = '';
 
         if (state.mode === 'VELOZ') {
             const t = lastTicks.slice(-3);
             if (t[2].value > t[1].value && t[1].value > t[0].value) {
                 signal = 'PAR';
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ] Detectado Momentum (2 subidas consecutivas)`);
+                analysisMsg = `Detectado Momentum (2 subidas consecutivas)`;
+            } else {
+                analysisMsg = `Sem Momentum (${t[0].value} -> ${t[1].value} -> ${t[2].value})`;
             }
         } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
@@ -247,15 +251,34 @@ export class NexusStrategy implements IStrategy {
                 const t = lastTicks.slice(-4);
                 if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
                     signal = 'PAR';
-                    this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE BALANCEADO] Pullback detectado em Tendência de Alta`);
+                    analysisMsg = `Pullback detectado em Tendência de Alta`;
+                } else {
+                    analysisMsg = `Preço > SMA, aguardando Pullback`;
                 }
+            } else {
+                analysisMsg = `Preço (${currentPrice}) abaixo da SMA50 (${sma50.toFixed(2)})`;
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
             // Relaxed from 20 to 30 to ensure execution
             if (rsi < 30) {
                 signal = 'PAR';
-                this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO] RSI em exaustão (${rsi.toFixed(2)})`);
+                analysisMsg = `RSI em exaustão (${rsi.toFixed(2)} < 30)`;
+            } else {
+                analysisMsg = `RSI Neutro/Alto (${rsi.toFixed(2)} >= 30)`;
+            }
+        }
+
+        // Logic for Batched Logging or Immediate Signal
+        if (signal) {
+            state.rejectedAnalysisCount = 0; // Reset
+            this.saveNexusLog(state.userId, this.symbol, 'analise', `🎯 [SINAL] ${analysisMsg} | Entrada Confirmada!`);
+        } else {
+            state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
+
+            if (state.rejectedAnalysisCount >= 5) {
+                this.saveNexusLog(state.userId, this.symbol, 'info', `📋 [RESUMO] Últimas 5 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`);
+                state.rejectedAnalysisCount = 0;
             }
         }
 
@@ -311,7 +334,8 @@ export class NexusStrategy implements IStrategy {
             originalMode: nexusMode,
             lastDirection: null,
             isOperationActive: false,
-            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0
+            vitoriasConsecutivas: 0, ultimoLucro: 0, ticksColetados: 0,
+            rejectedAnalysisCount: 0
         });
 
         this.riskManagers.set(userId, new RiskManager(

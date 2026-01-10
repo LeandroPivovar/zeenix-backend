@@ -77,7 +77,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
                 initial_balance, deriv_token, currency, symbol, agent_type, stop_loss_type
          FROM autonomous_agent_config 
-         WHERE is_active = TRUE AND agent_type = 'falcon'`,
+         WHERE is_active = TRUE 
+           AND agent_type = 'falcon'
+           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
@@ -729,6 +731,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.lucroAtual.toFixed(2)}. Encerrando operações do dia.`);
 
           // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
+          // Mantém is_active = TRUE para permitir reset automático no dia seguinte
           state.isActive = false; // Pausa em memória
           await this.dataSource.query(
             `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,

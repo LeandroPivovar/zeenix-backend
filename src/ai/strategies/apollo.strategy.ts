@@ -186,8 +186,8 @@ export class ApolloStrategy implements IStrategy {
     } else {
       state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
 
-      if (state.rejectedAnalysisCount >= 20) {
-        const logMsg = `📋 [RESUMO] Últimas 20 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`;
+      if (state.rejectedAnalysisCount >= 5) {
+        const logMsg = `📋 [RESUMO] Últimas 5 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`;
         this.logger.debug(`[APOLLO][${state.userId}] ${logMsg}`);
         this.saveLog(state.userId, 'info', logMsg);
         state.rejectedAnalysisCount = 0; // Reset
