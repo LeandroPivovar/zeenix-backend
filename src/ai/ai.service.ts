@@ -3300,13 +3300,13 @@ export class AiService implements OnModuleInit {
   private async saveWebSocketState(): Promise<void> {
     try {
       let ticksData = this.ticks.slice(-50); // Salvar apenas os últimos 50 ticks
-      
+
       // ✅ Garantir que ticksData é um array válido antes de stringificar
       if (!Array.isArray(ticksData)) {
         this.logger.warn(`[saveWebSocketState] ⚠️ ticksData não é um array, usando array vazio`);
         ticksData = [];
       }
-      
+
       // ✅ Sempre stringificar (ticksData sempre será array aqui)
       const ticksJson = JSON.stringify(ticksData);
 
@@ -3378,9 +3378,9 @@ export class AiService implements OnModuleInit {
               ticksDataStr = '[]';
             }
           }
-          
+
           ticks = JSON.parse(ticksDataStr);
-          
+
           // ✅ Validar que o resultado é um array
           if (!Array.isArray(ticks)) {
             this.logger.warn(`[loadWebSocketState] ⚠️ ticks_data parseado não é array, usando array vazio`);
@@ -3666,11 +3666,12 @@ export class AiService implements OnModuleInit {
     // Buscar histórico de trades do usuário (sem limite, apenas da sessão atual)
     this.logger.log(`[GetTradeHistory] 🔍 Buscando histórico para userId=${userId}${limit ? `, limit=${limit}` : ' (sem limite)'}`);
 
-    // ✅ CORREÇÃO: Buscar data de criação da sessão atual para filtrar apenas operações da sessão
+    // ✅ CORREÇÃO: Buscar data de criação da ÚLTIMA sessão (ativa ou não) para filtrar apenas operações recentes
+    // Isso evita carregar o histórico completo quando a sessão para (is_active = false)
     const sessionQuery = `
       SELECT created_at as sessionCreatedAt
       FROM ai_user_config
-      WHERE user_id = ? AND is_active = TRUE
+      WHERE user_id = ? 
       ORDER BY created_at DESC
       LIMIT 1
     `;
