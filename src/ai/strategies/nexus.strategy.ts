@@ -132,7 +132,7 @@ class RiskManager {
         nextStake = Math.round(nextStake * 100) / 100;
 
         const profitAccumulatedAtPeak = this.maxBalance - this.initialBalance;
-        const activationTrigger = this.profitTarget * 0.50;
+        const activationTrigger = this.profitTarget * 0.40;
         let minAllowedBalance = 0.0;
 
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {

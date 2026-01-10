@@ -604,8 +604,19 @@ export class AtlasStrategy implements IStrategy {
       }
 
       const stopLossDisponivel = this.calculateAvailableStopLoss(state);
+
+      // ✅ LOGICA DE SOBREVIVENCIA (Igual Orion)
+      // Se a próxima aposta do Martingale for maior que o Stop Loss disponível,
+      // em vez de bloquear ou reduzir, RESETAMOS o ciclo para a aposta base.
+      // Isso permite que o robô continue operando ("sobrevivendo") em vez de parar.
       if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
-        stakeAmount = Math.max(0.35, Math.min(state.apostaBase, stopLossDisponivel));
+        this.saveAtlasLog(state.userId, symbol, 'alerta',
+          `⚠️ Martingale bloqueado! Próxima aposta ($${stakeAmount.toFixed(2)}) ultrapassaria stop loss disponível ($${stopLossDisponivel.toFixed(2)}). Resetando para aposta base.`);
+
+        state.martingaleStep = 0;
+        state.perdaAcumulada = 0;
+        state.isInRecovery = false;
+        stakeAmount = state.apostaBase;
       }
     } else if (state.isInSoros && state.vitoriasConsecutivas > 0) {
       const SOROS_FACTOR = 0.9;
