@@ -476,7 +476,13 @@ export class ApolloStrategy implements IStrategy {
     const ws = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
 
     return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.logger.error('[APOLLO] WS Connection Timeout');
+        resolve(null);
+      }, 10000); // 10s Timeout
+
       ws.on('open', () => {
+        clearTimeout(timeout);
         const connection: any = {
           ws,
           authorized: false,
@@ -503,7 +509,15 @@ export class ApolloStrategy implements IStrategy {
           }
         });
       });
-      ws.on('error', (e) => { this.logger.error('WS Error', e); resolve(null); });
+      ws.on('error', (e) => {
+        clearTimeout(timeout);
+        this.logger.error('WS Error', e);
+        resolve(null);
+      });
+      ws.on('close', () => {
+        clearTimeout(timeout);
+        this.wsConnections.delete(token);
+      });
     });
   }
 
