@@ -618,13 +618,12 @@ export class AtlasStrategy implements IStrategy {
         state.isInRecovery = false;
         stakeAmount = state.apostaBase;
       }
-    } else if (state.isInSoros && state.vitoriasConsecutivas > 0) {
+    } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
+      // ✅ SOROS NÍVEL 1 APENAS (Pedido do usuário)
+      // Ganhou uma -> aplica lucro na próxima.
+      // Se ganhar a segunda -> reseta para mão fixa (não faz nível 2)
       const SOROS_FACTOR = 0.9;
-      if (state.vitoriasConsecutivas === 1) {
-        stakeAmount = state.apostaBase + (state.ultimoLucro * SOROS_FACTOR);
-      } else if (state.vitoriasConsecutivas === 2) {
-        stakeAmount = state.ultimaApostaUsada + (state.ultimoLucro * SOROS_FACTOR);
-      }
+      stakeAmount = state.apostaBase + (state.ultimoLucro * SOROS_FACTOR);
     }
 
     // Ajuste final
