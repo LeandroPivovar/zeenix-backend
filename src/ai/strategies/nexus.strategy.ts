@@ -348,7 +348,7 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier: string | undefined = '-0.35'; // Default Attack Mode (Nexus v2)
+        let barrier: string | undefined = '-0.15'; // Restored Original Attack Mode
 
         // Hybrid Defense Mode (Nexus v2)
         // Se estiver em recuperação (Losses > 0), remove barreira e opera Rise/Fall (Payout ~95%)
