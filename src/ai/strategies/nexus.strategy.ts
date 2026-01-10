@@ -105,7 +105,7 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.30;
+        const PAYOUT_RATE = 0.95;
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
@@ -117,10 +117,12 @@ class RiskManager {
                     nextStake = baseStake;
                 }
             } else if (this.riskMode === 'MODERADO') {
-                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.25);
+                // Modificado para Nexus v2: (TotalLoss * 1.25) / 0.95
+                const targetRecovery = this.totalLossAccumulated * 1.25;
                 nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
+                // Modificado para Nexus v2: (TotalLoss * 1.50) / 0.95
+                const targetRecovery = this.totalLossAccumulated * 1.50;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
@@ -346,9 +348,13 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier = '-0.15';
-        if (riskManager.consecutiveLosses === 1) barrier = '-0.25';
-        else if (riskManager.consecutiveLosses === 2) barrier = '-0.35';
+        let barrier: string | undefined = '-0.35'; // Default Attack Mode (Nexus v2)
+
+        // Hybrid Defense Mode (Nexus v2)
+        // Se estiver em recuperação (Losses > 0), remove barreira e opera Rise/Fall (Payout ~95%)
+        if (riskManager.consecutiveLosses > 0) {
+            barrier = undefined;
+        }
 
         state.isOperationActive = true;
         try {
