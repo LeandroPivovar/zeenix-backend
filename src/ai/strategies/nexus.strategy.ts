@@ -371,13 +371,19 @@ export class NexusStrategy implements IStrategy {
             }, state.userId);
 
             if (result) {
+                const wasRecovery = riskManager.consecutiveLosses > 0;
                 riskManager.updateResult(result.profit, stake);
                 state.capital += result.profit;
                 state.ultimoLucro = result.profit;
                 const status = result.profit >= 0 ? 'WON' : 'LOST';
 
                 if (status === 'WON') {
-                    state.vitoriasConsecutivas++;
+                    if (wasRecovery) {
+                        state.vitoriasConsecutivas = 0; // Reset total apos Martingale para voltar a Base
+                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base.`);
+                    } else {
+                        state.vitoriasConsecutivas++;
+                    }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] Resultado Positivo. Lucro: +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
                 } else {
                     state.vitoriasConsecutivas = 0;
