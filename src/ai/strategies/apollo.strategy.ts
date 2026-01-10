@@ -59,6 +59,7 @@ export interface ApolloUserState {
 // Internal augmented state for logic
 interface ApolloInternalState extends ApolloUserState {
   lossAccumulated: number;
+  rejectedAnalysisCount: number;
 }
 
 @Injectable()
@@ -176,16 +177,21 @@ export class ApolloStrategy implements IStrategy {
       }
     }
 
-    // Log Analysis (Periodic or on Signal)
+    // Log Analysis (Summary every 20 rejections OR Immediate Signal)
     if (signal) {
-      this.logger.debug(`[APOLLO][${state.userId}] 🎯 SIGNAL: ${analysisMsg}`);
-    } else if (state.ticksColetados <= 5 || state.ticksColetados % 20 === 0) {
-      // Log early ticks and then every 20 ticks to show it's alive
-      const logMsg = `🔍 [ANÁLISE] ${analysisMsg} | Aguardando gatilho...`;
+      state.rejectedAnalysisCount = 0; // Reset counter on signal
+      const logMsg = `🎯 [SINAL] ${analysisMsg} | Entrada Confirmada!`;
       this.logger.debug(`[APOLLO][${state.userId}] ${logMsg}`);
+      this.saveLog(state.userId, 'sinal', logMsg);
+    } else {
+      state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
 
-      // Save to DB so user sees it in the dashboard
-      this.saveLog(state.userId, 'info', logMsg);
+      if (state.rejectedAnalysisCount >= 20) {
+        const logMsg = `📋 [RESUMO] Últimas 20 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`;
+        this.logger.debug(`[APOLLO][${state.userId}] ${logMsg}`);
+        this.saveLog(state.userId, 'info', logMsg);
+        state.rejectedAnalysisCount = 0; // Reset
+      }
     }
 
     if (signal) {
@@ -429,7 +435,8 @@ export class ApolloStrategy implements IStrategy {
       lastDigit: null,
       ticksColetados: 0,
 
-      lossAccumulated: 0
+      lossAccumulated: 0,
+      rejectedAnalysisCount: 0
     };
 
     this.users.set(userId, initialState);
