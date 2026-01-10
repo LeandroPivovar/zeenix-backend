@@ -100,9 +100,9 @@ export class ApolloStrategy implements IStrategy {
     this.ticks.push(tick);
     if (this.ticks.length > 50) this.ticks.shift();
 
-    // 1. Global Heartbeat (Every 100 ticks or 10s)
+    // 1. Global Heartbeat (Time-based ~10s)
     const now = Date.now();
-    if (this.ticks.length % 50 === 0 || now - this.lastLogTime > 10000) {
+    if (now - this.lastLogTime > 10000) {
       this.logger.debug(`[APOLLO] 📊 Ticks: ${this.ticks.length}/50 (Buffer) | Users: ${this.users.size}`);
       this.lastLogTime = now;
     }
@@ -297,6 +297,14 @@ export class ApolloStrategy implements IStrategy {
     try {
       const tradeId = await this.createTradeRecord(state, contractType, stake, prediction);
 
+      if (tradeId === 0) {
+        // DB Insert failed (likely caught error), abort trade to be safe or retry?
+        // For now, abort to prevent 'ghost trades'
+        this.logger.error('[APOLLO] Trade Aborted: DB Insert Failed');
+        state.isOperationActive = false;
+        return;
+      }
+
       const result = await this.executeTradeViaWebSocket(state.derivToken, {
         contract_type: contractType,
         amount: stake,
@@ -305,9 +313,10 @@ export class ApolloStrategy implements IStrategy {
       }, state.userId);
 
       if (result) {
-        await this.processResult(state, result, stake);
+        await this.processResult(state, result, stake, tradeId);
       } else {
         state.isOperationActive = false; // Error / Timeout
+        // Optional: Update trade as ERROR in DB
       }
     } catch (error) {
       this.logger.error(`[APOLLO] Execution Error: ${error}`);
@@ -315,7 +324,7 @@ export class ApolloStrategy implements IStrategy {
     }
   }
 
-  private async processResult(state: ApolloInternalState, result: { profit: number, exitSpot: any, contractId: string }, stakeUsed: number) {
+  private async processResult(state: ApolloInternalState, result: { profit: number, exitSpot: any, contractId: string }, stakeUsed: number, tradeId: number) {
     state.isOperationActive = false;
     const profit = result.profit;
     const win = profit > 0;
@@ -323,6 +332,16 @@ export class ApolloStrategy implements IStrategy {
     state.lastProfit = profit;
     state.lastResultWin = win;
     state.capital += profit;
+
+    // Update Trade Record
+    try {
+      await this.dataSource.query(
+        `UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`,
+        [win ? 'WON' : 'LOST', profit, result.exitSpot, tradeId]
+      );
+    } catch (e) {
+      this.logger.error(`[APOLLO] Failed to update trade ${tradeId}: ${e}`);
+    }
 
     const logResult = win ? `✅ [WIN] +$${profit.toFixed(2)}` : `📉 [LOSS] -$${Math.abs(profit).toFixed(2)}`;
     this.saveLog(state.userId, 'resultado', `${logResult} | Saldo: $${state.capital.toFixed(2)}`);
@@ -616,13 +635,21 @@ export class ApolloStrategy implements IStrategy {
       soros: state.sorosActive
     };
 
+    // Fix: Shorten signal string to avoid DB 'Data too long' error
+    // "DIGITUNDER 6" -> "UNDER 6"
+    // "DIGITEVEN" -> "EVEN"
+    // "DIGITODD" -> "ODD"
+    let shortSignal = type.replace('DIGIT', '');
+    if (prediction !== undefined) shortSignal += ` ${prediction}`;
+
     try {
       const result: any = await this.dataSource.query(
         `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [state.userId, `${type} ${prediction || ''}`, 0, stake, 'PENDING', 1, `Apollo V3 - ${type}`, type, JSON.stringify(analysisData), this.symbol]
+        [state.userId, shortSignal, 0, stake, 'PENDING', 1, `Apollo V3 - ${shortSignal}`, type, JSON.stringify(analysisData), this.symbol]
       );
       return result.insertId;
     } catch (e) {
+      this.logger.error(`[APOLLO] DB Insert Error: ${e}`);
       return 0;
     }
   }
