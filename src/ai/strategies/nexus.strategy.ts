@@ -123,7 +123,7 @@ class RiskManager {
                 const targetRecovery = this.totalLossAccumulated + (baseStake * 0.50);
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
-        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {
+        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
             nextStake = baseStake + lastProfit;
         }
 
