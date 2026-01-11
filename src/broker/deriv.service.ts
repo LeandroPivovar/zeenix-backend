@@ -356,6 +356,9 @@ export class DerivService {
               balancesByCurrencyReal,
               accountsByCurrency,
               aggregatedBalances,
+              tokensByLoginId: {
+                [selectedEntry.loginid || balanceData.loginid]: token
+              }
             };
 
             this.logger.log(
@@ -470,6 +473,7 @@ export class DerivService {
       balancesByCurrencyDemo: account.balancesByCurrencyDemo ?? {},
       balancesByCurrencyReal: account.balancesByCurrencyReal ?? {},
       accountsByCurrency: account.accountsByCurrency ?? {},
+      tokensByLoginId: account.tokensByLoginId ?? {},
     };
   }
 

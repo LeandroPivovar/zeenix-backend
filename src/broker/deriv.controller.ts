@@ -309,22 +309,24 @@ export class DerivController {
 
     const preciseAccount = this.derivService.pickAccountForCurrency(account, targetCurrency);
 
-    // Garantir que o token seja salvo no raw.tokensByLoginId para uso futuro (ex: buyContract)
-    const rawData = { ...preciseAccount };
-    if (!rawData.tokensByLoginId) {
-      rawData.tokensByLoginId = {};
-    }
+    // Buscar informações existentes do banco para não perder tokens já armazenados
+    const derivInfo = await this.userRepository.getDerivInfo(userId);
+    const existingTokens = derivInfo?.raw?.tokensByLoginId || {};
+
+    // Garantir que o token atual seja salvo no raw.tokensByLoginId para uso futuro (ex: buyContract)
+    const tokensByLoginId = { ...existingTokens };
     if (preciseAccount.loginid) {
-      rawData.tokensByLoginId[preciseAccount.loginid] = token;
-      this.logger.log(`[${source}] Token salvo para loginid ${preciseAccount.loginid} no rawData`);
+      tokensByLoginId[preciseAccount.loginid] = token;
+      this.logger.log(`[${source}] Token mesclado para loginid ${preciseAccount.loginid}. Total: ${Object.keys(tokensByLoginId).length}`);
     }
 
     const accountForCurrency = {
-      ...rawData,
+      ...preciseAccount,
       balancesByCurrency,
       balancesByCurrencyDemo: account?.balancesByCurrencyDemo,
       balancesByCurrencyReal: account?.balancesByCurrencyReal,
       aggregatedBalances: account?.aggregatedBalances,
+      tokensByLoginId,
     };
 
     const sessionPayload = {
@@ -369,15 +371,15 @@ export class DerivController {
         appId,
       };
 
-      // Garantir que o token também seja preservado no refresh
-      const refreshedRaw = { ...refreshedAccount };
-      if (!refreshedRaw.tokensByLoginId) {
-        refreshedRaw.tokensByLoginId = accountForCurrency.tokensByLoginId || {};
-      }
-      // Se por algum motivo o token não estiver lá, recompor do inicial
-      if (refreshedAccount.loginid && !refreshedRaw.tokensByLoginId[refreshedAccount.loginid]) {
-        refreshedRaw.tokensByLoginId[refreshedAccount.loginid] = token;
-      }
+      // Garantir que os tokens sejam preservados no refresh
+      const tokensToKeep = refreshedAccount.tokensByLoginId && Object.keys(refreshedAccount.tokensByLoginId).length > 0
+        ? { ...accountForCurrency.tokensByLoginId, ...refreshedAccount.tokensByLoginId }
+        : accountForCurrency.tokensByLoginId;
+
+      const refreshedRaw = {
+        ...refreshedAccount,
+        tokensByLoginId: tokensToKeep
+      };
 
       this.logger.log(`[${source}] Atualizando banco de dados com dados atualizados...`);
       // Log para debug - verificar o que está sendo salvo como raw
