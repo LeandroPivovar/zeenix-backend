@@ -109,11 +109,11 @@ class BuyContractDto {
   @IsOptional()
   @IsString()
   proposalId?: string;
-  
+
   @IsOptional()
   @IsInt()
   barrier?: number; // Para contratos DIGIT* (dígito previsto 0-9)
-  
+
   @IsOptional()
   @IsInt()
   multiplier?: number; // Para contratos MULTUP/MULTDOWN
@@ -143,11 +143,11 @@ class ProposalDto {
 
   @IsInt()
   amount: number;
-  
+
   @IsOptional()
   @IsInt()
   barrier?: number; // Para contratos DIGIT* (dígito previsto 0-9)
-  
+
   @IsOptional()
   @IsInt()
   multiplier?: number; // Para contratos MULTUP/MULTDOWN
@@ -200,10 +200,10 @@ export class DerivController {
   }
 
   private buildResponse(
-    account: { 
-      loginid?: string; 
-      currency?: string; 
-      balance?: any; 
+    account: {
+      loginid?: string;
+      currency?: string;
+      balance?: any;
       balancesByCurrency?: Record<string, number>;
       balancesByCurrencyDemo?: Record<string, number>;
       balancesByCurrencyReal?: Record<string, number>;
@@ -237,10 +237,10 @@ export class DerivController {
       // Sempre incluir tokensByLoginId, mesmo que vazio
       tokensByLoginId: (account && 'tokensByLoginId' in account && account.tokensByLoginId) ? account.tokensByLoginId : {},
     };
-    
+
     // Log para debug - verificar se os campos estão presentes
     this.logger.log(`[DerivController] buildResponse - balancesByCurrencyDemo: ${JSON.stringify(response.balancesByCurrencyDemo)}, balancesByCurrencyReal: ${JSON.stringify(response.balancesByCurrencyReal)}, hasTokensByLoginId: ${!!response.tokensByLoginId}`);
-    
+
     return response;
   }
 
@@ -272,7 +272,7 @@ export class DerivController {
     this.logger.log(`[${source}] Dados recebidos da Deriv: ${JSON.stringify(account)}`);
 
     const balancesByCurrency = account?.balancesByCurrency ?? {};
-    
+
     // Se targetCurrency for DEMO, não verificar se existe "DEMO" nas moedas
     // pois DEMO não é uma moeda, mas sim um tipo de conta (demo em USD, BTC, etc)
     if (targetCurrency !== 'DEMO' && balancesByCurrency[targetCurrency] === undefined) {
@@ -286,11 +286,11 @@ export class DerivController {
         );
         throw new BadRequestException(
           `Nenhuma conta Deriv retornada corresponde à moeda ${targetCurrency}. ` +
-            'Selecione a conta USD real correta ao autorizar o OAuth.',
+          'Selecione a conta USD real correta ao autorizar o OAuth.',
         );
       }
     }
-    
+
     // Se for DEMO, verificar se há pelo menos uma conta demo disponível
     if (targetCurrency === 'DEMO') {
       const hasDemoAccount = Object.values(account?.accountsByCurrency ?? {}).some(
@@ -302,14 +302,25 @@ export class DerivController {
         );
         throw new BadRequestException(
           'Nenhuma conta demo Deriv encontrada. ' +
-            'Certifique-se de ter uma conta demo ativa na Deriv.',
+          'Certifique-se de ter uma conta demo ativa na Deriv.',
         );
       }
     }
 
     const preciseAccount = this.derivService.pickAccountForCurrency(account, targetCurrency);
+
+    // Garantir que o token seja salvo no raw.tokensByLoginId para uso futuro (ex: buyContract)
+    const rawData = { ...preciseAccount };
+    if (!rawData.tokensByLoginId) {
+      rawData.tokensByLoginId = {};
+    }
+    if (preciseAccount.loginid) {
+      rawData.tokensByLoginId[preciseAccount.loginid] = token;
+      this.logger.log(`[${source}] Token salvo para loginid ${preciseAccount.loginid} no rawData`);
+    }
+
     const accountForCurrency = {
-      ...preciseAccount,
+      ...rawData,
       balancesByCurrency,
       balancesByCurrencyDemo: account?.balancesByCurrencyDemo,
       balancesByCurrencyReal: account?.balancesByCurrencyReal,
@@ -328,7 +339,8 @@ export class DerivController {
       hasBalancesByCurrencyReal: !!accountForCurrency?.balancesByCurrencyReal,
       balancesByCurrencyDemo: accountForCurrency?.balancesByCurrencyDemo,
       balancesByCurrencyReal: accountForCurrency?.balancesByCurrencyReal,
-      balancesByCurrency: accountForCurrency?.balancesByCurrency
+      balancesByCurrency: accountForCurrency?.balancesByCurrency,
+      hasTokensByLoginId: !!accountForCurrency?.tokensByLoginId
     })}`);
     this.derivService.setSession(userId, sessionPayload);
     await this.userRepository.updateDerivInfo(userId, {
@@ -357,23 +369,34 @@ export class DerivController {
         appId,
       };
 
+      // Garantir que o token também seja preservado no refresh
+      const refreshedRaw = { ...refreshedAccount };
+      if (!refreshedRaw.tokensByLoginId) {
+        refreshedRaw.tokensByLoginId = accountForCurrency.tokensByLoginId || {};
+      }
+      // Se por algum motivo o token não estiver lá, recompor do inicial
+      if (refreshedAccount.loginid && !refreshedRaw.tokensByLoginId[refreshedAccount.loginid]) {
+        refreshedRaw.tokensByLoginId[refreshedAccount.loginid] = token;
+      }
+
       this.logger.log(`[${source}] Atualizando banco de dados com dados atualizados...`);
       // Log para debug - verificar o que está sendo salvo como raw
       this.logger.log(`[${source}] DEBUG - refreshedAccount sendo salvo como raw: ${JSON.stringify({
-        hasBalancesByCurrencyDemo: !!refreshedAccount?.balancesByCurrencyDemo,
-        hasBalancesByCurrencyReal: !!refreshedAccount?.balancesByCurrencyReal,
-        balancesByCurrencyDemo: refreshedAccount?.balancesByCurrencyDemo,
-        balancesByCurrencyReal: refreshedAccount?.balancesByCurrencyReal,
-        balancesByCurrency: refreshedAccount?.balancesByCurrency
+        hasBalancesByCurrencyDemo: !!refreshedRaw?.balancesByCurrencyDemo,
+        hasBalancesByCurrencyReal: !!refreshedRaw?.balancesByCurrencyReal,
+        balancesByCurrencyDemo: refreshedRaw?.balancesByCurrencyDemo,
+        balancesByCurrencyReal: refreshedRaw?.balancesByCurrencyReal,
+        balancesByCurrency: refreshedRaw?.balancesByCurrency,
+        hasTokensByLoginId: !!refreshedRaw?.tokensByLoginId
       })}`);
       await this.userRepository.updateDerivInfo(userId, {
-        loginId: refreshedSessionPayload.loginid ?? refreshedAccount.loginid ?? userId,
-        currency: refreshedSessionPayload.currency ?? refreshedAccount.currency,
+        loginId: refreshedSessionPayload.loginid ?? refreshedRaw.loginid ?? userId,
+        currency: refreshedSessionPayload.currency ?? refreshedRaw.currency,
         balance:
           refreshedSessionPayload.balance?.value ??
-          refreshedAccount.balance?.value ??
+          refreshedRaw.balance?.value ??
           undefined,
-        raw: refreshedAccount,
+        raw: refreshedRaw,
       });
       this.derivService.setSession(userId, refreshedSessionPayload);
       this.logger.log(
@@ -495,7 +518,7 @@ export class DerivController {
     if (!selectedAccount) {
       throw new BadRequestException(
         `Nenhuma conta OAuth retornada corresponde à moeda ${expectedCurrency}. ` +
-          'Selecione a conta USD real na Deriv antes de autorizar o OAuth.',
+        'Selecione a conta USD real na Deriv antes de autorizar o OAuth.',
       );
     }
 
@@ -577,17 +600,17 @@ export class DerivController {
           balancesByCurrencyReal: account.balancesByCurrencyReal
         })}`);
         this.logger.log(`[STATUS] DEBUG - account completo recebido do service: ${JSON.stringify(account)}`);
-        
+
         // Buscar tokens do raw antes de criar sessionPayload
         const derivInfoForTokens = await this.userRepository.getDerivInfo(userId);
         const tokensByLoginIdForAccount = derivInfoForTokens?.raw?.tokensByLoginId || {};
-        
+
         // Adicionar tokensByLoginId ao account antes de passar para buildResponse
         const accountWithTokens = {
           ...account,
           tokensByLoginId: tokensByLoginIdForAccount,
         };
-        
+
         const sessionPayload = {
           ...this.buildResponse(accountWithTokens, preferredCurrency),
           appId: appIdToUse,
@@ -619,7 +642,7 @@ export class DerivController {
         // Buscar tokens do raw se disponíveis
         const derivInfo = await this.userRepository.getDerivInfo(userId);
         const tokensByLoginId = derivInfo?.raw?.tokensByLoginId || {};
-        
+
         this.logger.log(`[STATUS] Tokens encontrados no banco: ${JSON.stringify({
           hasRaw: !!derivInfo?.raw,
           hasTokensByLoginId: !!derivInfo?.raw?.tokensByLoginId,
@@ -668,7 +691,7 @@ export class DerivController {
       // Buscar tokens do raw se disponíveis
       const derivInfo = await this.userRepository.getDerivInfo(userId);
       const tokensByLoginId = derivInfo?.raw?.tokensByLoginId || {};
-      
+
       this.logger.log(`[STATUS] Tokens encontrados no banco (sessão): ${JSON.stringify({
         hasRaw: !!derivInfo?.raw,
         hasTokensByLoginId: !!derivInfo?.raw?.tokensByLoginId,
@@ -702,19 +725,19 @@ export class DerivController {
     const derivInfo = await this.userRepository.getDerivInfo(userId);
     if (derivInfo && derivInfo.loginId) {
       this.logger.log(`[STATUS] Retornando dados do banco de dados para usuário ${userId}`);
-      
+
       // Se temos dados raw completos, usar eles (inclui balancesByCurrencyDemo e balancesByCurrencyReal)
       const accountData = derivInfo.raw || {
         loginid: derivInfo.loginId ?? undefined,
         currency: derivInfo.currency ?? undefined,
         balance: derivInfo.balance
           ? {
-              value: parseFloat(derivInfo.balance),
-              currency: derivInfo.currency ?? preferredCurrency,
-            }
+            value: parseFloat(derivInfo.balance),
+            currency: derivInfo.currency ?? preferredCurrency,
+          }
           : null,
       };
-      
+
       // Log para debug - verificar o que está no raw
       this.logger.log(`[STATUS] DEBUG - accountData do banco: ${JSON.stringify({
         hasRaw: !!derivInfo.raw,
@@ -724,7 +747,7 @@ export class DerivController {
         balancesByCurrencyReal: accountData?.balancesByCurrencyReal,
         balancesByCurrency: accountData?.balancesByCurrency
       })}`);
-      
+
       // Garantir que accountData tenha os campos necessários mesmo se não estiverem no raw
       if (!accountData.balancesByCurrencyDemo) {
         accountData.balancesByCurrencyDemo = {};
@@ -735,22 +758,22 @@ export class DerivController {
       if (!accountData.balancesByCurrency) {
         accountData.balancesByCurrency = {};
       }
-      
+
       const formatted = {
         ...this.buildResponse(accountData, preferredCurrency),
         appId: appIdToUse,
       };
-      
+
       // Log para debug - verificar o que está sendo retornado após buildResponse
       this.logger.log(`[STATUS] DEBUG - formatted após buildResponse: ${JSON.stringify({
         balancesByCurrencyDemo: formatted.balancesByCurrencyDemo,
         balancesByCurrencyReal: formatted.balancesByCurrencyReal,
         balancesByCurrency: formatted.balancesByCurrency
       })}`);
-      
+
       // Buscar tokens do raw se disponíveis
       const tokensByLoginId = derivInfo.raw?.tokensByLoginId || {};
-      
+
       this.logger.log(`[STATUS] Tokens encontrados no banco (db): ${JSON.stringify({
         hasRaw: !!derivInfo.raw,
         hasTokensByLoginId: !!derivInfo.raw?.tokensByLoginId,
@@ -767,7 +790,7 @@ export class DerivController {
         tokensByLoginId, // Incluir tokens mapeados por loginid
         source: 'db',
       };
-      
+
       this.logger.log(`[STATUS] DEBUG - dbResponse final: ${JSON.stringify({
         balancesByCurrency: dbResponse.balancesByCurrency,
         balancesByCurrencyDemo: dbResponse.balancesByCurrencyDemo,
@@ -802,13 +825,13 @@ export class DerivController {
     try {
       const userId = req.user.userId;
       this.logger.log(`[VerifyEmail] Verificando email para usuário ${userId}`);
-      
+
       if (!body.email) {
         throw new BadRequestException('Email é obrigatório');
       }
 
       const result = await this.derivService.verifyEmailForAccount(body.email);
-      
+
       return {
         success: true,
         message: result.message,
@@ -826,16 +849,16 @@ export class DerivController {
     try {
       const userId = req.user.userId;
       this.logger.log(`[CreateAccount] Criando conta Deriv para usuário ${userId}`);
-      
+
       if (!body.verificationCode) {
         throw new BadRequestException(
           'Código de verificação é obrigatório. ' +
           'Primeiro verifique o email usando o endpoint /verify-email',
         );
       }
-      
+
       const result = await this.derivService.createDerivAccount(body, userId, body.verificationCode);
-      
+
       return {
         success: true,
         message: 'Contas criadas com sucesso',
@@ -848,29 +871,29 @@ export class DerivController {
   }
 
   // ========== ENDPOINTS PARA OPERAÇÕES DE TRADING ==========
-  
+
   // Cache de tokens temporários para SSE (expira em 5 minutos)
   private sseTokens = new Map<string, { userId: string; expiresAt: number }>();
-  
+
   @Post('trading/sse-token')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async generateSSEToken(@Req() req: any) {
     const userId = req.user.userId;
-    
+
     // Gerar token temporário (UUID simples)
     const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutos
-    
+
     this.sseTokens.set(token, { userId, expiresAt });
-    
+
     // Limpar tokens expirados periodicamente
     this.cleanExpiredSSETokens();
-    
+
     this.logger.log(`[Trading] Token SSE gerado para usuário ${userId}`);
     return { token, expiresIn: 300 }; // 5 minutos em segundos
   }
-  
+
   private cleanExpiredSSETokens() {
     const now = Date.now();
     for (const [token, data] of this.sseTokens.entries()) {
@@ -879,26 +902,26 @@ export class DerivController {
       }
     }
   }
-  
+
   private validateSSEToken(token: string): string | null {
     const data = this.sseTokens.get(token);
     if (!data) return null;
-    
+
     if (data.expiresAt < Date.now()) {
       this.sseTokens.delete(token);
       return null;
     }
-    
+
     return data.userId;
   }
-  
+
   @Post('trading/connect')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async connectTrading(@Body() body: { token: string; loginid?: string }, @Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Conectando usuário ${userId} ao Deriv WebSocket`);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
       await service.connect(body.token, body.loginid);
@@ -918,7 +941,7 @@ export class DerivController {
   ) {
     // Validar token SSE temporário
     let userId: string | null = null;
-    
+
     if (sseToken) {
       userId = this.validateSSEToken(sseToken);
       if (!userId) {
@@ -933,30 +956,30 @@ export class DerivController {
       return;
     }
     this.logger.log(`[Trading] Iniciando stream SSE para usuário ${userId}`);
-    
+
     // Configurar headers para Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
-    
+
     const service = this.wsManager.getOrCreateService(userId);
-    
+
     // Se não estiver conectado, conectar primeiro
     if (!service['isAuthorized']) {
       // Buscar token Deriv do banco de dados
       const derivInfo = await this.userRepository.getDerivInfo(userId);
       const loginid = derivInfo?.loginId;
-      const finalDerivToken = (loginid && derivInfo?.raw?.tokensByLoginId?.[loginid]) || 
-                               derivToken || // Token passado via query
-                               null;
-      
+      const finalDerivToken = (loginid && derivInfo?.raw?.tokensByLoginId?.[loginid]) ||
+        derivToken || // Token passado via query
+        null;
+
       if (!finalDerivToken) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: 'Token Deriv não encontrado' })}\n\n`);
         res.end();
         return;
       }
-      
+
       try {
         await service.connect(finalDerivToken, loginid || undefined);
       } catch (error) {
@@ -966,33 +989,33 @@ export class DerivController {
         return;
       }
     }
-    
+
     // Configurar listeners para eventos
     const onTick = (data: any) => {
       // Validar dados antes de enviar
-      if (data && typeof data.value === 'number' && isFinite(data.value) && data.value > 0 && 
-          typeof data.epoch === 'number' && isFinite(data.epoch) && data.epoch > 0) {
+      if (data && typeof data.value === 'number' && isFinite(data.value) && data.value > 0 &&
+        typeof data.epoch === 'number' && isFinite(data.epoch) && data.epoch > 0) {
         res.write(`data: ${JSON.stringify({ type: 'tick', data })}\n\n`);
       } else {
         this.logger.warn(`[Trading] Tick inválido ignorado: ${JSON.stringify(data)}`);
       }
     };
-    
+
     const onHistory = (data: any) => {
       // Validar e filtrar ticks inválidos antes de enviar
       if (data && data.ticks && Array.isArray(data.ticks)) {
-        const validTicks = data.ticks.filter((t: any) => 
-          t && 
-          typeof t.value === 'number' && 
-          isFinite(t.value) && 
-          t.value > 0 && 
+        const validTicks = data.ticks.filter((t: any) =>
+          t &&
+          typeof t.value === 'number' &&
+          isFinite(t.value) &&
+          t.value > 0 &&
           !isNaN(t.value) &&
-          typeof t.epoch === 'number' && 
-          isFinite(t.epoch) && 
+          typeof t.epoch === 'number' &&
+          isFinite(t.epoch) &&
           t.epoch > 0 &&
           !isNaN(t.epoch)
         );
-        
+
         if (validTicks.length > 0) {
           res.write(`data: ${JSON.stringify({ type: 'history', data: { ...data, ticks: validTicks } })}\n\n`);
         } else {
@@ -1002,19 +1025,19 @@ export class DerivController {
         this.logger.warn(`[Trading] History inválido ignorado: ${JSON.stringify(data)}`);
       }
     };
-    
+
     const onProposal = (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'proposal', data })}\n\n`);
     };
-    
+
     const onBuy = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'buy', data })}\n\n`);
-      
+
       // Salvar operação no banco
       try {
         // Garantir que entrySpot sempre tenha um valor
         let entrySpot = data.entrySpot || data.entry_spot || null;
-        
+
         // Se não encontrou entrySpot, tentar obter do último tick do serviço WebSocket
         if (entrySpot === null || entrySpot === undefined) {
           try {
@@ -1033,12 +1056,12 @@ export class DerivController {
             this.logger.warn(`[Trading] Erro ao obter último tick para entrySpot: ${error.message}`);
           }
         }
-        
+
         // Garantir que entrySpot seja um número válido
         const finalEntrySpot = entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null;
-        
+
         this.logger.log(`[Trading] Salvando compra - entrySpot: ${finalEntrySpot}, entry_spot: ${data.entry_spot}, buyPrice: ${data.buyPrice}`);
-        
+
         const trade = this.tradeRepository.create({
           id: uuidv4(),
           userId,
@@ -1055,7 +1078,7 @@ export class DerivController {
         });
         const savedTrade = await this.tradeRepository.save(trade);
         this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}, entrySpot: ${savedTrade.entrySpot}, entryValue: ${savedTrade.entryValue}`);
-        
+
         // Verificar se o usuário é expert e replicar operação para copiadores
         try {
           const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
@@ -1082,15 +1105,15 @@ export class DerivController {
         this.logger.error(`[Trading] Erro ao salvar operação de compra: ${error.message}`);
       }
     };
-    
+
     const onSell = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'sell', data })}\n\n`);
-      
+
       // Atualizar operação no banco com o resultado
       try {
         // Garantir que exitSpot sempre tenha um valor
         let exitSpot = data.exitSpot || data.exit_spot || null;
-        
+
         // Se não encontrou exitSpot, tentar obter do último tick do serviço WebSocket
         if (exitSpot === null || exitSpot === undefined) {
           try {
@@ -1109,17 +1132,17 @@ export class DerivController {
             this.logger.warn(`[Trading] Erro ao obter último tick para exitSpot: ${error.message}`);
           }
         }
-        
+
         // Garantir que exitSpot seja um número válido
         const finalExitSpot = exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null;
-        
+
         this.logger.log(`[Trading] Atualizando venda - exitSpot: ${finalExitSpot}, exit_spot: ${data.exit_spot}, sellPrice: ${data.sellPrice}, profit: ${data.profit}`);
-        
+
         const trade = await this.tradeRepository.findOne({
           where: { derivTransactionId: data.contractId, userId },
           order: { createdAt: 'DESC' },
         });
-        
+
         if (trade) {
           trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
           trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null; // Valor recebido na venda
@@ -1127,11 +1150,11 @@ export class DerivController {
           trade.status = (trade.profit !== null && trade.profit > 0) ? TradeStatus.WON : (trade.profit !== null ? TradeStatus.LOST : TradeStatus.PENDING);
           const savedTrade = await this.tradeRepository.save(trade);
           this.logger.log(`[Trading] Operação de venda atualizada no banco: ${savedTrade.id}, exitSpot: ${savedTrade.exitSpot}, exitValue: ${savedTrade.exitValue}, profit: ${savedTrade.profit}`);
-          
+
           // Se a operação foi finalizada e o usuário é expert, atualizar operações de copy trading
-          if ((savedTrade.status === TradeStatus.WON || savedTrade.status === TradeStatus.LOST) && 
-              savedTrade.profit !== null && savedTrade.profit !== undefined && 
-              savedTrade.entryValue !== null && savedTrade.entryValue !== undefined) {
+          if ((savedTrade.status === TradeStatus.WON || savedTrade.status === TradeStatus.LOST) &&
+            savedTrade.profit !== null && savedTrade.profit !== undefined &&
+            savedTrade.entryValue !== null && savedTrade.entryValue !== undefined) {
             try {
               const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
               if (isMasterTrader) {
@@ -1158,42 +1181,42 @@ export class DerivController {
         this.logger.error(`[Trading] Erro ao atualizar operação de venda: ${error.message}`);
       }
     };
-    
+
     const onError = (error: any) => {
       res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`);
     };
-    
+
     const onContractsFor = (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'contracts_for', data })}\n\n`);
     };
-    
+
     const onTradingDurations = (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'trading_durations', data })}\n\n`);
     };
-    
+
     const onActiveSymbols = (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'active_symbols', data })}\n\n`);
     };
-    
+
     const onContractUpdate = async (data: any) => {
       res.write(`data: ${JSON.stringify({ type: 'contract', data })}\n\n`);
-      
+
       // Log detalhado para debug
       this.logger.log(`[Trading] [ContractUpdate] Recebido: contract_id=${data?.contract_id}, status=${data?.status}, is_expired=${data?.is_expired}, is_sold=${data?.is_sold}, exit_spot=${data?.exit_spot}, current_spot=${data?.current_spot}, profit=${data?.profit}`);
-      
+
       // Atualizar operação no banco sempre que houver atualização do contrato
       if (data && data.contract_id) {
         try {
           // Converter contract_id para string para garantir compatibilidade
           const contractId = String(data.contract_id);
           this.logger.log(`[Trading] [ContractUpdate] Buscando trade com contract_id: ${contractId}, userId: ${userId}`);
-          
+
           // Buscar trade pelo contract_id
           let trade = await this.tradeRepository.findOne({
             where: { derivTransactionId: contractId, userId },
             order: { createdAt: 'DESC' },
           });
-          
+
           // Se não encontrou, tentar buscar apenas pelo contract_id (pode ser de outro usuário ou sem userId)
           if (!trade) {
             this.logger.warn(`[Trading] [ContractUpdate] Trade não encontrado com userId, tentando buscar apenas por contract_id: ${contractId}`);
@@ -1202,46 +1225,46 @@ export class DerivController {
               order: { createdAt: 'DESC' },
             });
           }
-          
+
           if (!trade) {
             this.logger.error(`[Trading] [ContractUpdate] Trade não encontrado no banco para contract_id: ${contractId}, userId: ${userId}`);
             return;
           }
-          
+
           if (trade) {
             this.logger.log(`[Trading] [ContractUpdate] Trade encontrado: ${trade.id}, status atual: ${trade.status}, symbol atual: ${trade.symbol}`);
             let shouldSave = false;
-            
+
             // Atualizar symbol se disponível e ainda não tiver sido salvo
             if ((!trade.symbol || trade.symbol === null) && data.symbol !== null && data.symbol !== undefined) {
               trade.symbol = String(data.symbol);
               shouldSave = true;
               this.logger.log(`[Trading] Symbol atualizado do contrato: ${trade.symbol}`);
             }
-            
+
             // Atualizar entry_spot se disponível e ainda não tiver sido salvo
             if ((trade.entrySpot === null || trade.entrySpot === undefined) && data.entry_spot !== null && data.entry_spot !== undefined) {
               trade.entrySpot = Number(data.entry_spot);
               shouldSave = true;
               this.logger.log(`[Trading] EntrySpot atualizado do contrato: ${trade.entrySpot}`);
             }
-            
+
             // Verificar se o contrato foi finalizado (vendido ou expirado)
             const isFinalized = data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost';
-            
+
             // Se o contrato foi vendido ou expirou, atualizar com os dados finais
             if (isFinalized) {
               this.logger.log(`[Trading] [ContractUpdate] Contrato finalizado detectado: is_sold=${data.is_sold}, status=${data.status}, is_expired=${data.is_expired}`);
               // Atualizar preço de saída se disponível
               // A API Deriv pode retornar exit_spot, current_spot, exit_tick, ou exit_tick_time
               let exitSpot = data.exit_spot !== null && data.exit_spot !== undefined ? Number(data.exit_spot) : null;
-              
+
               // Se não encontrou exit_spot, tentar current_spot (último preço conhecido)
               if ((exitSpot === null || exitSpot === undefined) && data.current_spot !== null && data.current_spot !== undefined) {
                 exitSpot = Number(data.current_spot);
                 this.logger.log(`[Trading] ExitSpot não encontrado, usando current_spot: ${exitSpot}`);
               }
-              
+
               // Se ainda não encontrou, tentar obter do último tick do serviço WebSocket
               if (exitSpot === null || exitSpot === undefined) {
                 try {
@@ -1260,14 +1283,14 @@ export class DerivController {
                   this.logger.warn(`[Trading] Erro ao obter último tick para exitSpot: ${error.message}`);
                 }
               }
-              
+
               // Garantir que exitSpot seja salvo se disponível (mesmo que seja igual ao entrySpot)
               if (exitSpot !== null && exitSpot !== undefined && !isNaN(exitSpot) && isFinite(exitSpot)) {
                 trade.exitSpot = exitSpot;
                 shouldSave = true;
                 this.logger.log(`[Trading] ExitSpot definido: ${exitSpot}`);
               }
-              
+
               // Garantir que entrySpot seja salvo se ainda não tiver
               if ((trade.entrySpot === null || trade.entrySpot === undefined) && data.entry_spot !== null && data.entry_spot !== undefined) {
                 trade.entrySpot = Number(data.entry_spot);
@@ -1292,7 +1315,7 @@ export class DerivController {
                   this.logger.warn(`[Trading] Erro ao obter último tick para entrySpot: ${error.message}`);
                 }
               }
-              
+
               // Atualizar valor de saída se disponível
               // Prioridade: sell_price > payout > (entry_value + profit) > bid_price
               if (data.sell_price !== null && data.sell_price !== undefined) {
@@ -1316,14 +1339,14 @@ export class DerivController {
                 shouldSave = true;
                 this.logger.log(`[Trading] ExitValue atualizado de bid_price: ${trade.exitValue}`);
               }
-              
+
               // Atualizar lucro/prejuízo
               if (data.profit !== null && data.profit !== undefined) {
                 trade.profit = Number(data.profit) || null;
                 shouldSave = true;
                 this.logger.log(`[Trading] Profit atualizado: ${trade.profit}`);
               }
-              
+
               // Atualizar status
               let statusUpdated = false;
               if (data.status) {
@@ -1363,24 +1386,24 @@ export class DerivController {
                   this.logger.log(`[Trading] Status atualizado para LOST (is_expired=true sem profit)`);
                 }
               }
-              
+
               if (statusUpdated || shouldSave) {
                 shouldSave = true;
               }
             }
-            
+
             // Salvar apenas se houver mudanças
             if (shouldSave) {
               await this.tradeRepository.save(trade);
               this.logger.log(`[Trading] Contrato atualizado no banco: ${trade.id}, status: ${trade.status}, entrySpot: ${trade.entrySpot}, exitSpot: ${trade.exitSpot}, profit: ${trade.profit}`);
-              
+
               // Se o contrato foi finalizado e o usuário é expert, atualizar operações de copy trading
               if (isFinalized && (trade.status === TradeStatus.WON || trade.status === TradeStatus.LOST)) {
                 try {
                   const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
-                  if (isMasterTrader && 
-                      trade.profit !== null && trade.profit !== undefined && 
-                      trade.entryValue !== null && trade.entryValue !== undefined) {
+                  if (isMasterTrader &&
+                    trade.profit !== null && trade.profit !== undefined &&
+                    trade.entryValue !== null && trade.entryValue !== undefined) {
                     const result = trade.status === TradeStatus.WON ? 'win' : 'loss';
                     const profit = Number(trade.profit);
                     const entryValue = Number(trade.entryValue);
@@ -1404,7 +1427,7 @@ export class DerivController {
         }
       }
     };
-    
+
     service.on('tick', onTick);
     service.on('history', onHistory);
     service.on('proposal', onProposal);
@@ -1415,7 +1438,7 @@ export class DerivController {
     service.on('trading_durations', onTradingDurations);
     service.on('active_symbols', onActiveSymbols);
     service.on('contract_update', onContractUpdate);
-    
+
     // Limpar listeners quando a conexão for fechada
     req.on('close', () => {
       this.logger.log(`[Trading] Cliente desconectado do stream para usuário ${userId}`);
@@ -1430,23 +1453,23 @@ export class DerivController {
       service.removeAllListeners('active_symbols');
       service.removeAllListeners('contract_update');
     });
-    
+
     // Enviar dados iniciais se disponíveis
     const ticks = service.getTicks();
     if (ticks.length > 0) {
       // Filtrar ticks inválidos antes de enviar
-      const validTicks = ticks.filter((t: any) => 
-        t && 
-        typeof t.value === 'number' && 
-        isFinite(t.value) && 
-        t.value > 0 && 
+      const validTicks = ticks.filter((t: any) =>
+        t &&
+        typeof t.value === 'number' &&
+        isFinite(t.value) &&
+        t.value > 0 &&
         !isNaN(t.value) &&
-        typeof t.epoch === 'number' && 
-        isFinite(t.epoch) && 
+        typeof t.epoch === 'number' &&
+        isFinite(t.epoch) &&
         t.epoch > 0 &&
         !isNaN(t.epoch)
       );
-      
+
       if (validTicks.length > 0) {
         res.write(`data: ${JSON.stringify({ type: 'history', data: { ticks: validTicks } })}\n\n`);
       }
@@ -1459,10 +1482,10 @@ export class DerivController {
   async subscribeSymbol(@Body() body: { symbol: string; token?: string; loginid?: string }, @Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se no símbolo ${body.symbol}`);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
         const token = body.token || await this.getTokenFromStorage(userId);
@@ -1471,7 +1494,7 @@ export class DerivController {
         }
         await service.connect(token, body.loginid);
       }
-      
+
       service.subscribeToSymbol(body.symbol);
       return { success: true, message: 'Inscrição iniciada' };
     } catch (error) {
@@ -1485,38 +1508,38 @@ export class DerivController {
   async getTicks(@Query('symbol') symbol: string, @Req() req: any): Promise<{ ticks: Array<{ value: number; epoch: number }>; symbol: string; count: number }> {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando ticks para ${symbol}`);
-    
+
     const service = this.wsManager.getService(userId);
     if (!service) {
       return { ticks: [], symbol: symbol || 'R_100', count: 0 };
     }
-    
+
     const ticks = service.getTicks();
     return { ticks, symbol: symbol || 'R_100', count: ticks.length };
   }
-  
+
   private async getTokenFromStorage(userId: string, targetLoginid?: string): Promise<string | null> {
     try {
       // Buscar informações da Deriv do banco de dados
       const derivInfo = await this.userRepository.getDerivInfo(userId);
-      
+
       if (!derivInfo?.raw) {
         this.logger.warn(`[getTokenFromStorage] derivInfo.raw não encontrado para userId: ${userId}`);
         return null;
       }
-      
+
       // Se targetLoginid foi fornecido, buscar token específico desse loginid
       if (targetLoginid && derivInfo.raw.tokensByLoginId?.[targetLoginid]) {
         this.logger.log(`[getTokenFromStorage] Token encontrado para loginid ${targetLoginid}`);
         return derivInfo.raw.tokensByLoginId[targetLoginid];
       }
-      
+
       // Se não tiver targetLoginid, tentar usar o loginid padrão
       if (derivInfo.loginId && derivInfo.raw.tokensByLoginId?.[derivInfo.loginId]) {
         this.logger.log(`[getTokenFromStorage] Token encontrado para loginid padrão: ${derivInfo.loginId}`);
         return derivInfo.raw.tokensByLoginId[derivInfo.loginId];
       }
-      
+
       // Tentar qualquer token disponível
       const tokensByLoginId = derivInfo.raw.tokensByLoginId || {};
       const loginIds = Object.keys(tokensByLoginId);
@@ -1525,7 +1548,7 @@ export class DerivController {
         this.logger.log(`[getTokenFromStorage] Usando primeiro token disponível do loginid: ${loginIds[0]}`);
         return firstToken;
       }
-      
+
       this.logger.warn(`[getTokenFromStorage] Nenhum token encontrado para userId: ${userId}`);
       return null;
     } catch (error) {
@@ -1552,18 +1575,18 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se em proposta`);
-    
+
     // Validar contractType
     if (!body.contractType || body.contractType === 'undefined') {
       throw new BadRequestException('contractType é obrigatório');
     }
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Remover listeners antigos de proposta para evitar vazamento de memória
       service.removeAllListeners('proposal');
-      
+
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
         const token = body.token || await this.getTokenFromStorage(userId);
@@ -1572,7 +1595,7 @@ export class DerivController {
         }
         await service.connect(token);
       }
-      
+
       // Preparar configuração da proposta
       const proposalConfig: any = {
         symbol: body.symbol,
@@ -1581,7 +1604,7 @@ export class DerivController {
         durationUnit: body.durationUnit,
         amount: body.amount,
       };
-      
+
       // Adicionar barrier para contratos de dígitos
       const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
       if (digitContracts.includes(body.contractType)) {
@@ -1592,7 +1615,7 @@ export class DerivController {
           proposalConfig.barrier = 5;
         }
       }
-      
+
       // Adicionar multiplier para contratos MULTUP/MULTDOWN
       if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
         if (body.multiplier !== undefined && body.multiplier !== null) {
@@ -1602,9 +1625,9 @@ export class DerivController {
           proposalConfig.multiplier = 10;
         }
       }
-      
+
       service.subscribeToProposal(proposalConfig);
-      
+
       return { success: true, message: 'Inscrição em proposta iniciada' };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao inscrever-se em proposta: ${error.message}`);
@@ -1621,20 +1644,20 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} comprando contrato:`, body);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Buscar informações da conta para determinar qual loginid usar
       const derivInfo = await this.userRepository.getDerivInfo(userId);
       const preferredCurrency = await this.getPreferredCurrency(userId, 'BUY');
-      
+
       this.logger.log(`[Trading] PreferredCurrency: ${preferredCurrency}`);
       this.logger.log(`[Trading] derivInfo.raw existe: ${!!derivInfo?.raw}`);
       this.logger.log(`[Trading] accountsByCurrency existe: ${!!derivInfo?.raw?.accountsByCurrency}`);
       this.logger.log(`[Trading] accountsByCurrency keys: ${derivInfo?.raw?.accountsByCurrency ? Object.keys(derivInfo?.raw?.accountsByCurrency).join(', ') : 'N/A'}`);
       this.logger.log(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo?.raw?.tokensByLoginId).join(', ') : 'N/A'}`);
-      
+
       // Determinar qual loginid usar baseado na moeda preferida
       let targetLoginid: string | undefined = undefined;
       if (preferredCurrency === 'DEMO') {
@@ -1643,10 +1666,10 @@ export class DerivController {
         type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
         const allAccounts: AccountEntry[] = Object.values(derivInfo?.raw?.accountsByCurrency || {}).flat() as AccountEntry[];
         const usdDemoAccounts: AccountEntry[] = ((derivInfo?.raw?.accountsByCurrency?.['USD'] || []) as AccountEntry[]).filter((acc) => acc.isDemo === true);
-        
+
         this.logger.log(`[Trading] Contas demo USD encontradas: ${usdDemoAccounts.length}`);
         this.logger.log(`[Trading] Total de contas: ${allAccounts.length}`);
-        
+
         if (usdDemoAccounts.length > 0) {
           targetLoginid = usdDemoAccounts[0].loginid;
           this.logger.log(`[Trading] ✅ Usando conta demo USD: ${targetLoginid}`);
@@ -1666,29 +1689,29 @@ export class DerivController {
         targetLoginid = derivInfo?.loginId || undefined;
         this.logger.log(`[Trading] Usando conta real: ${targetLoginid}`);
       }
-      
+
       // Se não estiver conectado OU se estiver conectado com loginid diferente, reconectar
       const currentLoginid = service['currentLoginid'];
       const needsReconnect = !service['isAuthorized'] || (targetLoginid && currentLoginid !== targetLoginid);
-      
+
       if (needsReconnect) {
         this.logger.log(`[Trading] Reconectando: isAuthorized=${service['isAuthorized']}, currentLoginid=${currentLoginid}, targetLoginid=${targetLoginid}`);
-        
+
         // Buscar token do loginid específico ou fallback
         let token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || null;
-        
+
         if (!token) {
           token = await this.getTokenFromStorage(userId, targetLoginid);
         }
-        
+
         if (!token) {
           this.logger.error(`[Trading] Token não encontrado. userId: ${userId}, targetLoginid: ${targetLoginid}`);
           this.logger.error(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo.raw.tokensByLoginId).join(', ') : 'N/A'}`);
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
-        
+
         this.logger.log(`[Trading] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'}`);
-        
+
         // Se já estiver conectado, desconectar primeiro
         if (service['isAuthorized']) {
           this.logger.log(`[Trading] Desconectando serviço atual para reconectar com conta correta`);
@@ -1698,26 +1721,26 @@ export class DerivController {
             this.logger.warn(`[Trading] Erro ao desconectar: ${e.message}`);
           }
         }
-        
+
         await service.connect(token, targetLoginid);
         this.logger.log(`[Trading] ✅ Conectado com loginid: ${targetLoginid}`);
       } else {
         this.logger.log(`[Trading] ✅ Já conectado com loginid correto: ${currentLoginid}`);
       }
-      
+
       // Validar contractType
       if (!body.contractType) {
         throw new BadRequestException('contractType é obrigatório');
       }
-      
+
       this.logger.log(`[Trading] Compra solicitada com contractType: ${body.contractType}`);
-      
+
       // IMPORTANTE: Na API Deriv, quando você compra usando um proposalId, o contract_type já está definido na proposta.
       // Se o contractType enviado não corresponder ao da proposta, a compra será do tipo errado.
       // Por segurança, SEMPRE buscar uma nova proposta com o contractType correto, mesmo se houver proposalId.
       // Isso garante que o tipo correto seja sempre usado.
       this.logger.log(`[Trading] Buscando proposta com contractType: ${body.contractType} (proposalId fornecido: ${body.proposalId || 'nenhum'})`);
-      
+
       // Buscar proposta com os parâmetros fornecidos (sempre buscar nova para garantir tipo correto)
       const proposalConfig: any = {
         symbol: body.symbol,
@@ -1726,44 +1749,44 @@ export class DerivController {
         durationUnit: body.durationUnit,
         amount: body.amount,
       };
-      
+
       // Adicionar barrier para contratos de dígitos
       const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
       if (digitContracts.includes(body.contractType)) {
         proposalConfig.barrier = body.barrier !== undefined && body.barrier !== null ? body.barrier : 5;
       }
-      
+
       // Adicionar multiplier para contratos MULTUP/MULTDOWN
       if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
         proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
       }
-      
+
       const proposal = await this.getProposalInternal(service, proposalConfig);
-      
+
       if (!proposal || !proposal.id) {
         throw new BadRequestException('Não foi possível obter proposta para compra.');
       }
-      
+
       const proposalId = proposal.id;
       this.logger.log(`[Trading] ✅ Proposta obtida: ${proposalId} para contractType: ${body.contractType}`);
-      
+
       // Validar que proposalId é uma string válida
       if (!proposalId || typeof proposalId !== 'string') {
         throw new BadRequestException('Proposta inválida para compra.');
       }
-      
+
       // IMPORTANTE: A Deriv usa o contract_type da proposta quando compra por proposalId
       // Se o contractType enviado não corresponder ao da proposta, buscar nova proposta
       // Por segurança, sempre buscar nova proposta se o contractType for diferente
       // (Isso garante que o tipo correto seja usado)
       this.logger.log(`[Trading] Usando proposalId: ${proposalId} com contractType: ${body.contractType}`);
-      
+
       // Executar compra, passando durationUnit e duration para preservar valores originais
       // Também passar contractType para validação no processamento
       service.buyContract(proposalId, body.amount, body.durationUnit, body.duration, body.contractType);
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         message: 'Compra executada',
         proposalId,
         amount: body.amount,
@@ -1773,24 +1796,24 @@ export class DerivController {
       throw new BadRequestException(error.message || 'Erro ao comprar contrato');
     }
   }
-  
+
   private async getProposalInternal(service: any, config: ProposalDto): Promise<any> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout ao buscar proposta'));
       }, 10000);
-      
+
       const handler = (proposalData: any) => {
         clearTimeout(timeout);
         service.removeListener('proposal', handler);
         resolve(proposalData);
       };
-      
+
       // Remover listeners antigos para evitar vazamento
       service.removeAllListeners('proposal');
-      
+
       service.once('proposal', handler);
-      
+
       // Preparar configuração da proposta
       const proposalConfig: any = {
         symbol: config.symbol,
@@ -1799,7 +1822,7 @@ export class DerivController {
         durationUnit: config.durationUnit,
         amount: config.amount,
       };
-      
+
       // Adicionar barrier para contratos de dígitos
       const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
       if (digitContracts.includes(config.contractType)) {
@@ -1810,7 +1833,7 @@ export class DerivController {
           proposalConfig.barrier = 5;
         }
       }
-      
+
       // Adicionar multiplier para contratos MULTUP/MULTDOWN
       if (config.contractType === 'MULTUP' || config.contractType === 'MULTDOWN') {
         if ((config as any).multiplier !== undefined && (config as any).multiplier !== null) {
@@ -1820,7 +1843,7 @@ export class DerivController {
           proposalConfig.multiplier = 10;
         }
       }
-      
+
       service.subscribeToProposal(proposalConfig);
     });
   }
@@ -1834,19 +1857,19 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} vendendo contrato ${body.contractId}`);
-    
+
     try {
       const service = this.wsManager.getService(userId);
       if (!service) {
         throw new BadRequestException('Serviço WebSocket não encontrado. Conecte-se primeiro.');
       }
-      
+
       // Buscar preço atual do contrato antes de vender
       // O preço será determinado pela Deriv automaticamente
       service.sellContract(body.contractId, 0); // 0 = vender ao preço atual
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         message: 'Venda executada',
         contractId: body.contractId,
       };
@@ -1855,7 +1878,7 @@ export class DerivController {
       throw new BadRequestException(error.message || 'Erro ao vender contrato');
     }
   }
-  
+
   @Post('trading/proposal')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -1865,10 +1888,10 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando proposta:`, body);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
         const token = await this.getTokenFromStorage(userId);
@@ -1877,9 +1900,9 @@ export class DerivController {
         }
         await service.connect(token);
       }
-      
+
       const proposal = await this.getProposalInternal(service, body);
-      
+
       return {
         success: true,
         proposal: {
@@ -1895,7 +1918,7 @@ export class DerivController {
       throw new BadRequestException(error.message || 'Erro ao buscar proposta');
     }
   }
-  
+
   @Post('trading/default-values')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -1905,10 +1928,10 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando valores padrão:`, body);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
         const token = await this.getTokenFromStorage(userId);
@@ -1917,7 +1940,7 @@ export class DerivController {
         }
         await service.connect(token);
       }
-      
+
       // Buscar contratos disponíveis para o símbolo
       let contracts;
       try {
@@ -1927,7 +1950,7 @@ export class DerivController {
         this.logger.warn(`[Trading] Erro ao buscar contratos: ${error.message}`);
         contracts = null;
       }
-      
+
       // Processar contratos para extrair tipos disponíveis
       let availableContracts: any[] = [];
       if (contracts) {
@@ -1963,7 +1986,7 @@ export class DerivController {
             }
           }
         }
-        
+
         // Normalizar estrutura dos contratos - garantir que tenham contract_type
         availableContracts = availableContracts.map(contract => {
           if (typeof contract === 'string') {
@@ -1981,13 +2004,13 @@ export class DerivController {
           }
           return contract;
         }).filter(c => c && c.contract_type);
-        
+
         this.logger.log(`[Trading] Contratos processados (${availableContracts.length}):`, JSON.stringify(availableContracts, null, 2));
       }
-      
+
       // Buscar durações disponíveis
       const durations = await this.getTradingDurationsInternal(service);
-      
+
       // Determinar valores padrão baseado no símbolo e tipo de contrato
       const defaultValues = {
         amount: 10, // Valor padrão
@@ -1998,14 +2021,14 @@ export class DerivController {
         minAmount: 0.35,
         maxAmount: 10000,
       };
-      
+
       // Ajustar valores padrão baseado no tipo de contrato e símbolo
       if (body.contractType === 'CALL' || body.contractType === 'PUT') {
         // Para CALL/PUT, usar minutos por padrão
         defaultValues.durationUnit = 'm';
         defaultValues.duration = 1;
       }
-      
+
       return {
         success: true,
         defaultValues,
@@ -2025,41 +2048,41 @@ export class DerivController {
       };
     }
   }
-  
+
   private async getContractsInternal(service: any, symbol: string, currency: string): Promise<any> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout ao buscar contratos'));
       }, 10000);
-      
+
       const handler = (contractsData: any) => {
         clearTimeout(timeout);
         service.removeListener('contracts_for', handler);
         resolve(contractsData);
       };
-      
+
       service.once('contracts_for', handler);
       service.getContractsFor(symbol, currency);
     });
   }
-  
+
   private async getTradingDurationsInternal(service: any): Promise<any> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout ao buscar durações'));
       }, 10000);
-      
+
       const handler = (durationsData: any) => {
         clearTimeout(timeout);
         service.removeListener('trading_durations', handler);
         resolve(durationsData);
       };
-      
+
       service.once('trading_durations', handler);
       service.getTradingDurations('svg');
     });
   }
-  
+
   @Post('trading/get-contracts')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -2069,10 +2092,10 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} solicitando contratos para ${body.symbol}`);
-    
+
     try {
       const service = this.wsManager.getOrCreateService(userId);
-      
+
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
         const token = body.token || await this.getTokenFromStorage(userId);
@@ -2081,7 +2104,7 @@ export class DerivController {
         }
         await service.connect(token);
       }
-      
+
       service.getContractsFor(body.symbol, body.currency || 'USD');
       return { success: true, message: 'Solicitação de contratos enviada' };
     } catch (error) {
@@ -2099,13 +2122,13 @@ export class DerivController {
   ) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} cancelando subscription ${body.subscriptionId}`);
-    
+
     try {
       const service = this.wsManager.getService(userId);
       if (!service) {
         throw new BadRequestException('Serviço WebSocket não encontrado');
       }
-      
+
       service.cancelSubscription(body.subscriptionId);
       return { success: true, message: 'Subscription cancelada' };
     } catch (error) {
@@ -2120,13 +2143,13 @@ export class DerivController {
   async cancelTickSubscription(@Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} cancelando subscription de ticks`);
-    
+
     try {
       const service = this.wsManager.getService(userId);
       if (!service) {
         throw new BadRequestException('Serviço WebSocket não encontrado');
       }
-      
+
       service.cancelTickSubscription();
       return { success: true, message: 'Subscription de ticks cancelada' };
     } catch (error) {
@@ -2141,13 +2164,13 @@ export class DerivController {
   async cancelProposalSubscription(@Req() req: any) {
     const userId = req.user.userId;
     this.logger.log(`[Trading] Usuário ${userId} cancelando subscription de proposta`);
-    
+
     try {
       const service = this.wsManager.getService(userId);
       if (!service) {
         throw new BadRequestException('Serviço WebSocket não encontrado');
       }
-      
+
       service.cancelProposalSubscription();
       return { success: true, message: 'Subscription de proposta cancelada' };
     } catch (error) {
@@ -2203,7 +2226,7 @@ export class DerivController {
           const profitValue = order.profit !== null && order.profit !== undefined ? Number(order.profit) : null;
           displayStatus = profitValue !== null && profitValue > 0 ? TradeStatus.WON : TradeStatus.LOST;
         }
-        
+
         return {
           id: order.id,
           contractType: order.contractType,

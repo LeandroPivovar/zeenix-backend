@@ -24,6 +24,7 @@ type DerivAccountResult = {
   balancesByCurrencyReal?: Record<string, number>;
   accountsByCurrency: Record<string, CurrencyAccountEntry[]>;
   aggregatedBalances?: AggregatedBalances;
+  tokensByLoginId?: Record<string, string>;
 };
 
 @Injectable()
@@ -43,21 +44,21 @@ export class DerivService {
 
     for (const accountId in accounts) {
       const account = accounts[accountId];
-      
+
       // Normalizar demo_account: 0 ou false = real, 1 ou true = demo
       const demoFlag = account.demo_account;
       const isDemo = demoFlag === 1 || demoFlag === true || demoFlag === '1';
       const mode = isDemo ? 'demo' : 'real';
-      
+
       // Obter type (deriv, mt5, etc) ou "unknown" se ausente
       const type = account.type || 'unknown';
-      
+
       // Normalizar currency para uppercase
       const currency = (account.currency || 'UNKNOWN').toUpperCase();
       if (currency === 'UNKNOWN') {
         warnings.push(`Conta ${accountId} sem currency definida`);
       }
-      
+
       // Usar converted_amount se existir e for numérico, senão usar balance
       let value = 0;
       if (account.converted_amount !== null && account.converted_amount !== undefined) {
@@ -84,7 +85,7 @@ export class DerivService {
       } else {
         warnings.push(`Conta ${accountId} sem valor numérico válido`);
       }
-      
+
       // Inicializar níveis do dicionário se necessário
       if (!totais[type]) {
         totais[type] = { real: {}, demo: {} };
@@ -92,17 +93,17 @@ export class DerivService {
       if (!totais[type][mode][currency]) {
         totais[type][mode][currency] = 0;
       }
-      
+
       // Somar valor
       totais[type][mode][currency] += value;
     }
-    
+
     // Calcular totais globais por mode/currency
     const global: { real: Record<string, number>; demo: Record<string, number> } = {
       real: {},
       demo: {},
     };
-    
+
     for (const typeKey in totais) {
       for (const modeKey of ['real', 'demo'] as const) {
         for (const currencyKey in totais[typeKey][modeKey]) {
@@ -113,18 +114,18 @@ export class DerivService {
         }
       }
     }
-    
+
     const result = {
       by_type: totais,
       global,
       warnings,
     };
-    
+
     this.logger.log(`[DerivService] aggregateBalances resultado - global.real: ${JSON.stringify(global.real)}, global.demo: ${JSON.stringify(global.demo)}`);
-    
+
     return result;
   }
-  
+
   async connectAndGetAccount(token: string, appId: number, targetCurrency?: string): Promise<DerivAccountResult> {
     if (!token) throw new UnauthorizedException('Token ausente');
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
@@ -189,20 +190,20 @@ export class DerivService {
 
             const balanceData = msg.balance;
             const desiredCurrency = targetCurrency?.toUpperCase();
-            
+
             // Agregar saldos usando a nova lógica
             this.logger.log(`[DerivService] DEBUG - balanceData.accounts existe? ${!!balanceData.accounts}`);
             this.logger.log(`[DerivService] DEBUG - balanceData.accounts keys: ${balanceData.accounts ? Object.keys(balanceData.accounts).join(', ') : 'N/A'}`);
-            
-            const aggregatedBalances = balanceData.accounts 
+
+            const aggregatedBalances = balanceData.accounts
               ? this.aggregateBalances(balanceData.accounts)
               : { by_type: {}, global: { real: {}, demo: {} }, warnings: [] };
-            
+
             // Log dos warnings se houver
             if (aggregatedBalances.warnings.length > 0) {
               this.logger.warn(`[DerivService] Warnings ao processar contas: ${aggregatedBalances.warnings.join(', ')}`);
             }
-            
+
             // Log da estrutura agregada
             this.logger.log(
               `[DerivService] Saldos agregados: ${JSON.stringify(aggregatedBalances, null, 2)}`,
@@ -213,7 +214,7 @@ export class DerivService {
             this.logger.log(
               `[DerivService] DEBUG - aggregatedBalances.global.demo: ${JSON.stringify(aggregatedBalances.global.demo)}`,
             );
-            
+
             // Manter estrutura antiga para compatibilidade (accountsByCurrency)
             const accountsByCurrency: Record<string, CurrencyAccountEntry[]> = {};
             const allDemoAccounts: CurrencyAccountEntry[] = [];
@@ -224,35 +225,35 @@ export class DerivService {
                 const account = balanceData.accounts[accountId];
                 const currencyCode = (account.currency || '').toUpperCase();
                 if (!currencyCode) continue;
-                
+
                 // Usar converted_amount se disponível, senão balance
                 const numericBalance = account.converted_amount !== null && account.converted_amount !== undefined
                   ? parseFloat(account.converted_amount)
                   : parseFloat(account.balance ?? 0);
-                
+
                 // Identificar se é conta demo: usar demo_account como fonte primária
-                const isDemoAccount = 
-                  account.demo_account === 1 || 
+                const isDemoAccount =
+                  account.demo_account === 1 ||
                   account.demo_account === true;
-                
+
                 const accountEntry = {
                   value: numericBalance,
                   loginid: accountId,
                   isDemo: isDemoAccount,
                 };
-                
+
                 if (!accountsByCurrency[currencyCode]) {
                   accountsByCurrency[currencyCode] = [];
                 }
                 accountsByCurrency[currencyCode].push(accountEntry);
-                
+
                 // Separar contas demo e reais para facilitar seleção
                 if (isDemoAccount) {
                   allDemoAccounts.push(accountEntry);
                 } else {
                   allRealAccounts.push(accountEntry);
                 }
-                
+
                 this.logger.log(
                   `[DerivService] Conta ${accountId}: moeda ${currencyCode}, saldo ${numericBalance}, tipo: ${isDemoAccount ? 'DEMO' : 'REAL'}, demo_account: ${account.demo_account}, type: ${account.type || 'unknown'}`,
                 );
@@ -263,7 +264,7 @@ export class DerivService {
             const mainBalanceValue = parseFloat(balanceData.balance ?? 0);
             // Usar demo_account como fonte primária para identificar se é demo
             const mainIsDemo = balanceData.demo_account === 1 || balanceData.demo_account === true;
-            
+
             if (!accountsByCurrency[mainCurrency] || !accountsByCurrency[mainCurrency].length) {
               accountsByCurrency[mainCurrency] = [
                 { value: mainBalanceValue, loginid: balanceData.loginid || '', isDemo: mainIsDemo },
@@ -274,7 +275,7 @@ export class DerivService {
             // Se configurou USD/BTC, priorizar contas reais (CR), mas usar demo se não houver
             let selectedEntry;
             let selectedCurrency;
-            
+
             if (desiredCurrency === 'DEMO') {
               // Para DEMO, buscar contas demo (verificar propriedade isDemo)
               // Priorizar USD demo se disponível, senão usar qualquer conta demo
@@ -328,7 +329,7 @@ export class DerivService {
             // Isso garante que usamos converted_amount quando disponível e agrupamos corretamente
             const balancesByCurrencyDemo: Record<string, number> = { ...aggregatedBalances.global.demo };
             const balancesByCurrencyReal: Record<string, number> = { ...aggregatedBalances.global.real };
-            
+
             // Log para debug - verificar se os dados estão sendo criados
             this.logger.log(
               `[DerivService] DEBUG - aggregatedBalances.global.demo: ${JSON.stringify(aggregatedBalances.global.demo)}`,
@@ -364,16 +365,16 @@ export class DerivService {
               `[DerivService] Saldos separados - Demo: ${JSON.stringify(accountData.balancesByCurrencyDemo)}, Real: ${JSON.stringify(accountData.balancesByCurrencyReal)}`,
             );
             this.logger.log(
-              `[DerivService] Retorno completo: ${JSON.stringify({ 
-                loginid: accountData.loginid, 
-                currency: accountData.currency, 
+              `[DerivService] Retorno completo: ${JSON.stringify({
+                loginid: accountData.loginid,
+                currency: accountData.currency,
                 balance: accountData.balance,
                 balancesByCurrency: accountData.balancesByCurrency,
                 balancesByCurrencyDemo: accountData.balancesByCurrencyDemo,
                 balancesByCurrencyReal: accountData.balancesByCurrencyReal
               })}`,
             );
-            
+
             // Log do objeto completo antes de resolver
             this.logger.log(`[DerivService] DEBUG - accountData completo antes de resolve: ${JSON.stringify(accountData)}`);
 
@@ -412,12 +413,12 @@ export class DerivService {
 
   pickAccountForCurrency(account: DerivAccountResult, currency: string): DerivAccountResult {
     const desiredCurrency = currency.toUpperCase();
-    
+
     // Se o usuário configurou DEMO, buscar contas demo (priorizando USD demo)
     // Se configurou USD/BTC, priorizar contas reais (CR), mas usar demo se não houver
     let selectedEntry;
     let selectedCurrency;
-    
+
     if (desiredCurrency === 'DEMO') {
       // Para DEMO, buscar contas demo em todas as moedas (verificar propriedade isDemo)
       // Priorizar USD demo se disponível
@@ -425,7 +426,7 @@ export class DerivService {
       const usdDemoAccounts = (account.accountsByCurrency?.['USD'] ?? []).filter(
         acc => acc.isDemo === true
       );
-      
+
       if (usdDemoAccounts.length > 0) {
         selectedEntry = usdDemoAccounts[0];
         selectedCurrency = 'USD';
@@ -517,7 +518,7 @@ export class DerivService {
       ws.on('message', (data: WebSocket.RawData) => {
         try {
           const response = JSON.parse(data.toString());
-          
+
           if (response.error) {
             clearTimeout(timeout);
             ws.close();
@@ -558,7 +559,7 @@ export class DerivService {
   async createDerivAccount(formData: any, userId: string, verificationCode: string): Promise<any> {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
-    
+
     // Parâmetros de afiliado - valores padrão do link de afiliado
     // NOTA: O token do link (t=) não é o mesmo que affiliate_token da API
     // O affiliate_token deve ser obtido do painel de afiliados da Deriv
@@ -659,10 +660,10 @@ export class DerivService {
         this.logger.debug(
           `[CreateAccount] Configuração - AppID: ${appId}, AffiliateToken: ${AFFILIATE_TOKEN ? AFFILIATE_TOKEN.substring(0, 10) + '...' : 'não configurado'}`,
         );
-        
+
         // Iniciar timeout para conta DEMO
         setDemoTimeout();
-        
+
         // Validar dados obrigatórios
         if (!formData.email) {
           if (demoTimeout) clearTimeout(demoTimeout);
@@ -675,7 +676,7 @@ export class DerivService {
 
         // Gerar senha (o código de verificação vem do email)
         const password = this.generatePassword();
-        
+
         // Criar conta DEMO primeiro - seguindo documentação oficial da Deriv
         const demoRequest: any = {
           new_account_virtual: 1,
@@ -695,12 +696,12 @@ export class DerivService {
         if (AFFILIATE_TOKEN) {
           demoRequest.affiliate_token = AFFILIATE_TOKEN;
         }
-        
+
         this.logger.log('[CreateAccount] Enviando request para conta DEMO');
-        this.logger.log(`[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({ 
-          ...demoRequest, 
-          client_password: '<hidden>', 
-          verification_code: '<hidden>' 
+        this.logger.log(`[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({
+          ...demoRequest,
+          client_password: '<hidden>',
+          verification_code: '<hidden>'
         })}`);
         this.logger.debug(`[CreateAccount] Código de verificação usado: ${verificationCode.substring(0, 3)}...`);
         send(demoRequest);
@@ -710,19 +711,19 @@ export class DerivService {
         try {
           const response = JSON.parse(data.toString());
           this.logger.log('[CreateAccount] Resposta recebida da Deriv:', JSON.stringify(response));
-          
+
           if (response.error) {
             this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
             if (demoTimeout) clearTimeout(demoTimeout);
             if (realTimeout) clearTimeout(realTimeout);
             if (globalTimeout) clearTimeout(globalTimeout);
             ws.close();
-            
+
             // Mensagens de erro mais específicas
             let errorMessage = response.error.message || 'Erro ao criar conta';
             if (response.error.code === 'InvalidToken') {
               if (AFFILIATE_TOKEN) {
-                errorMessage = 
+                errorMessage =
                   'Token de afiliado inválido ou expirado. ' +
                   'O token configurado no sistema não é válido ou expirou. ' +
                   'Entre em contato com o administrador do sistema para atualizar o token de afiliado.';
@@ -730,7 +731,7 @@ export class DerivService {
                   `[CreateAccount] Token de afiliado inválido. Token usado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
                 );
               } else {
-                errorMessage = 
+                errorMessage =
                   'Erro ao criar conta. ' +
                   'Se você é um afiliado, configure um token de afiliado válido. ' +
                   'Caso contrário, entre em contato com o suporte.';
@@ -746,7 +747,7 @@ export class DerivService {
             } else if (response.error.code === 'RateLimit') {
               errorMessage = 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.';
             }
-            
+
             reject(new Error(errorMessage));
             return;
           }
@@ -755,7 +756,7 @@ export class DerivService {
           if (response.new_account_virtual && !demoAccountCreated) {
             demoAccountCreated = true;
             if (demoTimeout) clearTimeout(demoTimeout);
-            
+
             results.demoAccount = {
               client_id: response.new_account_virtual.client_id,
               email: response.new_account_virtual.email,
@@ -763,10 +764,10 @@ export class DerivService {
               oauth_token: response.new_account_virtual.oauth_token,
             };
             this.logger.log('[CreateAccount] Conta DEMO criada:', results.demoAccount.client_id);
-            
+
             // Iniciar timeout para conta REAL
             setRealTimeout();
-            
+
             // Agora criar conta REAL
             const realRequest: any = {
               new_account_real: 1,
@@ -799,7 +800,7 @@ export class DerivService {
             if (AFFILIATE_TOKEN) {
               realRequest.affiliate_token = AFFILIATE_TOKEN;
             }
-            
+
             this.logger.log('[CreateAccount] Enviando request para conta REAL');
             send(realRequest);
             return;
@@ -809,7 +810,7 @@ export class DerivService {
           if (response.new_account_real && !realAccountCreated) {
             realAccountCreated = true;
             if (realTimeout) clearTimeout(realTimeout);
-            
+
             results.realAccount = {
               client_id: response.new_account_real.client_id,
               email: response.new_account_real.email,
@@ -817,12 +818,12 @@ export class DerivService {
               oauth_token: response.new_account_real.oauth_token,
             };
             this.logger.log('[CreateAccount] Conta REAL criada:', results.realAccount.client_id);
-            
+
             // Limpar todos os timeouts
             if (demoTimeout) clearTimeout(demoTimeout);
             if (realTimeout) clearTimeout(realTimeout);
             if (globalTimeout) clearTimeout(globalTimeout);
-            
+
             ws.close();
             resolve({
               demoAccountId: results.demoAccount.client_id,
@@ -855,7 +856,7 @@ export class DerivService {
         if (demoTimeout) clearTimeout(demoTimeout);
         if (realTimeout) clearTimeout(realTimeout);
         if (globalTimeout) clearTimeout(globalTimeout);
-        
+
         // Se a conexão foi fechada antes de completar, verificar o que foi criado
         if (!demoAccountCreated && !realAccountCreated) {
           this.logger.error('[CreateAccount] Conexão fechada sem criar nenhuma conta');
