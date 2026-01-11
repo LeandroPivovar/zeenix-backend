@@ -151,6 +151,10 @@ class ProposalDto {
   @IsOptional()
   @IsInt()
   multiplier?: number; // Para contratos MULTUP/MULTDOWN
+
+  @IsOptional()
+  @IsString()
+  loginid?: string;
 }
 
 class DefaultValuesDto {
