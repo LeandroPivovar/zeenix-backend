@@ -361,20 +361,27 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 4. Calcular Probabilidade Combinada
     let probability = 50; // Base
 
+    // ✅ Debug: Log dos valores calculados
+    this.logger.debug(`[Falcon][${userId}] Análise: volatility=${volatility.toFixed(6)}, trendStrength=${(Math.abs(emaFast - emaSlow) / emaSlow).toFixed(6)}, digitStrength=${digitAnalysis.patternStrength.toFixed(3)}`);
+
     // Volatilidade: Alta volatilidade = maior confiança em tendências
-    if (volatility > 0.5) {
+    // ✅ CORRIGIDO: threshold de 0.5 era muito alto, ajustado para 0.0005 (0.05%)
+    if (volatility > 0.0005) {
       probability += 15;
+      this.logger.debug(`[Falcon][${userId}] +15 por volatilidade (${volatility.toFixed(6)} > 0.0005)`);
     }
 
     // Tendência: EMA rápida acima da lenta = CALL, abaixo = PUT
     const trendStrength = Math.abs(emaFast - emaSlow) / emaSlow;
     if (trendStrength > 0.001) {
       probability += 10;
+      this.logger.debug(`[Falcon][${userId}] +10 por tendência (${trendStrength.toFixed(6)} > 0.001)`);
     }
 
     // Padrões de dígitos: Se há padrão forte, aumenta probabilidade
     if (digitAnalysis.patternStrength > 0.6) {
       probability += 15;
+      this.logger.debug(`[Falcon][${userId}] +15 por padrão de dígitos (${digitAnalysis.patternStrength.toFixed(3)} > 0.6)`);
     }
 
     // Limitar entre 0 e 100
@@ -388,15 +395,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // Se digitAnalysis sugere direção diferente, reduzir probabilidade
       if (digitAnalysis.direction !== trend) {
         probability -= 10;
+        this.logger.debug(`[Falcon][${userId}] -10 por conflito de direção (digit=${digitAnalysis.direction} vs trend=${trend})`);
         // Se ainda assim a probabilidade é alta, usar direção dos dígitos
         if (probability >= 80 && digitAnalysis.patternStrength > 0.8) {
           signal = digitAnalysis.direction;
+          this.logger.debug(`[Falcon][${userId}] Usando direção dos dígitos (${digitAnalysis.direction})`);
         }
       } else {
         // Se concordam, aumentar probabilidade
         probability += 5;
+        this.logger.debug(`[Falcon][${userId}] +5 por concordância de direção`);
       }
     }
+
+    this.logger.debug(`[Falcon][${userId}] Probabilidade final: ${probability.toFixed(1)}%, Sinal: ${signal}`);
 
     return {
       probability,
@@ -554,8 +566,35 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
         : 'Sinal indefinido';
 
-      await this.saveLog(userId, 'INFO', 'DECISION',
-        `⏸️ COMPRA NEGADA | Score: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
+      // ✅ THROTTLING: Só logar se:
+      // 1. Passou pelo menos 30 segundos desde o último log de compra negada OU
+      // 2. A probabilidade mudou significativamente (mais de 5%) OU
+      // 3. A direção mudou
+      const now = Date.now();
+      const lastLogTime = state.lastDeniedLogTime || 0;
+      const timeSinceLastLog = now - lastLogTime;
+      const lastLogData = state.lastDeniedLogData;
+
+      const probabilityChanged = !lastLogData ||
+        Math.abs(lastLogData.probability - marketAnalysis.probability) > 5;
+      const directionChanged = !lastLogData ||
+        lastLogData.signal !== marketAnalysis.signal;
+
+      const shouldLog = timeSinceLastLog > 30000 || // 30 segundos
+        probabilityChanged ||
+        directionChanged;
+
+      if (shouldLog) {
+        await this.saveLog(userId, 'INFO', 'DECISION',
+          `⏸️ COMPRA NEGADA | Score: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
+
+        // ✅ Atualizar estado de último log
+        state.lastDeniedLogTime = now;
+        state.lastDeniedLogData = {
+          probability: marketAnalysis.probability,
+          signal: marketAnalysis.signal
+        };
+      }
     }
 
     return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
@@ -1838,4 +1877,7 @@ interface FalconUserState {
   sorosLevel: number;
   totalLosses: number;
   recoveryAttempts: number;
+  // ✅ Campos para throttling de logs de compra negada
+  lastDeniedLogTime?: number;
+  lastDeniedLogData?: { probability: number; signal: string | null };
 }
