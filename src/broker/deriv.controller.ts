@@ -1660,9 +1660,14 @@ export class DerivController {
       this.logger.log(`[Trading] accountsByCurrency keys: ${derivInfo?.raw?.accountsByCurrency ? Object.keys(derivInfo?.raw?.accountsByCurrency).join(', ') : 'N/A'}`);
       this.logger.log(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo?.raw?.tokensByLoginId).join(', ') : 'N/A'}`);
 
-      // Determinar qual loginid usar baseado na moeda preferida
-      let targetLoginid: string | undefined = undefined;
-      if (preferredCurrency === 'DEMO') {
+      // Determinar qual loginid usar
+      // 1. Se loginid foi passado no corpo da requisição (prioridade máxima)
+      // 2. Senão, baseado na moeda preferida (lógica antiga)
+      let targetLoginid: string | undefined = (body as any).loginid;
+
+      if (targetLoginid) {
+        this.logger.log(`[Trading] LoginId fornecido explicitamente: ${targetLoginid}`);
+      } else if (preferredCurrency === 'DEMO') {
         // Para DEMO, buscar conta demo (VRTC*)
         // Tentar todas as moedas, priorizando USD
         type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
