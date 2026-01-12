@@ -65,6 +65,7 @@ export interface ModeradoUserState {
   pendingTradeStakeAmount?: number | null;
   predictedStatus?: 'WON' | 'LOST' | null;
   ticksReceivedAfterBuy?: number;
+  ticksDesdeUltimaOp: number; // ✅ Cooldown para modo Moderado
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
 }
 
@@ -90,6 +91,7 @@ export interface PrecisoUserState {
   creationCooldownUntil?: number;
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
+  ticksDesdeUltimaOp: number; // ✅ Cooldown para modo Preciso/Lenta
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
 }
 
@@ -467,11 +469,23 @@ export class OrionStrategy implements IStrategy {
       }),
     ]);
 
-    // ✅ Incrementar ticksColetados para todos os usuários ativos
-    for (const state of this.velozUsers.values()) state.ticksColetados++;
-    for (const state of this.moderadoUsers.values()) state.ticksColetados++;
-    for (const state of this.precisoUsers.values()) state.ticksColetados++;
-    for (const state of this.lentaUsers.values()) state.ticksColetados++;
+    // ✅ Incrementar contadores para todos os usuários ativos
+    for (const state of this.velozUsers.values()) {
+      state.ticksColetados++;
+      state.ticksDesdeUltimaOp++;
+    }
+    for (const state of this.moderadoUsers.values()) {
+      state.ticksColetados++;
+      // Modo moderado usa timestamp, mas manteremos o contador por consistência se necessário
+    }
+    for (const state of this.precisoUsers.values()) {
+      state.ticksColetados++;
+      state.ticksDesdeUltimaOp++;
+    }
+    for (const state of this.lentaUsers.values()) {
+      state.ticksColetados++;
+      state.ticksDesdeUltimaOp++;
+    }
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
@@ -1173,6 +1187,12 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
+      // ✅ [ZENIX v2.0] Cooldown entre operações (Modo Lenta: 5 ticks)
+      const intervaloMinimo = LENTA_CONFIG.intervaloTicks || 0;
+      if (state.ticksDesdeUltimaOp < intervaloMinimo) {
+        continue;
+      }
+
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
       if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
         if (defesaAtiva) {
@@ -1230,16 +1250,20 @@ export class OrionStrategy implements IStrategy {
     mode: 'veloz' | 'moderado' | 'preciso' | 'lenta',
     entry: number = 1,
   ): Promise<void> {
+    // ✅ [ZENIX v2.0] Bloqueio imediato para evitar race condition de múltiplos disparos por tick
+    if (state.isOperationActive) {
+      return;
+    }
+    state.isOperationActive = true;
+
+    // ✅ Resetar contador de ticks ao iniciar operação
+    if ('ticksDesdeUltimaOp' in state) {
+      state.ticksDesdeUltimaOp = 0;
+    }
+
     // ✅ Declarar tradeId no escopo da função para ser acessível no catch
     let tradeId: number | null = null;
     let forcedStake: number | null = null; // ✅ Variável para forçar limite de stake (stop loss)
-
-    if (state.isOperationActive) {
-      this.logger.warn(`[ORION][${mode}] Usuário ${state.userId} já possui operação ativa`);
-      return;
-    }
-
-    // ✅ VERIFICAR STOP LOSS ANTES DE QUALQUER OPERAÇÃO
     try {
       const stopLossConfig = await this.dataSource.query(
         `SELECT 
@@ -1544,7 +1568,7 @@ export class OrionStrategy implements IStrategy {
     }
 
     // ✅ VALIDAÇÕES PREVENTIVAS serão feitas APÓS calcular o stakeAmount
-    state.isOperationActive = true;
+    // state.isOperationActive = true; // Removido: agora é feito no início da função
     // ✅ CORREÇÃO: martingaleStep é gerenciado após perda/vitória, não aqui
     // entry é apenas para logs e cálculo do stake
 
@@ -3525,6 +3549,7 @@ export class OrionStrategy implements IStrategy {
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
+        ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
       });
     }
@@ -3555,6 +3580,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
         defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
+        ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
       });
     } else {
@@ -3579,6 +3605,7 @@ export class OrionStrategy implements IStrategy {
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
+        ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
       });
     }
@@ -3609,6 +3636,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
         defesaAtivaLogged: false, // ✅ Resetar flag de log de defesa
+        ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
       });
     } else {
@@ -3633,6 +3661,7 @@ export class OrionStrategy implements IStrategy {
         ultimaDirecaoMartingale: null, // ✅ CORREÇÃO: Direção da última operação quando em martingale
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
+        ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
       });
     }

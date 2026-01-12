@@ -73,6 +73,7 @@ export const PRECISO_CONFIG: ModeConfig = {
 
 export const LENTA_CONFIG: ModeConfig = {
   amostraInicial: 50,
+  intervaloTicks: 5, // ✅ Adicionado intervalo de 5 ticks entre operações para modo Lenta
   desequilibrioMin: 0.70,
   confianciaMin: 0.80, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
   taxaAcertoEsperada: 0.85,
