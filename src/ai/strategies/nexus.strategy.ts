@@ -121,12 +121,12 @@ class RiskManager {
                     }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                // Modificado para Nexus v2: (TotalLoss * 1.25) / 0.95
-                const targetRecovery = this.totalLossAccumulated * 1.25;
+                // Modificado para Nexus v2: (TotalLoss * 1.10) / 0.95 (Recupera + 10%)
+                const targetRecovery = this.totalLossAccumulated * 1.10;
                 nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                // Modificado para Nexus v2: (TotalLoss * 1.50) / 0.95
-                const targetRecovery = this.totalLossAccumulated * 1.50;
+                // Modificado para Nexus v2: (TotalLoss * 1.30) / 0.95 (Recupera + 30%) -> Resulta em ~1.37x
+                const targetRecovery = this.totalLossAccumulated * 1.30;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
@@ -247,7 +247,7 @@ export class NexusStrategy implements IStrategy {
     }
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
-        let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
+        let requiredTicks = 5; // ✅ Documentação: Meta de coleta 5 ticks
 
         // Log de Coleta
         if (state.ticksColetados < requiredTicks) {
@@ -277,19 +277,20 @@ export class NexusStrategy implements IStrategy {
                 analysisMsg = `❌ Filtro 1: Sem Momentum (${t[0].value} -> ${t[1].value} -> ${t[2].value})`;
             }
         } else if (state.mode === 'BALANCEADO') {
-            const sma50 = this.calculateSMA(50);
+            const sma20 = this.calculateSMA(20); // Usando SMA 20 como padrão macro
             const currentPrice = lastTicks[lastTicks.length - 1].value;
 
-            if (currentPrice > sma50) {
-                const t = lastTicks.slice(-4);
-                if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
+            if (currentPrice > sma20) {
+                const t = lastTicks.slice(-3);
+                // Documentação: SMA > Preço + 2 ticks de queda (correção) + Entrada na reversão
+                if (t[0].value > t[1].value && t[1].value > t[2].value) { // 2 ticks de queda
                     signal = 'PAR';
-                    analysisMsg = `✅ FILTRO 1: Preço acima da SMA50\n✅ FILTRO 2: Pullback identificado\n✅ GATILHO: Retomada de alta`;
+                    analysisMsg = `✅ FILTRO 1: Tendência Macro Confirmada (SMA > Preço)\n✅ FILTRO 2: Correção Detectada (2 ticks de queda)\n✅ GATILHO: Padrão de Pullback Válido`;
                 } else {
-                    analysisMsg = `❌ Filtro 2: Aguardando Pullback`;
+                    analysisMsg = `❌ Filtro 2: Aguardando Correção (Pullback)`;
                 }
             } else {
-                analysisMsg = `❌ Filtro 1: Preço (${currentPrice}) abaixo da SMA50 (${sma50.toFixed(2)})`;
+                analysisMsg = `❌ Filtro 1: Preço (${currentPrice}) abaixo da SMA (${sma20.toFixed(2)})`;
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
@@ -302,10 +303,30 @@ export class NexusStrategy implements IStrategy {
             }
         }
 
+        // ✅ Lógica de Recuperação/Lento Bidirecional (Rise/Fall)
+        if (riskManager.consecutiveLosses > 0 || state.mode === 'PRECISO') {
+            const t = lastTicks.slice(-2);
+            const force = Math.abs(t[1].value - t[0].value);
+
+            // Filtro de Força (> 0.01)
+            if (force > 0.01) {
+                if (t[1].value > t[0].value) {
+                    signal = 'PAR'; // CALL
+                    analysisMsg = `✅ FILTRO EXTRA: Força Detectada (${force.toFixed(3)})\n✅ GATILHO: 2 ticks de alta (CALL)`;
+                } else if (t[1].value < t[0].value) {
+                    signal = 'IMPAR'; // PUT
+                    analysisMsg = `✅ FILTRO EXTRA: Força Detectada (${force.toFixed(3)})\n✅ GATILHO: 2 ticks de queda (PUT)`;
+                }
+            } else if (state.mode === 'PRECISO' || riskManager.consecutiveLosses > 0) {
+                analysisMsg = `❌ Filtro Extra: Movimento fraco (${force.toFixed(3)} < 0.01)`;
+            }
+        }
+
         // Logic for Batched Logging or Immediate Signal
         if (signal) {
             state.rejectedAnalysisCount = 0; // Reset
-            this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 ANÁLISE: MODO ${state.mode}\n${analysisMsg}\n💪 FORÇA DO SINAL: 65%\n📊 ENTRADA: ${state.mode === 'VELOZ' ? 'HIGHER (-0.15)' : 'CALL'}`);
+            const entryType = riskManager.consecutiveLosses > 0 ? (signal === 'PAR' ? 'RISE (CALL)' : 'FALL (PUT)') : 'HIGHER (-0.15)';
+            this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 ANÁLISE: MODO ${state.mode}\n${analysisMsg}\n💪 FORÇA DO SINAL: 75%\n📊 ENTRADA: ${entryType}`);
         } else {
             state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
 
@@ -412,6 +433,12 @@ export class NexusStrategy implements IStrategy {
         // Se estiver em recuperação (Losses > 0), remove barreira e opera Rise/Fall (Payout ~95%)
         if (riskManager.consecutiveLosses > 0) {
             barrier = undefined;
+
+            // ✅ Log de Troca de Contrato (ANTES da execução)
+            const riskMode = (riskManager as any).riskMode;
+            const multiplier = riskMode === 'AGRESSIVO' ? '1.37x' : riskMode === 'MODERADO' ? '1.16x' : '1.05x';
+
+            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos 2 ticks.\n• Multiplicador: ${multiplier} (Modo ${riskMode})`);
         }
 
         state.isOperationActive = true;
@@ -422,7 +449,7 @@ export class NexusStrategy implements IStrategy {
             // Removed old "ENTRADA CONFIRMADA" log as it is now detailed in check_signal result
 
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
-                contract_type: 'CALL',
+                contract_type: direction === 'PAR' ? 'CALL' : 'PUT',
                 amount: stake,
                 currency: state.currency,
                 barrier: barrier
@@ -438,8 +465,8 @@ export class NexusStrategy implements IStrategy {
                 if (status === 'WON') {
                     if (wasRecovery) {
                         state.vitoriasConsecutivas = 0; // Reset total apos Martingale para voltar a Base
-                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos 2 ticks.\n• Multiplicador: 1.37x (Modo Agressivo)`); // Log simulates the switch logic that happened before this win
-                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base.`);
+                        state.mode = state.originalMode; // ✅ Volta ao modo original após recuperação
+                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base e Modo Original (${state.mode}).`);
                     } else {
                         state.vitoriasConsecutivas++;
                         // ✅ Log de Ciclo Perfeito (Igual Orion)
@@ -461,6 +488,7 @@ export class NexusStrategy implements IStrategy {
 
                     if (riskManager.consecutiveLosses >= 3) {
                         this.saveNexusLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO para recuperação segura.`);
+                        state.mode = 'PRECISO'; // ✅ Ativa o modo LENTO (PRECISO) após 3 perdas
                     }
                 }
 
