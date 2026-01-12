@@ -4373,6 +4373,13 @@ export class AiService implements OnModuleInit {
       return;
     }
 
+    if (normalizedMode === 'lento' || normalizedMode === 'lenta') {
+      // ✅ ORION: O modo lento é processado diretamente pelo OrionStrategy através de ticks em tempo real.
+      // O background scheduler apenas mantém o estado ativo para o sincronizador.
+      this.logger.debug(`[Background AI] Usuário ${userId} em modo LENTO ignorado pelo scheduler (processado em tempo real por orion.strategy)`);
+      return;
+    }
+
     this.logger.warn(
       `[Background AI] Modo ${normalizedMode} não suportado`,
     );

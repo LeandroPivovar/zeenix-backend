@@ -55,11 +55,6 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         // ✅ OTIMIZAÇÃO: Configurar pool de conexões para melhor performance e resiliência
         extra: {
           connectionLimit: 30,        // Máximo de conexões no pool (aumentado de 10 para 30)
-          max: 30,                     // Alias para connectionLimit
-          min: 5,                      // Mínimo de conexões mantidas vivas (aumentado de 2 para 5)
-          acquireTimeoutMillis: 60000, // Timeout ao adquirir conexão (60s - aumentado de 30s)
-          idleTimeoutMillis: 60000,    // Timeout para conexões ociosas (60s - aumentado de 30s)
-          reconnect: true,             // Reconectar automaticamente em caso de falha
           queueLimit: 0,              // Sem limite de fila (0 = ilimitado)
           enableKeepAlive: true,       // Manter conexões vivas
           keepAliveInitialDelay: 0,     // Iniciar keep-alive imediatamente
@@ -71,4 +66,4 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
     }),
   ],
 })
-export class DatabaseModule {}
+export class DatabaseModule { }

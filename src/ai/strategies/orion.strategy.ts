@@ -701,7 +701,7 @@ export class OrionStrategy implements IStrategy {
       MIN_SEQ = 4; // Exige 4 iguais
     } else {
       // LENTA
-      META_PCT = LENTA_CONFIG.desequilibrioMin + 0.5; // Aproximação do desequilíbrio como dominância
+      META_PCT = 0.75; // Sniper-Plus (Exige alta dominância para maior precisão)
       META_ACCEL = 0.0;
       ALLOW_REVERSAL = false;
       USE_PING_PONG = false;
