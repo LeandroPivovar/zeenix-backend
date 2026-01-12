@@ -442,9 +442,19 @@ export class NexusStrategy implements IStrategy {
                         this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base.`);
                     } else {
                         state.vitoriasConsecutivas++;
+                        // ✅ Log de Ciclo Perfeito (Igual Orion)
+                        if (state.vitoriasConsecutivas % 2 === 0) {
+                            this.saveNexusLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 2 vitórias consecutivas (Nível 1)`);
+                            this.saveNexusLog(state.userId, this.symbol, 'info', `Reiniciando para entrada inicial: $${state.apostaInicial.toFixed(2)}`);
+                        }
                     }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
                 } else {
+                    // ✅ Log de Soros Falhou (Igual Orion)
+                    if (state.vitoriasConsecutivas > 0) {
+                        this.saveNexusLog(state.userId, this.symbol, 'resultado', `❌ Soros Nível 1 falhou! Entrando em recuperação`);
+                    }
+
                     state.vitoriasConsecutivas = 0;
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(result.profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
 
