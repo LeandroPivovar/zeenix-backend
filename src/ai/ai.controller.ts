@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AiService, DigitParity, Tick } from './ai.service';
+import { PerformanceService } from './performance.service';
 import { TradeEventsService } from './trade-events.service';
 import { Observable } from 'rxjs';
 
@@ -26,6 +27,7 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly tradeEventsService: TradeEventsService,
+    private readonly performanceService: PerformanceService,
   ) { }
 
   @Post('start')
@@ -594,6 +596,28 @@ export class AiController {
         {
           success: false,
           message: 'Erro ao buscar histórico de sessões',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('performance/weekly/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getWeeklyPerformance(@Param('userId') userId: string, @Req() req: any) {
+    try {
+      const finalUserId = userId === 'current' ? req.user.userId : userId;
+      const stats = await this.performanceService.getWeeklyStats(finalUserId);
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar desempenho semanal',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,

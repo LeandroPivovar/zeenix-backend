@@ -4,6 +4,7 @@ import { AiController } from './ai.controller';
 import { AiService } from './ai.service';
 import { AiScheduler } from './ai.scheduler';
 import { StatsIAsService } from './stats-ias.service';
+import { PerformanceService } from './performance.service';
 import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 import { BrokerModule } from '../broker/broker.module';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
@@ -33,6 +34,7 @@ import { AutonomousAgentModule } from '../autonomous-agent/autonomous-agent.modu
     ApolloStrategy,
     TitanStrategy,
     NexusStrategy,
+    PerformanceService,
     TradeEventsService,
   ],
   exports: [AiService, StrategyManagerService, TradeEventsService, OrionStrategy], // ✅ Exportar OrionStrategy para uso no agente autônomo
