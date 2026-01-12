@@ -318,7 +318,7 @@ class RiskManager {
         logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
       }
       if (saveLog) {
-        saveLog('soros', `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
+        saveLog('info', `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
       }
     }
 
@@ -1632,9 +1632,6 @@ export class OrionStrategy implements IStrategy {
           stakeAmount = apostaSoros;
           // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
           stakeAmount = Math.round(stakeAmount * 100) / 100;
-          this.logger.log(
-            `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${vitoriasAtuais} | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Nova aposta: $${stakeAmount.toFixed(2)}`,
-          );
         } else {
           // Fallback: usar aposta inicial
           this.logger.warn(
@@ -1926,8 +1923,6 @@ export class OrionStrategy implements IStrategy {
     this.saveOrionLog(state.userId, this.symbol, 'operacao', `Payout: 0.95 (95%)`);
     if (entry > 1) {
       this.saveOrionLog(state.userId, this.symbol, 'operacao', `🔄 MARTINGALE (${state.modoMartingale.toUpperCase()}) | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-    } else if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
-      this.saveOrionLog(state.userId, this.symbol, 'operacao', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Aposta anterior: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} | Lucro anterior: $${(state.ultimoLucro || 0).toFixed(2)}`);
     }
 
     try {
