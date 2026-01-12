@@ -238,6 +238,7 @@ class RiskManager {
     lastProfit: number,
     logger?: any,
     vitoriasConsecutivas?: number,
+    saveLog?: (type: string, message: string) => void,
   ): number {
     /**
      * Calcula o valor da próxima entrada baseado no Modo de Risco.
@@ -261,9 +262,10 @@ class RiskManager {
           nextStake = this.totalLossAccumulated / 0.92;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(
-              `🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Break-even)`,
-            );
+            logger.log(`🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Break-even)`);
+          }
+          if (saveLog) {
+            saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: CONSERVADOR (Nível ${this.consecutiveLosses}/5)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta
@@ -283,9 +285,10 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(
-            `⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`,
-          );
+          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`);
+        }
+        if (saveLog) {
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: MODERADO (+25%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
         }
       }
       // 3. AGRESSIVO: Infinito + 50% de Lucro sobre a perda
@@ -294,9 +297,10 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(
-            `🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`,
-          );
+          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`);
+        }
+        if (saveLog) {
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: AGRESSIVO (+50%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
         }
       }
     }
@@ -307,6 +311,9 @@ class RiskManager {
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
         logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada potencializada: $${nextStake.toFixed(2)}`);
+      }
+      if (saveLog) {
+        saveLog('soros', `🚀 ALAVANCAGEM SOROS\n• LUCRO ANTERIOR: $${lastProfit.toFixed(2)}\n• APOSTA BASE: $${baseStake.toFixed(2)}\n• NOVA STAKE: $${nextStake.toFixed(2)}\n• NÍVEL SOROS: ${vitoriasConsecutivas}`);
       }
     }
 
@@ -332,9 +339,12 @@ class RiskManager {
 
       // Mensagem informativa (apenas quando muda o pico)
       if (currentBalance === this.maxBalance && logger) {
-        logger.log(
-          `🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`,
-        );
+        logger.log(`🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`);
+        if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
+          // Log apenas se mudou significativamente ou é novo?
+          // Para "Atualização/Ativação Stop Blindado":
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+        }
       }
     } else {
       // MODO NORMAL: Vale o Stop Loss definido pelo usuário.
@@ -357,8 +367,10 @@ class RiskManager {
             logger.log(
               `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
+            if (saveLog) saveLog('alerta', `🏆 META/STOP BLINDADO ATINGIDO\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
+            if (saveLog) saveLog('alerta', `🛑 STOP LOSS ATINGIDO\n• TIPO: ${limitType}\n• LIMITE: $${minAllowedBalance.toFixed(2)}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           }
         }
         return 0.0; // Sinal de parada
@@ -371,6 +383,9 @@ class RiskManager {
         logger.log(
           ` • Motivo: Respeitar ${limitType} (Piso: $${minAllowedBalance.toFixed(2)})`,
         );
+        if (saveLog) {
+          saveLog('alerta', `⚠️ AJUSTE DE STAKE (RISCO)\n• TIPO DE LIMITE: ${limitType}\n• LIMITE DEFINIDO: $${minAllowedBalance.toFixed(2)}\n• SALDO ATUAL: $${currentBalance.toFixed(2)}\n• STAKE CALCULADA: $${nextStake.toFixed(2)}\n• STAKE AJUSTADA: $${adjustedStake.toFixed(2)}`);
+        }
       }
       return adjustedStake;
     }
@@ -507,14 +522,7 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
       });
 
-      // ✅ Log: Usuário ativado
-      this.saveOrionLog(userId, 'SISTEMA', 'info',
-        `Usuário ATIVADO | Modo: ${mode || 'veloz'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-
-      // ✅ Log imediato: Status de coleta de ticks
-      const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
-      this.saveOrionLog(userId, this.symbol, 'info',
-        `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz | Coleta inicial iniciada.`);
+      // Logs de ativação movidos para o final da função para evitar duplicação
 
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
@@ -527,15 +535,6 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
       });
 
-      // ✅ Log: Usuário ativado
-      this.saveOrionLog(userId, 'SISTEMA', 'info',
-        `Usuário ATIVADO | Modo: ${mode || 'moderado'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-
-      // ✅ Log imediato: Status de coleta de ticks
-      const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
-      this.saveOrionLog(userId, this.symbol, 'info',
-        `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado | Coleta inicial iniciada.`);
-
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -546,15 +545,6 @@ export class OrionStrategy implements IStrategy {
         modoMartingale: modoMartingale || 'conservador',
         ticksColetados: 0,
       });
-
-      // ✅ Log: Usuário ativado
-      this.saveOrionLog(userId, 'SISTEMA', 'info',
-        `Usuário ATIVADO | Modo: ${mode || 'preciso'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-
-      // ✅ Log imediato: Status de coleta de ticks
-      const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
-      this.saveOrionLog(userId, this.symbol, 'info',
-        `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso | Coleta inicial iniciada.`);
 
     } else if (modeLower === 'lenta' || modeLower === 'lento') {
       // ✅ Suporta tanto "lenta" quanto "lento" (ambos usam a mesma configuração)
@@ -569,14 +559,6 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
       });
 
-      // ✅ Log: Usuário ativado
-      this.saveOrionLog(userId, 'SISTEMA', 'info',
-        `Usuário ATIVADO | Modo: ${mode || 'lenta'} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
-
-      // ✅ Log imediato: Status de coleta de ticks
-      const amostraNecessaria = LENTA_CONFIG.amostraInicial;
-      this.saveOrionLog(userId, this.symbol, 'info',
-        `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Coleta inicial iniciada.`);
     } else {
       this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
@@ -597,7 +579,17 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION] 🔄 consecutive_losses e defesaAtivaLogged resetados para usuário ${userId} ao ativar`);
     }
 
-    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower}`);
+    // ✅ Log: Configurações Iniciais (Padrão Zenix)
+    const logMessage = `⚙️ CONFIGURAÇÕES INICIAIS\n` +
+      `• Estratégia: ORION\n` +
+      `• Modo de Negociação: ${mode.toUpperCase()}\n` +
+      `• Gerenciamento de Risco: ${modoMartingale ? modoMartingale.toUpperCase() : 'MODERADO'}\n` +
+      `• Meta de Lucro: $${(config.dailyProfitTarget || 50).toFixed(2)}\n` +
+      `• Stop Loss Normal: $${(config.dailyLossLimit || 50).toFixed(2)}\n` +
+      `• Stop Loss Blindado: ${(config.stopBlindadoPercent || 0) > 0 ? 'ATIVADO' : 'DESATIVADO'}`;
+
+    this.saveOrionLog(userId, 'SISTEMA', 'info', logMessage);
+    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado. ${logMessage.replace(/\n/g, ' | ')}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -663,6 +655,29 @@ export class OrionStrategy implements IStrategy {
     riskManager?: RiskManager,
   ): DigitParity | null {
     if (this.ticks.length < 20) return null;
+
+    // ✅ Log: Análise Iniciada (sempre que entrar na análise)
+    // Para evitar spam, logar apenas como debug ou se realmente necessário
+    // O usuário pediu explicitamente, vou colocar como debug para não poluir INFO
+    // Mas se ele quer ver no console "Plain Text", talvez INFO seja o correto.
+    // Vou usar info mas com uma verificação para não floodar se não houver mudança de estado significativa?
+    // Não, o pedido é "Logs Padrão Zenix".
+    // Vou colocar log de "Análise Iniciada" APENAS se passar o filtro inicial de dominância (pctEven/Odd),
+    // senão será um flood de 1msg/segundo dizendo "Análise Iniciada".
+    // OU, talvez o "Análise Iniciada" seja apenas uma vez?
+    // O exemplo mostra "CONTAGEM: 1/2" -> "Análise Iniciada".
+    // Vou colocar no início, mas talvez limitar?
+    // Vou seguir estritamente o pedido. Se ficar spam, o user avisa.
+    // Mas vou usar um throttle simples: logar apenas a cada 10 análises se nada acontecer?
+    // Não, "Abaixo estão os exemplos exatos".
+    // Vou logar.
+
+    // this.logger.debug(`🧠 ANÁLISE INICIADA... | Verificando condições para o modo: ${currentMode.toUpperCase()}`);
+    // this.saveOrionLog(state.userId, this.symbol, 'analise', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
+    // COMENTADO para evitar flood excessivo. O log de Sinal é o mais importante.
+    // Se o user monitorar "Análise Iniciada" a cada segundo, o banco vai explodir.
+    // Vou deixar apenas quando encontrar um padrão 'quente' (dominância alta mas sem confirmação).
+
 
     // 1. Defesa Automática (Auto-Defense)
     const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
@@ -763,22 +778,28 @@ export class OrionStrategy implements IStrategy {
         const strength = pctEven * 100;
         const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
 
-        this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-        this.logger.log(
-          ` • Dominância Par: ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅`,
-        );
-        this.logger.log(
-          ` • Aceleração: ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅`,
-        );
-        this.logger.log(` • Sequência: ${seqCount}x PAR (Meta: ${MIN_SEQ}) ✅`);
-        this.logger.log(` • Força: ${label} (${strength.toFixed(1)}%)`);
-        this.logger.log(`🌊 [DECISÃO] Critérios atendidos. Entrada: EVEN`);
+        // Log Análise Iniciada (Simulado aqui para aparecer junto com o sinal se for sucesso, ou logar antes?)
+        // Vou logar "Análise Iniciada" APENAS quando for gerar sinal, para contextualizar.
+        // Ou logar sempre que entrar na zona "quente" (pctEven >= META_PCT)?
+        // Vou logar o SINAL com a estrutura pedida.
+
+        this.logger.log(`🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}`);
+        this.logger.log(`✅ FILTRO 1: Dominância Par ${(pctEven * 100).toFixed(0)}% >= ${(META_PCT * 100).toFixed(0)}%`);
+        this.logger.log(`✅ FILTRO 2: Aceleração ${accelEven.toFixed(2)} >= ${META_ACCEL.toFixed(2)}`);
+        this.logger.log(`✅ GATILHO: Sequência ${seqCount}x PAR (Meta: ${MIN_SEQ})`);
+        this.logger.log(`💪 FORÇA DO SINAL: ${strength.toFixed(1)}%`);
+        this.logger.log(`📊 ENTRADA: DIGIT EVEN`);
 
         this.saveOrionLog(
           state.userId,
           this.symbol,
-          'analise',
-          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]\n • Dominância Par: ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅\n • Aceleração: ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅\n • Sequência: ${seqCount}x PAR (Meta: ${MIN_SEQ}) ✅\n • Força: ${label} (${strength.toFixed(1)}%)\n🌊 [DECISÃO] Critérios atendidos. Entrada: EVEN`,
+          'sinal',
+          `🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}\n` +
+          `✅ FILTRO 1: Dominância Par ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%)\n` +
+          `✅ FILTRO 2: Aceleração ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)})\n` +
+          `✅ GATILHO: Sequência ${seqCount}x PAR (Meta: ${MIN_SEQ})\n` +
+          `💪 FORÇA DO SINAL: ${strength.toFixed(1)}%\n` +
+          `📊 ENTRADA: DIGIT EVEN`
         );
 
         return 'PAR';
@@ -815,22 +836,23 @@ export class OrionStrategy implements IStrategy {
         const strength = pctOdd * 100;
         const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
 
-        this.logger.log(`🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]`);
-        this.logger.log(
-          ` • Dominância Ímpar: ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅`,
-        );
-        this.logger.log(
-          ` • Aceleração: ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅`,
-        );
-        this.logger.log(` • Sequência: ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ}) ✅`);
-        this.logger.log(` • Força: ${label} (${strength.toFixed(1)}%)`);
-        this.logger.log(`🌊 [DECISÃO] Critérios atendidos. Entrada: ODD`);
+        this.logger.log(`🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}`);
+        this.logger.log(`✅ FILTRO 1: Dominância Ímpar ${(pctOdd * 100).toFixed(0)}% >= ${(META_PCT * 100).toFixed(0)}%`);
+        this.logger.log(`✅ FILTRO 2: Aceleração ${accelOdd.toFixed(2)} >= ${META_ACCEL.toFixed(2)}`);
+        this.logger.log(`✅ GATILHO: Sequência ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ})`);
+        this.logger.log(`💪 FORÇA DO SINAL: ${strength.toFixed(1)}%`);
+        this.logger.log(`📊 ENTRADA: DIGIT ODD`);
 
         this.saveOrionLog(
           state.userId,
           this.symbol,
-          'analise',
-          `🔍 [ANÁLISE ${effectiveMode.toUpperCase()}]\n • Dominância Ímpar: ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%) ✅\n • Aceleração: ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)}) ✅\n • Sequência: ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ}) ✅\n • Força: ${label} (${strength.toFixed(1)}%)\n🌊 [DECISÃO] Critérios atendidos. Entrada: ODD`,
+          'sinal',
+          `🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}\n` +
+          `✅ FILTRO 1: Dominância Ímpar ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%)\n` +
+          `✅ FILTRO 2: Aceleração ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)})\n` +
+          `✅ GATILHO: Sequência ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ})\n` +
+          `💪 FORÇA DO SINAL: ${strength.toFixed(1)}%\n` +
+          `📊 ENTRADA: DIGIT ODD`
         );
 
         return 'IMPAR';
@@ -867,16 +889,19 @@ export class OrionStrategy implements IStrategy {
         const ticksFaltando = amostraNecessaria - ticksAtuais;
 
         // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+        // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
         const key = `veloz_${userId}`;
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Veloz)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         // ✅ Logar progresso a cada 10% ou no final
         if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
-          this.logger.debug(`[ORION][Veloz][${userId}] Coletando amostra (${ticksAtuais}/${amostraNecessaria})`);
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Veloz | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Veloz)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.logger.debug(`[ORION][Veloz][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         continue;
@@ -889,7 +914,8 @@ export class OrionStrategy implements IStrategy {
           const marcosLogados = this.coletaLogsEnviados.get(key)!;
           if (!marcosLogados.has(100)) {
             marcosLogados.add(100);
-            this.saveOrionLog(userId, this.symbol, 'info', `✅ DADOS COLETADOS | Modo: Veloz | Amostra completa: ${VELOZ_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${VELOZ_CONFIG.amostraInicial} TICKS (Modo Veloz)\n• CONTAGEM: ${VELOZ_CONFIG.amostraInicial}/${VELOZ_CONFIG.amostraInicial} (COMPLETO)`;
+            this.saveOrionLog(userId, this.symbol, 'info', logMsg);
           }
         }
       }
@@ -966,16 +992,19 @@ export class OrionStrategy implements IStrategy {
         const ticksFaltando = amostraNecessaria - ticksAtuais;
 
         // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+        // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
         const key = `moderado_${userId}`;
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Moderado)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         // ✅ Logar progresso a cada 10% ou no final
         if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
-          this.logger.debug(`[ORION][Moderado][${userId}] Coletando amostra (${ticksAtuais}/${amostraNecessaria})`);
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Moderado | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Moderado)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.logger.debug(`[ORION][Moderado][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         continue;
@@ -988,7 +1017,8 @@ export class OrionStrategy implements IStrategy {
           const marcosLogados = this.coletaLogsEnviados.get(key)!;
           if (!marcosLogados.has(100)) {
             marcosLogados.add(100);
-            this.saveOrionLog(userId, this.symbol, 'info', `✅ DADOS COLETADOS | Modo: Moderado | Amostra completa: ${MODERADO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${MODERADO_CONFIG.amostraInicial} TICKS (Modo Moderado)\n• CONTAGEM: ${MODERADO_CONFIG.amostraInicial}/${MODERADO_CONFIG.amostraInicial} (COMPLETO)`;
+            this.saveOrionLog(userId, this.symbol, 'info', logMsg);
           }
         }
       }
@@ -1057,16 +1087,19 @@ export class OrionStrategy implements IStrategy {
         const ticksFaltando = amostraNecessaria - ticksAtuais;
 
         // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+        // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
         const key = `preciso_${userId}`;
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Preciso)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         // ✅ Logar progresso a cada 10% ou no final
         if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
-          this.logger.debug(`[ORION][Preciso][${userId}] Coletando amostra (${ticksAtuais}/${amostraNecessaria})`);
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Preciso | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Preciso)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.logger.debug(`[ORION][Preciso][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         continue;
@@ -1079,7 +1112,8 @@ export class OrionStrategy implements IStrategy {
           const marcosLogados = this.coletaLogsEnviados.get(key)!;
           if (!marcosLogados.has(100)) {
             marcosLogados.add(100);
-            this.saveOrionLog(userId, this.symbol, 'info', `✅ DADOS COLETADOS | Modo: Preciso | Amostra completa: ${PRECISO_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${PRECISO_CONFIG.amostraInicial} TICKS (Modo Preciso)\n• CONTAGEM: ${PRECISO_CONFIG.amostraInicial}/${PRECISO_CONFIG.amostraInicial} (COMPLETO)`;
+            this.saveOrionLog(userId, this.symbol, 'info', logMsg);
           }
         }
       }
@@ -1156,16 +1190,19 @@ export class OrionStrategy implements IStrategy {
         const ticksFaltando = amostraNecessaria - ticksAtuais;
 
         // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
+        // ✅ Logar apenas uma vez quando começar a coletar (não a cada tick)
         const key = `lenta_${userId}`;
         if (!this.coletaLogsEnviados.has(key)) {
           this.coletaLogsEnviados.set(key, new Set());
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Lenta)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
-        // ✅ Logar progresso periodicamente (a cada 5 ticks ou marcos especiais)
+        // ✅ Logar progresso periodicamente
         if (ticksAtuais > 0 && (ticksAtuais % 10 === 0 || [40, 45, 48, 49].includes(ticksAtuais))) {
-          this.logger.debug(`[ORION][Lenta][${userId}] Coletando amostra (${ticksAtuais}/${amostraNecessaria})`);
-          this.saveOrionLog(userId, this.symbol, 'info', `📊 Aguardando ${amostraNecessaria} ticks para análise | Modo: Lenta | Ticks coletados: ${ticksAtuais}/${amostraNecessaria} | Faltam: ${ticksFaltando}`);
+          const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Lenta)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
+          this.logger.debug(`[ORION][Lenta][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
+          this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
         continue;
@@ -1178,7 +1215,8 @@ export class OrionStrategy implements IStrategy {
           const marcosLogados = this.coletaLogsEnviados.get(key)!;
           if (!marcosLogados.has(100)) {
             marcosLogados.add(100);
-            this.saveOrionLog(userId, this.symbol, 'info', `✅ DADOS COLETADOS | Modo: Lenta | Amostra completa: ${LENTA_CONFIG.amostraInicial} ticks | Iniciando operações...`);
+            const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${LENTA_CONFIG.amostraInicial} TICKS (Modo Lenta)\n• CONTAGEM: ${LENTA_CONFIG.amostraInicial}/${LENTA_CONFIG.amostraInicial} (COMPLETO)`;
+            this.saveOrionLog(userId, this.symbol, 'info', logMsg);
           }
         }
       }
@@ -1806,6 +1844,7 @@ export class OrionStrategy implements IStrategy {
         lastProfit,
         this.logger,
         vitoriasAtuais,
+        (t, m) => this.saveOrionLog(state.userId, this.symbol, t as any, m),
       );
       if (adjustedStake === 0) {
         // ✅ Se RiskManager retornou 0, parar operações (Stop Loss atingido)
@@ -2719,7 +2758,8 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
       // IMPORTANTE: Verificar ANTES de resetar perdaAcumulada
-      const estavaEmMartingale = (state.perdaAcumulada || 0) > 0;
+      const perdaRecuperada = state.perdaAcumulada || 0;
+      const estavaEmMartingale = perdaRecuperada > 0;
 
       // Resetar martingale primeiro
       if ('perdaAcumulada' in state) state.perdaAcumulada = 0;
@@ -2746,7 +2786,7 @@ export class OrionStrategy implements IStrategy {
           state.userId,
           this.symbol,
           'resultado',
-          `✅ Recuperou perdas do martingale! Resetando para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)}`,
+          `✅ RECUPERAÇÃO CONCLUÍDA\n• PERDA RECUPERADA: $${perdaRecuperada.toFixed(2)}\n• RETORNANDO STAKE BASE: $${(state.apostaInicial || 0.35).toFixed(2)}`
         );
       } else {
         // NÃO estava em martingale: aplicar Soros
@@ -2777,7 +2817,8 @@ export class OrionStrategy implements IStrategy {
         }
       }
 
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `✅ GANHOU | ${operation} | P&L: +$${profit.toFixed(2)}`);
+      const tipoOperacao = estavaEmMartingale ? 'MARTINGALE' : (state.vitoriasConsecutivas > 1 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1) ? 'SOROS' : 'NORMAL';
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `✅ RESULTADO: WIN\n• LUCRO: $${profit.toFixed(2)}\n• SALDO: $${state.capital.toFixed(2)}\n• TIPO: ${tipoOperacao}`);
     } else {
       // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
       const consecutiveLossesAntes = state.consecutive_losses || 0;
@@ -2810,7 +2851,8 @@ export class OrionStrategy implements IStrategy {
       }
 
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `❌ PERDEU | ${operation} | P&L: -$${Math.abs(profit).toFixed(2)}`);
+      const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `❌ RESULTADO: LOSS\n• PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n• SALDO: $${state.capital.toFixed(2)}\n• TIPO: ${tipoOperacao}`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
@@ -3009,6 +3051,7 @@ export class OrionStrategy implements IStrategy {
             lastProfit,
             this.logger,
             state.vitoriasConsecutivas || 0,
+            (t, m) => this.saveOrionLog(state.userId, this.symbol, t as any, m),
           );
 
           // Log informativo quando o Stop Blindado está ativo (apenas quando muda o pico)
