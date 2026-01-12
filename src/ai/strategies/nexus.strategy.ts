@@ -823,21 +823,23 @@ export class NexusStrategy implements IStrategy {
     private async saveNexusLog(userId: string, symbol: string, type: any, message: string) {
         if (!userId || !type || !message) return;
 
-        // Enviar log imediatamente via WebSocket
-        this.tradeEvents.emitLog({
-            userId,
-            type,
-            message,
-            timestamp: new Date()
-        });
-
         // Salvar no banco de dados de forma assíncrona (sem bloquear)
-        const icon = this.getIconForType(type);
+        // ✅ Mantendo compatibilidade com Orion: ícone vazio no banco, pois já vem na mensagem
+        const icon = '';
+
         this.dataSource.query(
             `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
             [userId, type, icon, message, JSON.stringify({ strategy: 'nexus' })]
         ).catch(err => {
             this.logger.error(`[NEXUS][LOG] Erro ao salvar log: ${err.message}`);
+        });
+
+        // ✅ Emitir evento SSE para atualizar frontend em tempo real (Igual Orion)
+        this.tradeEvents.emit({
+            userId,
+            type: 'updated',
+            strategy: 'nexus',
+            status: 'LOG',
         });
 
         if (type === 'alerta' && message.includes('BLINDADO ATIVADO')) {
@@ -846,6 +848,7 @@ export class NexusStrategy implements IStrategy {
     }
 
     private getIconForType(type: string): string {
+        // Ícones definidos apenas para referência interna ou display legado se necessário
         const icons: Record<string, string> = {
             'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
         };
