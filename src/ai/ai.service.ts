@@ -3,7 +3,7 @@ import WebSocket from 'ws';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { StatsIAsService } from './stats-ias.service';
-import { CopyTradingService } from '../copy-trading/copy-trading.service';
+
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
 import { AutonomousAgentService } from '../autonomous-agent/autonomous-agent.service';
@@ -527,8 +527,6 @@ export class AiService implements OnModuleInit {
   constructor(
     @InjectDataSource() private dataSource: DataSource,
     private readonly statsIAsService: StatsIAsService,
-    @Inject(forwardRef(() => CopyTradingService))
-    private readonly copyTradingService?: CopyTradingService,
     @Inject(forwardRef(() => StrategyManagerService))
     private readonly strategyManager?: StrategyManagerService, // ✅ Injetar StrategyManager
     @Inject(forwardRef(() => AutonomousAgentService))
@@ -541,8 +539,9 @@ export class AiService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('🚀 Inicializando AiService...');
     try {
-      await this.initializeTables();
-      this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
+      // Inicializar tabelas da IA - REMOVIDO: Agora gerenciado pelo StrategyManager
+      // await this.initializeTables();
+      // this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
 
       // Inicializar conexão WebSocket
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
@@ -550,8 +549,9 @@ export class AiService implements OnModuleInit {
         await this.initialize();
         this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
         // ✅ Sincronizar usuários ativos
-        this.logger.log('🔄 Sincronizando usuários ativos...');
-        await this.syncAtlasUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Atlas:', e));
+        // ✅ Sincronizar usuários ativos - REMOVIDO: Agora gerenciado pelo StrategyManager
+        // this.logger.log('🔄 Sincronizando usuários ativos...');
+        // await this.syncAtlasUsersFromDb().catch(e => this.logger.error('Erro ao sincronizar Atlas:', e));
       } catch (error) {
         this.logger.error('❌ Erro ao inicializar WebSocket:', error.message);
       }
@@ -702,6 +702,8 @@ export class AiService implements OnModuleInit {
       this.logger.debug('[KeepAlive] Keep-alive parado');
     }
   }
+
+
 
   // ======================== TRINITY REMOVIDO ========================
 
@@ -984,183 +986,7 @@ export class AiService implements OnModuleInit {
    * - Desequilíbrio mínimo: 50%
    * - Confiança mínima: 50%
    */
-  private async processVelozStrategies(latestTick: Tick) {
-    if (this.velozUsers.size === 0) {
-      return;
-    }
 
-    // ✅ ZENIX v2.0: Verificar amostra mínima
-    if (this.ticks.length < VELOZ_CONFIG.amostraInicial) {
-      this.logger.debug(
-        `[Veloz][ZENIX] Coletando amostra inicial (${this.ticks.length}/${VELOZ_CONFIG.amostraInicial})`,
-      );
-      return;
-    }
-
-    // ✅ ZENIX v2.0: Incrementar contador de ticks para TODOS os usuários (uma vez por tick)
-    // Isso garante que o intervalo seja contado corretamente
-    for (const [userId, state] of this.velozUsers.entries()) {
-      if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
-        state.ticksDesdeUltimaOp += 1;
-      }
-    }
-
-    // ✅ OTIMIZAÇÃO: Processar usuários em paralelo (não sequencial)
-    const userPromises = Array.from(this.velozUsers.entries()).map(async ([userId, state]) => {
-      try {
-        // Pular se já tem operação ativa (martingale)
-        if (state.isOperationActive) {
-          return;
-        }
-
-        // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale em vez de gerar novo sinal
-        if (state.perdaAcumulada > 0 && state.ultimaDirecaoMartingale) {
-          // Verificar se pode continuar com martingale
-          const canProcess = await this.canProcessVelozState(state);
-          if (!canProcess) {
-            return;
-          }
-
-          // Verificar intervalo entre operações (3 ticks)
-          if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
-            if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
-              this.logger.debug(
-                `[Veloz][${userId}] ⏱️ Aguardando intervalo (martingale): ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
-              );
-              return;
-            }
-          }
-
-          // Continuar com martingale usando a mesma direção
-          const proximaEntrada = state.martingaleStep + 1;
-          this.logger.log(
-            `[Veloz][${userId}] 🔄 Continuando MARTINGALE | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-          );
-
-          await this.executeVelozOperation(state, state.ultimaDirecaoMartingale, proximaEntrada);
-          return;
-        }
-
-        // Verificar se pode processar
-        const canProcess = await this.canProcessVelozState(state);
-        if (!canProcess) {
-          return;
-        }
-
-        // ✅ ZENIX v2.0: Verificar intervalo entre operações (3 ticks)
-        // CORREÇÃO: Usar contador de ticks desde última operação (mais confiável que índice)
-        if (state.ticksDesdeUltimaOp !== undefined && state.ticksDesdeUltimaOp >= 0) {
-          if (state.ticksDesdeUltimaOp < VELOZ_CONFIG.intervaloTicks) {
-            this.logger.debug(
-              `[Veloz][${userId}] ⏱️ Aguardando intervalo: ${state.ticksDesdeUltimaOp}/${VELOZ_CONFIG.intervaloTicks} ticks`,
-            );
-            return;
-          }
-        } else {
-          // ✅ Se ticksDesdeUltimaOp é undefined ou negativo, pode operar imediatamente
-          state.ticksDesdeUltimaOp = 0; // Inicializar contador
-          this.logger.debug(
-            `[Veloz][${userId}] ✅ Intervalo OK (primeira operação ou resetado) | totalTicks=${this.ticks.length}`,
-          );
-        }
-
-        // ✅ ZENIX v2.0: Gerar sinal usando análise completa
-        const sinal = gerarSinalZenix(this.ticks, VELOZ_CONFIG, 'VELOZ');
-
-        if (!sinal || !sinal.sinal) {
-          // 🔍 DEBUG: Logar por que não gerou sinal
-          if (this.ticks.length >= VELOZ_CONFIG.amostraInicial) {
-            const analiseDeseq = calcularDesequilibrio(this.ticks, VELOZ_CONFIG.amostraInicial);
-            this.logger.debug(
-              `[Veloz][${userId}] ❌ Sem sinal válido | ` +
-              `Desequilíbrio: ${(analiseDeseq.desequilibrio * 100).toFixed(1)}% (mín: ${(VELOZ_CONFIG.desequilibrioMin * 100).toFixed(0)}%) | ` +
-              `Operação: ${analiseDeseq.operacao || 'NENHUMA'} | ` +
-              `Ticks: ${this.ticks.length}`,
-            );
-          }
-          return; // Sem sinal válido
-        }
-
-        this.logger.log(
-          `[Veloz][ZENIX] 🎯 SINAL GERADO | User: ${userId} | ` +
-          `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%\n` +
-          `  └─ ${sinal.motivo}`,
-        );
-
-        // ✅ OTIMIZAÇÃO: Logs assíncronos (não bloqueiam execução)
-        // 📋 SALVAR LOGS DETALHADOS DA ANÁLISE (4 ANÁLISES COMPLETAS)
-        this.saveLogAsync(userId, 'analise', '🔍 ANÁLISE ZENIX v2.0');
-
-        // Formatar distribuição
-        const deseq = sinal.detalhes?.desequilibrio;
-        if (deseq) {
-          const percPar = (deseq.percentualPar * 100).toFixed(1);
-          const percImpar = (deseq.percentualImpar * 100).toFixed(1);
-          this.saveLogAsync(userId, 'analise', `Distribuição: PAR ${percPar}% | ÍMPAR ${percImpar}%`);
-          this.saveLogAsync(userId, 'analise', `Desequilíbrio: ${(deseq.desequilibrio * 100).toFixed(1)}% ${deseq.percentualPar > deseq.percentualImpar ? 'PAR' : 'ÍMPAR'}`);
-        }
-
-
-        // ANÁLISE 1: Desequilíbrio Base
-        this.saveLogAsync(userId, 'analise', `🔢 ANÁLISE 1: Desequilíbrio Base`);
-        this.saveLogAsync(userId, 'analise', `├─ ${deseq?.percentualPar > deseq?.percentualImpar ? 'PAR' : 'ÍMPAR'}: ${(Math.max(deseq?.percentualPar || 0, deseq?.percentualImpar || 0) * 100).toFixed(1)}% → Operar ${sinal.sinal}`);
-        this.saveLogAsync(userId, 'analise', `└─ Confiança base: ${sinal.detalhes?.confiancaBase?.toFixed(1) || sinal.confianca.toFixed(1)}%`);
-
-
-        // ANÁLISE 2: Sequências Repetidas
-        const seqInfo = sinal.detalhes?.sequencias;
-        const bonusSeq = seqInfo?.bonus || 0;
-        this.saveLogAsync(userId, 'analise', `🔁 ANÁLISE 2: Sequências Repetidas`);
-        if (seqInfo && seqInfo.tamanho >= 5) {
-          this.saveLogAsync(userId, 'analise', `├─ Sequência detectada: ${seqInfo.tamanho} ticks ${seqInfo.paridade}`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusSeq}% ✅`);
-        } else {
-          this.saveLogAsync(userId, 'analise', `├─ Nenhuma sequência longa (< 5 ticks)`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
-        }
-
-
-        // ANÁLISE 3: Micro-Tendências
-        const microInfo = sinal.detalhes?.microTendencias;
-        const bonusMicro = microInfo?.bonus || 0;
-        this.saveLogAsync(userId, 'analise', `📈 ANÁLISE 3: Micro-Tendências`);
-        if (microInfo && microInfo.aceleracao > 0.10) {
-          this.saveLogAsync(userId, 'analise', `├─ Aceleração: ${(microInfo.aceleracao * 100).toFixed(1)}%`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusMicro}% ✅`);
-        } else {
-          this.saveLogAsync(userId, 'analise', `├─ Aceleração baixa (< 10%)`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
-        }
-
-
-        // ANÁLISE 4: Força do Desequilíbrio
-        const forcaInfo = sinal.detalhes?.forca;
-        const bonusForca = forcaInfo?.bonus || 0;
-        this.saveLogAsync(userId, 'analise', `⚡ ANÁLISE 4: Força do Desequilíbrio`);
-        if (forcaInfo && forcaInfo.velocidade > 0.05) {
-          this.saveLogAsync(userId, 'analise', `├─ Velocidade: ${(forcaInfo.velocidade * 100).toFixed(1)}%`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +${bonusForca}% ✅`);
-        } else {
-          this.saveLogAsync(userId, 'analise', `├─ Velocidade baixa (< 5%)`);
-          this.saveLogAsync(userId, 'analise', `└─ Bônus: +0%`);
-        }
-
-        this.saveLogAsync(userId, 'analise', `🎯 CONFIANÇA FINAL: ${sinal.confianca.toFixed(1)}%`);
-        this.saveLogAsync(userId, 'analise', `└─ Base ${sinal.detalhes?.confiancaBase?.toFixed(1) || 0}% + Bônus ${bonusSeq + bonusMicro + bonusForca}% = ${sinal.confianca.toFixed(1)}%`);
-
-        this.saveLogAsync(userId, 'sinal', `✅ SINAL GERADO: ${sinal.sinal}`);
-        this.saveLogAsync(userId, 'sinal', `Operação: ${sinal.sinal} | Confiança: ${sinal.confianca.toFixed(1)}%`);
-
-        // Executar operação (não bloqueia mais por logs)
-        await this.executeVelozOperation(state, sinal.sinal, 1);
-      } catch (error) {
-        this.logger.error(`[Veloz][${userId}] Erro ao processar usuário:`, error);
-      }
-    });
-
-    // Aguardar todos os usuários processarem em paralelo
-    await Promise.all(userPromises);
-  }
 
   private calculateDVX(ticks: Tick[]): number {
     const relevantTicks = ticks.slice(-Math.min(100, ticks.length));
@@ -1556,254 +1382,43 @@ export class AiService implements OnModuleInit {
     return Math.max(0.35, proximaAposta); // Mínimo da Deriv: 0.35
   }
 
+
   private async executeVelozOperation(
     state: VelozUserState,
     proposal: DigitParity,
     entry: number = 1,
-  ): Promise<number> {
-    if (entry === 1 && state.isOperationActive) {
-      this.logger.warn(`[Veloz] Usuário ${state.userId} já possui operação ativa`);
-      return -1;
-    }
+  ): Promise<DigitTradeResult> {
+    const stakeAmount = await this.calculateVelozStake(state, entry, proposal);
+    const currency = state.currency || 'USD';
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+    const derivToken = state.derivToken;
 
-    state.isOperationActive = true;
-    state.martingaleStep = entry;
-
-    // ✅ ZENIX v2.0: Resetar contador de ticks ANTES de executar operação
-    // Isso garante que o intervalo seja calculado corretamente
-    state.ticksDesdeUltimaOp = 0;
-
-    // ✅ ZENIX v2.0: Calcular stake (já aplica Soros se for primeira entrada)
-    let stakeAmount = await this.calculateVelozStake(state, entry, proposal);
-    const currentPrice = this.getCurrentPrice() || 0;
-
-    // Se é primeira entrada, inicializar martingale e Soros
-    if (entry === 1) {
-      // ✅ CORREÇÃO: Manter apostaBase (não resetar para 0)
-      if (state.apostaBase <= 0) {
-        state.apostaBase = state.capital || 0.35; // Inicializar apenas se ainda não tiver valor
-      }
-
-      // ✅ ZENIX v2.0: Aplicar estratégia Soros se houver vitórias consecutivas
-      // Entrada 2 = Soros nível 1, Entrada 3 = Soros nível 2
-      if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.ultimoLucro > 0) {
-        const apostaComSoros = calcularApostaComSoros(
-          state.apostaInicial || state.apostaBase,
-          state.ultimoLucro,
-          state.vitoriasConsecutivas,
-        );
-        if (apostaComSoros !== null && apostaComSoros > stakeAmount) {
-          // Ajustar stakeAmount para usar valor com Soros
-          stakeAmount = apostaComSoros;
-          this.logger.log(
-            `[Veloz][Soros] 🚀 Soros Nível ${state.vitoriasConsecutivas} | ` +
-            `Aposta: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + Lucro: $${state.ultimoLucro.toFixed(2)} = $${apostaComSoros.toFixed(2)}`,
-          );
-        }
-      }
-
-      state.apostaInicial = stakeAmount;
-      state.perdaAcumulada = 0;
-
-      const config = CONFIGS_MARTINGALE[state.modoMartingale];
-      const multiplicadorLucro = state.modoMartingale === 'conservador' ? 0 :
-        state.modoMartingale === 'moderado' ? 0.25 : 0.50;
-      this.logger.log(
-        `[Veloz][Martingale] Iniciado - Modo: ${state.modoMartingale.toUpperCase()} | ` +
-        `Aposta inicial: $${stakeAmount.toFixed(2)} | ` +
-        `Aposta base: $${state.apostaBase.toFixed(2)} | ` +
-        `Vitórias consecutivas: ${state.vitoriasConsecutivas} | ` +
-        `Máx entradas: ${config.maxEntradas === Infinity ? '∞' : config.maxEntradas} | ` +
-        `Multiplicador lucro: ${(multiplicadorLucro * 100).toFixed(0)}%`,
-      );
-
-      // ✅ OTIMIZAÇÃO: Agrupar logs de operação em uma única mensagem (reduz de 6-7 para 1 log)
-      const martingaleInfo = state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0
-        ? `Martingale: NÃO (Soros Nível ${state.vitoriasConsecutivas})`
-        : `Martingale: NÃO (operação normal)`;
-      const operacaoMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} | Ativo: R_10 | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Payout: 0.95 (95%) | Lucro esperado: $${(stakeAmount * 0.95).toFixed(2)} | ${martingaleInfo}`;
-      this.saveLogAsync(state.userId, 'operacao', operacaoMsg);
-    } else {
-      // ✅ Verificar se é Soros ou Martingale
-      const isSoros = entry <= 3 && state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL && state.perdaAcumulada === 0;
-
-      if (isSoros) {
-        // ✅ OTIMIZAÇÃO: Agrupar logs de Soros em uma única mensagem (reduz de 5 para 1 log)
-        const formulaMsg = state.ultimoLucro > 0
-          ? `Fórmula: $${(state.apostaInicial || state.apostaBase).toFixed(2)} + $${state.ultimoLucro.toFixed(2)} = $${stakeAmount.toFixed(2)}`
-          : '';
-        const sorosMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} (SOROS NÍVEL ${state.vitoriasConsecutivas}) | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Martingale: NÃO${formulaMsg ? ` | ${formulaMsg}` : ''}`;
-        this.saveLogAsync(state.userId, 'operacao', sorosMsg);
-      } else {
-        // ✅ OTIMIZAÇÃO: Agrupar logs de Martingale em uma única mensagem (reduz de 5 para 1 log)
-        const martingaleMsg = `🎯 EXECUTANDO OPERAÇÃO #${entry} (MARTINGALE) | Direção: ${proposal} | Valor: $${stakeAmount.toFixed(2)} | Martingale: SIM (entrada ${entry}) | Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)}`;
-        this.saveLogAsync(state.userId, 'operacao', martingaleMsg);
-      }
-    }
-
-    const tradeId = await this.createVelozTradeRecord(
-      state.userId,
-      proposal,
-      stakeAmount,
-      currentPrice,
+    // Criar registro inicial do trade
+    const insertResult = await this.dataSource.query(
+      `INSERT INTO ai_trades 
+       (user_id, symbol, contract_type, stake_amount, status, strategy, started_at)
+       VALUES (?, ?, ?, ?, 'PENDING', 'VELOZ', NOW())`,
+      [state.userId, this.symbol, contractType, stakeAmount],
     );
+    const tradeId = insertResult.insertId;
 
-    // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
-    if (this.copyTradingService) {
-      this.copyTradingService.replicateAIOperation(
-        state.userId,
-        {
-          tradeId: tradeId,
-          contractId: '', // Será preenchido quando o contrato for criado
-          contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-          symbol: this.symbol,
-          duration: 1,
-          stakeAmount: stakeAmount,
-          entrySpot: currentPrice,
-          entryTime: Math.floor(Date.now() / 1000),
-        }
-      ).catch(error => {
-        this.logger.error(`[Veloz][CopyTrading] Erro ao replicar operação: ${error.message}`);
-      });
-    }
-
-    this.logger.log(
-      `[Veloz][${state.userId}] Enviando operação ${proposal} | stake=${stakeAmount} | entrada=${entry}`,
-    );
-
-    try {
-      const result = await this.executeDigitTradeOnDeriv({
-        tradeId,
-        derivToken: state.derivToken,
-        currency: state.currency || 'USD',
-        stakeAmount,
-        contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-      });
-
-      await this.handleVelozTradeOutcome(
-        state,
-        proposal,
-        tradeId,
-        stakeAmount,
-        result,
-        entry,
-      );
-
-      // ✅ NOTA: lastOperationTickIndex já foi atualizado ANTES de executar a operação
-      // para garantir que o intervalo seja calculado corretamente
-
-      return tradeId;
-    } catch (error: any) {
-      state.isOperationActive = false;
-      state.martingaleStep = 0;
-      await this.dataSource.query(
-        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
-        ['ERROR', error?.message || 'Erro no modo veloz', tradeId],
-      );
-      throw error;
-    }
-  }
-
-  private async createVelozTradeRecord(
-    userId: string,
-    proposal: DigitParity,
-    stakeAmount: number,
-    fallbackEntryPrice: number,
-  ): Promise<number> {
-    const analysisPayload = {
-      strategy: 'modo_veloz',
-      dvx: this.calculateDVX(this.ticks),
-      window: VELOZ_CONFIG.window,
-      ticks: this.ticks.slice(-50), // Salvar apenas os últimos 50 ticks para reduzir log
-    };
-
-    // ✅ Tentar inserir com symbol, se falhar, inserir sem symbol (campo pode não existir ainda)
-    let insertResult;
-    try {
-      insertResult = await this.dataSource.query(
-        `INSERT INTO ai_trades (
-          user_id,
-          analysis_data,
-          gemini_signal,
-          gemini_duration,
-          gemini_reasoning,
-          entry_price,
-          stake_amount,
-          contract_type,
-          status,
-          symbol
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          userId,
-          JSON.stringify(analysisPayload),
-          proposal,
-          1,
-          'Modo Veloz - desequilíbrio de paridade',
-          fallbackEntryPrice,
-          stakeAmount,
-          proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-          'PENDING',
-          this.symbol,
-        ],
-      );
-    } catch (error: any) {
-      // Se o campo symbol não existir, inserir sem ele
-      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
-        this.logger.warn(`[CreateVelozTradeRecord] Campo 'symbol' não existe, inserindo sem ele. Execute o script SQL: backend/db/add_symbol_to_ai_trades.sql`);
-        insertResult = await this.dataSource.query(
-          `INSERT INTO ai_trades (
-            user_id,
-            analysis_data,
-            gemini_signal,
-            gemini_duration,
-            gemini_reasoning,
-            entry_price,
-            stake_amount,
-            contract_type,
-            status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            userId,
-            JSON.stringify(analysisPayload),
-            proposal,
-            1,
-            'Modo Veloz - desequilíbrio de paridade',
-            fallbackEntryPrice,
-            stakeAmount,
-            proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-            'PENDING',
-          ],
-        );
-      } else {
-        throw error;
-      }
-    }
-
-    return insertResult.insertId;
-  }
-
-  private async executeDigitTradeOnDeriv(params: {
-    tradeId: number;
-    derivToken: string;
-    currency: string;
-    stakeAmount: number;
-    contractType: 'DIGITEVEN' | 'DIGITODD';
-  }): Promise<DigitTradeResult> {
-    const { tradeId, derivToken, currency, stakeAmount, contractType } = params;
+    this.logger.log(`[Veloz] Iniciando trade ${tradeId} | ${proposal} | $${stakeAmount} | entrada=${entry}`);
 
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint);
 
-      let proposalId: string | null = null;
-      let proposalPrice: number | null = null;
       let contractId: string | null = null;
       let isCompleted = false;
+      let proposalId: string | null = null;
+      let proposalPrice: number = 0;
 
       const timeout = setTimeout(() => {
         if (!isCompleted) {
           isCompleted = true;
-          ws.close();
+          try {
+            ws.close();
+          } catch (e) { }
           reject(new Error('Timeout ao executar contrato dígito'));
         }
       }, 60000);
@@ -1864,15 +1479,15 @@ export class AiService implements OnModuleInit {
           }
 
           if (msg.msg_type === 'proposal') {
-            const proposal = msg.proposal;
-            if (!proposal || !proposal.id) {
+            const proposalResponse = msg.proposal;
+            if (!proposalResponse || !proposalResponse.id) {
               finalize(new Error('Proposta inválida para contrato dígito'));
               return;
             }
 
-            proposalId = proposal.id;
-            proposalPrice = Number(proposal.ask_price);
-            const payout = Number(proposal.payout || 0);
+            proposalId = proposalResponse.id;
+            proposalPrice = Number(proposalResponse.ask_price);
+            const payout = Number(proposalResponse.payout || 0);
 
             await this.dataSource.query(
               'UPDATE ai_trades SET payout = ? WHERE id = ?',
@@ -1946,50 +1561,7 @@ export class AiService implements OnModuleInit {
               [exitPrice, profit, status, tradeId],
             );
 
-            // Buscar dados da operação para replicação
-            const tradeData = await this.dataSource.query(
-              `SELECT user_id, contract_type, stake_amount, created_at 
-               FROM ai_trades WHERE id = ?`,
-              [tradeId],
-            );
-
-            // Replicar operação para copiadores (assíncrono, não bloqueia)
-            if (tradeData && tradeData.length > 0 && this.copyTradingService) {
-              const trade = tradeData[0];
-              this.copyTradingService.replicateTradeToFollowers(
-                trade.user_id,
-                {
-                  operationType: trade.contract_type,
-                  stakeAmount: parseFloat(trade.stake_amount) || 0,
-                  result: status === 'WON' ? 'win' : 'loss',
-                  profit: profit,
-                  executedAt: trade.created_at,
-                  closedAt: new Date(),
-                  traderOperationId: tradeId.toString(),
-                },
-              ).catch((error: any) => {
-                this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
-              });
-            }
-
-            // ✅ COPY TRADING (NOVO): Atualizar resultado para copiadores usando método correto
-            if (tradeData && tradeData.length > 0 && this.copyTradingService) {
-              const trade = tradeData[0];
-              const finalContractId = contract.contract_id || contractId;
-
-              if (finalContractId) {
-                this.copyTradingService.updateCopyTradingOperationsResult(
-                  trade.user_id,
-                  finalContractId,
-                  status === 'WON' ? 'win' : 'loss',
-                  profit,
-                  parseFloat(trade.stake_amount) || 0,
-                ).catch((error: any) => {
-                  this.logger.error(`[Veloz][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
-                });
-              }
-            }
-
+            // Removido lógica de CopyTrading (vazio)
 
             finalize(undefined, {
               profitLoss: profit,
@@ -2011,6 +1583,135 @@ export class AiService implements OnModuleInit {
         if (!isCompleted) {
           finalize(new Error('WebSocket do contrato dígito fechado inesperadamente'));
         }
+      });
+    });
+  }
+
+  /**
+   * Helper genérico para executar operações de dígitos na Deriv
+   */
+  private async executeDigitTradeOnDeriv(params: {
+    tradeId: number;
+    derivToken: string;
+    currency: string;
+    stakeAmount: number;
+    contractType: 'DIGITEVEN' | 'DIGITODD';
+  }): Promise<DigitTradeResult> {
+    return new Promise((resolve, reject) => {
+      const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      const ws = new WebSocket(endpoint);
+      let isCompleted = false;
+      let contractId = '';
+      let proposalId = '';
+
+      const timeout = setTimeout(() => {
+        if (!isCompleted) {
+          isCompleted = true;
+          try { ws.close(); } catch (e) { }
+          reject(new Error('Timeout ao executar contrato dígito'));
+        }
+      }, 60000);
+
+      const finalize = (error?: Error, result?: DigitTradeResult) => {
+        if (isCompleted) return;
+        isCompleted = true;
+        clearTimeout(timeout);
+        try { ws.close(); } catch (e) { }
+        if (error) reject(error);
+        else resolve(result!);
+      };
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ authorize: params.derivToken }));
+      });
+
+      ws.on('message', async (data: Buffer) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          if (msg.error) {
+            finalize(new Error(msg.error.message || 'Erro da Deriv'));
+            return;
+          }
+
+          if (msg.msg_type === 'authorize') {
+            ws.send(JSON.stringify({
+              proposal: 1,
+              amount: params.stakeAmount,
+              basis: 'stake',
+              contract_type: params.contractType,
+              currency: params.currency,
+              duration: 1,
+              duration_unit: 't',
+              symbol: this.symbol,
+            }));
+          } else if (msg.msg_type === 'proposal') {
+            if (!msg.proposal || !msg.proposal.id) {
+              finalize(new Error('Proposta inválida'));
+              return;
+            }
+            proposalId = msg.proposal.id;
+            const payout = Number(msg.proposal.payout || 0);
+
+            // Atualizar payout
+            await this.dataSource.query(
+              'UPDATE ai_trades SET payout = ? WHERE id = ?',
+              [payout - params.stakeAmount, params.tradeId],
+            );
+
+            ws.send(JSON.stringify({ buy: proposalId, price: Number(msg.proposal.ask_price) }));
+          } else if (msg.msg_type === 'buy') {
+            if (!msg.buy || !msg.buy.contract_id) {
+              finalize(new Error('Compra falhou'));
+              return;
+            }
+            contractId = msg.buy.contract_id;
+            const entrySpot = Number(msg.buy.entry_spot || this.getCurrentPrice() || 0);
+
+            // Atualizar entry
+            await this.dataSource.query(
+              `UPDATE ai_trades 
+                 SET contract_id = ?, entry_price = ?, status = 'ACTIVE', started_at = NOW() 
+                 WHERE id = ?`,
+              [contractId, entrySpot, params.tradeId],
+            );
+
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            }));
+          } else if (msg.msg_type === 'proposal_open_contract') {
+            const contract = msg.proposal_open_contract;
+            if (contract.is_sold === 1) {
+              const profit = Number(contract.profit || 0);
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+              const status = profit >= 0 ? 'WON' : 'LOST';
+
+              // Atualizar resultado
+              await this.dataSource.query(
+                `UPDATE ai_trades
+                 SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+                 WHERE id = ?`,
+                [exitPrice, profit, status, params.tradeId],
+              );
+
+              finalize(undefined, {
+                profitLoss: profit,
+                status,
+                exitPrice,
+                contractId,
+              });
+            }
+          }
+        } catch (error) {
+          finalize(error as Error);
+        }
+      });
+
+      ws.on('error', (err) => finalize(err));
+      ws.on('close', () => {
+        if (!isCompleted) finalize(new Error('Conexão fechada'));
       });
     });
   }
@@ -3573,7 +3274,7 @@ export class AiService implements OnModuleInit {
     }
 
     await this.ensureTickStreamReady();
-    const tradeId = await this.executeVelozOperation(state, proposal);
+    const tradeId = await this.executeVelozOperation(state, proposal, 1);
     if (tradeId <= 0) {
       throw new Error('Já existe uma operação ativa para este usuário');
     }
@@ -5136,24 +4837,7 @@ export class AiService implements OnModuleInit {
                 [tradeId],
               );
 
-              // Replicar operação para copiadores (assíncrono, não bloqueia)
-              if (tradeData && tradeData.length > 0 && this.copyTradingService) {
-                const trade = tradeData[0];
-                this.copyTradingService.replicateTradeToFollowers(
-                  trade.user_id,
-                  {
-                    operationType: trade.contract_type,
-                    stakeAmount: parseFloat(trade.stake_amount) || 0,
-                    result: status === 'WON' ? 'win' : 'loss',
-                    profit: profit,
-                    executedAt: trade.created_at,
-                    closedAt: new Date(),
-                    traderOperationId: tradeId.toString(),
-                  },
-                ).catch((error: any) => {
-                  this.logger.error(`[ReplicateTrade] Erro ao replicar operação ${tradeId}: ${error.message}`);
-                });
-              }
+
 
               // Unsubscribe
               if (contractSubscriptionId) {

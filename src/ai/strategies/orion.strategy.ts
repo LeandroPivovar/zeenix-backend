@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
-import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
 
@@ -428,7 +428,7 @@ export class OrionStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
-    private copyTradingService: CopyTradingService,
+
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
