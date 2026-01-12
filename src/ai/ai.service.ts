@@ -3273,12 +3273,45 @@ export class AiService implements OnModuleInit {
       );
     }
 
-    await this.ensureTickStreamReady();
-    const tradeId = await this.executeVelozOperation(state, proposal, 1);
-    if (tradeId <= 0) {
+    if (state.isOperationActive) {
       throw new Error('Já existe uma operação ativa para este usuário');
     }
-    return tradeId;
+
+    await this.ensureTickStreamReady();
+
+    // executeVelozOperation cria o trade internamente e retorna DigitTradeResult
+    // Precisamos buscar o tradeId do banco após a execução
+    const stakeAmount = await this.calculateVelozStake(state, 1, proposal);
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+
+    // Criar registro inicial do trade
+    const insertResult = await this.dataSource.query(
+      `INSERT INTO ai_trades 
+       (user_id, symbol, contract_type, stake_amount, status, strategy, started_at)
+       VALUES (?, ?, ?, ?, 'PENDING', 'VELOZ', NOW())`,
+      [state.userId, this.symbol, contractType, stakeAmount],
+    );
+    const tradeId = insertResult.insertId;
+
+    // Executar a operação (que irá atualizar o trade criado acima)
+    try {
+      await this.executeDigitTradeOnDeriv({
+        tradeId,
+        derivToken: state.derivToken,
+        currency: state.currency || 'USD',
+        stakeAmount,
+        contractType,
+      });
+
+      return tradeId;
+    } catch (error) {
+      // Atualizar status do trade para ERROR
+      await this.dataSource.query(
+        'UPDATE ai_trades SET status = ?, error_message = ? WHERE id = ?',
+        ['ERROR', error.message || 'Erro ao executar operação', tradeId],
+      );
+      throw error;
+    }
   }
 
   async getSessionStats(userId: string) {
