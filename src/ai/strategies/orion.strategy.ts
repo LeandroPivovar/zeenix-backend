@@ -308,11 +308,9 @@ class RiskManager {
       }
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
+    // --- LÓGICA DE SOROS (APÓS WIN) ---
     else if (lastProfit > 0 && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
-      nextStake = Math.round(nextStake * 100) / 100;
-      if (logger) {
-        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
-      }
+      nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
         logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
