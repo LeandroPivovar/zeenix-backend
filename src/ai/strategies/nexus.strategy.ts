@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
-import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+
 
 /**
  * ✅ NEXUS Strategy Master
@@ -116,6 +116,9 @@ class RiskManager {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
+                    if (userId && symbol && logCallback) {
+                        logCallback(userId, symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${baseStake.toFixed(2)})`);
+                    }
                 }
             } else if (this.riskMode === 'MODERADO') {
                 // Modificado para Nexus v2: (TotalLoss * 1.25) / 0.95
@@ -128,6 +131,9 @@ class RiskManager {
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
             nextStake = baseStake + lastProfit;
+            if (userId && symbol && logCallback) {
+                logCallback(userId, symbol, 'info', `🚀 APLICANDO SOROS NÍVEL ${(vitoriasConsecutivas + 1) / 2}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
+            }
         }
 
         nextStake = Math.round(nextStake * 100) / 100;
@@ -139,7 +145,7 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'info', `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${(profitAccumulatedAtPeak * 0.5).toFixed(2)}`);
+                logCallback(userId, symbol, 'alerta', `🛡️ STOP LOSS BLINDADO ATIVADO\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
             }
         }
 
@@ -162,6 +168,12 @@ class RiskManager {
         if (potentialBalanceAfterLoss < minAllowedBalance) {
             let adjustedStake = currentBalance - minAllowedBalance;
             adjustedStake = Math.round(adjustedStake * 100) / 100;
+
+            if (userId && symbol && logCallback) {
+                const isBlindado = this._blindadoActive;
+                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (STOP ${isBlindado ? 'BLINDADO' : 'NORMAL'})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${isBlindado ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${isBlindado ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
+            }
+
             if (adjustedStake < 0.35) return 0.0;
             return adjustedStake;
         }
@@ -204,7 +216,6 @@ export class NexusStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
-        private copyTradingService: CopyTradingService,
     ) {
         this.appId = (process as any).env.DERIV_APP_ID || '111346';
     }
@@ -237,7 +248,19 @@ export class NexusStrategy implements IStrategy {
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
         let requiredTicks = state.mode === 'VELOZ' ? 10 : state.mode === 'BALANCEADO' ? 20 : 50;
-        if (state.ticksColetados < requiredTicks) return null;
+
+        // Log de Coleta
+        if (state.ticksColetados < requiredTicks) {
+            if (state.ticksColetados % 5 === 0 || state.ticksColetados === 3) {
+                this.saveNexusLog(state.userId, this.symbol, 'info', `📡 COLETANDO DADOS...\n• META DE COLETA: ${requiredTicks} TICKS (Modo ${state.mode})\n• CONTAGEM: ${state.ticksColetados}/${requiredTicks}`);
+            }
+            return null;
+        }
+
+        // Log de Início de Análise
+        if (state.ticksColetados === requiredTicks) {
+            this.saveNexusLog(state.userId, this.symbol, 'info', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${state.mode}`);
+        }
 
         const lastTicks = this.ticks.slice(-requiredTicks);
         if (lastTicks.length < 5) return null;
@@ -249,9 +272,9 @@ export class NexusStrategy implements IStrategy {
             const t = lastTicks.slice(-3);
             if (t[2].value > t[1].value && t[1].value > t[0].value) {
                 signal = 'PAR';
-                analysisMsg = `Detectado Momentum (2 subidas consecutivas)`;
+                analysisMsg = `✅ FILTRO 1: Padrão de Alta Identificado\n✅ FILTRO 2: Momentum confirmado\n✅ GATILHO: 2 subidas consecutivas`;
             } else {
-                analysisMsg = `Sem Momentum (${t[0].value} -> ${t[1].value} -> ${t[2].value})`;
+                analysisMsg = `❌ Filtro 1: Sem Momentum (${t[0].value} -> ${t[1].value} -> ${t[2].value})`;
             }
         } else if (state.mode === 'BALANCEADO') {
             const sma50 = this.calculateSMA(50);
@@ -261,33 +284,33 @@ export class NexusStrategy implements IStrategy {
                 const t = lastTicks.slice(-4);
                 if (t[0].value > t[1].value && t[1].value > t[2].value && t[3].value > t[2].value) {
                     signal = 'PAR';
-                    analysisMsg = `Pullback detectado em Tendência de Alta`;
+                    analysisMsg = `✅ FILTRO 1: Preço acima da SMA50\n✅ FILTRO 2: Pullback identificado\n✅ GATILHO: Retomada de alta`;
                 } else {
-                    analysisMsg = `Preço > SMA, aguardando Pullback`;
+                    analysisMsg = `❌ Filtro 2: Aguardando Pullback`;
                 }
             } else {
-                analysisMsg = `Preço (${currentPrice}) abaixo da SMA50 (${sma50.toFixed(2)})`;
+                analysisMsg = `❌ Filtro 1: Preço (${currentPrice}) abaixo da SMA50 (${sma50.toFixed(2)})`;
             }
         } else if (state.mode === 'PRECISO') {
             const rsi = this.calculateRSI(14);
             // Relaxed from 20 to 30 to ensure execution
             if (rsi < 30) {
                 signal = 'PAR';
-                analysisMsg = `RSI em exaustão (${rsi.toFixed(2)} < 30)`;
+                analysisMsg = `✅ FILTRO 1: RSI em zona de sobrevenda (${rsi.toFixed(2)})\n✅ GATILHO: Exaustão de venda detectada`;
             } else {
-                analysisMsg = `RSI Neutro/Alto (${rsi.toFixed(2)} >= 30)`;
+                analysisMsg = `❌ Filtro 1: RSI Neutro/Alto (${rsi.toFixed(2)} >= 30)`;
             }
         }
 
         // Logic for Batched Logging or Immediate Signal
         if (signal) {
             state.rejectedAnalysisCount = 0; // Reset
-            this.saveNexusLog(state.userId, this.symbol, 'analise', `🎯 [SINAL] ${analysisMsg} | Entrada Confirmada!`);
+            this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 ANÁLISE: MODO ${state.mode}\n${analysisMsg}\n💪 FORÇA DO SINAL: 65%\n📊 ENTRADA: ${state.mode === 'VELOZ' ? 'HIGHER (-0.15)' : 'CALL'}`);
         } else {
             state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
 
             if (state.rejectedAnalysisCount >= 5) {
-                this.saveNexusLog(state.userId, this.symbol, 'info', `📋 [RESUMO] Últimas 5 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`);
+                // this.saveNexusLog(state.userId, this.symbol, 'info', `📋 [RESUMO] Últimas 5 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`);
                 state.rejectedAnalysisCount = 0;
             }
         }
@@ -354,7 +377,7 @@ export class NexusStrategy implements IStrategy {
         ));
 
         this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode} (Input: ${inputMode})`);
-        this.saveNexusLog(userId, 'SISTEMA', 'info', `IA NEXUS v4.0 ATIVADA | Modo: ${nexusMode} | Capital: $${stakeAmount.toFixed(2)}`);
+        this.saveNexusLog(userId, 'SISTEMA', 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: NEXUS\n• Modo de Negociação: ${nexusMode}\n• Gerenciamento de Risco: ${modoMartingale.toUpperCase()}\n• Meta de Lucro: $${(profitTarget || 100).toFixed(2)}\n• Stop Loss Normal: $${(lossLimit || 50).toFixed(2)}\n• Stop Loss Blindado: ${stopLossBlindado !== false ? 'ATIVADO' : 'DESATIVADO'}`);
     }
 
     async deactivateUser(userId: string): Promise<void> {
@@ -396,7 +419,7 @@ export class NexusStrategy implements IStrategy {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            this.saveNexusLog(state.userId, this.symbol, 'operacao', `🎯 ENTRADA CONFIRMADA: CALL | Valor: $${stake.toFixed(2)} | Barreira: ${barrier}`);
+            // Removed old "ENTRADA CONFIRMADA" log as it is now detailed in check_signal result
 
             const result = await this.executeTradeViaWebSocket(state.derivToken, {
                 contract_type: 'CALL',
@@ -415,42 +438,24 @@ export class NexusStrategy implements IStrategy {
                 if (status === 'WON') {
                     if (wasRecovery) {
                         state.vitoriasConsecutivas = 0; // Reset total apos Martingale para voltar a Base
+                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos 2 ticks.\n• Multiplicador: 1.37x (Modo Agressivo)`); // Log simulates the switch logic that happened before this win
                         this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base.`);
                     } else {
                         state.vitoriasConsecutivas++;
                     }
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `✅ [WIN] Resultado Positivo. Lucro: +$${result.profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
                 } else {
                     state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `📉 [LOSS] Perda de $${Math.abs(result.profit).toFixed(2)}. Iniciando recuperação Dinâmica.`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(result.profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+
+                    if (riskManager.consecutiveLosses >= 3) {
+                        this.saveNexusLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO para recuperação segura.`);
+                    }
                 }
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
 
-                // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
-                if (this.copyTradingService) {
-                    const tradeData = await this.dataSource.query(
-                        `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
-                        [tradeId]
-                    );
 
-                    if (tradeData && tradeData.length > 0) {
-                        const trade = tradeData[0];
-                        const contractId = trade.contract_id || result.contractId;
-
-                        if (contractId) {
-                            this.copyTradingService.updateCopyTradingOperationsResult(
-                                trade.user_id,
-                                contractId,
-                                status === 'WON' ? 'win' : 'loss',
-                                result.profit,
-                                parseFloat(trade.stake_amount) || 0,
-                            ).catch((error: any) => {
-                                this.logger.error(`[Nexus][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
-                            });
-                        }
-                    }
-                }
 
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
 
@@ -530,24 +535,7 @@ export class NexusStrategy implements IStrategy {
         );
         const tradeId = r.insertId || r[0]?.insertId;
 
-        // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
-        if (tradeId && this.copyTradingService) {
-            this.copyTradingService.replicateAIOperation(
-                state.userId,
-                {
-                    tradeId: tradeId,
-                    contractId: '',
-                    contractType: 'CALL',
-                    symbol: this.symbol,
-                    duration: 5,
-                    stakeAmount: stake,
-                    entrySpot: entryPrice,
-                    entryTime: Math.floor(Date.now() / 1000),
-                }
-            ).catch(error => {
-                this.logger.error(`[Nexus][CopyTrading] Erro ao replicar operação: ${error.message}`);
-            });
-        }
+
 
         return tradeId;
     }
