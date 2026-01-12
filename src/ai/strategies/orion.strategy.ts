@@ -264,6 +264,9 @@ class RiskManager {
           if (logger) {
             logger.log(`🛑 [CONSERVADOR] Limite de Recuperação Atingido. Resetando.`);
           }
+          if (logger) {
+            logger.log(`🛑 [CONSERVADOR] Limite de Recuperação Atingido. Resetando.`);
+          }
           if (saveLog) {
             saveLog('info', `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${baseStake.toFixed(2)})`);
           }
@@ -306,6 +309,10 @@ class RiskManager {
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
     else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
+      nextStake = Math.round(nextStake * 100) / 100;
+      if (logger) {
+        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
+      }
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
         logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
@@ -383,7 +390,6 @@ class RiskManager {
         );
         if (saveLog) {
           if (limitType.includes('BLINDADO')) {
-            const lucroProtegido = currentBalance - this.initialBalance; // Aproximado
             saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
           } else {
             saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
@@ -659,28 +665,14 @@ export class OrionStrategy implements IStrategy {
   ): DigitParity | null {
     if (this.ticks.length < 20) return null;
 
-    // ✅ Log: Análise Iniciada (sempre que entrar na análise)
-    // Para evitar spam, logar apenas como debug ou se realmente necessário
-    // O usuário pediu explicitamente, vou colocar como debug para não poluir INFO
-    // Mas se ele quer ver no console "Plain Text", talvez INFO seja o correto.
-    // Vou usar info mas com uma verificação para não floodar se não houver mudança de estado significativa?
-    // Não, o pedido é "Logs Padrão Zenix".
-    // Vou colocar log de "Análise Iniciada" APENAS se passar o filtro inicial de dominância (pctEven/Odd),
-    // senão será um flood de 1msg/segundo dizendo "Análise Iniciada".
-    // OU, talvez o "Análise Iniciada" seja apenas uma vez?
-    // O exemplo mostra "CONTAGEM: 1/2" -> "Análise Iniciada".
-    // Vou colocar no início, mas talvez limitar?
-    // Vou seguir estritamente o pedido. Se ficar spam, o user avisa.
-    // Mas vou usar um throttle simples: logar apenas a cada 10 análises se nada acontecer?
-    // Não, "Abaixo estão os exemplos exatos".
-    // Vou logar.
-
-    // this.logger.debug(`🧠 ANÁLISE INICIADA... | Verificando condições para o modo: ${currentMode.toUpperCase()}`);
-    // this.saveOrionLog(state.userId, this.symbol, 'analise', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
-    // COMENTADO para evitar flood excessivo. O log de Sinal é o mais importante.
-    // Se o user monitorar "Análise Iniciada" a cada segundo, o banco vai explodir.
-    // Vou deixar apenas quando encontrar um padrão 'quente' (dominância alta mas sem confirmação).
-
+    // ✅ Log de análise iniciada (Debounce para não spammar)
+    // Apenas logar se não houver um sinal recente (evitar spam durante processamento normal)
+    const agora = Date.now();
+    const lastLogTime = (state as any).lastAnalysisLogTime || 0;
+    if (agora - lastLogTime > 5000) { // Log a cada 5s no máximo
+      // this.saveOrionLog(state.userId, this.symbol, 'analise', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
+      (state as any).lastAnalysisLogTime = agora;
+    }
 
     // 1. Defesa Automática (Auto-Defense)
     const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
@@ -690,15 +682,9 @@ export class OrionStrategy implements IStrategy {
       effectiveMode = 'preciso';
       // ✅ Logar apenas uma vez quando a defesa é ativada
       if (!state.defesaAtivaLogged) {
-        this.logger.log(
-          `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
-        );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'alerta',
-          `🚨 [DEFESA ATIVA] ${consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`,
-        );
+        const modeName = effectiveMode.toUpperCase();
+        this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Forçando modo ${modeName}`);
+        // Log já é feito no processOrionResult ao detectar losses
         state.defesaAtivaLogged = true;
       }
     } else {
@@ -2829,8 +2815,7 @@ export class OrionStrategy implements IStrategy {
         state.consecutive_losses = consecutiveLossesAntes + 1;
       }
       const consecutiveLossesAgora = state.consecutive_losses || 0;
-
-      this.logger.log(`[ORION][${mode}][${state.userId}] 📊 LOSSES CONSECUTIVAS | ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
+      this.logger.warn(`[ORION][${mode}][${state.userId}] ❌ PERDA | Losses: ${consecutiveLossesAntes} -> ${consecutiveLossesAgora}`);
       this.saveOrionLog(state.userId, this.symbol, 'resultado', `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
 
       if (consecutiveLossesAgora >= 3) {
@@ -2838,7 +2823,7 @@ export class OrionStrategy implements IStrategy {
         this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (PRECISO) para recuperação segura.`);
       }
 
-      // ❌ PERDA: Resetar Soros e ativar martingale
+      // ❌ PERDA: Resetar Soros
       if ('vitoriasConsecutivas' in state) state.vitoriasConsecutivas = 0;
       if ('ultimoLucro' in state) state.ultimoLucro = 0;
 
@@ -3816,21 +3801,21 @@ export class OrionStrategy implements IStrategy {
 
     try {
       const icons: Record<string, string> = {
-        'info': 'ℹ️',
-        'tick': '📊',
-        'analise': '🔍',
-        'sinal': '🎯',
-        'operacao': '⚡',
-        'resultado': '💰',
-        'alerta': '⚠️',
-        'erro': '❌',
+        'info': '',
+        'tick': '',
+        'analise': '',
+        'sinal': '',
+        'operacao': '',
+        'resultado': '',
+        'alerta': '',
+        'erro': '',
       };
 
       const placeholders = logs.map(() => '(?, ?, ?, ?, ?, NOW())').join(', ');
       const flatValues: any[] = [];
 
       for (const log of logs) {
-        const icon = icons[log.type] || 'ℹ️';
+        const icon = icons[log.type] || '';
         const detailsJson = log.details ? JSON.stringify(log.details) : JSON.stringify({ symbol: log.symbol });
 
         flatValues.push(
