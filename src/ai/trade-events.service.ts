@@ -20,6 +20,16 @@ interface TradeEventPayload {
   profitProtected?: number; // ✅ Para eventos 'stopped_blindado' - lucro garantido
   profitPeak?: number; // ✅ Para evento 'blindado_activated' - pico de lucro
   protectedAmount?: number; // ✅ Para evento 'blindado_activated' - valor protegido
+  data?: any; // Para compatibilidade com emitLog
+}
+
+export interface LogEventPayload {
+  userId: string;
+  type: string;
+  message: string;
+  timestamp: Date;
+
+
 }
 
 @Injectable()
@@ -29,6 +39,14 @@ export class TradeEventsService {
 
   emit(event: TradeEventPayload): void {
     this.stream$.next(event);
+  }
+
+  emitLog(event: LogEventPayload): void {
+    this.stream$.next({
+      userId: event.userId,
+      type: 'log' as any, // 'log' não está no tipo original, mas o frontend pode filtrar
+      data: event
+    } as any);
   }
 
   subscribe(userId: string, strategy?: string): Observable<MessageEvent> {

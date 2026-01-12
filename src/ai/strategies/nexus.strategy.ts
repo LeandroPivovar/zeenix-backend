@@ -820,38 +820,35 @@ export class NexusStrategy implements IStrategy {
         if (conn) conn.subscriptions.delete(subId);
     }
 
-    private saveNexusLog(userId: string, symbol: string, type: any, message: string) {
+    private async saveNexusLog(userId: string, symbol: string, type: any, message: string) {
         if (!userId || !type || !message) return;
-        this.logQueue.push({ userId, symbol, type, message, timestamp: new Date() });
-        this.processQueue();
+
+        // Enviar log imediatamente via WebSocket
+        this.tradeEvents.emitLog({
+            userId,
+            type,
+            message,
+            timestamp: new Date()
+        });
+
+        // Salvar no banco de dados de forma assíncrona (sem bloquear)
+        const icon = this.getIconForType(type);
+        this.dataSource.query(
+            `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
+            [userId, type, icon, message, JSON.stringify({ strategy: 'nexus' })]
+        ).catch(err => {
+            this.logger.error(`[NEXUS][LOG] Erro ao salvar log: ${err.message}`);
+        });
+
+        if (type === 'alerta' && message.includes('BLINDADO ATIVADO')) {
+            this.tradeEvents.emit({ userId, type: 'blindado_activated', strategy: 'nexus' });
+        }
     }
 
-    private async processQueue() {
-        if (this.logProcessing || this.logQueue.length === 0) return;
-        this.logProcessing = true;
-
-        try {
-            const logs = this.logQueue.splice(0, 50);
-            const icons: Record<string, string> = {
-                'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
-            };
-
-            for (const log of logs) {
-                const icon = icons[log.type] || '🎯';
-                await this.dataSource.query(
-                    `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
-                    [log.userId, log.type, icon, log.message, JSON.stringify({ strategy: 'nexus' })]
-                );
-
-                if (log.type === 'alerta' && log.message.includes('BLINDADO ATIVADO')) {
-                    this.tradeEvents.emit({ userId: log.userId, type: 'blindado_activated', strategy: 'nexus' });
-                }
-            }
-        } catch (e) {
-            this.logger.error(`[NEXUS][LOG] ${e.message}`);
-        } finally {
-            this.logProcessing = false;
-            if (this.logQueue.length > 0) this.processQueue();
-        }
+    private getIconForType(type: string): string {
+        const icons: Record<string, string> = {
+            'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
+        };
+        return icons[type] || '🎯';
     }
 }
