@@ -1134,6 +1134,9 @@ export class OrionStrategy implements IStrategy {
     // Processar cada usuário
     for (const [userId, state] of this.lentaUsers.entries()) {
       if (state.ticksColetados < LENTA_CONFIG.amostraInicial) {
+        // ✅ Incrementar contador de ticks coletados
+        state.ticksColetados++;
+
         const ticksAtuais = state.ticksColetados;
         const amostraNecessaria = LENTA_CONFIG.amostraInicial;
         const ticksFaltando = amostraNecessaria - ticksAtuais;
