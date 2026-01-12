@@ -262,10 +262,10 @@ class RiskManager {
           nextStake = this.totalLossAccumulated / 0.92;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🛡️ [CONSERVADOR] Recuperação Nível ${this.consecutiveLosses}/5: $${nextStake.toFixed(2)} (Break-even)`);
+            logger.log(`🛑 [CONSERVADOR] Limite de Recuperação Atingido. Resetando.`);
           }
           if (saveLog) {
-            saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: CONSERVADOR (Nível ${this.consecutiveLosses}/5)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
+            saveLog('info', `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${baseStake.toFixed(2)})`);
           }
         } else {
           // Aceita a perda e reseta
@@ -306,14 +306,12 @@ class RiskManager {
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
     else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
-      // Soros até Nível 3: Reinveste o lucro da anterior
-      nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
-        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada potencializada: $${nextStake.toFixed(2)}`);
+        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
       }
       if (saveLog) {
-        saveLog('soros', `🚀 ALAVANCAGEM SOROS\n• LUCRO ANTERIOR: $${lastProfit.toFixed(2)}\n• APOSTA BASE: $${baseStake.toFixed(2)}\n• NOVA STAKE: $${nextStake.toFixed(2)}\n• NÍVEL SOROS: ${vitoriasConsecutivas}`);
+        saveLog('soros', `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
       }
     }
 
@@ -370,7 +368,7 @@ class RiskManager {
             if (saveLog) saveLog('alerta', `🏆 META/STOP BLINDADO ATINGIDO\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
-            if (saveLog) saveLog('alerta', `🛑 STOP LOSS ATINGIDO\n• TIPO: ${limitType}\n• LIMITE: $${minAllowedBalance.toFixed(2)}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `🛑 STOP LOSS NORMAL ATINGIDO\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
           }
         }
         return 0.0; // Sinal de parada
@@ -384,7 +382,12 @@ class RiskManager {
           ` • Motivo: Respeitar ${limitType} (Piso: $${minAllowedBalance.toFixed(2)})`,
         );
         if (saveLog) {
-          saveLog('alerta', `⚠️ AJUSTE DE STAKE (RISCO)\n• TIPO DE LIMITE: ${limitType}\n• LIMITE DEFINIDO: $${minAllowedBalance.toFixed(2)}\n• SALDO ATUAL: $${currentBalance.toFixed(2)}\n• STAKE CALCULADA: $${nextStake.toFixed(2)}\n• STAKE AJUSTADA: $${adjustedStake.toFixed(2)}`);
+          if (limitType.includes('BLINDADO')) {
+            const lucroProtegido = currentBalance - this.initialBalance; // Aproximado
+            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
+          } else {
+            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
+          }
         }
       }
       return adjustedStake;
@@ -2818,7 +2821,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const tipoOperacao = estavaEmMartingale ? 'MARTINGALE' : (state.vitoriasConsecutivas > 1 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1) ? 'SOROS' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `✅ RESULTADO: WIN\n• LUCRO: $${profit.toFixed(2)}\n• SALDO: $${state.capital.toFixed(2)}\n• TIPO: ${tipoOperacao}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
     } else {
       // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
       const consecutiveLossesAntes = state.consecutive_losses || 0;
@@ -2831,8 +2834,8 @@ export class OrionStrategy implements IStrategy {
       this.saveOrionLog(state.userId, this.symbol, 'resultado', `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
 
       if (consecutiveLossesAgora >= 3) {
-        this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos. Modo PRECISO será forçado na próxima entrada.`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos. Modo PRECISO será forçado na próxima entrada.`);
+        this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (PRECISO) para recuperação segura.`);
       }
 
       // ❌ PERDA: Resetar Soros e ativar martingale
@@ -2852,7 +2855,7 @@ export class OrionStrategy implements IStrategy {
 
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
       const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `❌ RESULTADO: LOSS\n• PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n• SALDO: $${state.capital.toFixed(2)}\n• TIPO: ${tipoOperacao}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
@@ -2903,7 +2906,7 @@ export class OrionStrategy implements IStrategy {
           this.logger.log(
             `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`,
           );
-          this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
+          this.saveOrionLog(state.userId, this.symbol, 'info', `🏆 META DE LUCRO ATINGIDA!\n• Lucro Total: $${lucroAtual.toFixed(2)}\n• Ação: Parabéns! Encerrando operações por hoje.`);
 
           // Desativar a IA
           await this.dataSource.query(
