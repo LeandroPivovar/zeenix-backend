@@ -129,7 +129,7 @@ class RiskManager {
                 const targetRecovery = this.totalLossAccumulated * 1.50;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
-        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas === 1) {
+        } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
             nextStake = baseStake + lastProfit;
             if (userId && symbol && logCallback) {
                 logCallback(userId, symbol, 'info', `🚀 APLICANDO SOROS NÍVEL 1\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
@@ -442,11 +442,6 @@ export class NexusStrategy implements IStrategy {
                         this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base.`);
                     } else {
                         state.vitoriasConsecutivas++;
-                        // ✅ ZENIX v2.0: Soros Nível 1 apenas (User Request)
-                        // Se atingir 2 vitórias (1ª normal + 1ª Soros), reseta para iniciar novo ciclo
-                        if (state.vitoriasConsecutivas >= 2) {
-                            state.vitoriasConsecutivas = 0;
-                        }
                     }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
                 } else {
