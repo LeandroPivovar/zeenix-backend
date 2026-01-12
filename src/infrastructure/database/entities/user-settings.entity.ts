@@ -30,6 +30,9 @@ export class UserSettingsEntity {
   @Column({ type: 'varchar', length: 10, default: 'USD', name: 'trade_currency' })
   tradeCurrency: string;
 
+  @Column({ type: 'timestamp', nullable: true, name: 'last_notification_cleared_at' })
+  lastNotificationClearedAt?: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -1,10 +1,10 @@
-import { Controller, Get, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Req } from '@nestjs/common';
 import { NotificationsService, LoginNotificationSummary } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notificationsService: NotificationsService) { }
 
   /**
    * GET /notifications/login-summary
@@ -15,7 +15,7 @@ export class NotificationsController {
   @UseGuards(JwtAuthGuard)
   async getLoginSummary(@Req() req: any): Promise<LoginNotificationSummary> {
     const userId = req.user?.userId;
-    
+
     if (!userId) {
       return {
         agent: null,
@@ -37,7 +37,7 @@ export class NotificationsController {
   async getSummaryByUserId(@Req() req: any): Promise<LoginNotificationSummary> {
     // Por segurança, usar apenas o userId do token (não do parâmetro)
     const userId = req.user?.userId;
-    
+
     if (!userId) {
       return {
         agent: null,
@@ -48,6 +48,22 @@ export class NotificationsController {
     }
 
     return this.notificationsService.getLoginSummary(userId);
+  }
+
+  /**
+   * POST /notifications/clear
+   * Limpa as notificações do usuário (marca data de corte)
+   */
+  @Post('clear')
+  @UseGuards(JwtAuthGuard)
+  async clearNotifications(@Req() req: any): Promise<void> {
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      return;
+    }
+
+    await this.notificationsService.clearNotifications(userId);
   }
 }
 

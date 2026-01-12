@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { UserSettingsEntity } from '../infrastructure/database/entities/user-settings.entity';
 
 export interface AgentSummary {
   isActive: boolean;
@@ -44,7 +45,7 @@ export interface LoginNotificationSummary {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
 
   /**
    * Busca resumo de notificações ao fazer login
@@ -53,12 +54,17 @@ export class NotificationsService {
   async getLoginSummary(userId: string): Promise<LoginNotificationSummary> {
     this.logger.log(`[Notifications] Buscando resumo de login para usuário ${userId}`);
 
-    const [agentSummary, aiSummary] = await Promise.all([
+    const [agentSummary, aiSummary, userSettings] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
+      this.dataSource.getRepository(UserSettingsEntity).findOne({ where: { userId } }),
     ]);
 
-    const notifications = this.buildNotifications(agentSummary, aiSummary);
+    const notifications = this.buildNotifications(
+      agentSummary,
+      aiSummary,
+      userSettings?.lastNotificationClearedAt
+    );
 
     const summary: LoginNotificationSummary = {
       agent: agentSummary,
@@ -184,7 +190,7 @@ export class NotificationsService {
       // Conforme atualizado em orion.strategy.ts linha 2887-2892
       let sessionBalance = parseFloat(config.session_balance) || 0;
       let lucroDaSessao = sessionBalance; // ✅ session_balance já é o lucro/perda da sessão
-      
+
       // ✅ Sempre buscar o lucro real dos trades da sessão atual (mais preciso)
       // Isso funciona tanto para sessões ativas quanto paradas
       if (config.created_at) {
@@ -198,7 +204,7 @@ export class NotificationsService {
              AND status IN ('WON', 'LOST')`,
           [userId, config.created_at],
         );
-        
+
         if (tradesResult && tradesResult.length > 0) {
           const lucroDosTrades = parseFloat(tradesResult[0].total_profit_loss) || 0;
           // ✅ Usar o lucro dos trades (é mais preciso e confiável)
@@ -229,13 +235,22 @@ export class NotificationsService {
   private buildNotifications(
     agent: AgentSummary | null,
     ai: AISummary | null,
+    lastClearedAt?: Date | null,
   ): LoginNotificationSummary['notifications'] {
     const notifications: LoginNotificationSummary['notifications'] = [];
     const now = new Date();
 
+    // Filtra notificações anteriores à data de limpeza
+    const isNew = (timestamp: Date | null) => {
+      if (!timestamp) return false;
+      if (!lastClearedAt) return true;
+      return new Date(timestamp) > new Date(lastClearedAt);
+    };
+
     // Notificações do Agente Autônomo
     if (agent) {
       if (agent.isActive) {
+        // Agente ativo sempre mostra
         notifications.push({
           type: 'info',
           title: '🤖 Agente Autônomo Ativo',
@@ -243,7 +258,7 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_profit') {
+      } else if (agent.sessionStatus === 'stopped_profit' && isNew(agent.lastTradeAt || now)) {
         notifications.push({
           type: 'success',
           title: '🎉 Agente Autônomo - Meta Atingida!',
@@ -251,7 +266,7 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_loss') {
+      } else if (agent.sessionStatus === 'stopped_loss' && isNew(agent.lastTradeAt || now)) {
         notifications.push({
           type: 'warning',
           title: '⚠️ Agente Autônomo - Stop Loss',
@@ -259,7 +274,7 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_blindado') {
+      } else if (agent.sessionStatus === 'stopped_blindado' && isNew(agent.lastTradeAt || now)) {
         notifications.push({
           type: 'warning',
           title: '🛡️ Agente Autônomo - Stop Blindado',
@@ -267,7 +282,7 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.totalTrades > 0) {
+      } else if (agent.totalTrades > 0 && isNew(agent.lastTradeAt || now)) {
         // Tem histórico mas não está ativo
         notifications.push({
           type: 'info',
@@ -290,7 +305,7 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_profit') {
+      } else if (ai.sessionStatus === 'stopped_profit' && isNew(ai.lastTradeAt || now)) {
         notifications.push({
           type: 'success',
           title: '🎉 IA de Trading - Meta Atingida!',
@@ -298,7 +313,7 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_loss') {
+      } else if (ai.sessionStatus === 'stopped_loss' && isNew(ai.lastTradeAt || now)) {
         notifications.push({
           type: 'warning',
           title: '⚠️ IA de Trading - Stop Loss',
@@ -306,7 +321,7 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_blindado') {
+      } else if (ai.sessionStatus === 'stopped_blindado' && isNew(ai.lastTradeAt || now)) {
         notifications.push({
           type: 'warning',
           title: '🛡️ IA de Trading - Stop Blindado',
@@ -314,7 +329,7 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionBalance !== 0) {
+      } else if (ai.sessionBalance !== 0 && isNew(ai.lastTradeAt || now)) {
         // Tem histórico mas não está ativa
         const strategyName = 'Orion';
         notifications.push({
@@ -340,64 +355,93 @@ export class NotificationsService {
     console.log('╠══════════════════════════════════════════════════════════════════╣');
     console.log(`║  Usuário: ${userId.substring(0, 30).padEnd(30)}                    ║`);
     console.log('╠══════════════════════════════════════════════════════════════════╣');
-    
+
     // Agente Autônomo
     console.log('║  🤖 AGENTE AUTÔNOMO:                                              ║');
     if (summary.agent) {
       const statusIcon = summary.agent.isActive ? '🟢' : '🔴';
-      const statusText = summary.agent.isActive ? 'RODANDO' : 
-                         summary.agent.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
-                         summary.agent.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
-                         summary.agent.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADO';
+      const statusText = summary.agent.isActive ? 'RODANDO' :
+        summary.agent.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
+          summary.agent.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
+            summary.agent.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADO';
       const resultIcon = summary.agent.netResult >= 0 ? '📈' : '📉';
       const resultColor = summary.agent.netResult >= 0 ? '\x1b[32m' : '\x1b[31m';
       const reset = '\x1b[0m';
-      
+
       console.log(`║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`);
       console.log(`║     Resultado: ${resultIcon} ${resultColor}${summary.agent.netResult >= 0 ? '+' : ''}$${summary.agent.netResult.toFixed(2)}${reset}`.padEnd(72) + '║');
       console.log(`║     Trades: ${summary.agent.totalWins}V / ${summary.agent.totalLosses}D (${summary.agent.totalTrades} total)`.padEnd(66) + '║');
     } else {
       console.log('║     Sem configuração encontrada                                    ║');
     }
-    
+
     console.log('╠══════════════════════════════════════════════════════════════════╣');
-    
+
     // IA de Trading
     console.log('║  🧠 IA DE TRADING:                                                 ║');
     if (summary.ai) {
       const statusIcon = summary.ai.isActive ? '🟢' : '🔴';
-      const statusText = summary.ai.isActive ? 'RODANDO' : 
-                         summary.ai.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
-                         summary.ai.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
-                         summary.ai.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADA';
+      const statusText = summary.ai.isActive ? 'RODANDO' :
+        summary.ai.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
+          summary.ai.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
+            summary.ai.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADA';
       const resultIcon = summary.ai.sessionBalance >= 0 ? '📈' : '📉';
       const resultColor = summary.ai.sessionBalance >= 0 ? '\x1b[32m' : '\x1b[31m';
       const reset = '\x1b[0m';
       const strategyName = summary.ai.strategy === 'trinity' ? 'Trinity' : 'Orion';
-      
+
       console.log(`║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`);
       console.log(`║     Estratégia: ${strategyName} (${summary.ai.mode || 'N/A'})`.padEnd(66) + '║');
       console.log(`║     Saldo Sessão: ${resultIcon} ${resultColor}${summary.ai.sessionBalance >= 0 ? '+' : ''}$${summary.ai.sessionBalance.toFixed(2)}${reset}`.padEnd(72) + '║');
     } else {
       console.log('║     Sem configuração encontrada                                    ║');
     }
-    
+
     console.log('╠══════════════════════════════════════════════════════════════════╣');
     console.log(`║  📊 Total de Notificações: ${summary.notifications.length}                                      ║`);
-    
+
     if (summary.notifications.length > 0) {
       console.log('╠══════════════════════════════════════════════════════════════════╣');
       summary.notifications.forEach((notif, idx) => {
-        const typeIcon = notif.type === 'success' ? '✅' : 
-                        notif.type === 'warning' ? '⚠️' : 
-                        notif.type === 'error' ? '❌' : 'ℹ️';
+        const typeIcon = notif.type === 'success' ? '✅' :
+          notif.type === 'warning' ? '⚠️' :
+            notif.type === 'error' ? '❌' : 'ℹ️';
         console.log(`║  ${idx + 1}. ${typeIcon} ${notif.title.substring(0, 50).padEnd(50)}       ║`);
         console.log(`║     ${notif.message.substring(0, 55).padEnd(55)}     ║`);
       });
     }
-    
+
     console.log('╚══════════════════════════════════════════════════════════════════╝');
     console.log('\n');
+  }
+
+  /**
+   * Limpa as notificações do usuário atualizando a data de limpeza
+   */
+  async clearNotifications(userId: string): Promise<void> {
+    this.logger.log(`[Notifications] Limpando notificações para usuário ${userId}`);
+
+    // Atualiza ou cria a entrada de configurações
+    // Usamos um SQL direto para garantir compatibilidade caso user_settings não exista (embora deva existir)
+    // Mas o mais seguro com TypeORM é fazer um upsert ou verificar
+
+    const repo = this.dataSource.getRepository(UserSettingsEntity);
+
+    // Verifica se existe
+    let settings = await repo.findOne({ where: { userId } });
+
+    if (settings) {
+      settings.lastNotificationClearedAt = new Date();
+      await repo.save(settings);
+    } else {
+      // Se não existir (caso raro), cria
+      settings = repo.create({
+        userId,
+        lastNotificationClearedAt: new Date(),
+        // Valores default serão aplicados
+      });
+      await repo.save(settings);
+    }
   }
 }
 
