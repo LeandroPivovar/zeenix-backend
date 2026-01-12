@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { UserSettingsEntity } from '../infrastructure/database/entities/user-settings.entity';
 
 export interface AgentSummary {
   isActive: boolean;
@@ -54,16 +53,14 @@ export class NotificationsService {
   async getLoginSummary(userId: string): Promise<LoginNotificationSummary> {
     this.logger.log(`[Notifications] Buscando resumo de login para usuário ${userId}`);
 
-    const [agentSummary, aiSummary, userSettings] = await Promise.all([
+    const [agentSummary, aiSummary] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
-      this.dataSource.getRepository(UserSettingsEntity).findOne({ where: { userId } }),
     ]);
 
     const notifications = this.buildNotifications(
       agentSummary,
-      aiSummary,
-      userSettings?.lastNotificationClearedAt
+      aiSummary
     );
 
     const summary: LoginNotificationSummary = {
@@ -235,16 +232,13 @@ export class NotificationsService {
   private buildNotifications(
     agent: AgentSummary | null,
     ai: AISummary | null,
-    lastClearedAt?: Date | null,
   ): LoginNotificationSummary['notifications'] {
     const notifications: LoginNotificationSummary['notifications'] = [];
     const now = new Date();
 
-    // Filtra notificações anteriores à data de limpeza
+    // Sempre mostra notificações (sem filtro de data de limpeza)
     const isNew = (timestamp: Date | null) => {
-      if (!timestamp) return false;
-      if (!lastClearedAt) return true;
-      return new Date(timestamp) > new Date(lastClearedAt);
+      return true; // Sempre considera como nova
     };
 
     // Notificações do Agente Autônomo
@@ -415,33 +409,6 @@ export class NotificationsService {
     console.log('\n');
   }
 
-  /**
-   * Limpa as notificações do usuário atualizando a data de limpeza
-   */
-  async clearNotifications(userId: string): Promise<void> {
-    this.logger.log(`[Notifications] Limpando notificações para usuário ${userId}`);
 
-    // Atualiza ou cria a entrada de configurações
-    // Usamos um SQL direto para garantir compatibilidade caso user_settings não exista (embora deva existir)
-    // Mas o mais seguro com TypeORM é fazer um upsert ou verificar
-
-    const repo = this.dataSource.getRepository(UserSettingsEntity);
-
-    // Verifica se existe
-    let settings = await repo.findOne({ where: { userId } });
-
-    if (settings) {
-      settings.lastNotificationClearedAt = new Date();
-      await repo.save(settings);
-    } else {
-      // Se não existir (caso raro), cria
-      settings = repo.create({
-        userId,
-        lastNotificationClearedAt: new Date(),
-        // Valores default serão aplicados
-      });
-      await repo.save(settings);
-    }
-  }
 }
 

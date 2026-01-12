@@ -50,21 +50,7 @@ export class NotificationsController {
     return this.notificationsService.getLoginSummary(userId);
   }
 
-  /**
-   * POST /notifications/clear
-   * Limpa as notificações do usuário (marca data de corte)
-   */
-  @Post('clear')
-  @UseGuards(JwtAuthGuard)
-  async clearNotifications(@Req() req: any): Promise<void> {
-    const userId = req.user?.userId;
 
-    if (!userId) {
-      return;
-    }
-
-    await this.notificationsService.clearNotifications(userId);
-  }
 }
 
 
