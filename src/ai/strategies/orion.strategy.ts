@@ -2799,9 +2799,10 @@ export class OrionStrategy implements IStrategy {
 
           if (state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
             const proximaApostaSoros = calcularApostaComSoros(stakeAmount, profit, state.vitoriasConsecutivas);
-            if (proximaApostaSoros !== null) {
-              this.saveOrionLog(state.userId, this.symbol, 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima: $${proximaApostaSoros.toFixed(2)}`);
-            }
+            // Log já realizado no RiskManager.calculateStake
+            // if (proximaApostaSoros !== null) {
+            //   this.saveOrionLog(state.userId, this.symbol, 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima: $${proximaApostaSoros.toFixed(2)}`);
+            // }
           }
         }
       }
