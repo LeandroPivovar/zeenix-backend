@@ -446,6 +446,7 @@ export class NexusStrategy implements IStrategy {
                         if (state.vitoriasConsecutivas % 2 === 0) {
                             this.saveNexusLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 2 vitórias consecutivas (Nível 1)`);
                             this.saveNexusLog(state.userId, this.symbol, 'info', `Reiniciando para entrada inicial: $${state.apostaInicial.toFixed(2)}`);
+                            state.vitoriasConsecutivas = 0; // ✅ Resetar contador após ciclo completo
                         }
                     }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
