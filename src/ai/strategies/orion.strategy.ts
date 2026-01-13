@@ -277,13 +277,10 @@ class RiskManager {
           nextStake = this.totalLossAccumulated / 0.92;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🛑 [CONSERVADOR] Limite de Recuperação Atingido. Resetando.`);
-          }
-          if (logger) {
-            logger.log(`🛑 [CONSERVADOR] Limite de Recuperação Atingido. Resetando.`);
+            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)}`);
           }
           if (saveLog) {
-            saveLog('info', `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${baseStake.toFixed(2)})`);
+            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta
@@ -1915,14 +1912,8 @@ export class OrionStrategy implements IStrategy {
 
 
 
-    // ✅ Log de Soros Nível 1 (Recuperado do prompt)
-    if (entry === 1 && state.vitoriasConsecutivas === 1 && stakeAmount > (state.apostaInicial || 0.35)) {
-      const lucroAnterior = state.ultimoLucro || 0;
-      this.logger.log(`🚀 APLICANDO SOROS NÍVEL 1 | Lucro Anterior: $${lucroAnterior.toFixed(2)} | Nova Stake: $${stakeAmount.toFixed(2)}`);
-      this.saveOrionLog(state.userId, this.symbol, 'resultado',
-        `🚀 APLICANDO SOROS NÍVEL 1\n• Lucro Anterior: $${lucroAnterior.toFixed(2)}\n• Nova Stake (Base + Lucro): $${stakeAmount.toFixed(2)}`
-      );
-    }
+    // ✅ Log de Soros Nível 1 - Já tratado no RiskManager ou logs anteriores
+    // Removido para evitar duplicação conforme solicitado
 
     // ✅ VALIDAÇÕES PREVENTIVAS após calcular stakeAmount
     // ✅ Garantir que stakeAmount sempre tem exatamente 2 casas decimais antes de enviar
