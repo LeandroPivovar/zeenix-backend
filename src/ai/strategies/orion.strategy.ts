@@ -1750,9 +1750,9 @@ export class OrionStrategy implements IStrategy {
       const payoutCliente = 92; // Payout padrão (95 - 3)
       const baseStake = state.apostaInicial || 0.35;
 
-      // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 4 martingales (5 entradas totais)
-      // entry 1: base, entry 2-5: martingale 1-4. entry 6: reset.
-      if (state.modoMartingale === 'conservador' && entry > 5) {
+      // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 5 martingales (6 entradas totais)
+      // entry 1: base, entry 2-6: martingale 1-5. entry 7: reset.
+      if (state.modoMartingale === 'conservador' && entry > 6) {
         this.logger.warn(`[ORION][${mode}][${state.userId}] ⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR). Resetando.`);
         this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${(state.apostaInicial || 0.35).toFixed(2)})`);
 
@@ -3516,7 +3516,8 @@ export class OrionStrategy implements IStrategy {
               }
 
               // Logs do resultado
-              this.saveOrionLog(state.userId, this.symbol, 'resultado',
+              const logType = status === 'WON' ? 'resultado' : 'erro';
+              this.saveOrionLog(state.userId, this.symbol, logType,
                 `${status === 'WON' ? '✅ GANHOU' : '❌ PERDEU'} | ${operation} | P&L: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`);
 
               this.logger.log(
