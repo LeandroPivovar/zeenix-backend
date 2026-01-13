@@ -773,68 +773,52 @@ export class OrionStrategy implements IStrategy {
     // --- 2. FASE DE ATAQUE (Digit Over 3) ---
     // Busca falhas na sequência de dígitos baixos (< 4)
 
-    // Configurar Trigger por modo
-    let TRIGGER_SEQ = 2; // Veloz
-    if (currentMode === 'moderado') TRIGGER_SEQ = 3; // Normal
-    if (currentMode === 'preciso' || currentMode === 'lenta') TRIGGER_SEQ = 4; // Lenta
+    // ✅ stateless implementation aligned with reference
+    let requiredLosses = 3;
+    if (currentMode === 'veloz') requiredLosses = 2;
+    else if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
+    else if (currentMode === 'lenta') requiredLosses = 5;
+    else if (currentMode === 'preciso') requiredLosses = 5;
 
-    const lastDigit = this.ticks[this.ticks.length - 1].digit;
+    // Safety check
+    if (this.ticks.length < requiredLosses) return null;
 
-    // Verifica se dígito é "Baixo" (0, 1, 2, 3) -> Perdedor para Over 3
-    const isLowDigit = lastDigit < 4;
+    // Lógica Stateless: Extrair últimos N dígitos
+    const lastTicks = this.ticks.slice(-requiredLosses);
+    const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
 
-    if (isLowDigit) {
-      // Se dígito baixo, incrementa contagem
-      state.lastLowDigitsCount = (state.lastLowDigitsCount || 0) + 1;
-    } else {
-      // Se dígito alto (4+), reseta contagem
-      state.lastLowDigitsCount = 0;
-    }
+    // Verificar se TODOS são < 4 (Dígitos Perdedores)
+    const isSignal = lastDigits.every(d => d < 4);
 
-    // ✅ DEBUG: Logar progresso de contagem para modos Lenta (Defesa)
-    if (currentMode === 'lenta' && state.lastLowDigitsCount > 0) {
-      this.logger.debug(`[ORION][${currentMode}] 📊 Contagem Dígitos < 4: ${state.lastLowDigitsCount}/${TRIGGER_SEQ} | Último: ${lastDigit}`);
-    }
+    if (isSignal) {
+      // ✅ LOGS EXATOS DA REFERÊNCIA
+      this.logger.log(`[ORION] 🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}`);
 
-    const currentSeq = state.lastLowDigitsCount;
+      const filters = lastDigits.map((d, i) => `Dígito ${d} (Perdedor < 4)`);
+      lastDigits.forEach((d, i) => {
+        this.logger.log(`[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Perdedor < 4)`);
+      });
 
-    // Verificar Gatilho
-    if (currentSeq >= TRIGGER_SEQ) {
-      // Validar se o último dígito realmente foi baixo (redundante mas seguro)
-      if (isLowDigit) {
-        this.logger.log(`🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}`);
-        // Recuperar dígitos anteriores para o log
-        const previousDigit = this.ticks[this.ticks.length - 2]?.digit;
+      this.logger.log(`[ORION] ✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.`);
 
-        this.logger.log(`✅ FILTRO 1: Dígito anterior foi ${previousDigit} (Perdedor)`);
-        this.logger.log(`✅ FILTRO 2: Dígito atual foi ${lastDigit} (Perdedor)`);
-        this.logger.log(`✅ GATILHO: Sequência de ${currentSeq} dígitos < 4 detectada.`);
+      // Calcular Força (Simulada para alinhar com referência)
+      const strength = 60 + requiredLosses * 5;
+      this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
+      this.logger.log(`[ORION] 📊 ENTRADA: DIGIT OVER 3`);
 
-        // Calcular "Força" fictícia baseada na sequência (quanto maior, melhor)
-        const strength = Math.min(60 + (currentSeq - TRIGGER_SEQ) * 10, 99);
-        this.logger.log(`💪 FORÇA DO SINAL: ${strength}%`);
-        this.logger.log(`📊 ENTRADA: DIGIT OVER 3`);
+      // Salvar log para frontend
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'sinal',
+        `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
+        lastDigits.map((d, i) => `✅ FILTRO ${i + 1}: Dígito ${d} (Perdedor < 4)`).join('\n') + '\n' +
+        `✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.\n` +
+        `💪 FORÇA DO SINAL: ${strength}%\n` +
+        `📊 ENTRADA: DIGIT OVER 3`
+      );
 
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'sinal',
-          `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
-          `✅ FILTRO 1: Dígito anterior foi ${previousDigit} (Perdedor)\n` +
-          `✅ FILTRO 2: Dígito atual foi ${lastDigit} (Perdedor)\n` +
-          `✅ GATILHO: Sequência de ${currentSeq} dígitos < 4 detectada.\n` +
-          `💪 FORÇA DO SINAL: ${strength}%\n` +
-          `📊 ENTRADA: DIGIT OVER 3`
-        );
-
-        // Resetar contagem após sinal para evitar múltiplas entradas na mesma sequência?
-        // Documentação diz "Aproveita correções rápidas". Se entrar e ganhar, reseta.
-        // Se entrar e perder, vai pra defesa.
-        // Vamos resetar para garantir clareza.
-        state.lastLowDigitsCount = 0;
-
-        return 'DIGITOVER';
-      }
+      return 'DIGITOVER';
     }
 
     return null;
@@ -2936,7 +2920,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const tipoOperacao = estavaEmMartingale ? 'MARTINGALE' : (state.vitoriasConsecutivas > 1 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1) ? 'SOROS' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 TRADE FINALIZADO: WIN\n💰 LUCRO: +$${profit.toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}`);
     } else {
       // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
       const consecutiveLossesAntes = state.consecutive_losses || 0;
@@ -2969,7 +2953,7 @@ export class OrionStrategy implements IStrategy {
 
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
       const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'erro', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `🏁 TRADE FINALIZADO: LOSS\n📉 PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
