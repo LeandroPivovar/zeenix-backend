@@ -2989,7 +2989,7 @@ export class OrionStrategy implements IStrategy {
 
       if (consecutiveLossesAgora >= 3) {
         this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos.`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (PRECISO) para recuperação segura.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO DE RECUPERAÇÃO Dinâmico.`);
       }
 
       // ❌ PERDA: Resetar Soros
