@@ -789,6 +789,11 @@ export class OrionStrategy implements IStrategy {
       state.lastLowDigitsCount = 0;
     }
 
+    // ✅ DEBUG: Logar progresso de contagem para modos Lenta (Defesa)
+    if (currentMode === 'lenta' && state.lastLowDigitsCount > 0) {
+      this.logger.debug(`[ORION][${currentMode}] 📊 Contagem Dígitos < 4: ${state.lastLowDigitsCount}/${TRIGGER_SEQ} | Último: ${lastDigit}`);
+    }
+
     const currentSeq = state.lastLowDigitsCount;
 
     // Verificar Gatilho
