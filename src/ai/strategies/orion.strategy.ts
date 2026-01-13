@@ -104,6 +104,7 @@ export interface PrecisoUserState {
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
   ticksDesdeUltimaOp: number; // ✅ Cooldown para modo Preciso/Lenta
+  lastRecoveryLog?: number; // ✅ Timestamp para log throttled de recuperação
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
 
   // ✅ NOVOS CAMPOS PARA ORION HÍBRIDA
@@ -1064,22 +1065,20 @@ export class OrionStrategy implements IStrategy {
         else if (m1 < 0 && m2 < 0) direction = 'PUT';
 
         if (!direction) {
-          // Se o mercado estiver lateralizando (Sobe/Desce), aguardamos um padrão claro.
-          // Log throttled para não spamar
-          const now = Date.now();
-          if (now - (state.lastRecoveryLog || 0) > 4000) {
-            state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando alinhamento de 2 ticks para recuperar...`);
-          }
-          continue;
+          // ⚠️ FALLBACK ANTI-FREEZE: Se não tiver 2 ticks iguais, usa o último tick.
+          // O usuário reclamou de travamento. Prioridade = Executar Martingale.
+          const lastTickVal = this.ticks[this.ticks.length - 1].value;
+          const prevTickVal = this.ticks[this.ticks.length - 2].value;
+          direction = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
+          this.logger.debug(`[ORION][Veloz] ⚠️ Fallback Anti-Freeze ativado (1 tick)`);
         }
 
         const novoSinal = direction;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (2 Ticks) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Anti-Freeze) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Modo Anti-Freeze Ativado (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
@@ -1176,7 +1175,19 @@ export class OrionStrategy implements IStrategy {
         const smaSignal = this.checkTrendSMA(state);
 
         if (!smaSignal) {
-          // Aguardando confirmação da Tendência...
+          // ⚠️ FALLBACK ANTI-FREEZE: Sem tendência clara? Segue o fluxo do último candle.
+          const lastTickVal = this.ticks[this.ticks.length - 1].value;
+          const prevTickVal = this.ticks[this.ticks.length - 2].value;
+          const fallbackSignal = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
+
+          const novoSinal = fallbackSignal;
+          const entryNumber = (state.martingaleStep || 0) + 1;
+          state.ultimaDirecaoMartingale = novoSinal;
+
+          this.logger.debug(`[ORION][Moderado] ⚠️ Fallback Anti-Freeze ativado (SMA Indefinido)`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. SMA Indefinido -> Price Action Simples (${novoSinal})`);
+
+          await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
           continue;
         }
 
@@ -1378,7 +1389,34 @@ export class OrionStrategy implements IStrategy {
         const pullbackSignal = this.checkPullback(state);
 
         if (!pullbackSignal) {
-          // Aguardando confirmação do Pullback...
+          // ⚠️ FALLBACK ANTI-FREEZE: Se não tiver 3 ticks, tenta 1 tick após timeout?
+          // Lenta deve ser mais paciente, mas não eterna.
+          // Vamos aguardar um pouco mais, mas se travar (state.lastRecoveryLog > 15s), chuta.
+
+          const now = Date.now();
+          const lastAttempt = state.lastRecoveryLog || now;
+
+          if (now - lastAttempt > 10000) { // 10 segundos travado
+            const lastTickVal = this.ticks[this.ticks.length - 1].value;
+            const prevTickVal = this.ticks[this.ticks.length - 2].value;
+            const fallbackSignal = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
+
+            const novoSinal = fallbackSignal;
+            const entryNumber = (state.martingaleStep || 0) + 1;
+            state.ultimaDirecaoMartingale = novoSinal;
+            state.lastRecoveryLog = now; // Reset timer
+
+            this.logger.warn(`[ORION][Lenta] ⚠️ Fallback Anti-Freeze Lento (Timeout 10s)`);
+            this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Lenta. Timeout -> Price Action Force (${novoSinal})`);
+
+            await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
+            continue;
+          }
+
+          if (now - (state.lastRecoveryLog || 0) > 4000) {
+            state.lastRecoveryLog = now;
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Pullback (3 movimentos)...`);
+          }
           continue;
         }
 
