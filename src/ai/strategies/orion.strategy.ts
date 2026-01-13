@@ -883,6 +883,7 @@ export class OrionStrategy implements IStrategy {
     if (this.ticks.length < 7) return null; // 5 ticks trend + 1 correction + current
 
     // 🎯 LÓGICA RIGOROSA: 5 ticks seguidos na MESMA direção
+    const trendTicks = this.ticks.slice(-7, -1);
     const movements: ('UP' | 'DOWN' | 'DOJI')[] = [];
     for (let i = 1; i < trendTicks.length; i++) {
       const valAtual = trendTicks[i].value;
@@ -947,7 +948,6 @@ export class OrionStrategy implements IStrategy {
         return signal;
       }
     }
-
 
     return null;
   }
