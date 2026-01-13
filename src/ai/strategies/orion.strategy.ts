@@ -740,8 +740,8 @@ export class OrionStrategy implements IStrategy {
     if (consecutiveLosses >= 3) {
       // 3+ Losses: Força modo LENTA (Price Action - Pullback)
       if (!state.defesaAtivaLogged) {
-        this.logger.warn(`[ORION] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Pullback).`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA: Forçando análise LENTA (Pullback).`);
+        this.logger.warn(`[ORION] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). entrado no modo lento`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA: entrado no modo lento`);
         state.defesaAtivaLogged = true;
       }
       // Forçar modo Lenta para a análise
@@ -796,7 +796,6 @@ export class OrionStrategy implements IStrategy {
       // ✅ LOGS EXATOS DA REFERÊNCIA
       this.logger.log(`[ORION] 🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}`);
 
-      const filters = lastDigits.map((d, i) => `Dígito ${d} (Perdedor < 4)`);
       lastDigits.forEach((d, i) => {
         this.logger.log(`[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Perdedor < 4)`);
       });
@@ -898,9 +897,16 @@ export class OrionStrategy implements IStrategy {
 
     // Se correção for oposta à tendência
     if (trendDirection !== correctionDirection) {
-      // Entrar a favor da tendência ORIGINAL
+      // Monitorar ticks
+      const logTicks = [
+        ...trendTicks.map((t, i) => `Tick ${i + 1}: ${t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce'} (${t.value})`),
+        `Correção: ${correctionDirection === 'UP' ? 'Sobe' : 'Desce'} (${lastTick.value})`
+      ].join('\n');
+
       const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
-      this.logDefenseSignal(state, 'LENTA (Pullback)', `Tendência ${trendDirection} + Correção ${correctionDirection}`, signal);
+      // Logs específicos para Lento/Ticks
+      this.logDefenseSignal(state, 'LENTO (Pullback)', `\n${logTicks}`, signal);
+
       return signal;
     }
 
