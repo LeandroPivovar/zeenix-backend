@@ -560,7 +560,7 @@ export class OrionStrategy implements IStrategy {
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
-    const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue } = config;
+    const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, profitTarget, lossLimit, stopLossBlindado, symbol } = config;
     const modeLower = (mode || 'veloz').toLowerCase();
 
     // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
@@ -576,9 +576,10 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
         ticksColetados: 0,
+        profitTarget: profitTarget || 0,
+        lossLimit: lossLimit || 0,
+        stopLossBlindado: stopLossBlindado
       });
-
-      // Logs de ativação movidos para o final da função para evitar duplicação
 
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
@@ -589,6 +590,9 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
         ticksColetados: 0,
+        profitTarget: profitTarget || 0,
+        lossLimit: lossLimit || 0,
+        stopLossBlindado: stopLossBlindado
       });
 
     } else if (modeLower === 'preciso') {
@@ -600,6 +604,9 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
         ticksColetados: 0,
+        profitTarget: profitTarget || 0,
+        lossLimit: lossLimit || 0,
+        stopLossBlindado: stopLossBlindado
       });
 
     } else if (modeLower === 'lenta' || modeLower === 'lento') {
@@ -613,6 +620,9 @@ export class OrionStrategy implements IStrategy {
         currency,
         modoMartingale: modoMartingale || 'conservador',
         ticksColetados: 0,
+        profitTarget: profitTarget || 0,
+        lossLimit: lossLimit || 0,
+        stopLossBlindado: stopLossBlindado
       });
 
     } else {
@@ -635,17 +645,9 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION] 🔄 consecutive_losses e defesaAtivaLogged resetados para usuário ${userId} ao ativar`);
     }
 
-    // ✅ Log: Configurações Iniciais (Padrão Zenix)
-    const logMessage = `⚙️ CONFIGURAÇÕES INICIAIS\n` +
-      `• Estratégia: ORION\n` +
-      `• Modo de Negociação: ${mode.toUpperCase()}\n` +
-      `• Gerenciamento de Risco: ${modoMartingale ? modoMartingale.toUpperCase() : 'MODERADO'}\n` +
-      `• Meta de Lucro: $${(config.dailyProfitTarget || 50).toFixed(2)}\n` +
-      `• Stop Loss Normal: $${(config.dailyLossLimit || 50).toFixed(2)}\n` +
-      `• Stop Loss Blindado: ${(config.stopBlindadoPercent || 0) > 0 ? 'ATIVADO' : 'DESATIVADO'}`;
-
-    this.saveOrionLog(userId, 'SISTEMA', 'info', logMessage);
-    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado. ${logMessage.replace(/\n/g, ' | ')}`);
+    // LOG REMOVIDO: A responsabilidade de logar a configuração inicial agora é dos métodos upsert*UserState
+    // Isso evita duplicação de logs e garante que os valores reais (passados para o estado) sejam logados.
+    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower.toUpperCase()}.`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
