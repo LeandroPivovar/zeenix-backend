@@ -1109,7 +1109,7 @@ export class OrionStrategy implements IStrategy {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
         this.logger.log(`[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        // this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
@@ -1174,7 +1174,7 @@ export class OrionStrategy implements IStrategy {
             // Direção do martingale é válida com filtros do modo PRECISO - continuar martingale
             const proximaEntrada = (state.martingaleStep || 0) + 1;
             this.logger.log(`[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-            // this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
             await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'preciso', proximaEntrada);
             continue;
           } else {
@@ -1182,7 +1182,7 @@ export class OrionStrategy implements IStrategy {
             if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
               this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
               this.logger.log(`[ORION][Preciso][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`);
-              // this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
             }
           }
         } else {
@@ -1281,7 +1281,7 @@ export class OrionStrategy implements IStrategy {
           if (sinalPreciso && sinalPreciso === state.ultimaDirecaoMartingale) {
             const proximaEntrada = (state.martingaleStep || 0) + 1;
             this.logger.log(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO | Entrada: ${proximaEntrada} | Direção: ${state.ultimaDirecaoMartingale} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-            // this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
+            this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa (${consecutiveLosses} losses). Continuando MARTINGALE em modo PRECISO`);
             await this.executeOrionOperation(state, state.ultimaDirecaoMartingale, 'lenta', proximaEntrada);
             continue;
           } else {
@@ -1289,7 +1289,7 @@ export class OrionStrategy implements IStrategy {
             if (!this.defesaDirecaoInvalidaLogsEnviados.has(key)) {
               this.defesaDirecaoInvalidaLogsEnviados.set(key, true);
               this.logger.log(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida em modo PRECISO. Recalculando sinal mas mantendo martingale.`);
-              // this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
+              this.saveOrionLog(userId, this.symbol, 'alerta', `🛡️ Defesa ativa (${consecutiveLosses} losses). Direção do martingale inválida. Recalculando sinal em modo PRECISO mas mantendo perda acumulada.`);
             }
           }
         } else {
@@ -1312,7 +1312,7 @@ export class OrionStrategy implements IStrategy {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
         this.logger.log(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        // this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
@@ -1736,6 +1736,7 @@ export class OrionStrategy implements IStrategy {
         if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
 
         stakeAmount = baseStake;
+        forcedStake = baseStake; // ✅ FORÇAR que este valor seja respeitado mesmo com RiskManager
       } else {
         stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
       }
@@ -1898,7 +1899,13 @@ export class OrionStrategy implements IStrategy {
         if (entry > 1) {
           // Martingale: usar o maior entre o calculado pelo martingale e o do RiskManager
           // (RiskManager pode ter ajustado para respeitar Stop Loss)
-          stakeAmount = Math.max(stakeAmount, adjustedStake);
+          // ✅ CORREÇÃO: Se forcedStake estiver definido (Reset Conservador), NÃO usar Math.max(stake, adjusted)
+          // Pois adjustedStake pode trazer valor de recuperação antigo do RiskManager
+          if (forcedStake !== null) {
+            stakeAmount = forcedStake;
+          } else {
+            stakeAmount = Math.max(stakeAmount, adjustedStake);
+          }
         } else {
           // Primeira entrada: se já calculamos Soros, manter o stake do Soros
           // mas validar se não viola Stop Loss (usar o menor entre Soros e ajustado)
