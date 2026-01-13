@@ -2782,8 +2782,7 @@ export class OrionStrategy implements IStrategy {
     profit: number,
     mode: string,
   ): Promise<void> {
-    // Atualizar estado do usuário
-    state.isOperationActive = false;
+    // state.isOperationActive = false; // MOVIDO PARA O FINAL DO MÉTODO PARA EVITAR RACE CONDITION
     state.capital += profit;
 
     // ✅ [NOVO] Atualizar RiskManager após cada operação
@@ -3181,6 +3180,10 @@ export class OrionStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar limites após resultado:`, error);
       // Continuar mesmo se houver erro na verificação (fail-open)
+    } finally {
+      // ✅ LIBERAR LOCK APÓS ATUALIZAR TODO O ESTADO
+      // Isso evita que check_signal seja chamado antes de consecutive_losses ser atualizado
+      state.isOperationActive = false;
     }
   }
 
