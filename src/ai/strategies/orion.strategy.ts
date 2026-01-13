@@ -1044,7 +1044,7 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
-      const modoSinal = defesaAtiva ? 'preciso' : 'veloz';
+      const modoSinal = defesaAtiva ? 'lenta' : 'veloz';
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) {
@@ -1071,7 +1071,7 @@ export class OrionStrategy implements IStrategy {
         const key = `veloz_defesa_invalida_${userId}`;
         this.defesaDirecaoInvalidaLogsEnviados.delete(key);
         this.logger.log(`[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
         const key = `veloz_defesa_invalida_${userId}`;
@@ -1149,7 +1149,7 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
-      const modoSinal = defesaAtiva ? 'preciso' : 'moderado';
+      const modoSinal = defesaAtiva ? 'lenta' : 'moderado';
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) {
@@ -1174,7 +1174,7 @@ export class OrionStrategy implements IStrategy {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
         this.logger.log(`[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
@@ -1263,7 +1263,7 @@ export class OrionStrategy implements IStrategy {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
         this.logger.log(`[ORION][Preciso][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo PRECISO`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
