@@ -740,8 +740,8 @@ export class OrionStrategy implements IStrategy {
     if (consecutiveLosses >= 3) {
       // 3+ Losses: Força modo LENTA (Price Action - Pullback)
       if (!state.defesaAtivaLogged) {
-        this.logger.warn(`[ORION] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). entrado no modo lento`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA: entrado no modo lento`);
+        this.logger.warn(`[ORION] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). entrando no modo lento`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA: entrando no modo lento`);
         state.defesaAtivaLogged = true;
       }
       // Forçar modo Lenta para a análise
@@ -897,15 +897,35 @@ export class OrionStrategy implements IStrategy {
 
     // Se correção for oposta à tendência
     if (trendDirection !== correctionDirection) {
-      // Monitorar ticks
-      const logTicks = [
-        ...trendTicks.map((t, i) => `Tick ${i + 1}: ${t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce'} (${t.value})`),
-        `Correção: ${correctionDirection === 'UP' ? 'Sobe' : 'Desce'} (${lastTick.value})`
-      ].join('\n');
+      // Monitorar ticks com formato visual igual ao Veloz
+      this.logger.log(`[ORION] 🔍 ANÁLISE: MODO LENTO (Pullback)`);
+
+      trendTicks.forEach((t, i) => {
+        const direction = t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce';
+        this.logger.log(`[ORION] ✅ TICK ${i + 1}: ${direction} (${t.value})`);
+      });
+      const corrDir = correctionDirection === 'UP' ? 'Sobe' : 'Desce';
+      this.logger.log(`[ORION] ✅ CORREÇÃO: ${corrDir} (${lastTick.value})`);
+      this.logger.log(`[ORION] ✅ GATILHO: Tendência 5 Ticks + Correção 1 Tick.`);
+
+      const strength = 85;
+      this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
 
       const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
-      // Logs específicos para Lento/Ticks
-      this.logDefenseSignal(state, 'LENTO (Pullback)', `\n${logTicks}`, signal);
+      this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
+
+      // Log para frontend
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'sinal',
+        `🔍 ANÁLISE: MODO LENTO (Pullback)\n` +
+        trendTicks.map((t, i) => `✅ TICK ${i + 1}: ${t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce'} (${t.value})`).join('\n') + '\n' +
+        `✅ CORREÇÃO: ${corrDir} (${lastTick.value})\n` +
+        `✅ GATILHO: Tendência 5 Ticks + Correção 1 Tick.\n` +
+        `💪 FORÇA DO SINAL: ${strength}%\n` +
+        `📊 ENTRADA: ${signal}`
+      );
 
       return signal;
     }
@@ -2861,8 +2881,8 @@ export class OrionStrategy implements IStrategy {
       this.defesaDirecaoInvalidaLogsEnviados.delete(keyLenta);
 
       if (consecutiveLossesAntes > 0) {
-        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | Losses consecutivos zerados após vitória (antes: ${consecutiveLossesAntes})`);
-        this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 DEFESA AUTOMÁTICA DESATIVADA | Losses consecutivos zerados: ${consecutiveLossesAntes} → 0`);
+        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | sair do modo lento (loss zerado)`);
+        this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 sair do modo lento`);
       }
 
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
