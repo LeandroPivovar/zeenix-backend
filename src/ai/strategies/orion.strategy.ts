@@ -882,53 +882,72 @@ export class OrionStrategy implements IStrategy {
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
     if (this.ticks.length < 7) return null; // 5 ticks trend + 1 correction + current
 
-    // Analisar tendência dos ticks [-7] a [-2] (5 movimentos)
-    const trendTicks = this.ticks.slice(-7, -1);
-    const startPrice = trendTicks[0].value;
-    const endPrice = trendTicks[trendTicks.length - 1].value;
-
-    const trendDirection = endPrice > startPrice ? 'UP' : 'DOWN';
-
-    // Analisar último tick (correção)
-    const lastTick = this.ticks[this.ticks.length - 1]; // Atual
-    const prevTick = this.ticks[this.ticks.length - 2]; // Anterior
-
-    const correctionDirection = lastTick.value > prevTick.value ? 'UP' : 'DOWN';
-
-    // Se correção for oposta à tendência
-    if (trendDirection !== correctionDirection) {
-      // Monitorar ticks com formato visual igual ao Veloz
-      this.logger.log(`[ORION] 🔍 ANÁLISE: MODO LENTO (Pullback)`);
-
-      trendTicks.forEach((t, i) => {
-        const direction = t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce';
-        this.logger.log(`[ORION] ✅ TICK ${i + 1}: ${direction} (${t.value})`);
-      });
-      const corrDir = correctionDirection === 'UP' ? 'Sobe' : 'Desce';
-      this.logger.log(`[ORION] ✅ CORREÇÃO: ${corrDir} (${lastTick.value})`);
-      this.logger.log(`[ORION] ✅ GATILHO: Tendência 5 Ticks + Correção 1 Tick.`);
-
-      const strength = 85;
-      this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
-
-      const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
-      this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
-
-      // Log para frontend
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'sinal',
-        `🔍 ANÁLISE: MODO LENTO (Pullback)\n` +
-        trendTicks.map((t, i) => `✅ TICK ${i + 1}: ${t.value > trendTicks[Math.max(0, i - 1)].value ? 'Sobe' : 'Desce'} (${t.value})`).join('\n') + '\n' +
-        `✅ CORREÇÃO: ${corrDir} (${lastTick.value})\n` +
-        `✅ GATILHO: Tendência 5 Ticks + Correção 1 Tick.\n` +
-        `💪 FORÇA DO SINAL: ${strength}%\n` +
-        `📊 ENTRADA: ${signal}`
-      );
-
-      return signal;
+    // 🎯 LÓGICA RIGOROSA: 5 ticks seguidos na MESMA direção
+    const movements: ('UP' | 'DOWN' | 'DOJI')[] = [];
+    for (let i = 1; i < trendTicks.length; i++) {
+      const valAtual = trendTicks[i].value;
+      const valAnt = trendTicks[i - 1].value;
+      if (valAtual > valAnt) movements.push('UP');
+      else if (valAtual < valAnt) movements.push('DOWN');
+      else movements.push('DOJI');
     }
+
+    // Verificar se todos os 5 movimentos são iguais e não são Doji
+    const firstMov = movements[0];
+    const isStrictTrend = movements.length === 5 &&
+      firstMov !== 'DOJI' &&
+      movements.every(m => m === firstMov);
+
+    if (isStrictTrend) {
+      const trendDirection = firstMov;
+
+      // Analisar último tick (correção)
+      const lastTick = this.ticks[this.ticks.length - 1]; // Atual
+      const prevTick = this.ticks[this.ticks.length - 2]; // Anterior
+      const correctionDirection = lastTick.value > prevTick.value ? 'UP' : lastTick.value < prevTick.value ? 'DOWN' : 'DOJI';
+
+      // Se correção for oposta à tendência
+      if (correctionDirection !== 'DOJI' && trendDirection !== correctionDirection) {
+        // Monitorar ticks com formato visual igual ao Veloz
+        this.logger.log(`[ORION] 🔍 ANÁLISE: MODO LENTO (Pullback Rigoroso)`);
+
+        trendTicks.slice(1).forEach((t, i) => {
+          const dir = t.value > trendTicks[i].value ? 'Sobe' : 'Desce';
+          this.logger.log(`[ORION] ✅ TICK ${i + 1}: ${dir} (${t.value})`);
+        });
+
+        const corrDir = correctionDirection === 'UP' ? 'Sobe' : 'Desce';
+        this.logger.log(`[ORION] ✅ CORREÇÃO: ${corrDir} (${lastTick.value})`);
+        this.logger.log(`[ORION] ✅ GATILHO: 5 Ticks numa direção + 1 Correção.`);
+
+        const strength = 95; // Força maior pois é padrão rigoroso
+        this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
+
+        const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
+        this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
+
+        // Log para frontend
+        const logTicks = trendTicks.slice(1).map((t, i) => {
+          const dir = t.value > trendTicks[i].value ? 'Sobe' : 'Desce';
+          return `✅ TICK ${i + 1}: ${dir} (${t.value})`;
+        }).join('\n');
+
+        this.saveOrionLog(
+          state.userId,
+          this.symbol,
+          'sinal',
+          `🔍 ANÁLISE: MODO LENTO (Pullback)\n` +
+          logTicks + '\n' +
+          `✅ CORREÇÃO: ${corrDir} (${lastTick.value})\n` +
+          `✅ GATILHO: 5 Ticks ${trendDirection === 'UP' ? 'Sobe' : 'Desce'} + 1 Correção.\n` +
+          `💪 FORÇA DO SINAL: ${strength}%\n` +
+          `📊 ENTRADA: ${signal}`
+        );
+
+        return signal;
+      }
+    }
+
 
     return null;
   }
