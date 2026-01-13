@@ -2900,8 +2900,8 @@ export class OrionStrategy implements IStrategy {
       this.defesaDirecaoInvalidaLogsEnviados.delete(keyLenta);
 
       if (consecutiveLossesAntes > 0) {
-        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | sair do modo lento (loss zerado)`);
-        this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 sair do modo lento`);
+        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | saiu do modo lento (loss zerado)`);
+        this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 saiu do modo lento`);
       }
 
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
