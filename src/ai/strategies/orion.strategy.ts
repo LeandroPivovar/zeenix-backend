@@ -2505,7 +2505,6 @@ export class OrionStrategy implements IStrategy {
         duration_unit: 't',
         symbol: this.symbol,
         ...((contractParams as any).barrier ? { barrier: (contractParams as any).barrier } : {}),
-        ...((contractParams as any).last_digit_prediction ? { last_digit_prediction: (contractParams as any).last_digit_prediction } : {}),
       }, 60000);
 
       // ✅ Verificar erros na resposta (pode estar em error ou proposal.error)
