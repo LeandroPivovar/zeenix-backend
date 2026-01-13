@@ -920,7 +920,7 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
 
       // Log para frontend
-      const logMovements = [];
+      const logMovements: string[] = [];
       for (let i = 1; i < last3Ticks.length; i++) {
         const dir = last3Ticks[i].value > last3Ticks[i - 1].value ? 'Sobe' : 'Desce';
         logMovements.push(`✅ MOVIMENTO ${i}: ${dir} (${last3Ticks[i].value})`);
