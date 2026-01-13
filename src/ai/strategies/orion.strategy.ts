@@ -2600,8 +2600,9 @@ export class OrionStrategy implements IStrategy {
           `[ORION] ❌ Erro ao comprar contrato: ${errorMessage} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
         );
 
+        // ✅ FIX: Logar erro VISÍVEL para o usuário (Frontend)
         if (userId) {
-          this.saveOrionLog(userId, this.symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
+          this.saveOrionLog(userId, this.symbol, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage} (Tentando novamente...)`);
           if (errorMessage.includes('Timeout')) {
             this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Timeout ao comprar contrato. Tente novamente.`);
           }
@@ -2686,6 +2687,9 @@ export class OrionStrategy implements IStrategy {
                   hasResolved = true;
                   if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
                   connection.removeSubscription(contractId);
+                  if (userId) {
+                    this.saveOrionLog(userId, this.symbol, 'erro', `❌ Erro na subscription do contrato ${contractId}: ${msg.error.message || JSON.stringify(msg.error)}`);
+                  }
                   resolve(null);
                 }
                 return;
@@ -3603,6 +3607,9 @@ export class OrionStrategy implements IStrategy {
     currency: string;
     modoMartingale?: ModoMartingale;
     ticksColetados?: number;
+    profitTarget?: number; // ✅ NOVO: Meta de lucro
+    lossLimit?: number; // ✅ NOVO: Limite de perda
+    stopLossBlindado?: boolean; // ✅ NOVO: Stop Blindado
   }): void {
     const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.velozUsers.get(params.userId);
@@ -3651,8 +3658,8 @@ export class OrionStrategy implements IStrategy {
         currentPhase: 'ATAQUE', // ✅ Inicializar fase de ataque
         lastLowDigitsCount: 0, // ✅ Inicializar contagem de dígitos baixos
       });
-      // ✅ Log de Configurações Iniciais (Novo Usuário)
-      this.logInitialConfig(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
+      // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
+      this.logInitialConfig(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
     }
   }
 
@@ -3664,6 +3671,9 @@ export class OrionStrategy implements IStrategy {
     currency: string;
     modoMartingale?: ModoMartingale;
     ticksColetados?: number;
+    profitTarget?: number; // ✅ NOVO: Meta de lucro
+    lossLimit?: number; // ✅ NOVO: Limite de perda
+    stopLossBlindado?: boolean; // ✅ NOVO: Stop Blindado
   }): void {
     const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.moderadoUsers.get(params.userId);
@@ -3711,8 +3721,8 @@ export class OrionStrategy implements IStrategy {
         currentPhase: 'ATAQUE',
         lastLowDigitsCount: 0,
       });
-      // ✅ Log de Configurações Iniciais (Novo Usuário)
-      this.logInitialConfig(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
+      // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
+      this.logInitialConfig(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -3724,6 +3734,9 @@ export class OrionStrategy implements IStrategy {
     currency: string;
     modoMartingale?: ModoMartingale;
     ticksColetados?: number;
+    profitTarget?: number; // ✅ NOVO: Meta de lucro
+    lossLimit?: number; // ✅ NOVO: Limite de perda
+    stopLossBlindado?: boolean; // ✅ NOVO: Stop Blindado
   }): void {
     const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.precisoUsers.get(params.userId);
@@ -3771,8 +3784,8 @@ export class OrionStrategy implements IStrategy {
         currentPhase: 'ATAQUE',
         lastLowDigitsCount: 0,
       });
-      // ✅ Log de Configurações Iniciais (Novo Usuário)
-      this.logInitialConfig(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
+      // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
+      this.logInitialConfig(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -3784,6 +3797,9 @@ export class OrionStrategy implements IStrategy {
     currency: string;
     modoMartingale?: ModoMartingale;
     ticksColetados?: number;
+    profitTarget?: number; // ✅ NOVO: Meta de lucro
+    lossLimit?: number; // ✅ NOVO: Limite de perda
+    stopLossBlindado?: boolean; // ✅ NOVO: Stop Blindado
   }): void {
     const apostaInicial = params.apostaInicial || 0.35; // Usar apostaInicial se fornecido, senão 0.35
     const existing = this.lentaUsers.get(params.userId);
@@ -3831,8 +3847,8 @@ export class OrionStrategy implements IStrategy {
         currentPhase: 'ATAQUE',
         lastLowDigitsCount: 0,
       });
-      // ✅ Log de Configurações Iniciais (Novo Usuário)
-      this.logInitialConfig(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
+      // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
+      this.logInitialConfig(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
