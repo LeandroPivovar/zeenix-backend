@@ -875,78 +875,69 @@ export class OrionStrategy implements IStrategy {
   }
 
   /**
-   * 🎯 LENTA: Pullback
-   * Identifica tendência de 5 ticks + aguarda 1 tick de correção contra.
-   * Entra a favor da tendência original.
+   * 🎯 LENTA: Pullback Simples
+   * Identifica 2 movimentos consecutivos na mesma direção.
+   * Entra a favor da tendência (2 subidas = CALL, 2 descidas = PUT).
    */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 5) return null; // 3 ticks trend + 1 correction + current
+    if (this.ticks.length < 3) return null; // Precisa de 3 ticks para detectar 2 movimentos
 
-    // 🎯 LÓGICA RIGOROSA: 3 ticks seguidos na MESMA direção
-    const trendTicks = this.ticks.slice(-5, -1);
+    // 🎯 LÓGICA SIMPLIFICADA: 2 movimentos consecutivos na MESMA direção
+    const last3Ticks = this.ticks.slice(-3);
     const movements: ('UP' | 'DOWN' | 'DOJI')[] = [];
-    for (let i = 1; i < trendTicks.length; i++) {
-      const valAtual = trendTicks[i].value;
-      const valAnt = trendTicks[i - 1].value;
+
+    for (let i = 1; i < last3Ticks.length; i++) {
+      const valAtual = last3Ticks[i].value;
+      const valAnt = last3Ticks[i - 1].value;
       if (valAtual > valAnt) movements.push('UP');
       else if (valAtual < valAnt) movements.push('DOWN');
       else movements.push('DOJI');
     }
 
-    // Verificar se todos os 3 movimentos são iguais e não são Doji
+    // Verificar se os 2 movimentos são iguais e não são Doji
     const firstMov = movements[0];
-    const isStrictTrend = movements.length === 3 &&
+    const isStrictTrend = movements.length === 2 &&
       firstMov !== 'DOJI' &&
       movements.every(m => m === firstMov);
 
     if (isStrictTrend) {
       const trendDirection = firstMov;
 
-      // Analisar último tick (correção)
-      const lastTick = this.ticks[this.ticks.length - 1]; // Atual
-      const prevTick = this.ticks[this.ticks.length - 2]; // Anterior
-      const correctionDirection = lastTick.value > prevTick.value ? 'UP' : lastTick.value < prevTick.value ? 'DOWN' : 'DOJI';
+      // Monitorar ticks com formato visual
+      this.logger.log(`[ORION] 🔍 ANÁLISE: MODO LENTO (2 Movimentos)`);
 
-      // Se correção for oposta à tendência
-      if (correctionDirection !== 'DOJI' && trendDirection !== correctionDirection) {
-        // Monitorar ticks com formato visual igual ao Veloz
-        this.logger.log(`[ORION] 🔍 ANÁLISE: MODO LENTO (Pullback Rigoroso)`);
-
-        trendTicks.slice(1).forEach((t, i) => {
-          const dir = t.value > trendTicks[i].value ? 'Sobe' : 'Desce';
-          this.logger.log(`[ORION] ✅ TICK ${i + 1}: ${dir} (${t.value})`);
-        });
-
-        const corrDir = correctionDirection === 'UP' ? 'Sobe' : 'Desce';
-        this.logger.log(`[ORION] ✅ CORREÇÃO: ${corrDir} (${lastTick.value})`);
-        this.logger.log(`[ORION] ✅ GATILHO: 3 Ticks numa direção + 1 Correção.`);
-
-        const strength = 85; // Força do sinal para 3 ticks
-        this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
-
-        const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
-        this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
-
-        // Log para frontend
-        const logTicks = trendTicks.slice(1).map((t, i) => {
-          const dir = t.value > trendTicks[i].value ? 'Sobe' : 'Desce';
-          return `✅ TICK ${i + 1}: ${dir} (${t.value})`;
-        }).join('\n');
-
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'sinal',
-          `🔍 ANÁLISE: MODO LENTO (Pullback)\n` +
-          logTicks + '\n' +
-          `✅ CORREÇÃO: ${corrDir} (${lastTick.value})\n` +
-          `✅ GATILHO: 3 Ticks ${trendDirection === 'UP' ? 'Sobe' : 'Desce'} + 1 Correção.\n` +
-          `💪 FORÇA DO SINAL: ${strength}%\n` +
-          `📊 ENTRADA: ${signal}`
-        );
-
-        return signal;
+      for (let i = 1; i < last3Ticks.length; i++) {
+        const dir = last3Ticks[i].value > last3Ticks[i - 1].value ? 'Sobe' : 'Desce';
+        this.logger.log(`[ORION] ✅ MOVIMENTO ${i}: ${dir} (${last3Ticks[i].value})`);
       }
+
+      this.logger.log(`[ORION] ✅ GATILHO: 2 Movimentos ${trendDirection === 'UP' ? 'para cima' : 'para baixo'} detectados.`);
+
+      const strength = 75; // Força do sinal para 2 movimentos
+      this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
+
+      const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
+      this.logger.log(`[ORION] 📊 ENTRADA: ${signal}`);
+
+      // Log para frontend
+      const logMovements = [];
+      for (let i = 1; i < last3Ticks.length; i++) {
+        const dir = last3Ticks[i].value > last3Ticks[i - 1].value ? 'Sobe' : 'Desce';
+        logMovements.push(`✅ MOVIMENTO ${i}: ${dir} (${last3Ticks[i].value})`);
+      }
+
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'sinal',
+        `🔍 ANÁLISE: MODO LENTO (2 Movimentos)\n` +
+        logMovements.join('\n') + '\n' +
+        `✅ GATILHO: 2 Movimentos ${trendDirection === 'UP' ? 'para cima' : 'para baixo'} detectados.\n` +
+        `💪 FORÇA DO SINAL: ${strength}%\n` +
+        `📊 ENTRADA: ${signal}`
+      );
+
+      return signal;
     }
 
     return null;
