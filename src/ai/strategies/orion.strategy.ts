@@ -1043,20 +1043,21 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // Lógica Simplificada de Price Action para Martingale Rápido (Não trava)
-        let novoSinal: OrionSignal = 'CALL'; // Default
-        const lastTick = this.ticks[this.ticks.length - 1];
-        const prevTick = this.ticks[this.ticks.length - 2];
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum (2 Ticks)
+        // Se não houver sinal claro de Momentum, AGUARDAR (não forçar entrada).
+        const momentumSignal = this.checkPriceMomentum(state);
 
-        if (lastTick && prevTick) {
-          novoSinal = lastTick.value > prevTick.value ? 'CALL' : 'PUT';
+        if (!momentumSignal) {
+          // Aguardando confirmação do Momentum...
+          continue;
         }
 
+        const novoSinal = momentumSignal;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (Momentum) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Momentum (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
@@ -1149,19 +1150,20 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        let novoSinal: OrionSignal = 'CALL'; // Default
-        const lastTick = this.ticks[this.ticks.length - 1];
-        const prevTick = this.ticks[this.ticks.length - 2];
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Tendência (SMA)
+        const smaSignal = this.checkTrendSMA(state);
 
-        if (lastTick && prevTick) {
-          novoSinal = lastTick.value > prevTick.value ? 'CALL' : 'PUT';
+        if (!smaSignal) {
+          // Aguardando confirmação da Tendência...
+          continue;
         }
 
+        const novoSinal = smaSignal;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+        this.logger.log(`[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (SMA) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Tendência (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
         continue;
@@ -1350,19 +1352,20 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        let novoSinal: OrionSignal = 'CALL'; // Default
-        const lastTick = this.ticks[this.ticks.length - 1];
-        const prevTick = this.ticks[this.ticks.length - 2];
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (3 Ticks)
+        const pullbackSignal = this.checkPullback(state);
 
-        if (lastTick && prevTick) {
-          novoSinal = lastTick.value > prevTick.value ? 'CALL' : 'PUT';
+        if (!pullbackSignal) {
+          // Aguardando confirmação do Pullback...
+          continue;
         }
 
+        const novoSinal = pullbackSignal;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Pullback) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Pullback (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
         continue;
