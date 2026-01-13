@@ -39,48 +39,48 @@ export interface IStrategy {
 // ✅ CORRIGIDO conforme documentação TRINITY:
 // - Modo VELOZ: Amostra 10 ticks, intervalo 3 ticks, desequilíbrio ≥50%, confiança ≥50%
 // - Modo NORMAL usa 60%/60% (definido em MODERADO_CONFIG)
-// ✅ ORION v3.0: Configurações Híbridas (Dígitos + Price Action)
-// DOCUMENTAÇÃO OFICIAL ZENIX
 export const VELOZ_CONFIG: ModeConfig = {
-  amostraInicial: 2, // ✅ Documentação: 2 ticks para modo VELOZ
-  intervaloTicks: 0,
-  desequilibrioMin: 0.0, // Lógica baseada em sequência, não desequilíbrio
-  confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.50,
-  payout: 2.35, // Payout médio Digit Over 3 (~235%)
+  amostraInicial: 10, // ✅ Documentação: 10 ticks para modo VELOZ
+  intervaloTicks: 3,  // ✅ Documentação: 3 ticks entre operações
+  desequilibrioMin: 0.50, // ✅ Documentação: ≥50% para modo VELOZ
+  confianciaMin: 0.50,    // ✅ Documentação: ≥50% para modo VELOZ
+  taxaAcertoEsperada: 0.67,
+  payout: 0.95,
   minStake: 0.35,
   betPercent: 0.005,
 };
 
-// Modo NORMAL (Moderado na interface)
 export const MODERADO_CONFIG: ModeConfig = {
-  amostraInicial: 5, // ✅ Documentação implícita: Modo Normal
-  intervaloTicks: 0,
-  desequilibrioMin: 0.0,
-  confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.60,
-  payout: 2.35,
+  amostraInicial: 20,
+  intervaloSegundos: 17,
+  desequilibrioMin: 0.60,
+  confianciaMin: 0.60,
+  taxaAcertoEsperada: 0.76,
+  payout: 0.95,
   minStake: 0.35,
   betPercent: 0.0075,
 };
 
-// Modo LENTO
-export const LENTA_CONFIG: ModeConfig = {
-  amostraInicial: 10, // ✅ Documentação: "Busca anomalias estatísticas raras"
-  intervaloTicks: 1,
-  desequilibrioMin: 0.0,
-  confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.70,
-  payout: 2.35,
+export const PRECISO_CONFIG: ModeConfig = {
+  amostraInicial: 50,
+  desequilibrioMin: 0.70,
+  confianciaMin: 0.70,
+  taxaAcertoEsperada: 0.82,
+  payout: 0.95,
   minStake: 0.35,
   betPercent: 0.01,
 };
 
-// ✅ BACKWARD COMPATIBILITY: Alias Preciso -> Moderado (Normal)
-export const PRECISO_CONFIG = MODERADO_CONFIG;
-
-// ✅ ORION: Tipos Híbridos
-export type OrionOperationType = 'OVER3' | 'CALL' | 'PUT' | 'PAR' | 'IMPAR';
+export const LENTA_CONFIG: ModeConfig = {
+  amostraInicial: 50,
+  intervaloTicks: 5, // ✅ Adicionado intervalo de 5 ticks entre operações para modo Lenta
+  desequilibrioMin: 0.70,
+  confianciaMin: 0.80, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
+  taxaAcertoEsperada: 0.85,
+  payout: 0.95,
+  minStake: 0.35,
+  betPercent: 0.01,
+};
 
 // ✅ ATLAS v2.0: Configurações para Extrema Alta Frequência (EHF)
 // Modo VELOZ: 3.000 ops/dia (~125 ops/minuto), intervalo 4.8s, sem loss virtual
