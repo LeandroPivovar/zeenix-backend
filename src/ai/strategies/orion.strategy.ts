@@ -27,6 +27,7 @@ export interface VelozUserState {
   perdaAcumulada: number;
   apostaInicial: number;
   ticksDesdeUltimaOp: number;
+  lastRecoveryLog?: number; // ✅ Timestamp para log throttled de recuperação
   vitoriasConsecutivas: number;
   apostaBase: number;
   ultimoLucro: number;
@@ -1043,21 +1044,42 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum (2 Ticks)
-        // Se não houver sinal claro de Momentum, AGUARDAR (não forçar entrada).
-        const momentumSignal = this.checkPriceMomentum(state);
+        // ✅ [ZENIX v2.0] Bypass Inteligente: Análise Rápida de 2 Movimentos
+        // Funciona "do jeito que deveria" (2 ticks mesma direção) mas de forma direta.
 
-        if (!momentumSignal) {
-          // Aguardando confirmação do Momentum...
+        if (this.ticks.length < 3) continue; // Precisa de 3 pontos para 2 movimentos
+
+        const t3 = this.ticks[this.ticks.length - 1]; // Atual
+        const t2 = this.ticks[this.ticks.length - 2]; // Anterior
+        const t1 = this.ticks[this.ticks.length - 3]; // Antepenúltimo
+
+        const m1 = t2.value - t1.value; // Movimento 1
+        const m2 = t3.value - t2.value; // Movimento 2 (Mais recente)
+
+        // Verifica se ambos são positivos (Sobe/Sobe) ou negativos (Desce/Desce)
+        // Ignora Doji (0)
+        let direction: OrionSignal | null = null;
+
+        if (m1 > 0 && m2 > 0) direction = 'CALL';
+        else if (m1 < 0 && m2 < 0) direction = 'PUT';
+
+        if (!direction) {
+          // Se o mercado estiver lateralizando (Sobe/Desce), aguardamos um padrão claro.
+          // Log throttled para não spamar
+          const now = Date.now();
+          if (now - (state.lastRecoveryLog || 0) > 4000) {
+            state.lastRecoveryLog = now;
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando alinhamento de 2 ticks para recuperar...`);
+          }
           continue;
         }
 
-        const novoSinal = momentumSignal;
+        const novoSinal = direction;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (Momentum) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Momentum (${novoSinal})`);
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (2 Ticks) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
