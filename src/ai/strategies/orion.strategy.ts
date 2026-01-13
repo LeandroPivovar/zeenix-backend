@@ -956,8 +956,8 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
-        // ✅ Logar progresso a cada 10% ou no final
-        if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
+        // ✅ Logar progresso a cada 20% ou no final (Reduzir spam em amostras pequenas)
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Veloz)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
           this.logger.debug(`[ORION][Veloz][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
@@ -992,7 +992,8 @@ export class OrionStrategy implements IStrategy {
       }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      if (state.perdaAcumulada > 0) {
+      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
+      if (state.perdaAcumulada > 0 && !defesaAtiva) {
         // Lógica Simplificada de Price Action para Martingale Rápido (Não trava)
         let novoSinal: OrionSignal = 'CALL'; // Default
         const lastTick = this.ticks[this.ticks.length - 1];
@@ -1069,8 +1070,8 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
-        // ✅ Logar progresso a cada 10% ou no final
-        if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
+        // ✅ Logar progresso a cada 20%
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Moderado)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
           this.logger.debug(`[ORION][Moderado][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
@@ -1097,7 +1098,8 @@ export class OrionStrategy implements IStrategy {
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      if (state.perdaAcumulada > 0) {
+      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
+      if (state.perdaAcumulada > 0 && !defesaAtiva) {
         let novoSinal: OrionSignal = 'CALL'; // Default
         const lastTick = this.ticks[this.ticks.length - 1];
         const prevTick = this.ticks[this.ticks.length - 2];
@@ -1168,8 +1170,8 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
-        // ✅ Logar progresso a cada 10% ou no final
-        if (ticksAtuais > 0 && ticksAtuais % Math.max(1, Math.floor(amostraNecessaria / 10)) === 0) {
+        // ✅ Logar progresso a cada 20%
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Preciso)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
           this.logger.debug(`[ORION][Preciso][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
@@ -1196,7 +1198,8 @@ export class OrionStrategy implements IStrategy {
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      if (state.perdaAcumulada > 0) {
+      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
+      if (state.perdaAcumulada > 0 && !defesaAtiva) {
         let novoSinal: OrionSignal = 'CALL'; // Default
         const lastTick = this.ticks[this.ticks.length - 1];
         const prevTick = this.ticks[this.ticks.length - 2];
@@ -1262,8 +1265,8 @@ export class OrionStrategy implements IStrategy {
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
-        // ✅ Logar progresso periodicamente
-        if (ticksAtuais > 0 && (ticksAtuais % 10 === 0 || [40, 45, 48, 49].includes(ticksAtuais))) {
+        // ✅ Logar progresso periodicamente (apenas a cada 10 ticks)
+        if (ticksAtuais > 0 && ticksAtuais % 10 === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Lenta)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
           this.logger.debug(`[ORION][Lenta][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
@@ -1296,7 +1299,8 @@ export class OrionStrategy implements IStrategy {
       }
 
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      if (state.perdaAcumulada > 0) {
+      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
+      if (state.perdaAcumulada > 0 && !defesaAtiva) {
         let novoSinal: OrionSignal = 'CALL'; // Default
         const lastTick = this.ticks[this.ticks.length - 1];
         const prevTick = this.ticks[this.ticks.length - 2];

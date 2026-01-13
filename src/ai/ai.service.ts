@@ -5954,7 +5954,7 @@ export class AiService implements OnModuleInit {
       );
 
       // 📋 LOG: Resultado - VITÓRIA
-      this.saveLogAsync(state.userId, 'resultado', '🎉 VITÓRIA!');
+
       this.saveLogAsync(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
       this.saveLogAsync(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
       this.saveLogAsync(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
