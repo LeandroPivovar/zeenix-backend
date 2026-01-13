@@ -880,6 +880,9 @@ export class OrionStrategy implements IStrategy {
    * Entra a favor da tendência (2 subidas = CALL, 2 descidas = PUT).
    */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
+    // ✅ LOG DE DEBUG: Confirmar que função está sendo chamada
+    this.logger.debug(`[ORION][DEBUG] checkPullback chamado | Ticks disponíveis: ${this.ticks.length}`);
+
     if (this.ticks.length < 3) return null; // Precisa de 3 ticks para detectar 2 movimentos
 
     // 🎯 LÓGICA SIMPLIFICADA: 2 movimentos consecutivos na MESMA direção
@@ -899,6 +902,9 @@ export class OrionStrategy implements IStrategy {
     const isStrictTrend = movements.length === 2 &&
       firstMov !== 'DOJI' &&
       movements.every(m => m === firstMov);
+
+    // ✅ LOG DE DEBUG: Mostrar movimentos detectados
+    this.logger.debug(`[ORION][DEBUG] Movimentos detectados: [${movements.join(', ')}] | isStrictTrend: ${isStrictTrend}`);
 
     if (isStrictTrend) {
       const trendDirection = firstMov;
