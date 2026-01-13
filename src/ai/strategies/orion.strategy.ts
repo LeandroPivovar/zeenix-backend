@@ -730,39 +730,41 @@ export class OrionStrategy implements IStrategy {
 
     // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
     // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
-    if (phase === 'DEFESA' || consecutiveLosses > 0) {
-      // ✅ Defesa Automática: Se > 3 losses, força modo LENTA (Preciso)
-      let defenseMode = currentMode;
-      if (consecutiveLosses >= 3) {
-        defenseMode = 'lenta'; // Modo Lenta usa lógica de Pullback (mais assertiva)
+    // --- 1. FASE DE DEFESA (Recuperação) ---
+    // ✅ CORREÇÃO: Se >= 3 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
+    // Se 1-2 Losses, usar Price Action (Active Fallback)
 
-        // Log único de ativação da defesa automática
-        if (!state.defesaAtivaLogged) {
-          this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Pullback).`);
-          this.saveOrionLog(state.userId, this.symbol, 'alerta',
-            `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (PRECISO) para recuperação segura.`
-          );
-          state.defesaAtivaLogged = true;
-        }
+    if (consecutiveLosses >= 3) {
+      // Log único de ativação da defesa automática
+      if (!state.defesaAtivaLogged) {
+        this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Dígitos < 4).`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta',
+          `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (Aguardar sequencia de dígitos baixos) para recuperação segura.`
+        );
+        state.defesaAtivaLogged = true;
       }
-
-
-      // Executar lógica de Price Action conforme o modo
+      // Forçar modo Lenta para a análise de dígitos abaixo
+      currentMode = 'lenta';
+      // NÃO RETORNAR NULL. Deixar cair para a lógica de dígitos abaixo.
+    }
+    // Se não for defesa severa (1-2 losses), usa Price Action se estiver habilitado
+    else if (phase === 'DEFESA' || consecutiveLosses > 0) {
+      // Executar lógica de Price Action conforme o modo (Active Fallback)
+      let defenseMode = currentMode;
       let defenseSignal: OrionSignal | null = null;
+
       if (defenseMode === 'veloz') {
-        // ⚡ VELOZ: Momentum (3 ticks iguais)
         defenseSignal = this.checkPriceMomentum(state);
       } else if (defenseMode === 'moderado') {
-        // ⚖️ NORMAL/MODERADO: Tendência (SMA 20)
         defenseSignal = this.checkTrendSMA(state);
       } else {
-        // 🎯 LENTA/PRECISO: Pullback
         defenseSignal = this.checkPullback(state);
       }
 
-      // ✅ SE ESTIVER EM DEFESA (RECUPERAÇÃO), NÃO PODE VOLTAR PARA ATAQUE (DIGIT OVER)
-      // Se não encontrou sinal de defesa, retorna null e espera o próximo tick.
-      // CORREÇÃO: Usar 'return null' em vez de variável indefinida
+      // Se encontrou sinal de Price Action, poderia retornar aqui, mas o fluxo atual retorna null se não encontrar.
+      // O chamador (process*Strategies) lida com Active Fallback separadamente se perdaAcumulada > 0.
+      // Se chegamos aqui via check_signal, é porque o Active Fallback foi pulado ou estamos apenas monitorando.
+      // Mas para manter compatibilidade:
       return null;
     }
 
@@ -3659,7 +3661,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0, // ✅ Inicializar contagem de dígitos baixos
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfig(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
+      this.logInitialConfigFixed(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
     }
   }
 
@@ -3722,7 +3724,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfig(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfigFixed(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -3785,7 +3787,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfig(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfigFixed(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -3848,7 +3850,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfig(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfigFixed(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -4000,6 +4002,20 @@ export class OrionStrategy implements IStrategy {
     } catch (error) {
       this.logger.error(`[ORION][SaveLogsBatch][${userId}] Erro ao salvar logs:`, error);
     }
+  }
+
+  // ✅ [ZENIX v2.0] Log de Configuração Inicial (Fix DB Error)
+  private logInitialConfigFixed(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
+    const blindadoStatus = blindado ? 'ATIVADO' : 'DESATIVADO';
+    this.logger.log(`⚙️ CONFIGURAÇÕES INICIAIS`);
+    this.logger.log(`• Estratégia: ORION`);
+    this.logger.log(`• Modo de Negociação: ${mode}`);
+    this.logger.log(`• Gerenciamento de Risco: ${riskMode.toUpperCase()}`);
+    this.logger.log(`• Meta de Lucro: $${profitTarget.toFixed(2)}`);
+    this.logger.log(`[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`);
+
+    // ✅ FIX: Usar type 'info' para evitar WARN_DATA_TRUNCATED no banco
+    this.saveOrionLog(userId, this.symbol, 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`);
   }
 }
 
