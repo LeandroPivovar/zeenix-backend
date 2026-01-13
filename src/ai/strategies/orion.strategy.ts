@@ -9,6 +9,9 @@ import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
 
 // Estados ORION
+export type OrionPhase = 'ATAQUE' | 'DEFESA';
+export type OrionSignal = DigitParity | 'DIGITOVER' | 'CAL' | 'PUT' | null;
+
 export interface VelozUserState {
   userId: string;
   derivToken: string;
@@ -28,11 +31,15 @@ export interface VelozUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
-  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  ultimaDirecaoMartingale: DigitParity | 'CAL' | 'PUT' | 'DIGITOVER' | null; // ✅ Atualizado para suportar Digits/Call/Put
   creationCooldownUntil?: number; // Cooldown pós erro/timeout para mitigar rate limit
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
+
+  // ✅ NOVOS CAMPOS PARA ORION HÍBRIDA
+  currentPhase: OrionPhase; // ATAQUE (Dígitos) ou DEFESA (Price Action)
+  lastLowDigitsCount: number; // Contagem de dígitos < 4
 }
 
 export interface ModeradoUserState {
@@ -54,7 +61,7 @@ export interface ModeradoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
-  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  ultimaDirecaoMartingale: DigitParity | 'CAL' | 'PUT' | 'DIGITOVER' | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
@@ -67,6 +74,10 @@ export interface ModeradoUserState {
   ticksReceivedAfterBuy?: number;
   ticksDesdeUltimaOp: number; // ✅ Cooldown para modo Moderado
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
+
+  // ✅ NOVOS CAMPOS PARA ORION HÍBRIDA
+  currentPhase: OrionPhase;
+  lastLowDigitsCount: number;
 }
 
 export interface PrecisoUserState {
@@ -87,12 +98,16 @@ export interface PrecisoUserState {
   apostaBase: number;
   ultimoLucro: number;
   ultimaApostaUsada: number; // ✅ Última aposta usada (necessário para cálculo do martingale agressivo)
-  ultimaDirecaoMartingale: DigitParity | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
+  ultimaDirecaoMartingale: DigitParity | 'CAL' | 'PUT' | 'DIGITOVER' | null; // ✅ CORREÇÃO: Direção da última operação quando em martingale
   creationCooldownUntil?: number;
   consecutive_losses: number; // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
   defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
   ticksDesdeUltimaOp: number; // ✅ Cooldown para modo Preciso/Lenta
   ticksColetados: number; // ✅ NOVO: Ticks coletados desde a ativação
+
+  // ✅ NOVOS CAMPOS PARA ORION HÍBRIDA
+  currentPhase: OrionPhase;
+  lastLowDigitsCount: number;
 }
 
 // ============================================
@@ -162,14 +177,14 @@ function calcularProximaAposta(
       aposta = perdasTotais / PAYOUT;
       break;
     case 'moderado':
-      // Meta: recuperar 100% das perdas + 25% de lucro
-      // Fórmula: entrada_próxima = (perdas_totais × 1.25) / payout
-      aposta = (perdasTotais * 1.25) / PAYOUT;
+      // Meta: recuperar 100% das perdas + 10% de lucro ( conforme doc )
+      // Fórmula: entrada_próxima = (perdas_totais × 1.10) / payout
+      aposta = (perdasTotais * 1.10) / PAYOUT;
       break;
     case 'agressivo':
-      // Meta: recuperar 100% das perdas + 50% de lucro
-      // Fórmula: entrada_próxima = (perdas_totais × 1.50) / payout
-      aposta = (perdasTotais * 1.50) / PAYOUT;
+      // Meta: recuperar 100% das perdas + 20% de lucro ( conforme doc )
+      // Fórmula: entrada_próxima = (perdas_totais × 1.20) / payout
+      aposta = (perdasTotais * 1.20) / PAYOUT;
       break;
   }
 
@@ -425,6 +440,27 @@ export class OrionStrategy implements IStrategy {
   private defesaDirecaoInvalidaLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que direção do martingale é inválida
 
   // ✅ Sistema de logs
+  private logInitialConfig(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
+    const blindadoStatus = blindado ? 'ATIVADO' : 'DESATIVADO';
+    this.logger.log(`⚙️ CONFIGURAÇÕES INICIAIS`);
+    this.logger.log(`• Estratégia: ORION`);
+    this.logger.log(`• Modo de Negociação: ${mode}`);
+    this.logger.log(`• Gerenciamento de Risco: ${riskMode.toUpperCase()}`);
+    this.logger.log(`• Meta de Lucro: $${profitTarget.toFixed(2)}`);
+    this.logger.log(`• Stop Loss Normal: $${stopLoss.toFixed(2)}`);
+    this.logger.log(`• Stop Loss Blindado: ${blindadoStatus}`);
+
+    this.saveOrionLog(userId, this.symbol, 'info',
+      `⚙️ CONFIGURAÇÕES INICIAIS\n` +
+      `• Estratégia: ORION\n` +
+      `• Modo de Negociação: ${mode}\n` +
+      `• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n` +
+      `• Meta de Lucro: $${profitTarget.toFixed(2)}\n` +
+      `• Stop Loss Normal: $${stopLoss.toFixed(2)}\n` +
+      `• Stop Loss Blindado: ${blindadoStatus}`
+    );
+  }
+
   private logQueue: Array<{
     userId: string;
     symbol: string;
@@ -651,215 +687,231 @@ export class OrionStrategy implements IStrategy {
     return count;
   }
 
+
+
   /**
    * ✅ ORION Master Blueprint: check_signal
-   * Retorna 'EVEN', 'ODD' ou None.
-   * Recebe risk_manager para verificar Defesa Automática.
+   * Implementa a lógica HÍBRIDA:
+   * - ATAQUE: Digit Over 3 (Sequência de dígitos < 4)
+   * - DEFESA: Price Action (Rise/Fall)
    */
   private check_signal(
-    state: VelozUserState | ModeradoUserState | PrecisoUserState,
+    state: VelozUserState | ModeradoUserState | PrecisoUserState | any,
     currentMode: 'veloz' | 'moderado' | 'preciso' | 'lenta',
     riskManager?: RiskManager,
-  ): DigitParity | null {
+  ): DigitParity | 'DIGITOVER' | 'CAL' | 'PUT' | null {
     if (this.ticks.length < 20) return null;
 
-    // ✅ Log de análise iniciada (Debounce para não spammar)
-    // Apenas logar se não houver um sinal recente (evitar spam durante processamento normal)
+    // ✅ Log de análise iniciada (Debounce)
     const agora = Date.now();
     const lastLogTime = (state as any).lastAnalysisLogTime || 0;
-    if (agora - lastLogTime > 5000) { // Log a cada 5s no máximo
-      // this.saveOrionLog(state.userId, this.symbol, 'analise', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
+    if (agora - lastLogTime > 5000) {
       (state as any).lastAnalysisLogTime = agora;
+      this.logger.log(`🧠 ANÁLISE INICIADA...`);
+      this.logger.log(`• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
     }
 
-    // 1. Defesa Automática (Auto-Defense)
+    // Identificar fase atual (padrão: ATAQUE)
+    const phase = state.currentPhase || 'ATAQUE';
     const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
-    let effectiveMode: 'veloz' | 'moderado' | 'preciso' | 'lenta' = currentMode;
 
-    if (consecutiveLosses >= 3) {
-      effectiveMode = 'preciso';
-      // ✅ Logar apenas uma vez quando a defesa é ativada
-      if (!state.defesaAtivaLogged) {
-        const modeName = effectiveMode.toUpperCase();
-        this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa ativa (${consecutiveLosses} losses). Forçando modo ${modeName}`);
-        // Log já é feito no processOrionResult ao detectar losses
-        state.defesaAtivaLogged = true;
-      }
-    } else {
-      // ✅ Resetar flag quando a defesa não está mais ativa
-      state.defesaAtivaLogged = false;
-    }
+    // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
+    // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
+    if (phase === 'DEFESA' || consecutiveLosses > 0) {
+      // ✅ Defesa Automática: Se > 3 losses, força modo LENTA (Preciso)
+      let defenseMode = currentMode;
+      if (consecutiveLosses >= 3) {
+        defenseMode = 'lenta'; // Modo Lenta usa lógica de Pullback (mais assertiva)
 
-    // 2. Calibragem dos Modos (ATUALIZADO)
-    let META_PCT: number;
-    let META_ACCEL: number;
-    let ALLOW_REVERSAL: boolean;
-    let USE_PING_PONG: boolean;
-    let MIN_SEQ: number;
-
-    if (effectiveMode === 'veloz') {
-      META_PCT = 0.51; // 51% Dominância (Volume Máximo)
-      META_ACCEL = -0.10; // Aceita leve queda
-      ALLOW_REVERSAL = true;
-      USE_PING_PONG = true;
-      MIN_SEQ = 0;
-    } else if (effectiveMode === 'moderado') {
-      META_PCT = 0.55; // 55% Dominância (Equilíbrio)
-      META_ACCEL = 0.0; // Estável
-      ALLOW_REVERSAL = true;
-      USE_PING_PONG = false;
-      MIN_SEQ = 3; // Exige 3 iguais
-    } else if (effectiveMode === 'preciso') {
-      META_PCT = 0.65; // 65% Dominância (Sniper)
-      META_ACCEL = 0.05; // Crescente
-      ALLOW_REVERSAL = false;
-      USE_PING_PONG = false;
-      MIN_SEQ = 4; // Exige 4 iguais
-    } else {
-      // LENTA
-      META_PCT = 0.75; // Sniper-Plus (Exige alta dominância para maior precisão)
-      META_ACCEL = 0.0;
-      ALLOW_REVERSAL = false;
-      USE_PING_PONG = false;
-      MIN_SEQ = 5; // Mais conservador
-    }
-
-    // 3. Análise de Dados
-    const lastDigits = this.ticks.map(t => t.digit);
-
-    // Filtro Anti-Ping-Pong (Só no Veloz)
-    if (USE_PING_PONG && this.isPingPong(lastDigits)) {
-      this.logger.log(`⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`);
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'info',
-        `⚠️ [${effectiveMode.toUpperCase()}] Ping-Pong detectado. Entrada bloqueada.`,
-      );
-      return null;
-    }
-
-    // Estatísticas
-    const last10 = lastDigits.slice(-10);
-    const last20 = lastDigits.slice(-20);
-    const evens10 = last10.filter(d => d % 2 === 0).length;
-    const pctEven = evens10 / 10.0;
-    const evens20 = last20.filter(d => d % 2 === 0).length;
-    const accelEven = pctEven - evens20 / 20.0;
-    const seqCount = this.getRepeatedSequenceCount(lastDigits);
-    const lastIsEven = lastDigits[lastDigits.length - 1] % 2 === 0;
-
-    // 4. Tomada de Decisão
-    // --- PAR DOMINANDO ---
-    if (pctEven >= META_PCT) {
-      // Aposta a Favor (Sequência)
-      if (accelEven >= META_ACCEL) {
-        // Validação ZENIX (Sequência Mínima)
-        if (MIN_SEQ > 0) {
-          if (!lastIsEven || seqCount < MIN_SEQ) {
-            return null; // Falhou na validação
-          }
+        // Log único de ativação da defesa automática
+        if (!state.defesaAtivaLogged) {
+          this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Pullback).`);
+          this.saveOrionLog(state.userId, this.symbol, 'alerta',
+            `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (PRECISO) para recuperação segura.`
+          );
+          state.defesaAtivaLogged = true;
         }
+      }
 
-        // Força do Sinal
-        const strength = pctEven * 100;
-        const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
+      // Executar lógica de Price Action conforme o modo
+      if (defenseMode === 'veloz') {
+        // ⚡ VELOZ: Momentum (3 ticks iguais)
+        return this.checkPriceMomentum(state);
+      } else if (defenseMode === 'moderado') {
+        // ⚖️ NORMAL/MODERADO: Tendência (SMA 20)
+        return this.checkTrendSMA(state);
+      } else {
+        // 🎯 LENTA/PRECISO: Pullback
+        return this.checkPullback(state);
+      }
+    }
 
-        // Log Análise Iniciada (Simulado aqui para aparecer junto com o sinal se for sucesso, ou logar antes?)
-        // Vou logar "Análise Iniciada" APENAS quando for gerar sinal, para contextualizar.
-        // Ou logar sempre que entrar na zona "quente" (pctEven >= META_PCT)?
-        // Vou logar o SINAL com a estrutura pedida.
+    // --- 2. FASE DE ATAQUE (Digit Over 3) ---
+    // Busca falhas na sequência de dígitos baixos (< 4)
 
-        this.logger.log(`🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}`);
-        this.logger.log(`✅ FILTRO 1: Dominância Par ${(pctEven * 100).toFixed(0)}% >= ${(META_PCT * 100).toFixed(0)}%`);
-        this.logger.log(`✅ FILTRO 2: Aceleração ${accelEven.toFixed(2)} >= ${META_ACCEL.toFixed(2)}`);
-        this.logger.log(`✅ GATILHO: Sequência ${seqCount}x PAR (Meta: ${MIN_SEQ})`);
-        this.logger.log(`💪 FORÇA DO SINAL: ${strength.toFixed(1)}%`);
-        this.logger.log(`📊 ENTRADA: DIGIT EVEN`);
+    // Configurar Trigger por modo
+    let TRIGGER_SEQ = 2; // Veloz
+    if (currentMode === 'moderado') TRIGGER_SEQ = 3; // Normal
+    if (currentMode === 'preciso' || currentMode === 'lenta') TRIGGER_SEQ = 4; // Lenta
+
+    const lastDigit = this.ticks[this.ticks.length - 1].digit;
+
+    // Verifica se dígito é "Baixo" (0, 1, 2, 3) -> Perdedor para Over 3
+    const isLowDigit = lastDigit < 4;
+
+    if (isLowDigit) {
+      // Se dígito baixo, incrementa contagem
+      state.lastLowDigitsCount = (state.lastLowDigitsCount || 0) + 1;
+    } else {
+      // Se dígito alto (4+), reseta contagem
+      state.lastLowDigitsCount = 0;
+    }
+
+    const currentSeq = state.lastLowDigitsCount;
+
+    // Verificar Gatilho
+    if (currentSeq >= TRIGGER_SEQ) {
+      // Validar se o último dígito realmente foi baixo (redundante mas seguro)
+      if (isLowDigit) {
+        this.logger.log(`🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}`);
+        // Recuperar dígitos anteriores para o log
+        const previousDigit = this.ticks[this.ticks.length - 2]?.digit;
+
+        this.logger.log(`✅ FILTRO 1: Dígito anterior foi ${previousDigit} (Perdedor)`);
+        this.logger.log(`✅ FILTRO 2: Dígito atual foi ${lastDigit} (Perdedor)`);
+        this.logger.log(`✅ GATILHO: Sequência de ${currentSeq} dígitos < 4 detectada.`);
+
+        // Calcular "Força" fictícia baseada na sequência (quanto maior, melhor)
+        const strength = Math.min(60 + (currentSeq - TRIGGER_SEQ) * 10, 99);
+        this.logger.log(`💪 FORÇA DO SINAL: ${strength}%`);
+        this.logger.log(`📊 ENTRADA: DIGIT OVER 3`);
 
         this.saveOrionLog(
           state.userId,
           this.symbol,
           'sinal',
-          `🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}\n` +
-          `✅ FILTRO 1: Dominância Par ${(pctEven * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%)\n` +
-          `✅ FILTRO 2: Aceleração ${accelEven.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)})\n` +
-          `✅ GATILHO: Sequência ${seqCount}x PAR (Meta: ${MIN_SEQ})\n` +
-          `💪 FORÇA DO SINAL: ${strength.toFixed(1)}%\n` +
-          `📊 ENTRADA: DIGIT EVEN`
+          `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
+          `✅ FILTRO 1: Dígito anterior foi ${previousDigit} (Perdedor)\n` +
+          `✅ FILTRO 2: Dígito atual foi ${lastDigit} (Perdedor)\n` +
+          `✅ GATILHO: Sequência de ${currentSeq} dígitos < 4 detectada.\n` +
+          `💪 FORÇA DO SINAL: ${strength}%\n` +
+          `📊 ENTRADA: DIGIT OVER 3`
         );
 
-        return 'PAR';
-      }
-      // Aposta Contra (Reversão)
-      else if (ALLOW_REVERSAL && accelEven < 0) {
-        if (seqCount >= 5) {
-          // Fadiga ZENIX
-          this.logger.log(`🔄 [DECISÃO] Saturação Par (${seqCount}x). Entrada: ODD`);
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'sinal',
-            `🔄 [DECISÃO] Saturação Par (${seqCount}x). Entrada: ODD`,
-          );
-          return 'IMPAR';
-        }
-      }
-    }
-    // --- ÍMPAR DOMINANDO ---
-    else if (pctEven <= 1.0 - META_PCT) {
-      const pctOdd = 1.0 - pctEven;
-      const accelOdd = -accelEven;
+        // Resetar contagem após sinal para evitar múltiplas entradas na mesma sequência?
+        // Documentação diz "Aproveita correções rápidas". Se entrar e ganhar, reseta.
+        // Se entrar e perder, vai pra defesa.
+        // Vamos resetar para garantir clareza.
+        state.lastLowDigitsCount = 0;
 
-      // Aposta a Favor
-      if (accelOdd >= META_ACCEL) {
-        if (MIN_SEQ > 0) {
-          if (lastIsEven || seqCount < MIN_SEQ) {
-            // lastIsEven=True é Par
-            return null;
-          }
-        }
-
-        const strength = pctOdd * 100;
-        const label = strength > 75 ? 'ALTA' : strength >= 65 ? 'MÉDIA' : 'BAIXA';
-
-        this.logger.log(`🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}`);
-        this.logger.log(`✅ FILTRO 1: Dominância Ímpar ${(pctOdd * 100).toFixed(0)}% >= ${(META_PCT * 100).toFixed(0)}%`);
-        this.logger.log(`✅ FILTRO 2: Aceleração ${accelOdd.toFixed(2)} >= ${META_ACCEL.toFixed(2)}`);
-        this.logger.log(`✅ GATILHO: Sequência ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ})`);
-        this.logger.log(`💪 FORÇA DO SINAL: ${strength.toFixed(1)}%`);
-        this.logger.log(`📊 ENTRADA: DIGIT ODD`);
-
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'sinal',
-          `🔍 ANÁLISE: MODO ${effectiveMode.toUpperCase()}\n` +
-          `✅ FILTRO 1: Dominância Ímpar ${(pctOdd * 100).toFixed(0)}% (Meta: ${(META_PCT * 100).toFixed(0)}%)\n` +
-          `✅ FILTRO 2: Aceleração ${accelOdd.toFixed(2)} (Meta: ${META_ACCEL.toFixed(2)})\n` +
-          `✅ GATILHO: Sequência ${seqCount}x ÍMPAR (Meta: ${MIN_SEQ})\n` +
-          `💪 FORÇA DO SINAL: ${strength.toFixed(1)}%\n` +
-          `📊 ENTRADA: DIGIT ODD`
-        );
-
-        return 'IMPAR';
-      }
-      // Aposta Contra
-      else if (ALLOW_REVERSAL && accelOdd < 0) {
-        if (seqCount >= 5) {
-          this.logger.log(`🔄 [DECISÃO] Saturação Ímpar (${seqCount}x). Entrada: EVEN`);
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'sinal',
-            `🔄 [DECISÃO] Saturação Ímpar (${seqCount}x). Entrada: EVEN`,
-          );
-          return 'PAR';
-        }
+        return 'DIGITOVER';
       }
     }
 
     return null;
+  }
+
+  // --- Helpers de Price Action (Defesa) ---
+
+  /**
+   * ⚡ VELOZ: Momentum
+   * Se os últimos 3 ticks foram iguais (ex: Sobe, Sobe, Sobe), entra a favor.
+   */
+  private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CAL' | 'PUT' | null {
+    const prices = this.ticks.slice(-4).map(t => t.value); // Precisa de 4 preços para ter 3 variações
+    if (prices.length < 4) return null;
+
+    const changes: ('UP' | 'DOWN')[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      if (prices[i] > prices[i - 1]) changes.push('UP');
+      else if (prices[i] < prices[i - 1]) changes.push('DOWN');
+      else return null; // Sem mudança (Doji) quebra momentum
+    }
+
+    const lastChange = changes[changes.length - 1];
+    const isAllSame = changes.every(c => c === lastChange);
+
+    if (isAllSame && changes.length === 3) { // Garante exatos 3 movimentos analisados
+      const signal = lastChange === 'UP' ? 'CAL' : 'PUT';
+      this.logDefenseSignal(state, 'VELOZ (Momentum)', `3 ticks direção ${lastChange}`, signal);
+      return signal;
+    }
+    return null;
+  }
+
+  /**
+   * ⚖️ NORMAL: Tendência (SMA)
+   * Se Preço > Média Móvel (20), entra Call. Se Preço < Média, entra Put.
+   */
+  private checkTrendSMA(state: any): DigitParity | 'DIGITOVER' | 'CAL' | 'PUT' | null {
+    const PERIOD = 20;
+    if (this.ticks.length < PERIOD) return null;
+
+    const lastPrice = this.ticks[this.ticks.length - 1].value;
+    const sma = this.calculateSMA(PERIOD);
+
+    if (lastPrice > sma) {
+      this.logDefenseSignal(state, 'NORMAL (Tendência)', `Preço ${lastPrice.toFixed(2)} > SMA(${PERIOD}) ${sma.toFixed(2)}`, 'CAL');
+      return 'CAL';
+    } else if (lastPrice < sma) {
+      this.logDefenseSignal(state, 'NORMAL (Tendência)', `Preço ${lastPrice.toFixed(2)} < SMA(${PERIOD}) ${sma.toFixed(2)}`, 'PUT');
+      return 'PUT';
+    }
+    return null; // Preço igual à média
+  }
+
+  /**
+   * 🎯 LENTA: Pullback
+   * Identifica tendência de 5 ticks + aguarda 1 tick de correção contra.
+   * Entra a favor da tendência original.
+   */
+  private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CAL' | 'PUT' | null {
+    if (this.ticks.length < 7) return null; // 5 ticks trend + 1 correction + current
+
+    // Analisar tendência dos ticks [-7] a [-2] (5 movimentos)
+    const trendTicks = this.ticks.slice(-7, -1);
+    const startPrice = trendTicks[0].value;
+    const endPrice = trendTicks[trendTicks.length - 1].value;
+
+    const trendDirection = endPrice > startPrice ? 'UP' : 'DOWN';
+
+    // Analisar último tick (correção)
+    const lastTick = this.ticks[this.ticks.length - 1]; // Atual
+    const prevTick = this.ticks[this.ticks.length - 2]; // Anterior
+
+    const correctionDirection = lastTick.value > prevTick.value ? 'UP' : 'DOWN';
+
+    // Se correção for oposta à tendência
+    if (trendDirection !== correctionDirection) {
+      // Entrar a favor da tendência ORIGINAL
+      const signal = trendDirection === 'UP' ? 'CAL' : 'PUT';
+      this.logDefenseSignal(state, 'LENTA (Pullback)', `Tendência ${trendDirection} + Correção ${correctionDirection}`, signal);
+      return signal;
+    }
+
+    return null;
+  }
+
+  private calculateSMA(period: number): number {
+    const slice = this.ticks.slice(-period);
+    const sum = slice.reduce((acc, tick) => acc + tick.value, 0);
+    return sum / slice.length;
+  }
+
+  private logDefenseSignal(state: any, modeName: string, logic: string, signal: string) {
+    if (state.lastDefenseLogTick === this.ticks.length) return; // Evita spam no mesmo tick
+    state.lastDefenseLogTick = this.ticks.length;
+
+    this.logger.log(`🛡️ ANÁLISE DEFESA: ${modeName}`);
+    this.logger.log(`✅ LÓGICA: ${logic}`);
+    this.logger.log(`📊 ENTRADA: ${signal === 'CAL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`);
+
+    this.saveOrionLog(
+      state.userId,
+      this.symbol,
+      'sinal',
+      `🛡️ ANÁLISE DEFESA: ${modeName}\n✅ LÓGICA: ${logic}\n📊 ENTRADA: ${signal === 'CAL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`
+    );
   }
 
   private async processVelozStrategies(latestTick: Tick): Promise<void> {
@@ -1271,7 +1323,7 @@ export class OrionStrategy implements IStrategy {
    */
   private async executeOrionOperation(
     state: VelozUserState | ModeradoUserState | PrecisoUserState,
-    operation: DigitParity,
+    operation: OrionSignal,
     mode: 'veloz' | 'moderado' | 'preciso' | 'lenta',
     entry: number = 1,
   ): Promise<void> {
@@ -1668,11 +1720,11 @@ export class OrionStrategy implements IStrategy {
       const payoutCliente = 92; // Payout padrão (95 - 3)
       const baseStake = state.apostaInicial || 0.35;
 
-      // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 5 martingales (6 losses totais)
-      // entry 1: base, entry 2-6: martingale 1-5, entry 7: reset
-      if (state.modoMartingale === 'conservador' && entry > 6) {
-        this.logger.warn(`[ORION][${mode}][${state.userId}] ❌ Limite de 5 martingales atingido no modo CONSERVADOR. Resetando.`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `❌ Limite de 5 martingales atingido no modo CONSERVADOR. Resetando para aposta base.`);
+      // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 4 martingales (5 entradas totais)
+      // entry 1: base, entry 2-5: martingale 1-4. entry 6: reset.
+      if (state.modoMartingale === 'conservador' && entry > 5) {
+        this.logger.warn(`[ORION][${mode}][${state.userId}] ⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR). Resetando.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${(state.apostaInicial || 0.35).toFixed(2)})`);
 
         state.perdaAcumulada = 0;
         state.martingaleStep = 0;
@@ -1861,6 +1913,17 @@ export class OrionStrategy implements IStrategy {
       stakeAmount = Math.round(stakeAmount * 100) / 100;
     }
 
+
+
+    // ✅ Log de Soros Nível 1 (Recuperado do prompt)
+    if (entry === 1 && state.vitoriasConsecutivas === 1 && stakeAmount > (state.apostaInicial || 0.35)) {
+      const lucroAnterior = state.ultimoLucro || 0;
+      this.logger.log(`🚀 APLICANDO SOROS NÍVEL 1 | Lucro Anterior: $${lucroAnterior.toFixed(2)} | Nova Stake: $${stakeAmount.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado',
+        `🚀 APLICANDO SOROS NÍVEL 1\n• Lucro Anterior: $${lucroAnterior.toFixed(2)}\n• Nova Stake (Base + Lucro): $${stakeAmount.toFixed(2)}`
+      );
+    }
+
     // ✅ VALIDAÇÕES PREVENTIVAS após calcular stakeAmount
     // ✅ Garantir que stakeAmount sempre tem exatamente 2 casas decimais antes de enviar
     stakeAmount = Math.round(stakeAmount * 100) / 100;
@@ -1936,13 +1999,39 @@ export class OrionStrategy implements IStrategy {
       // ✅ Executar trade E monitorar no MESMO WebSocket (mais rápido para contratos de 1 tick)
       // ✅ Garantir arredondamento final antes de enviar (requisito da Deriv: máximo 2 casas decimais)
       const finalStakeAmount = Math.round(stakeAmount * 100) / 100;
+
+      // Definir parâmetros do contrato baseado no sinal
+      let contractParams: any = {
+        amount: finalStakeAmount,
+        currency: state.currency || 'USD',
+        symbol: this.symbol,
+      };
+
+      if (operation === 'DIGITOVER') {
+        contractParams.contract_type = 'DIGITOVER';
+        contractParams.barrier = '3'; // Over 3
+        contractParams.duration = 1;
+        contractParams.duration_unit = 't';
+      } else if (operation === 'CAL') {
+        // Rise/Fall - Call
+        contractParams.contract_type = 'CALL';
+        contractParams.duration = 1;
+        contractParams.duration_unit = 't';
+      } else if (operation === 'PUT') {
+        // Rise/Fall - Put
+        contractParams.contract_type = 'PUT';
+        contractParams.duration = 1;
+        contractParams.duration_unit = 't';
+      } else {
+        // Fallback para Par/Ímpar (caso antigo)
+        contractParams.contract_type = operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+        contractParams.duration = 1;
+        contractParams.duration_unit = 't';
+      }
+
       const result = await this.executeOrionTradeViaWebSocket(
         state.derivToken,
-        {
-          contract_type: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
-          amount: finalStakeAmount,
-          currency: state.currency || 'USD',
-        },
+        contractParams,
         state.userId,
       );
 
@@ -2014,7 +2103,7 @@ export class OrionStrategy implements IStrategy {
    */
   private async createOrionTradeRecord(
     userId: string,
-    operation: DigitParity,
+    operation: OrionSignal,
     stakeAmount: number,
     entryPrice: number,
     mode: string,
@@ -2040,7 +2129,7 @@ export class OrionStrategy implements IStrategy {
           stakeAmount,
           'PENDING',
           1,
-          operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+          operation === 'CAL' ? 'CALL' : operation,
           JSON.stringify(analysisData),
           this.symbol,
         ],
@@ -2060,7 +2149,7 @@ export class OrionStrategy implements IStrategy {
             stakeAmount,
             'PENDING',
             1,
-            operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+            operation, // contract_type direto (DIGITOVER/CALL/PUT)
             JSON.stringify(analysisData),
           ],
         );
@@ -2080,7 +2169,7 @@ export class OrionStrategy implements IStrategy {
         status: 'PENDING',
         strategy: 'orion',
         symbol: this.symbol as any,
-        contractType: operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        contractType: operation as any,
       });
     }
 
@@ -2697,7 +2786,7 @@ export class OrionStrategy implements IStrategy {
   private async processOrionResult(
     state: VelozUserState | ModeradoUserState | PrecisoUserState,
     stakeAmount: number,
-    operation: DigitParity,
+    operation: OrionSignal,
     profit: number,
     mode: string,
   ): Promise<void> {
@@ -3520,7 +3609,11 @@ export class OrionStrategy implements IStrategy {
         consecutive_losses: 0, // ✅ NOVO: Rastrear perdas consecutivas para defesa automática
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
         ticksColetados: 0, // ✅ Inicializar contagem
+        currentPhase: 'ATAQUE', // ✅ Inicializar fase de ataque
+        lastLowDigitsCount: 0, // ✅ Inicializar contagem de dígitos baixos
       });
+      // ✅ Log de Configurações Iniciais (Novo Usuário)
+      this.logInitialConfig(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
     }
   }
 
@@ -3576,7 +3669,11 @@ export class OrionStrategy implements IStrategy {
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
         ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
+        currentPhase: 'ATAQUE',
+        lastLowDigitsCount: 0,
       });
+      // ✅ Log de Configurações Iniciais (Novo Usuário)
+      this.logInitialConfig(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
     }
   }
 
@@ -3632,7 +3729,11 @@ export class OrionStrategy implements IStrategy {
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
         ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
+        currentPhase: 'ATAQUE',
+        lastLowDigitsCount: 0,
       });
+      // ✅ Log de Configurações Iniciais (Novo Usuário)
+      this.logInitialConfig(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
     }
   }
 
@@ -3688,7 +3789,11 @@ export class OrionStrategy implements IStrategy {
         defesaAtivaLogged: false, // ✅ Flag para evitar log repetido de defesa ativa
         ticksDesdeUltimaOp: 999, // Cooldown
         ticksColetados: 0,
+        currentPhase: 'ATAQUE',
+        lastLowDigitsCount: 0,
       });
+      // ✅ Log de Configurações Iniciais (Novo Usuário)
+      this.logInitialConfig(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', 50.00, params.stakeAmount, true);
     }
   }
 
