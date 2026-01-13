@@ -880,10 +880,10 @@ export class OrionStrategy implements IStrategy {
    * Entra a favor da tendência original.
    */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 7) return null; // 5 ticks trend + 1 correction + current
+    if (this.ticks.length < 5) return null; // 3 ticks trend + 1 correction + current
 
-    // 🎯 LÓGICA RIGOROSA: 5 ticks seguidos na MESMA direção
-    const trendTicks = this.ticks.slice(-7, -1);
+    // 🎯 LÓGICA RIGOROSA: 3 ticks seguidos na MESMA direção
+    const trendTicks = this.ticks.slice(-5, -1);
     const movements: ('UP' | 'DOWN' | 'DOJI')[] = [];
     for (let i = 1; i < trendTicks.length; i++) {
       const valAtual = trendTicks[i].value;
@@ -893,9 +893,9 @@ export class OrionStrategy implements IStrategy {
       else movements.push('DOJI');
     }
 
-    // Verificar se todos os 5 movimentos são iguais e não são Doji
+    // Verificar se todos os 3 movimentos são iguais e não são Doji
     const firstMov = movements[0];
-    const isStrictTrend = movements.length === 5 &&
+    const isStrictTrend = movements.length === 3 &&
       firstMov !== 'DOJI' &&
       movements.every(m => m === firstMov);
 
@@ -919,9 +919,9 @@ export class OrionStrategy implements IStrategy {
 
         const corrDir = correctionDirection === 'UP' ? 'Sobe' : 'Desce';
         this.logger.log(`[ORION] ✅ CORREÇÃO: ${corrDir} (${lastTick.value})`);
-        this.logger.log(`[ORION] ✅ GATILHO: 5 Ticks numa direção + 1 Correção.`);
+        this.logger.log(`[ORION] ✅ GATILHO: 3 Ticks numa direção + 1 Correção.`);
 
-        const strength = 95; // Força maior pois é padrão rigoroso
+        const strength = 85; // Força do sinal para 3 ticks
         this.logger.log(`[ORION] 💪 FORÇA DO SINAL: ${strength}%`);
 
         const signal = trendDirection === 'UP' ? 'CALL' : 'PUT';
@@ -940,7 +940,7 @@ export class OrionStrategy implements IStrategy {
           `🔍 ANÁLISE: MODO LENTO (Pullback)\n` +
           logTicks + '\n' +
           `✅ CORREÇÃO: ${corrDir} (${lastTick.value})\n` +
-          `✅ GATILHO: 5 Ticks ${trendDirection === 'UP' ? 'Sobe' : 'Desce'} + 1 Correção.\n` +
+          `✅ GATILHO: 3 Ticks ${trendDirection === 'UP' ? 'Sobe' : 'Desce'} + 1 Correção.\n` +
           `💪 FORÇA DO SINAL: ${strength}%\n` +
           `📊 ENTRADA: ${signal}`
         );
