@@ -975,7 +975,18 @@ export class OrionStrategy implements IStrategy {
       const modoSinal = defesaAtiva ? 'preciso' : 'veloz';
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
-      if (!sinal) continue;
+      if (!sinal) {
+        // ✅ Se estiver em modo de defesa (recuperação) e sem sinal, logar periodicamente para feedback
+        if (state.perdaAcumulada > 0) {
+          const now = Date.now();
+          const lastLog = (state as any).lastWaitingLog || 0;
+          if (now - lastLog > 5000) { // Log a cada 5 segundos
+            (state as any).lastWaitingLog = now;
+            this.logger.debug(`[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
+          }
+        }
+        continue;
+      }
 
       this.logger.log(`[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
       this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
@@ -1051,7 +1062,18 @@ export class OrionStrategy implements IStrategy {
       const modoSinal = defesaAtiva ? 'preciso' : 'moderado';
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
-      if (!sinal) continue;
+      if (!sinal) {
+        // ✅ Feedback visual: Aguardando sinal de defesa
+        if (state.perdaAcumulada > 0) {
+          const now = Date.now();
+          const lastLog = (state as any).lastWaitingLog || 0;
+          if (now - lastLog > 5000) {
+            (state as any).lastWaitingLog = now;
+            this.logger.debug(`[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
+          }
+        }
+        continue;
+      }
 
       this.logger.log(`[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
       this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
@@ -1206,7 +1228,18 @@ export class OrionStrategy implements IStrategy {
 
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, 'lenta', riskManager);
-      if (!sinal) continue;
+      if (!sinal) {
+        // ✅ Feedback visual: Aguardando sinal de defesa
+        if (state.perdaAcumulada > 0) {
+          const now = Date.now();
+          const lastLog = (state as any).lastWaitingLog || 0;
+          if (now - lastLog > 5000) {
+            (state as any).lastWaitingLog = now;
+            this.logger.debug(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
+          }
+        }
+        continue;
+      }
 
       this.logger.log(`[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
       this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
