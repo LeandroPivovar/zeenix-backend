@@ -736,19 +736,21 @@ export class OrionStrategy implements IStrategy {
     // ✅ CORREÇÃO: Se >= 3 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
     // Se 1-2 Losses, usar Price Action (Active Fallback)
 
+    // --- 1. FASE DE DEFESA (Recuperação) ---
     if (consecutiveLosses >= 3) {
-      // Log único de ativação da defesa automática
+      // 3+ Losses: Força modo LENTA (Price Action - Pullback)
       if (!state.defesaAtivaLogged) {
-        this.logger.warn(`[ORION][${currentMode}] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Dígitos < 4).`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta',
-          `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO (Aguardar sequencia de dígitos baixos) para recuperação segura.`
-        );
+        this.logger.warn(`[ORION] 🛡️ Defesa Automática Ativa (${consecutiveLosses} losses). Forçando análise LENTA (Pullback).`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA: Forçando análise LENTA (Pullback).`);
         state.defesaAtivaLogged = true;
       }
-      // Forçar modo Lenta para a análise de dígitos abaixo
+      // Forçar modo Lenta para a análise
       currentMode = 'lenta';
-      // NÃO RETORNAR NULL. Deixar cair para a lógica de dígitos abaixo.
+
+      // ✅ CORREÇÃO: Em Defesa Severa (Lenta), usar Price Action (Pullback) e não Dígitos
+      return this.checkPullback(state);
     }
+
     // Se não for defesa severa (1-2 losses), usa Price Action se estiver habilitado
     else if (phase === 'DEFESA' || consecutiveLosses > 0) {
       // Executar lógica de Price Action conforme o modo (Active Fallback)
