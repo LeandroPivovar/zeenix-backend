@@ -2952,7 +2952,7 @@ export class OrionStrategy implements IStrategy {
 
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
       const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
