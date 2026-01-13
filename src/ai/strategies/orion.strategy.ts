@@ -965,12 +965,35 @@ export class OrionStrategy implements IStrategy {
       const consecutiveLosses = state.consecutive_losses || 0;
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) {
-        this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] Operação ativa, pulando`);
+        // Log a cada 10s se estiver travado muito tempo
+        const now = Date.now();
+        if (!(state as any).lastLockLog || now - (state as any).lastLockLog > 10000) {
+          (state as any).lastLockLog = now;
+          this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] 🔒 Operação ativa, pulando tick...`);
+        }
         continue;
       }
 
-      // ✅ CORREÇÃO: Remover bloco que força repetição de sinal no Martingale.
-      // Deixar fluir para check_signal, que detectará losses > 0 e usará Price Action.
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
+      if (state.perdaAcumulada > 0) {
+        // Lógica Simplificada de Price Action para Martingale Rápido (Não trava)
+        let novoSinal: OrionSignal = 'CAL'; // Default
+        const lastTick = this.ticks[this.ticks.length - 1];
+        const prevTick = this.ticks[this.ticks.length - 2];
+
+        if (lastTick && prevTick) {
+          novoSinal = lastTick.value > prevTick.value ? 'CAL' : 'PUT';
+        }
+
+        const entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = novoSinal;
+
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+
+        await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
+        continue;
+      }
 
       const modoSinal = defesaAtiva ? 'preciso' : 'veloz';
       const riskManager = this.riskManagers.get(userId);
@@ -1056,8 +1079,25 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
-      // ✅ CORREÇÃO: Remover bloco que força repetição de sinal no Martingale.
-      // Deixar fluir para check_signal, que detectará losses > 0 e usará Price Action.
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
+      if (state.perdaAcumulada > 0) {
+        let novoSinal: OrionSignal = 'CAL'; // Default
+        const lastTick = this.ticks[this.ticks.length - 1];
+        const prevTick = this.ticks[this.ticks.length - 2];
+
+        if (lastTick && prevTick) {
+          novoSinal = lastTick.value > prevTick.value ? 'CAL' : 'PUT';
+        }
+
+        const entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = novoSinal;
+
+        this.logger.log(`[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+
+        await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
+        continue;
+      }
 
       const modoSinal = defesaAtiva ? 'preciso' : 'moderado';
       const riskManager = this.riskManagers.get(userId);
@@ -1139,8 +1179,25 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
-      // ✅ CORREÇÃO: Remover bloco que força repetição de sinal no Martingale.
-      // Deixar fluir para check_signal, que detectará losses > 0 e usará Price Action.
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
+      if (state.perdaAcumulada > 0) {
+        let novoSinal: OrionSignal = 'CAL'; // Default
+        const lastTick = this.ticks[this.ticks.length - 1];
+        const prevTick = this.ticks[this.ticks.length - 2];
+
+        if (lastTick && prevTick) {
+          novoSinal = lastTick.value > prevTick.value ? 'CAL' : 'PUT';
+        }
+
+        const entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = novoSinal;
+
+        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+
+        await this.executeOrionOperation(state, novoSinal, 'preciso', entryNumber);
+        continue;
+      }
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
       const riskManager = this.riskManagers.get(userId);
@@ -1223,8 +1280,25 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
-      // ✅ CORREÇÃO: Remover bloco que força repetição de sinal no Martingale.
-      // Deixar fluir para check_signal, que detectará losses > 0 e usará Price Action.
+      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
+      if (state.perdaAcumulada > 0) {
+        let novoSinal: OrionSignal = 'CAL'; // Default
+        const lastTick = this.ticks[this.ticks.length - 1];
+        const prevTick = this.ticks[this.ticks.length - 2];
+
+        if (lastTick && prevTick) {
+          novoSinal = lastTick.value > prevTick.value ? 'CAL' : 'PUT';
+        }
+
+        const entryNumber = (state.martingaleStep || 0) + 1;
+        state.ultimaDirecaoMartingale = novoSinal;
+
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+
+        await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
+        continue;
+      }
 
       const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, 'lenta', riskManager);
@@ -3135,6 +3209,7 @@ export class OrionStrategy implements IStrategy {
       // ✅ LIBERAR LOCK APÓS ATUALIZAR TODO O ESTADO
       // Isso evita que check_signal seja chamado antes de consecutive_losses ser atualizado
       state.isOperationActive = false;
+      this.logger.debug(`[ORION][${mode}] 🔓 LOCK LIBERADO. Pronto para próxima análise.`);
     }
   }
 
