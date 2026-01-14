@@ -784,7 +784,7 @@ export class OrionStrategy implements IStrategy {
 
     // ✅ stateless implementation aligned with reference
     let requiredLosses = 3;
-    if (currentMode === 'veloz') requiredLosses = 2;
+    if (currentMode === 'veloz') requiredLosses = 1; // ✅ Alterado para 1 (Espera 1, entra no 2º)
     else if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
     else if (currentMode === 'lenta') requiredLosses = 5;
     else if (currentMode === 'preciso') requiredLosses = 5;
