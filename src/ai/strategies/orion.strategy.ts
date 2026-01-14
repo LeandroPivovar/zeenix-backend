@@ -743,11 +743,11 @@ export class OrionStrategy implements IStrategy {
 
     // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
     // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
-    // ✅ CORREÇÃO: Se >= 3 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
-    // Se 1-2 Losses, usar Price Action (Active Fallback)
+    // ✅ CORREÇÃO: Se >= 4 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
+    // Se 1-3 Losses, usar Price Action (Active Fallback)
 
-    // Se 1-2 Losses (Defesa Leve / Active Fallback), usar Momentum + Força
-    if ((phase === 'DEFESA' || consecutiveLosses > 0) && consecutiveLosses < 3) {
+    // Se 1-3 Losses (Defesa Leve / Active Fallback), usar Momentum + Força
+    if ((phase === 'DEFESA' || consecutiveLosses > 0) && consecutiveLosses < 4) {
       // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
       if (currentMode === 'veloz') {
         // Veloz: 2 ticks + delta 0.3
@@ -758,15 +758,15 @@ export class OrionStrategy implements IStrategy {
       }
     }
 
-    // Se >= 3 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
-    if (consecutiveLosses >= 3) {
+    // Se >= 4 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
+    if (consecutiveLosses >= 4) {
       if (currentMode !== 'lenta') {
         // Debug apenas se mudou
         const now = Date.now();
         // Cast to avoid TS error if property not in type
         if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
           (state as any).lastModeChangeLog = now;
-          this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>3 Losses): Alternando para Modo LENTA (Análise de Dígitos Estrita)`);
+          this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo LENTA (Análise de Dígitos Estrita)`);
         }
       }
       currentMode = 'lenta';
