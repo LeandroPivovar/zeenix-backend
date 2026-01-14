@@ -746,22 +746,16 @@ export class OrionStrategy implements IStrategy {
     // ✅ CORREÇÃO: Se >= 3 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
     // Se 1-2 Losses, usar Price Action (Active Fallback)
 
-    // Se 1-2 Losses (Defesa Leve / Active Fallback), usar Price Action/SMA
+    // Se 1-2 Losses (Defesa Leve / Active Fallback), usar Momentum + Força
     if ((phase === 'DEFESA' || consecutiveLosses > 0) && consecutiveLosses < 3) {
-      // Executar lógica de Recuperação Leve por Modo
-      let defenseMode = currentMode;
-      let defenseSignal: OrionSignal | null = null;
-
-      if (defenseMode === 'veloz') {
-        defenseSignal = this.checkPriceMomentum(state);
-      } else if (defenseMode === 'moderado') {
-        defenseSignal = this.checkTrendSMA(state);
+      // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
+      if (currentMode === 'veloz') {
+        // Veloz: 2 ticks + delta 0.3
+        return this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
       } else {
-        // Lenta e Preciso usam Pullback
-        defenseSignal = this.checkPullback(state);
+        // Normal/Lento/Preciso: 3 ticks + delta 0.5
+        return this.checkMomentumAndStrength(state, 3, 0.5, currentMode.toUpperCase());
       }
-
-      return defenseSignal;
     }
 
     // Se >= 3 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
@@ -897,124 +891,66 @@ export class OrionStrategy implements IStrategy {
   // --- Helpers de Price Action (Defesa) ---
 
   /**
-  /**
-   * ⚡ VELOZ: Price Action Dinâmico (4 Ticks / 3 Movimentos)
-   * Refinamento: Pede consistência de 3 movimentos + Força no último.
+   * ✅ UNIFICADO: Momentum + Força do Mercado (Delta)
+   * Verifica consistência direcional em N intervalos + força mínima no último movimento.
+   * 
+   * @param ticksCount - Número de intervalos a verificar (Ex: 2 ticks = 3 pontos de dados)
+   * @param minDelta - Diferença mínima absoluta no último intervalo
+   * @param modeLabel - Nome do modo para exibição nos logs (Ex: VELOZ, NORMAL)
    */
-  private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 4) return null; // PRECISA DE 4 TICKS PARA 3 MOVIMENTOS
+  private checkMomentumAndStrength(state: any, ticksCount: number, minDelta: number, modeLabel: string): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
+    // Precisa de N+1 pontos de dados para N intervalos
+    const requiredPoints = ticksCount + 1;
+    if (this.ticks.length < requiredPoints) return null;
 
-    const tCurrent = this.ticks[this.ticks.length - 1];
-    const tPrev = this.ticks[this.ticks.length - 2];
-    const tAntePrev = this.ticks[this.ticks.length - 3];
-    const tAnteAntePrev = this.ticks[this.ticks.length - 4];
+    const relevantTicks = this.ticks.slice(-requiredPoints);
 
-    const diff1 = tCurrent.value - tPrev.value;
-    const diff2 = tPrev.value - tAntePrev.value;
-    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+    // Calcular diferenças (deltas)
+    const deltas: number[] = [];
+    for (let i = 1; i < relevantTicks.length; i++) {
+      deltas.push(relevantTicks[i].value - relevantTicks[i - 1].value);
+    }
 
-    const force = Math.abs(diff1);
+    // Verificar consistência direcional
+    const allPositive = deltas.every(d => d > 0);
+    const allNegative = deltas.every(d => d < 0);
 
-    // ✅ Consistência: 3 movimentos na mesma direção (Mais robusto)
-    const isConsistent = (diff1 > 0 && diff2 > 0 && diff3 > 0) || (diff1 < 0 && diff2 < 0 && diff3 < 0);
+    if (!allPositive && !allNegative) return null;
 
-    if (isConsistent && force > 0.01) {
-      let signal: 'CALL' | 'PUT' | null = null;
-      if (diff1 > 0) signal = 'CALL';
-      else signal = 'PUT';
+    // Verificar força do último movimento (Delta)
+    const lastDelta = Math.abs(deltas[deltas.length - 1]);
 
-      const logDetail = `Consistência (3 Ticks) + Força ${force.toFixed(3)} > 0.01\n` +
-        `• Movimentos: ${diff3.toFixed(2)} -> ${diff2.toFixed(2)} -> ${diff1.toFixed(2)}\n` +
-        `• Ticks: ${tAnteAntePrev.value} -> ${tAntePrev.value} -> ${tPrev.value} -> ${tCurrent.value}`;
+    // Pegar referências para log
+    const lastTick = relevantTicks[relevantTicks.length - 1];
+    const prevTick = relevantTicks[relevantTicks.length - 2];
 
-      this.logDefenseSignal(state, 'VELOZ (3 Movimentos)', logDetail, signal);
+    if (lastDelta >= minDelta) {
+      const signal = allPositive ? 'CALL' : 'PUT';
+      const directionStr = allPositive ? 'SUBIU' : 'CAIU';
+
+      // Detalhes para log user-friendly
+      const priceHistory = relevantTicks.map(t => t.value.toFixed(2)).join(' -> ');
+      const calcDetail = `|${lastTick.value} - ${prevTick.value}| = ${lastDelta.toFixed(3)}`;
+
+      const logMsg = `🛡️ RECUPERAÇÃO ${modeLabel} DETECTADA\n` +
+        `• Onde: Últimos ${ticksCount} movimentos (${priceHistory})\n` +
+        `• O que aconteceu: O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
+        `• Cálculo da Força: ${calcDetail}\n` +
+        `• Força Final: ${lastDelta.toFixed(3)} (Mínimo: ${minDelta}) ✅\n` +
+        `• Conclusão: Mercado com força para continuar ${allPositive ? 'SUBINDO' : 'CAINDO'}.`;
+
+      // Logar
+      this.saveOrionLog(state.userId, this.symbol, 'sinal', logMsg);
+      this.logger.log(`[ORION] 🛡️ Defesa ${modeLabel}: ${signal} (Força ${lastDelta.toFixed(3)} >= ${minDelta})`);
+
       return signal;
     }
 
-    // Feedback visual se estiver em defesa
-    // Log apenas se 'lastRecLog2' expirar (evita spam)
+    // Feedback visual se estiver em defesa (throttled)
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa: Aguardando 3 movimentos consistentes c/ força...`);
-      // Log extra para mostrar que está analisando
-      const debugDiffs = `(${diff3.toFixed(2)}, ${diff2.toFixed(2)}, ${diff1.toFixed(2)})`;
-      this.logger.debug(`[ORION] 🔍 Análise Price Action: Movimentos ${debugDiffs} | Força: ${force.toFixed(3)}`);
-    }
-
-    return null;
-  }
-
-  /**
-   * ⚖️ NORMAL: Tendência (SMA)
-   * Se Preço > Média Móvel (20), entra Call. Se Preço < Média, entra Put.
-   */
-  private checkTrendSMA(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    const PERIOD = 20;
-    if (this.ticks.length < PERIOD) return null;
-
-    const lastPrice = this.ticks[this.ticks.length - 1].value;
-    const sma = this.calculateSMA(PERIOD);
-
-    if (lastPrice > sma) {
-      this.logDefenseSignal(state, 'NORMAL (Tendência)', `Preço ${lastPrice.toFixed(2)} > SMA(${PERIOD}) ${sma.toFixed(2)}`, 'CALL');
-      return 'CALL';
-    } else if (lastPrice < sma) {
-      this.logDefenseSignal(state, 'NORMAL (Tendência)', `Preço ${lastPrice.toFixed(2)} < SMA(${PERIOD}) ${sma.toFixed(2)}`, 'PUT');
-      return 'PUT';
-    }
-    return null; // Preço igual à média
-  }
-
-  /**
-   * 🎯 LENTA: Pullback (Ajustado para 3 ticks)
-   * Identifica 3 movimentos consecutivos na mesma direção.
-   */
-  /**
-   * 🎯 LENTA: Pullback (3 Movimentos)
-   * Lógica: 3 ticks subindo -> CALL.
-   */
-  /**
-  /**
-   * 🎯 LENTA: Pullback (4 Ticks / 3 Movimentos)
-   * Refinamento: 3 movimentos consecutivos na mesma direção + Força no último.
-   */
-  private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 4) return null; // Precisa de 4 ticks para 3 movimentos
-
-    const tCurrent = this.ticks[this.ticks.length - 1];
-    const tPrev = this.ticks[this.ticks.length - 2];
-    const tAntePrev = this.ticks[this.ticks.length - 3];
-    const tAnteAntePrev = this.ticks[this.ticks.length - 4];
-
-    const diff = tCurrent.value - tPrev.value;
-    const diff2 = tPrev.value - tAntePrev.value;
-    const diff3 = tAntePrev.value - tAnteAntePrev.value;
-
-    const force = Math.abs(diff);
-
-    // ✅ Logic: 3 Movimentos na mesma direção
-    const is3MovementsConsistent = (diff > 0 && diff2 > 0 && diff3 > 0) || (diff < 0 && diff2 < 0 && diff3 < 0);
-
-    /*
-     * Lógica Nexus Force integrada:
-     * - Exige os 3 movimentos (Direção Clara)
-     * - Exige Força no último movimento (> 0.01) (Evita perder força no final)
-     */
-    if (is3MovementsConsistent && force > 0.01) {
-      let signal: 'CALL' | 'PUT' | null = null;
-      if (diff > 0) signal = 'CALL';
-      else signal = 'PUT';
-
-      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (3 Movimentos): Consistência Tripla + Força ${force.toFixed(3)} (${signal})`);
-      return signal;
-    }
-
-    // Feedback visual
-    const now = Date.now();
-    if (now - (state.lastRecoveryLog || 0) > 4000) {
-      state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Extrema: Aguardando 3 movimentos c/ força...`);
+      this.logger.debug(`[ORION] ⏳ Aguardando Momentum (${ticksCount}t) + Delta >= ${minDelta}... (Atual: ${lastDelta.toFixed(3)})`);
     }
 
     return null;
@@ -1114,16 +1050,15 @@ export class OrionStrategy implements IStrategy {
           continue;
         }
 
-        // ✅ [ZENIX v2.0] Active Fallback (NEXUS LOGIC)
-        // Usa a mesma função checkPriceMomentum que agora tem a lógica Nexus (Force > 0.01)
-        const nexusSignal = this.checkPriceMomentum(state);
+        // ✅ [ZENIX v2.0] MODO VELOZ: 2 Ticks + Delta 0.3
+        const nexusSignal = this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
 
         if (!nexusSignal) {
           // Aguardando força...
           // Log throttled
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando 2 Movimentos (>0.01)...`);
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Momentum (2 Ticks) + Delta >= 0.3...`);
           }
           continue;
         }
@@ -1238,23 +1173,11 @@ export class OrionStrategy implements IStrategy {
           continue;
         }
 
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Tendência (SMA)
-        const smaSignal = this.checkTrendSMA(state);
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (MODERADO: 3 Ticks + Delta 0.5)
+        const smaSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'NORMAL');
 
         if (!smaSignal) {
-          // ⚠️ FALLBACK ANTI-FREEZE: Sem tendência clara? Segue o fluxo do último candle.
-          const lastTickVal = this.ticks[this.ticks.length - 1].value;
-          const prevTickVal = this.ticks[this.ticks.length - 2].value;
-          const fallbackSignal = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
-
-          const novoSinal = fallbackSignal;
-          const entryNumber = (state.martingaleStep || 0) + 1;
-          state.ultimaDirecaoMartingale = novoSinal;
-
-          this.logger.debug(`[ORION][Moderado] ⚠️ Fallback Anti-Freeze ativado (SMA Indefinido)`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. SMA Indefinido -> Price Action Simples (${novoSinal})`);
-
-          await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
+          // Aguardando...
           continue;
         }
 
@@ -1263,7 +1186,7 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = novoSinal;
 
         this.logger.log(`[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (SMA) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Tendência (${novoSinal})`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Momentum + Força (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
         continue;
@@ -1348,22 +1271,20 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
-      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
+      // ✅ CORREÇÃO MARTINGALE: Active Fallback usando Momentum + Delta (PRECISO: 3 Ticks + Delta 0.5)
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        let novoSinal: OrionSignal = 'CALL'; // Default
-        const lastTick = this.ticks[this.ticks.length - 1];
-        const prevTick = this.ticks[this.ticks.length - 2];
+        // Usar lógica "Momentum + Delta" também para Preciso
+        const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'NORMAL');
 
-        if (lastTick && prevTick) {
-          novoSinal = lastTick.value > prevTick.value ? 'CALL' : 'PUT';
-        }
+        if (!momentumSignal) continue;
+
+        const novoSinal = momentumSignal;
 
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Forçando Price Action: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Price Action (${novoSinal})`);
+        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'preciso', entryNumber);
         continue;
@@ -1459,15 +1380,15 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (Dynamic Logic)
-        const pullbackSignal = this.checkPullback(state);
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (LENTA: 3 Ticks + Delta 0.5)
+        const pullbackSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'LENTA');
 
         if (!pullbackSignal) {
-          // Aguardando confirmação do Pullback (Nexus Force)...
+          // Aguardando confirmação do Momentum...
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando 3 Movimentos (>0.01)...`);
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Momentum (3 Ticks) + Delta >= 0.5...`);
           }
           continue;
         }
@@ -1477,7 +1398,7 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = novoSinal;
 
         this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Price Action (3 Movimentos) (${novoSinal})`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
 
         // Atualiza timestamp também na recuperação
         state.lastOperationTimestamp = Date.now();
