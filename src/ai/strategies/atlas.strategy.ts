@@ -342,7 +342,8 @@ export class AtlasStrategy implements IStrategy {
       if (recoverySignal) {
         // Se encontrou sinal de recuperação, entra com a stake de recuperação
         const signalOp = recoverySignal === 'CALL' ? 'CALL' : 'PUT';
-        await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal}`);
+        const typeLabel = recoverySignal === 'CALL' ? 'Rise' : 'Fall';
+        await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal} (${typeLabel})`);
       } else {
         // Se não encontrou sinal, aguarda e loga (mas com moderação)
         const key = `${symbol}_${state.userId}_waiting_recovery`;
@@ -469,56 +470,29 @@ export class AtlasStrategy implements IStrategy {
     const prevTick = ticks[ticks.length - 2];
     const antePrev = ticks[ticks.length - 3];
 
-    // ✅ 1. VELOZ: Confirmação Dupla (2 últimos movimentos na mesma direção)
-    if (normalizedMode === 'veloz') {
-      const diff1 = lastTick.value - prevTick.value;
-      const diff2 = prevTick.value - antePrev.value;
+    // ✅ ORION LOGIC (Veloz, Normal, Lento): 3 Movimentos consistentes + Força > 0.01
+    // Padronização solicitada: "o modo de recuperação use a mesma logica do ia orion"
+    if (ticks.length < 4) return null;
 
-      const isUp = diff1 > 0 && diff2 > 0;
-      const isDown = diff1 < 0 && diff2 < 0; // Correção: diff2 < 0 para consistência de baixa
+    const tCurrent = ticks[ticks.length - 1];
+    const tPrev = ticks[ticks.length - 2];
+    const tAntePrev = ticks[ticks.length - 3];
+    const tAnteAntePrev = ticks[ticks.length - 4];
 
+    const diff1 = tCurrent.value - tPrev.value;
+    const diff2 = tPrev.value - tAntePrev.value;
+    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+
+    const force = Math.abs(diff1);
+
+    // ✅ Consistência: 3 movimentos na mesma direção
+    const isUp = diff1 > 0 && diff2 > 0 && diff3 > 0;
+    const isDown = diff1 < 0 && diff2 < 0 && diff3 < 0;
+
+    // Filtro de Força (igual Orion)
+    if (force > 0.01) {
       if (isUp) return 'CALL';
       if (isDown) return 'PUT';
-      return null;
-    }
-
-    // ✅ 2. NORMAL: Saldo Matemático (Soma dos últimos 5 ticks)
-    if (normalizedMode === 'normal') {
-      const last5 = ticks.slice(-5); // Pega os últimos 5
-      // Calcular saldo de movimentos
-      let saldo = 0;
-      for (let i = 1; i < last5.length; i++) {
-        saldo += (last5[i].value - last5[i - 1].value);
-      }
-
-      if (saldo > 0.1) return 'CALL';  // Saldo positivo relevante
-      if (saldo < -0.1) return 'PUT';  // Saldo negativo relevante
-      return null;
-    }
-
-    // ✅ 3. LENTO: Tendência (3 ticks) + Doji Filter
-    if (normalizedMode === 'lento') {
-      if (ticks.length < 6) return null;
-      const tCurrent = ticks[ticks.length - 1];
-      const tPrev = ticks[ticks.length - 2];
-      const tAntePrev = ticks[ticks.length - 3];
-      const tAnteAntePrev = ticks[ticks.length - 4];
-
-      const diff1 = tCurrent.value - tPrev.value;
-      const diff2 = tPrev.value - tAntePrev.value;
-      const diff3 = tAntePrev.value - tAnteAntePrev.value;
-
-      const force = Math.abs(diff1);
-
-      const isUp = diff1 > 0 && diff2 > 0 && diff3 > 0;
-      const isDown = diff1 < 0 && diff2 < 0 && diff3 < 0;
-
-      // Filtro de Doji/Força
-      if (force > 0.01) {
-        if (isUp) return 'CALL';
-        if (isDown) return 'PUT';
-      }
-      return null;
     }
 
     return null;
@@ -1150,8 +1124,10 @@ export class AtlasStrategy implements IStrategy {
       state.virtualLossCount = 0;
       state.virtualLossActive = false;
 
+      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `✅ VITÓRIA! | Op: ${operation} | Dígito: ${digitoResultado} | ` +
+        `✅ VITÓRIA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
 
 
@@ -1189,9 +1165,18 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 3 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
+        state.mode = 'lento';
+        this.saveAtlasLog(state.userId, symbol, 'alerta',
+          `🛡️ Defesa Automática: Mudança para modo LENTO devido a sequências de perdas (M${state.martingaleStep}).`);
+      }
+
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `❌ DERROTA! | Op: ${operation} | Dígito: ${digitoResultado} | ` +
+        `❌ DERROTA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Perda: -$${perda.toFixed(2)} | Capital: $${state.capital.toFixed(2)} | ` +
         `Martingale: M${state.martingaleStep} | Recovery: ${state.isInRecovery ? 'SIM' : 'NÃO'}`);
 
