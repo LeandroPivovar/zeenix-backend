@@ -189,8 +189,8 @@ interface NexusUserState {
     capital: number;
     apostaInicial: number;
     modoMartingale: ModoMartingale;
-    mode: 'VELOZ' | 'BALANCEADO' | 'PRECISO';
-    originalMode: 'VELOZ' | 'BALANCEADO' | 'PRECISO';
+    mode: 'VELOZ' | 'NORMAL' | 'LENTO';
+    originalMode: 'VELOZ' | 'NORMAL' | 'LENTO';
     lastDirection: DigitParity | null;
     isOperationActive: boolean;
     vitoriasConsecutivas: number;
@@ -281,8 +281,8 @@ export class NexusStrategy implements IStrategy {
                     );
                 }
 
-            } else if (state.mode === 'BALANCEADO') {
-                // BALANCEADO (NORMAL): 3 ticks consecutivos + delta > 0.3
+            } else if (state.mode === 'NORMAL') {
+                // NORMAL: 3 ticks consecutivos + delta > 0.3
                 if (this.ticks.length < 4) return null;
 
                 const last4 = this.ticks.slice(-4);
@@ -300,6 +300,7 @@ export class NexusStrategy implements IStrategy {
                         `🔍 SINAL DE ENTRADA\n` +
                         `• Modo: ${state.mode}\n` +
                         `• Filtro: 3 ticks + delta 0.3\n` +
+                        `• Direção: ALTA (CALL)\n` +
                         `• Delta: ${delta.toFixed(4)}\n` +
                         `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
                         `• Contrato: Higher (-0.15)\n` +
@@ -307,25 +308,12 @@ export class NexusStrategy implements IStrategy {
                     );
                     return 'PAR';
                 } else {
-                    // ❌ Log de análise rejeitada
-                    let motivo = '';
-                    if (!upMomentum) {
-                        motivo = 'Momentum de alta não confirmado (3 ticks consecutivos)';
-                    } else if (delta <= 0.3) {
-                        motivo = `Delta insuficiente (${delta.toFixed(4)} ≤ 0.3)`;
-                    }
-
-                    this.saveNexusLog(state.userId, this.symbol, 'analise',
-                        `❌ ANÁLISE REJEITADA (BALANCEADO)\n` +
-                        `• Motivo: ${motivo}\n` +
-                        `• Delta Atual: ${delta.toFixed(4)}\n` +
-                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Aguardando: 3 ticks de alta + delta > 0.3`
-                    );
+                    // Log de análise rejeitada (silencioso no console interno, mas logado no sistema para o usuário ver se quiser)
+                    // (Log omitido se quiser silenciar as rejeições excessivas)
                 }
 
-            } else if (state.mode === 'PRECISO') {
-                // PRECISO (LENTO): 5 ticks consecutivos + delta > 0.5
+            } else if (state.mode === 'LENTO') {
+                // LENTO: 5 ticks consecutivos + delta > 0.5
                 if (this.ticks.length < 6) return null;
 
                 const last6 = this.ticks.slice(-6);
@@ -345,28 +333,13 @@ export class NexusStrategy implements IStrategy {
                         `🔍 SINAL DE ENTRADA\n` +
                         `• Modo: ${state.mode}\n` +
                         `• Filtro: 5 ticks + delta 0.5\n` +
+                        `• Direção: ALTA (CALL)\n` +
                         `• Delta: ${delta.toFixed(4)}\n` +
                         `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
                         `• Contrato: Higher (-0.15)\n` +
                         `• Payout: 60%`
                     );
                     return 'PAR';
-                } else {
-                    // ❌ Log de análise rejeitada
-                    let motivo = '';
-                    if (!upMomentum) {
-                        motivo = 'Momentum de alta não confirmado (5 ticks consecutivos)';
-                    } else if (delta <= 0.5) {
-                        motivo = `Delta insuficiente (${delta.toFixed(4)} ≤ 0.5)`;
-                    }
-
-                    this.saveNexusLog(state.userId, this.symbol, 'analise',
-                        `❌ ANÁLISE REJEITADA (PRECISO)\n` +
-                        `• Motivo: ${motivo}\n` +
-                        `• Delta Atual: ${delta.toFixed(4)}\n` +
-                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Aguardando: 5 ticks de alta + delta > 0.5`
-                    );
                 }
             }
 
@@ -385,7 +358,7 @@ export class NexusStrategy implements IStrategy {
                 minDelta = 0.3;
                 modeInfo = '2 ticks + delta 0.3';
             } else {
-                // BALANCEADO/PRECISO: 3 ticks + delta 0.5
+                // NORMAL/LENTO: 3 ticks + delta 0.5
                 requiredTicks = 3;
                 minDelta = 0.5;
                 modeInfo = '3 ticks + delta 0.5';
@@ -443,31 +416,7 @@ export class NexusStrategy implements IStrategy {
                 return 'IMPAR'; // PUT
             }
 
-            // ❌ Log de recuperação rejeitada
-            if (!upMomentum && !downMomentum) {
-                this.saveNexusLog(state.userId, this.symbol, 'analise',
-                    `❌ RECUPERAÇÃO REJEITADA\n` +
-                    `• Motivo: Sem direção clara (movimento lateral)\n` +
-                    `• Delta Alta: ${deltaUp.toFixed(4)}\n` +
-                    `• Delta Baixa: ${deltaDown.toFixed(4)}\n` +
-                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                    `• Aguardando: ${modeInfo} em uma direção`
-                );
-            } else if (upMomentum && deltaUp <= minDelta) {
-                this.saveNexusLog(state.userId, this.symbol, 'analise',
-                    `❌ RECUPERAÇÃO REJEITADA (CALL)\n` +
-                    `• Motivo: Delta insuficiente (${deltaUp.toFixed(4)} ≤ ${minDelta})\n` +
-                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                    `• Aguardando: Delta > ${minDelta}`
-                );
-            } else if (downMomentum && deltaDown <= minDelta) {
-                this.saveNexusLog(state.userId, this.symbol, 'analise',
-                    `❌ RECUPERAÇÃO REJEITADA (PUT)\n` +
-                    `• Motivo: Delta insuficiente (${deltaDown.toFixed(4)} ≤ ${minDelta})\n` +
-                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                    `• Aguardando: Delta > ${minDelta}`
-                );
-            }
+            // Logs de rejeição (silenciados para não poluir demais)
         }
 
         return null;
@@ -503,13 +452,13 @@ export class NexusStrategy implements IStrategy {
         const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, stopLossBlindado, profitTarget, lossLimit } = config;
 
         // Mapeamento de Modos (Frontend -> Backend)
-        let nexusMode: 'VELOZ' | 'BALANCEADO' | 'PRECISO' = 'VELOZ';
+        let nexusMode: 'VELOZ' | 'NORMAL' | 'LENTO' = 'VELOZ';
         const inputMode = (mode || '').toUpperCase();
 
-        if (inputMode === 'MODERADO' || inputMode === 'MODERATE' || inputMode === 'BALANCEADO') {
-            nexusMode = 'BALANCEADO';
+        if (inputMode === 'MODERADO' || inputMode === 'MODERATE' || inputMode === 'BALANCEADO' || inputMode === 'NORMAL') {
+            nexusMode = 'NORMAL';
         } else if (inputMode === 'LENTO' || inputMode === 'PRECISO' || inputMode === 'DEVAGAR' || inputMode === 'SLOW') {
-            nexusMode = 'PRECISO';
+            nexusMode = 'LENTO';
         } else {
             nexusMode = 'VELOZ';
         }
@@ -579,7 +528,7 @@ export class NexusStrategy implements IStrategy {
         state.isOperationActive = true;
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
-            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
+            const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice, barrier);
 
             // Removed old "ENTRADA CONFIRMADA" log as it is now detailed in check_signal result
 
@@ -601,7 +550,11 @@ export class NexusStrategy implements IStrategy {
                     if (wasRecovery) {
                         state.vitoriasConsecutivas = 0; // Reset total apos Martingale para voltar a Base
                         state.mode = state.originalMode; // ✅ Volta ao modo original após recuperação
-                        this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 Recuperação completada. Resetando para Stake Base e Modo Original (${state.mode}).`);
+                        this.saveNexusLog(state.userId, this.symbol, 'info',
+                            `✅ RECUPERAÇÃO CONCLUÍDA\n` +
+                            `• Ação: Retornando ao modo ${state.mode}\n` +
+                            `• Status: Meta de recuperação atingida.`
+                        );
                     } else {
                         state.vitoriasConsecutivas++;
                         // ✅ Log de Ciclo Perfeito (Igual Orion)
@@ -611,27 +564,38 @@ export class NexusStrategy implements IStrategy {
                             state.vitoriasConsecutivas = 0; // ✅ Resetar contador após ciclo completo
                         }
                     }
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: WIN\n• Lucro/Prejuízo: +$${result.profit.toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
+                        `🏁 RESULTADO DA ENTRADA\n` +
+                        `• Status: VITÓRIA ✅\n` +
+                        `• Lucro: $${result.profit.toFixed(2)}\n` +
+                        `• Saldo Atual: $${state.capital.toFixed(2)}`
+                    );
                 } else {
                     // ✅ Log de Soros Falhou (Igual Orion)
                     if (state.vitoriasConsecutivas > 0) {
                         this.saveNexusLog(state.userId, this.symbol, 'resultado', `❌ Soros Nível 1 falhou! Entrando em recuperação`);
                     }
 
-
                     state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(result.profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
+                        `🏁 RESULTADO DA ENTRADA\n` +
+                        `• Status: DERROTA ❌\n` +
+                        `• Operação: ${barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall')}\n` +
+                        `• Perda: -$${Math.abs(result.profit).toFixed(2)}\n` +
+                        `• Capital: $${state.capital.toFixed(2)}\n` +
+                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)`
+                    );
 
                     // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
-                    if (riskManager.consecutiveLosses >= 4) {
+                    if (riskManager.consecutiveLosses >= 4 && state.mode === 'VELOZ') {
                         this.saveNexusLog(state.userId, this.symbol, 'alerta',
                             `🚨 DEFESA AUTOMÁTICA ATIVADA\n` +
                             `• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas\n` +
-                            `• Ação: Mudando para MODO LENTO\n` +
+                            `• Ação: Mudando para MODO LENTO para proteção de capital.\n` +
                             `• Entrada: 5 ticks + delta 0.5\n` +
                             `• Recuperação: 3 ticks + delta 0.5`
                         );
-                        state.mode = 'PRECISO'; // ✅ Ativa o modo LENTO (PRECISO) após 4 perdas
+                        state.mode = 'LENTO'; // ✅ Ativa o modo LENTO após 4 perdas
                     }
                 }
 
@@ -680,7 +644,7 @@ export class NexusStrategy implements IStrategy {
                 logType = 'alerta';
                 break;
             case 'stopped_blindado':
-                logMessage = `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
+                logMessage = `Shield Ativado! 🛡️\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
                 break;
         }
@@ -708,12 +672,13 @@ export class NexusStrategy implements IStrategy {
         this.logger.log(`[NEXUS] ${state.userId} parado por ${reason}. Status salvo no banco.`);
     }
 
-    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number): Promise<number> {
+    private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction };
+        const signalLabel = barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall');
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, 'CALL', ?, ?, 'PENDING', 'CALL', NOW(), ?, ?, 5)`,
-            [state.userId, entryPrice, stake, JSON.stringify(analysisData), this.symbol]
+             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5)`,
+            [state.userId, signalLabel, entryPrice, stake, signalLabel.toUpperCase(), JSON.stringify(analysisData), this.symbol]
         );
         const tradeId = r.insertId || r[0]?.insertId;
 
