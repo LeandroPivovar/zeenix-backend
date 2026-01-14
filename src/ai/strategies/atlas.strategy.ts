@@ -216,33 +216,24 @@ export class AtlasStrategy implements IStrategy {
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    // ✅ Determinar símbolo: R_10, R_25, R_100 ou 1HZ100V
-    // Default alterado para 1HZ100V conforme pedido do usuário
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' = '1HZ100V';
+    // ✅ Determinar símbolo: R_10, R_25 ou R_100
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' = 'R_100';
 
     if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
       atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
 
-      // ✅ Mapear preferência "Vol 100" para "1HZ100V" (1s)
-      if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
-        atlasSymbol = '1HZ100V'; // ✅ Forçar 1s Index se pedir Vol 100
-      } else if (marketLower.includes('1hz100v') || marketLower.includes('1s')) {
+      // ✅ Mapear preferência
+      if (marketLower.includes('1hz100v') || marketLower.includes('1s')) {
         atlasSymbol = '1HZ100V';
       } else if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
         atlasSymbol = 'R_10';
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
       } else {
-        // Fallback robusto
-        if (marketLower.includes('vol100') || marketLower.includes('r_100')) {
-          atlasSymbol = '1HZ100V'; // ✅ Preferência para 1HZ100V
-        } else if (marketLower.includes('vol10') || marketLower.includes('r_10')) {
-          atlasSymbol = 'R_10';
-        } else if (marketLower.includes('vol25') || marketLower.includes('r_25')) {
-          atlasSymbol = 'R_25';
-        }
+        // Default ou Vol 100
+        atlasSymbol = 'R_100';
       }
     }
 
