@@ -194,7 +194,10 @@ export class AtlasStrategy implements IStrategy {
       state.tickCounter = (state.tickCounter || 0) + 1;
       if (state.tickCounter >= 100) {
         state.tickCounter = 0;
-        this.saveAtlasLog(state.userId, assetSymbol, 'info', `💓 IA Atlas operando | Analisando mercado ${assetSymbol}...`);
+        this.saveAtlasLog(state.userId, assetSymbol, 'info',
+          `💓 IA ATLAS OPERA\n` +
+          `• Mercado: ${assetSymbol}\n` +
+          `• Status: Analisando padrões...`);
       }
 
       await this.processAtlasStrategies(tick, state);
@@ -271,15 +274,22 @@ export class AtlasStrategy implements IStrategy {
       this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
 
       const blindadoStatus = stopLossBlindado
-        ? (profitTargetNum ? `Ativo (Gatilho: $${(profitTargetNum * 0.40).toFixed(2)})` : 'Ativo (Sem meta!)')
-        : 'Inativo';
+        ? (profitTargetNum ? `ATIVADO (Gatilho: $${(profitTargetNum * 0.40).toFixed(2)})` : 'ATIVADO (Sem meta!)')
+        : 'DESATIVADO';
+
+      const state = this.atlasUsers.get(userId);
+      const saldoAtual = state ? state.capital : stakeAmountNum;
 
       this.saveAtlasLog(userId, 'SISTEMA', 'info',
-        `${logPrefix} | Modo: ${mode || 'veloz'} | Ativo: ${atlasSymbol} | Capital: $${stakeAmountNum.toFixed(2)} | ` +
-        `Martingale: ${modoMartingale || 'conservador'} | ` +
-        `Meta: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'} | ` +
-        `Stop-loss: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'} | ` +
-        `Stop blindado: ${blindadoStatus}`);
+        `⚙️ CONFIGURAÇÕES INICIAIS\n` +
+        `• Estratégia: ATLAS\n` +
+        `• Modo de Negociação: ${mode || 'veloz'}\n` +
+        `• Asset: ${atlasSymbol}\n` +
+        `• Saldo Atual: $${saldoAtual.toFixed(2)}\n` +
+        `• Gerenciamento: ${modoMartingale || 'conservador'}\n` +
+        `• Meta de Lucro: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'}\n` +
+        `• Stop Loss Normal: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'}\n` +
+        `• Stop Loss Blindado: ${blindadoStatus}`);
 
       this.lastActivationLog.set(userId, now);
 
@@ -331,7 +341,10 @@ export class AtlasStrategy implements IStrategy {
       const shouldLog = !set.has(logKey) || state.digitBuffer.length % 5 === 0;
       if (shouldLog) {
         this.saveAtlasLog(state.userId, symbol, 'info',
-          `📊 Aguardando ${modeConfig.amostraInicial} dígitos para análise | Coletados: ${state.digitBuffer.length}/${modeConfig.amostraInicial} | Modo: ${state.mode}`);
+          `📊 ANÁLISE INICIAL\n` +
+          `• Amostra: ${state.digitBuffer.length} / ${modeConfig.amostraInicial}\n` +
+          `• Modo: ${state.mode.toUpperCase()}\n` +
+          `• Status: Coletando dígitos...`);
         set.add(logKey);
         this.coletaLogsEnviados.set(keyUser, set);
         // Resetar após logar para permitir novo log quando necessário
@@ -586,7 +599,9 @@ export class AtlasStrategy implements IStrategy {
         const key = `${state.symbol}_${state.userId}_intervalo`;
         if (!this.intervaloLogsEnviados.has(key)) {
           this.saveAtlasLog(state.userId, state.symbol, 'info',
-            `⏱️ Aguardando intervalo | ${secondsSinceLastOp.toFixed(1)}s / ${modeConfig.intervaloSegundos}s`);
+            `⏱️ AGUARDANDO INTERVALO\n` +
+            `• Restante: ${secondsSinceLastOp.toFixed(1)}s\n` +
+            `• Configurado: ${modeConfig.intervaloSegundos}s`);
           this.intervaloLogsEnviados.set(key, true);
         }
         return false;
@@ -654,19 +669,15 @@ export class AtlasStrategy implements IStrategy {
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
 
-      // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
-      const dailyProfit = await this.getDailyProfit(state.userId);
-      const lucroAtual = dailyProfit;
-      const capitalSessao = capitalInicial + lucroAtual; // Acompanha o capital baseado no lucro do dia
+      const lucroAtual = parseFloat(config.sessionBalance) || 0;
+      const capitalSessao = capitalInicial + lucroAtual;
 
       // Sincronizar estado em memória com banco (para exibição correta)
       state.capital = capitalSessao;
       state.capitalInicial = capitalInicial;
       state.totalProfitLoss = lucroAtual;
 
-      // =================================================================================
-      // ✅ 1. VERIFICAR STOP PROFIT (Meta de Lucro)
-      // =================================================================================
+      // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
         this.saveAtlasLog(state.userId, symbol, 'info',
           `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
@@ -691,14 +702,11 @@ export class AtlasStrategy implements IStrategy {
         return;
       }
 
-      // =================================================================================
-      // ✅ 2. VERIFICAR STOP-LOSS BLINDADO (Trailing)
-      // =================================================================================
+      // Stop Blindado
       if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
         let currentPeak = profitPeak;
         const activationThreshold = profitTarget * 0.40;
 
-        // Auto-update do Pico
         if (lucroAtual > currentPeak) {
           currentPeak = lucroAtual;
           await this.dataSource.query(`UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`, [currentPeak, state.userId]);
@@ -711,7 +719,6 @@ export class AtlasStrategy implements IStrategy {
           }
         }
 
-        // Ativação e Check
         if (profitTarget > 0 && currentPeak >= activationThreshold) {
           const factor = stopBlindadoPercent / 100;
           const stopBlindado = capitalInicial + (currentPeak * factor);
@@ -744,9 +751,7 @@ export class AtlasStrategy implements IStrategy {
         }
       }
 
-      // =================================================================================
-      // ✅ 3. VERIFICAR STOP LOSS NORMAL
-      // =================================================================================
+      // Stop Loss Normal
       const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
       if (lossLimit > 0 && perdaAtual >= lossLimit) {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
@@ -772,11 +777,6 @@ export class AtlasStrategy implements IStrategy {
         return;
       }
 
-      // =================================================================================
-      // FIM DAS VERIFICAÇÕES DE RISCO
-      // =================================================================================
-
-      // ✅ Calcular stake
       const modeConfig = this.getModeConfig(state.mode);
       if (!modeConfig) {
         state.isOperationActive = false;
@@ -785,7 +785,7 @@ export class AtlasStrategy implements IStrategy {
 
       let stakeAmount = state.apostaInicial;
 
-      // ✅ Martingale ou Soros
+      // Martingale ou Soros
       if (state.isInRecovery && state.martingaleStep > 0) {
         const payout = modeConfig.payout;
         const perdas = state.perdaAcumulada;
@@ -802,18 +802,15 @@ export class AtlasStrategy implements IStrategy {
 
         const stopLossDisponivel = this.calculateAvailableStopLoss(state);
 
-        // ✅ MODO SOBREVIVÊNCIA (Recalcular e Investir)
-        // Se a próxima aposta do Martingale for maior que o Stop Loss disponível,
-        // O ROBÔ deve apenas recalcular para a stake mínima permitida ou resetar, para não parar.
         if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
           this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `�️ [SOBREVIVÊNCIA] Stake de Martingale ($${stakeAmount.toFixed(2)}) excede limite disponível ($${stopLossDisponivel.toFixed(2)}). Ajustando para tentar manter a operação.`);
+            `🛡️ [MODO SOBREVIVÊNCIA]\n` +
+            `• Motivo: Stake do Martingale ($${stakeAmount.toFixed(2)}) excede Stop Loss.\n` +
+            `• Ação: Ajustando para stake disponível ($${stopLossDisponivel.toFixed(2)}).`);
 
           stakeAmount = stopLossDisponivel;
         }
       } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
-        // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
-        const SOROS_FACTOR = 1.0;
         stakeAmount = state.apostaBase + state.ultimoLucro;
         this.saveAtlasLog(state.userId, symbol, 'info',
           `🚀 APLICANDO SOROS NÍVEL 1\n` +
@@ -821,87 +818,55 @@ export class AtlasStrategy implements IStrategy {
           `• Nova Stake: $${stakeAmount.toFixed(2)}`);
       }
 
-      // Ajuste final
       stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
 
-
-      // =================================================================================
-      // ✅ GESTÃO DE RISCO AVANÇADA - PRECISÃO (Stake Clamping)
-      // =================================================================================
-
-      // Definir Piso (Limite Inferior) para Clamping
+      // GESTÃO DE RISCO - Clamping
       let minAllowedBalance = 0.0;
       let limitType = '';
-
-      // Use the profitPeak and stopBlindadoPercent fetched from DB
       const activationThreshold = profitTarget * 0.40;
 
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
-        // MODO BLINDADO: Garante % do lucro máximo atingido
         const factor = stopBlindadoPercent / 100;
         const guaranteedProfit = profitPeak * factor;
         minAllowedBalance = capitalInicial + guaranteedProfit;
         limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
       } else {
-        // MODO NORMAL: Stop Loss configurado
         if (lossLimit > 0) {
           minAllowedBalance = capitalInicial - lossLimit;
           limitType = 'STOP LOSS NORMAL';
         } else {
-          minAllowedBalance = -Infinity; // Sem stop loss
+          minAllowedBalance = -Infinity;
         }
       }
 
-      // 5. STAKE CLAMPING (Ajuste de Precisão)
-      // Verifica se a perda desta aposta faria cruzar o piso
       const potentialBalanceAfterLoss = capitalSessao - stakeAmount;
 
       if (minAllowedBalance !== -Infinity && potentialBalanceAfterLoss < minAllowedBalance) {
-        // Precisamos reduzir a mão para não quebrar o stop/blindado
         let adjustedStake = state.capital - minAllowedBalance;
         adjustedStake = Math.round(adjustedStake * 100) / 100;
 
         if (adjustedStake < 0.35) {
-          // ✅ [MODO SOBREVIVÊNCIA] Não há margem nem para a aposta mínima.
-          // Em vez de parar, resetamos o Martingale para a stake base (Recalcular e Investir)
-
           this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `🛡️ [SOBREVIVÊNCIA] Sem margem de risco para Martingale. Resetando ciclo para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`);
+            `🛡️ [MODO SOBREVIVÊNCIA]\n` +
+            `• Motivo: Sem margem de risco para Martingale.\n` +
+            `• Ação: Resetando para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`);
 
           state.martingaleStep = 0;
           state.perdaAcumulada = 0;
           state.isInRecovery = false;
           stakeAmount = state.apostaBase;
-          // Não aplicamos o 'return', deixamos seguir com a stake base
         } else {
-          // Se ajustou mas ainda é viável, logar o ajuste
           if (adjustedStake !== stakeAmount) {
             this.saveAtlasLog(state.userId, symbol, 'alerta',
               `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`);
             stakeAmount = adjustedStake;
-            state.ultimaApostaUsada = stakeAmount; // Atualizar referência
           }
         }
       }
 
-
-      // Marcar como operação ativa
       state.isOperationActive = true;
       state.lastOperationTimestamp = new Date();
-
       state.ultimaApostaUsada = stakeAmount;
-
-      // ✅ ATLAS: Filtro de Latência (crítico para EHF) - DESATIVADO A PEDIDO DO CLIENTE
-      /*
-      const connection = this.wsConnections.get(state.derivToken);
-      if (connection && connection.lastLatency > 500) {
-        this.saveAtlasLog(state.userId, symbol, 'alerta', 
-          `⚠️ Latência alta detectada: ${connection.lastLatency}ms | Operação abortada`);
-        state.isOperationActive = false;
-        state.creationCooldownUntil = Date.now() + 2000;
-        return;
-      }
-      */
 
       if (analysis) {
         this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
@@ -1024,7 +989,10 @@ export class AtlasStrategy implements IStrategy {
         const errorCode = errorObj?.code || '';
         const errorMessage = errorObj?.message || JSON.stringify(errorObj);
         this.logger.error(`[ATLAS][${symbol}] ❌ Erro na proposta: ${errorMessage} | Código: ${errorCode} | Tipo: ${contractParams.contract_type}`);
-        this.saveAtlasLog(userId, symbol, 'erro', `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
+        this.saveAtlasLog(userId, symbol, 'erro',
+          `❌ ERRO NA PROPOSTA\n` +
+          `• Código: ${errorCode}\n` +
+          `• Mensagem: ${errorMessage}`);
         return null;
       }
 
@@ -1052,6 +1020,9 @@ export class AtlasStrategy implements IStrategy {
         }, 60000);
       } catch (error: any) {
         this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${error.message}`);
+        this.saveAtlasLog(userId, symbol, 'erro',
+          `❌ ERRO AO COMPRAR\n` +
+          `• Mensagem: ${error.message}`);
         return null;
       }
 
@@ -1060,7 +1031,10 @@ export class AtlasStrategy implements IStrategy {
         const errorCode = buyErrorObj?.code || '';
         const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
         this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | Código: ${errorCode} | ProposalId: ${proposalId}`);
-        this.saveAtlasLog(userId, symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
+        this.saveAtlasLog(userId, symbol, 'erro',
+          `❌ ERRO AO COMPRAR\n` +
+          `• Código: ${errorCode}\n` +
+          `• Mensagem: ${errorMessage}`);
         return null;
       }
 
@@ -1072,7 +1046,11 @@ export class AtlasStrategy implements IStrategy {
 
       const buyDuration = Date.now() - buyStartTime;
       this.logger.log(`[ATLAS][${symbol}] ✅ Contrato criado | Proposal: ${proposalDuration}ms | Compra: ${buyDuration}ms | ContractId: ${contractId}`);
-      this.saveAtlasLog(userId, symbol, 'operacao', `✅ Contrato criado: ${contractId} | Proposta: ${proposalDuration}ms | Compra: ${buyDuration}ms`);
+      this.saveAtlasLog(userId, symbol, 'operacao',
+        `✅ CONTRATO CRIADO\n` +
+        `• ID: ${contractId}\n` +
+        `• Latência Proposta: ${proposalDuration}ms\n` +
+        `• Latência Compra: ${buyDuration}ms`);
 
       // Monitorar contrato
       return await new Promise((resolve) => {
@@ -1169,10 +1147,6 @@ export class AtlasStrategy implements IStrategy {
     state.lastOperationTimestamp = new Date();
     state.creationCooldownUntil = Date.now() + 500; // ✅ ATLAS: Cooldown mínimo para EHF
 
-    // ✅ ATLAS: Modo Normal Recovery Payout Override
-    // Rise/Fall tem payout maior (~95.4%) que Digit Over (~63%)
-    // Ajustar payout se necessário para cálculo de lucro correto
-
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return;
 
@@ -1184,8 +1158,6 @@ export class AtlasStrategy implements IStrategy {
 
     if (isWin) {
       // ✅ VITÓRIA
-      // O profit da API Deriv já é o lucro líquido (ganho bruto - aposta)
-      // Se profit > 0, usar diretamente; se não, calcular ganho bruto - aposta
       const lucro = profit > 0 ? profit : (stakeAmount * currentPayout - stakeAmount);
       state.capital += lucro;
       state.totalProfitLoss += lucro;
@@ -1195,10 +1167,14 @@ export class AtlasStrategy implements IStrategy {
         const nivelAntes = state.martingaleStep;
         const perdaRecuperada = state.perdaAcumulada;
 
-        // ✅ Calcular ganho bruto para exibição (lucro líquido + aposta)
+        // ✅ Calcular ganho bruto para exibição
         const ganhoBrutoRecuperacao = lucro + stakeAmount;
         this.saveAtlasLog(state.userId, symbol, 'info',
-          `MARTINGALE RECUPERADO ✅ | Nível: ${nivelAntes} → 0 | Perda recuperada: $${perdaRecuperada.toFixed(2)} | Ganho: $${ganhoBrutoRecuperacao.toFixed(2)} | Lucro: $${lucro.toFixed(2)}`);
+          `✅ MARTINGALE RECUPERADO\n` +
+          `• Nível: ${nivelAntes} → 0\n` +
+          `• Perda Recuperada: $${perdaRecuperada.toFixed(2)}\n` +
+          `• Ganho Bruto: $${ganhoBrutoRecuperacao.toFixed(2)}\n` +
+          `• Lucro Líquido: $${lucro.toFixed(2)}`);
 
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
@@ -1209,42 +1185,31 @@ export class AtlasStrategy implements IStrategy {
         // ✅ ATLAS: Auto-Revert -> Voltar ao modo original após recuperar
         if (state.mode !== state.originalMode) {
           this.saveAtlasLog(state.userId, symbol, 'info',
-            `🔄 Recuperação Concluída: Retornando ao modo ${state.originalMode.toUpperCase()}`);
+            `✅ RECUPERAÇÃO CONCLUÍDA\n` +
+            `• Ação: Retornando ao modo ${state.originalMode.toUpperCase()}\n` +
+            `• Status: Meta de recuperação atingida.`);
           state.mode = state.originalMode;
         }
       }
       // ✅ Soros: verificar ciclo (Apenas se NÃO estava em recuperação)
       else if (!state.isInRecovery) {
-        // ✅ CORREÇÃO: Resetar loss virtual também quando ganha sem estar em recuperação
         state.virtualLossCount = 0;
         state.virtualLossActive = false;
 
         if (state.vitoriasConsecutivas === 0) {
-          // Primeira vitória: ativar Soros Nível 1
           state.vitoriasConsecutivas = 1;
           state.isInSoros = true;
           state.ultimoLucro = lucro;
         } else if (state.vitoriasConsecutivas === 1) {
-          // Soros Nível 1 vitorioso: ativar Soros Nível 2
           state.vitoriasConsecutivas = 2;
           state.ultimoLucro = lucro;
         } else if (state.vitoriasConsecutivas === 2) {
-          // Soros Nível 2 vitorioso: ciclo completo
           state.vitoriasConsecutivas = 0;
           state.isInSoros = false;
           state.ultimoLucro = 0;
         }
       }
 
-
-
-      // Para CALL/PUT, não temos "dígito resultado" no mesmo sentido, mas podemos extrair o último dígito do exitPrice
-      const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
-      // ✅ O profit da API Deriv já é lucro líquido (ganho bruto - aposta)
-      // Para exibir o ganho bruto, somamos a aposta de volta
-      const ganhoBruto = lucro + stakeAmount;
-
-      // ✅ CORREÇÃO: Resetar loss virtual ao ganhar (permite próxima operação)
       state.virtualLossCount = 0;
       state.virtualLossActive = false;
 
@@ -1256,25 +1221,22 @@ export class AtlasStrategy implements IStrategy {
         `• Lucro: $${lucro.toFixed(2)}\n` +
         `• Saldo Atual: $${state.capital.toFixed(2)}`);
 
-
     } else {
       // ✅ DERROTA
       const perda = stakeAmount;
       state.capital -= perda;
       state.totalProfitLoss -= perda;
 
-      // ✅ Interromper Soros
       if (state.isInSoros) {
         state.vitoriasConsecutivas = 0;
         state.isInSoros = false;
         state.ultimoLucro = 0;
       }
 
-      // ✅ Ativar/incrementar Martingale (recuperação imediata)
       if (state.martingaleStep === 0) {
         state.martingaleStep = 1;
         state.perdaAcumulada = perda;
-        state.isInRecovery = true; // ✅ ATLAS: Recuperação imediata
+        state.isInRecovery = true;
         state.virtualLossCount = (state.virtualLossCount || 0) + 1;
       } else {
         state.martingaleStep += 1;
@@ -1282,12 +1244,11 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossCount = (state.virtualLossCount || 0) + 1;
       }
 
-      // ✅ ATLAS: Atualizar loss virtual conforme modo
       const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
       const maxLosses = requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
 
       if (state.virtualLossCount > maxLosses) {
-        state.virtualLossCount = maxLosses; // Limitar conforme modo
+        state.virtualLossCount = maxLosses;
         state.virtualLossActive = true;
       }
 
@@ -1295,24 +1256,28 @@ export class AtlasStrategy implements IStrategy {
       if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `� DEFESA AUTOMÁTICA ATIVADA\n` +
+          `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
           `• Motivo: 3 Perdas Consecutivas.\n` +
-          `• Ação: Mudando análise para MODO LENTO para recuperação segura.`);
+          `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `❌ DERROTA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
-        `Aposta: $${stakeAmount.toFixed(2)} | Perda: -$${perda.toFixed(2)} | Capital: $${state.capital.toFixed(2)} | ` +
-        `Martingale: M${state.martingaleStep} | Recovery: ${state.isInRecovery ? 'SIM' : 'NÃO'}`);
+        `🏁 RESULTADO DA ENTRADA\n` +
+        `• Status: DERROTA ❌\n` +
+        `• Operação: ${opLabel}\n` +
+        `• Dígito: ${digitoResultado}\n` +
+        `• Aposta: $${stakeAmount.toFixed(2)}\n` +
+        `• Perda: -$${perda.toFixed(2)}\n` +
+        `• Capital: $${state.capital.toFixed(2)}\n` +
+        `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}`);
 
     }
 
-    // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
-    const dailyProfit = await this.getDailyProfit(state.userId);
-    const lucroSessao = dailyProfit;
+    // ✅ [ZENIX v3.1] Lucro da SESSÃO (Recalculado após a trade)
+    const lucroSessao = state.totalProfitLoss;
 
     // Atualizar saldo da sessão no banco de dados (Sincronismo para Dashboard)
     this.dataSource.query(
@@ -1362,9 +1327,7 @@ export class AtlasStrategy implements IStrategy {
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
 
-    // ✅ [ZENIX v3.1] Lucro REAL do dia
-    const dailyProfit = await this.getDailyProfit(state.userId);
-    const lucroAtual = dailyProfit;
+    const lucroAtual = parseFloat(config.sessionBalance) || 0;
     const capitalSessao = capitalInicial + lucroAtual;
 
     // 1. Meta de Lucro (Profit Target)
@@ -1490,8 +1453,8 @@ export class AtlasStrategy implements IStrategy {
 
     if (existing) {
       hasConfigChanges =
-        existing.capital !== params.stakeAmount ||
-        existing.mode !== params.mode ||
+        existing.capitalInicial !== params.stakeAmount ||
+        existing.originalMode !== params.mode ||
         existing.modoMartingale !== (params.modoMartingale || 'conservador') ||
         existing.profitTarget !== (params.profitTarget || null) ||
         existing.stopLoss !== stopLossNormalized ||
@@ -1585,24 +1548,6 @@ export class AtlasStrategy implements IStrategy {
     const lastChar = normalized.charAt(normalized.length - 1);
     const digit = parseInt(lastChar, 10);
     return Number.isNaN(digit) ? 0 : digit;
-  }
-
-  /**
-   * ✅ ATLAS: Obtém lucro total do dia (Soma de todos os trades de hoje)
-   */
-  private async getDailyProfit(userId: string): Promise<number> {
-    try {
-      const result = await this.dataSource.query(
-        `SELECT SUM(profit_loss) as dailyProfit 
-         FROM ai_trades 
-         WHERE user_id = ? AND created_at >= CURDATE()`,
-        [userId]
-      );
-      return parseFloat(result[0]?.dailyProfit) || 0;
-    } catch (e) {
-      this.logger.error(`[ATLAS] Erro ao buscar lucro diário: ${e.message}`);
-      return 0;
-    }
   }
 
   /**
@@ -1886,18 +1831,18 @@ export class AtlasStrategy implements IStrategy {
 
     try {
       const icons = {
-        info: 'ℹ️',
-        tick: '📊',
-        analise: '🔍',
-        sinal: '⚡',
-        operacao: '💰',
-        resultado: '✅',
-        alerta: '⚠️',
-        erro: '🚫',
+        info: '',
+        tick: '',
+        analise: '',
+        sinal: '',
+        operacao: '',
+        resultado: '',
+        alerta: '',
+        erro: '',
       };
 
       const values = logs.map(log => {
-        const icon = icons[log.type] || 'ℹ️';
+        const icon = icons[log.type] || '';
         const messageWithSymbol = log.symbol === 'SISTEMA'
           ? log.message
           : `[${log.symbol}] ${log.message}`;
