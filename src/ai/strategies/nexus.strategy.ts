@@ -240,6 +240,15 @@ export class NexusStrategy implements IStrategy {
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
+        // ✅ Feedback periódico para o usuário não achar que o bot parou
+        if (state.ticksColetados % 30 === 0) {
+            this.saveNexusLog(state.userId, this.symbol, 'info',
+                `📡 Analisando mercado...\n` +
+                `• Modo: ${state.mode}\n` +
+                `• Status: Buscando sinais de alta precisão.`
+            );
+        }
+
         const signal = this.check_signal(state, riskManager);
         if (!signal) return;
 
