@@ -415,44 +415,52 @@ export class AtlasStrategy implements IStrategy {
 
     const lastDigit = state.digitBuffer[state.digitBuffer.length - 1];
 
-    analysis += ` • Últimos Dígitos: [${state.digitBuffer.slice(-5).join(', ')}]\n`;
+    analysis += `\n🧠 ANÁLISE INICIADA...\n`;
+    analysis += `• Verificando condições para o modo: ${normalizedMode.toUpperCase()}\n`;
 
     // ✅ 1. MODO VELOZ: Último dígito > 2
     if (normalizedMode === 'veloz') {
       if (lastDigit > 2) {
-        analysis += `✅ GATILHO: Último dígito (${lastDigit}) > 2.\n`;
-        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) > 2\n`;
+        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
+        analysis += `💪 FORÇA DO SINAL: 70%\n`;
+        analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 2.\n`;
+        // analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 2.\n`;
         return { canTrade: false, analysis };
       }
     }
 
-    // ✅ 2. MODO NORMAL: 3 dos últimos 5 > 2 (60% consistência)
+    // ✅ 2. MODO NORMAL: 3 dos últimos 5 > 2
     if (normalizedMode === 'normal') {
       const window = state.digitBuffer.slice(-5);
       const countOver2 = window.filter(d => d > 2).length;
       if (countOver2 >= 3) {
-        analysis += `✅ GATILHO: Consistência (${countOver2}/5) > 2.\n`;
-        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+        const strength = (countOver2 / 5) * 100;
+        analysis += `✅ FILTRO: Densidade Alta (${countOver2}/5 > 2)\n`;
+        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
+        analysis += `💪 FORÇA DO SINAL: ${strength.toFixed(0)}%\n`;
+        analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Apenas ${countOver2}/5 > 2.\n`;
         return { canTrade: false, analysis };
       }
     }
 
-    // ✅ 3. MODO LENTO: 8 dos últimos 10 > 2 (80% dominância)
+    // ✅ 3. MODO LENTO: 8 dos últimos 10 > 2
     if (normalizedMode === 'lento') {
       const window = state.digitBuffer.slice(-10);
       const countOver2 = window.filter(d => d > 2).length;
-      if (countOver2 >= 8) {
-        analysis += `✅ GATILHO: Dominância (${countOver2}/10) > 2.\n`;
-        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+      // Requisito extra do Python: lastDigit > 2 também
+      if (countOver2 >= 8 && lastDigit > 2) {
+        const strength = (countOver2 / 10) * 100;
+        analysis += `✅ FILTRO: Dominância Absoluta (${countOver2}/10 > 2)\n`;
+        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
+        analysis += `💪 FORÇA DO SINAL: ${strength.toFixed(0)}%\n`;
+        analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Apenas ${countOver2}/10 > 2.\n`;
         return { canTrade: false, analysis };
       }
     }
@@ -655,6 +663,15 @@ export class AtlasStrategy implements IStrategy {
         [`Meta atingida: +$${lucroAtualRisco.toFixed(2)}`, state.userId]
       );
 
+      // ✅ EMITIR EVENTO
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'stopped_profit',
+        strategy: 'atlas',
+        symbol: symbol,
+        profitLoss: lucroAtualRisco
+      });
+
       this.atlasUsers.delete(state.userId);
       state.isStopped = true;
       return;
@@ -674,6 +691,16 @@ export class AtlasStrategy implements IStrategy {
           `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
           [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId]
         );
+
+        // ✅ EMITIR EVENTO STOP BLINDADO
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: 'stopped_blindado',
+          strategy: 'atlas',
+          symbol: symbol,
+          profitProtected: lucroProtegido,
+          profitLoss: lucroProtegido
+        });
 
         this.atlasUsers.delete(state.userId);
         state.isStopped = true;
@@ -696,6 +723,15 @@ export class AtlasStrategy implements IStrategy {
           `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
           [`Stop Loss: -$${perdaAtual.toFixed(2)}`, state.userId]
         );
+
+        // ✅ EMITIR EVENTO STOP LOSS
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: 'stopped_loss',
+          strategy: 'atlas',
+          symbol: symbol,
+          profitLoss: -perdaAtual
+        });
 
         this.atlasUsers.delete(state.userId);
         state.isStopped = true;
@@ -749,7 +785,11 @@ export class AtlasStrategy implements IStrategy {
     } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
       // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
       const SOROS_FACTOR = 1.0;
-      stakeAmount = state.apostaBase + (state.ultimoLucro * SOROS_FACTOR);
+      stakeAmount = state.apostaBase + state.ultimoLucro;
+      this.saveAtlasLog(state.userId, symbol, 'info',
+        `🚀 APLICANDO SOROS NÍVEL 1\n` +
+        `• Lucro Anterior: $${state.ultimoLucro.toFixed(2)}\n` +
+        `• Nova Stake: $${stakeAmount.toFixed(2)}`);
     }
 
     // Ajuste final
@@ -814,6 +854,17 @@ export class AtlasStrategy implements IStrategy {
           `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
           [status, `${reason}: $${state.capital.toFixed(2)}`, state.userId],
         );
+
+        // ✅ EMITIR EVENTO PARA O FRONTEND PAUSAR VISUALMENTE
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: state.blindadoActive ? 'stopped_blindado' : 'stopped_loss',
+          strategy: 'atlas',
+          symbol: symbol,
+          profitLoss: state.blindadoActive ? state.capital - state.capitalInicial : -(state.capitalInicial - state.capital),
+          profitProtected: state.blindadoActive ? state.capital - state.capitalInicial : undefined
+        });
+
         this.atlasUsers.delete(state.userId);
         state.isStopped = true;
         return;
@@ -1191,8 +1242,10 @@ export class AtlasStrategy implements IStrategy {
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `✅ VITÓRIA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
-        `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
+        `🏁 RESULTADO DA ENTRADA\n` +
+        `• Status: VITÓRIA ✅\n` +
+        `• Lucro: $${lucro.toFixed(2)}\n` +
+        `• Saldo Atual: $${state.capital.toFixed(2)}`);
 
 
     } else {
@@ -1233,7 +1286,9 @@ export class AtlasStrategy implements IStrategy {
       if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `🛡️ Defesa Automática: Mudança para modo LENTO devido a sequências de perdas (M${state.martingaleStep}).`);
+          `� DEFESA AUTOMÁTICA ATIVADA\n` +
+          `• Motivo: 3 Perdas Consecutivas.\n` +
+          `• Ação: Mudando análise para MODO LENTO para recuperação segura.`);
       }
 
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
@@ -1281,6 +1336,16 @@ export class AtlasStrategy implements IStrategy {
          WHERE user_id = ? AND is_active = 1`,
         [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)}`, state.userId],
       );
+
+      // ✅ EMITIR EVENTO PARA O FRONTEND PAUSAR VISUALMENTE
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'stopped_profit',
+        strategy: 'atlas',
+        symbol: symbol,
+        profitLoss: lucroAtual
+      });
+
       this.atlasUsers.delete(state.userId);
       return;
     }
@@ -1353,6 +1418,17 @@ export class AtlasStrategy implements IStrategy {
                 WHERE user_id = ? AND is_active = 1`,
               [`Stop Blindado: +$${lucroProtegido.toFixed(2)}`, state.userId],
             );
+
+            // ✅ EMITIR EVENTO PARA O FRONTEND PAUSAR VISUALMENTE
+            this.tradeEvents.emit({
+              userId: state.userId,
+              type: 'stopped_blindado',
+              strategy: 'atlas',
+              symbol: symbol,
+              profitProtected: lucroProtegido,
+              profitLoss: lucroProtegido
+            });
+
             this.atlasUsers.delete(state.userId);
             return;
           }
@@ -1391,6 +1467,16 @@ export class AtlasStrategy implements IStrategy {
          WHERE user_id = ? AND is_active = 1`,
         [`Stop loss atingido: -$${perdaAtual.toFixed(2)}`, state.userId],
       );
+
+      // ✅ EMITIR EVENTO PARA O FRONTEND PAUSAR VISUALMENTE
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'stopped_loss',
+        strategy: 'atlas',
+        symbol: symbol,
+        profitLoss: -perdaAtual
+      });
+
       this.atlasUsers.delete(state.userId);
       return;
     }
