@@ -838,36 +838,37 @@ export class OrionStrategy implements IStrategy {
 
   /**
   /**
-   * ⚡ VELOZ: Price Action Dinâmico (4 Ticks / 3 Movimentos)
-   * Refinamento: Pede consistência de 3 movimentos + Força no último.
+  /**
+   * ⚡ VELOZ: Price Action Dinâmico (3 Ticks / 2 Movimentos)
+   * Refinamento: Pede consistência de 2 movimentos + Força no último.
    */
   private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 4) return null; // PRECISA DE 4 TICKS PARA 3 MOVIMENTOS
+    if (this.ticks.length < 3) return null; // PRECISA DE 3 TICKS PARA 2 MOVIMENTOS
 
     const tCurrent = this.ticks[this.ticks.length - 1];
     const tPrev = this.ticks[this.ticks.length - 2];
     const tAntePrev = this.ticks[this.ticks.length - 3];
-    const tAnteAntePrev = this.ticks[this.ticks.length - 4];
+    // const tAnteAntePrev = this.ticks[this.ticks.length - 4]; // Não necessário para 2 movimentos
 
     const diff1 = tCurrent.value - tPrev.value;
     const diff2 = tPrev.value - tAntePrev.value;
-    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+    // const diff3 = tAntePrev.value - tAnteAntePrev.value;
 
     const force = Math.abs(diff1);
 
-    // ✅ Consistência: 3 movimentos na mesma direção (Mais robusto)
-    const isConsistent = (diff1 > 0 && diff2 > 0 && diff3 > 0) || (diff1 < 0 && diff2 < 0 && diff3 < 0);
+    // ✅ Consistência: 2 movimentos na mesma direção (Mais Rápido)
+    const isConsistent = (diff1 > 0 && diff2 > 0) || (diff1 < 0 && diff2 < 0);
 
     if (isConsistent && force > 0.01) {
       let signal: 'CALL' | 'PUT' | null = null;
       if (diff1 > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      const logDetail = `Consistência (3 Ticks) + Força ${force.toFixed(3)} > 0.01\n` +
-        `• Movimentos: ${diff3.toFixed(2)} -> ${diff2.toFixed(2)} -> ${diff1.toFixed(2)}\n` +
-        `• Ticks: ${tAnteAntePrev.value} -> ${tAntePrev.value} -> ${tPrev.value} -> ${tCurrent.value}`;
+      const logDetail = `Consistência (2 Ticks) + Força ${force.toFixed(3)} > 0.01\n` +
+        `• Movimentos: ${diff2.toFixed(2)} -> ${diff1.toFixed(2)}\n` +
+        `• Ticks: ${tAntePrev.value} -> ${tPrev.value} -> ${tCurrent.value}`;
 
-      this.logDefenseSignal(state, 'VELOZ (3 Movimentos)', logDetail, signal);
+      this.logDefenseSignal(state, 'VELOZ (2 Movimentos)', logDetail, signal);
       return signal;
     }
 
@@ -876,9 +877,9 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa: Aguardando 3 movimentos consistentes c/ força...`);
+      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa: Aguardando 2 movimentos consistentes c/ força...`);
       // Log extra para mostrar que está analisando
-      const debugDiffs = `(${diff3.toFixed(2)}, ${diff2.toFixed(2)}, ${diff1.toFixed(2)})`;
+      const debugDiffs = `(${diff2.toFixed(2)}, ${diff1.toFixed(2)})`;
       this.logger.debug(`[ORION] 🔍 Análise Price Action: Movimentos ${debugDiffs} | Força: ${force.toFixed(3)}`);
     }
 
