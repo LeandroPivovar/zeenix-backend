@@ -841,22 +841,26 @@ export class OrionStrategy implements IStrategy {
    * ⚡ VELOZ: Momentum (2 Ticks / 2 Movimentos)
    * Lógica Simplificada "Bypass": Só precisa de 2 movimentos na mesma direção.
    */
+  /**
+   * ⚡ VELOZ: Momentum (2 Ticks / 2 Movimentos)
+   * Lógica Nexus: 2 Ticks (1 Movimento) + Força (> 0.01)
+   */
   private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 3) return null;
+    if (this.ticks.length < 2) return null;
 
-    const t3 = this.ticks[this.ticks.length - 1]; // Atual
-    const t2 = this.ticks[this.ticks.length - 2]; // Anterior
-    const t1 = this.ticks[this.ticks.length - 3]; // Antepenúltimo
+    const tCurrent = this.ticks[this.ticks.length - 1];
+    const tPrev = this.ticks[this.ticks.length - 2];
 
-    const m1 = t2.value - t1.value;
-    const m2 = t3.value - t2.value;
+    const diff = tCurrent.value - tPrev.value;
+    const force = Math.abs(diff);
 
-    let signal: 'CALL' | 'PUT' | null = null;
-    if (m1 > 0 && m2 > 0) signal = 'CALL';
-    else if (m1 < 0 && m2 < 0) signal = 'PUT';
+    // ✅ Nexus Logic: Force Filter > 0.01
+    if (force > 0.01) {
+      let signal: 'CALL' | 'PUT' | null = null;
+      if (diff > 0) signal = 'CALL';
+      else signal = 'PUT';
 
-    if (signal) {
-      this.logDefenseSignal(state, 'VELOZ (Momentum 2 Ticks)', `Direção confirmada: ${signal}`, signal);
+      this.logDefenseSignal(state, 'VELOZ (Nexus Force)', `Força ${force.toFixed(3)} > 0.01`, signal);
       return signal;
     }
 
@@ -864,7 +868,7 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa (3+ Loss): Aguardando 2 movimentos iguais...`);
+      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Nexus: Aguardando movimento forte (>0.01)...`);
     }
 
     return null;
@@ -899,34 +903,36 @@ export class OrionStrategy implements IStrategy {
    * 🎯 LENTA: Pullback (3 Movimentos)
    * Lógica: 3 ticks subindo -> CALL.
    */
+  /**
+   * 🎯 LENTA: Pullback (Nexus Logic)
+   * Lógica Nexus: 2 Ticks (1 Movimento) + Força (> 0.01)
+   * Adotando a mesma lógica robusta para evitar congelamento.
+   */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 4) return null;
+    if (this.ticks.length < 2) return null;
 
-    const t4 = this.ticks[this.ticks.length - 1];
-    const t3 = this.ticks[this.ticks.length - 2];
-    const t2 = this.ticks[this.ticks.length - 3];
-    const t1 = this.ticks[this.ticks.length - 4];
+    const tCurrent = this.ticks[this.ticks.length - 1];
+    const tPrev = this.ticks[this.ticks.length - 2];
 
-    // Movimentos
-    const m1 = t2.value - t1.value;
-    const m2 = t3.value - t2.value;
-    const m3 = t4.value - t3.value;
+    const diff = tCurrent.value - tPrev.value;
+    const force = Math.abs(diff);
 
-    let signal: 'CALL' | 'PUT' | null = null;
-    // Strict 3 movements
-    if (m1 > 0 && m2 > 0 && m3 > 0) signal = 'CALL';
-    else if (m1 < 0 && m2 < 0 && m3 < 0) signal = 'PUT';
+    // ✅ Nexus Logic: Force Filter > 0.01
+    // Para modo Lenta, mantemos a exigência de força para não entrar em ruído
+    if (force > 0.01) {
+      let signal: 'CALL' | 'PUT' | null = null;
+      if (diff > 0) signal = 'CALL';
+      else signal = 'PUT';
 
-    if (signal) {
-      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA: 3 Movimentos confirmados (${signal})`);
-      return signal as any;
+      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Nexus): Força ${force.toFixed(3)} > 0.01 (${signal})`);
+      return signal;
     }
 
     // Feedback visual
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa (3+ Loss): Aguardando 3 movimentos iguais...`);
+      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Nexus: Aguardando movimento forte (>0.01)...`);
     }
 
     return null;
@@ -1014,40 +1020,27 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Bypass Inteligente: Análise Rápida de 2 Movimentos
-        // Funciona "do jeito que deveria" (2 ticks mesma direção) mas de forma direta.
+        // ✅ [ZENIX v2.0] Active Fallback (NEXUS LOGIC)
+        // Usa a mesma função checkPriceMomentum que agora tem a lógica Nexus (Force > 0.01)
+        const nexusSignal = this.checkPriceMomentum(state);
 
-        if (this.ticks.length < 3) continue; // Precisa de 3 pontos para 2 movimentos
-
-        const t3 = this.ticks[this.ticks.length - 1]; // Atual
-        const t2 = this.ticks[this.ticks.length - 2]; // Anterior
-        const t1 = this.ticks[this.ticks.length - 3]; // Antepenúltimo
-
-        const m1 = t2.value - t1.value; // Movimento 1
-        const m2 = t3.value - t2.value; // Movimento 2 (Mais recente)
-
-        // Verifica se ambos são positivos (Sobe/Sobe) ou negativos (Desce/Desce)
-        // Ignora Doji (0)
-        let direction: OrionSignal | null = null;
-
-        if (m1 > 0 && m2 > 0) direction = 'CALL';
-        else if (m1 < 0 && m2 < 0) direction = 'PUT';
-
-        if (!direction) {
-          // ⚠️ FALLBACK ANTI-FREEZE: Se não tiver 2 ticks iguais, usa o último tick.
-          // O usuário reclamou de travamento. Prioridade = Executar Martingale.
-          const lastTickVal = this.ticks[this.ticks.length - 1].value;
-          const prevTickVal = this.ticks[this.ticks.length - 2].value;
-          direction = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
-          this.logger.debug(`[ORION][Veloz] ⚠️ Fallback Anti-Freeze ativado (1 tick)`);
+        if (!nexusSignal) {
+          // Aguardando força...
+          // Log throttled
+          const now = Date.now();
+          if (now - (state.lastRecoveryLog || 0) > 4000) {
+            state.lastRecoveryLog = now;
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Força Nexus (>0.01)...`);
+          }
+          continue;
         }
 
-        const novoSinal = direction;
+        const novoSinal = nexusSignal;
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Anti-Freeze) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Modo Anti-Freeze Ativado (${novoSinal})`);
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Nexus Force) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Nexus Logic (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
@@ -1354,37 +1347,15 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (3 Ticks)
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (Nexus Logic)
         const pullbackSignal = this.checkPullback(state);
 
         if (!pullbackSignal) {
-          // ⚠️ FALLBACK ANTI-FREEZE: Se não tiver 3 ticks, tenta 1 tick após timeout?
-          // Lenta deve ser mais paciente, mas não eterna.
-          // Vamos aguardar um pouco mais, mas se travar (state.lastRecoveryLog > 15s), chuta.
-
+          // Aguardando confirmação do Pullback (Nexus Force)...
           const now = Date.now();
-          const lastAttempt = state.lastRecoveryLog || now;
-
-          if (now - lastAttempt > 10000) { // 10 segundos travado
-            const lastTickVal = this.ticks[this.ticks.length - 1].value;
-            const prevTickVal = this.ticks[this.ticks.length - 2].value;
-            const fallbackSignal = lastTickVal > prevTickVal ? 'CALL' : 'PUT';
-
-            const novoSinal = fallbackSignal;
-            const entryNumber = (state.martingaleStep || 0) + 1;
-            state.ultimaDirecaoMartingale = novoSinal;
-            state.lastRecoveryLog = now; // Reset timer
-
-            this.logger.warn(`[ORION][Lenta] ⚠️ Fallback Anti-Freeze Lento (Timeout 10s)`);
-            this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Lenta. Timeout -> Price Action Force (${novoSinal})`);
-
-            await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
-            continue;
-          }
-
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Pullback (3 movimentos)...`);
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Força Nexus (>0.01)...`);
           }
           continue;
         }
@@ -1393,8 +1364,8 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Pullback) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Pullback (${novoSinal})`);
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Nexus Force) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Nexus Logic (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
         continue;
