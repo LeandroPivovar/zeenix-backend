@@ -665,10 +665,8 @@ export class AtlasStrategy implements IStrategy {
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
 
-      // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
-      const dailyProfit = await this.getDailyProfit(state.userId);
-      const lucroAtual = dailyProfit;
-      const capitalSessao = capitalInicial + lucroAtual; // Acompanha o capital baseado no lucro do dia
+      const lucroAtual = parseFloat(config.sessionBalance) || 0;
+      const capitalSessao = capitalInicial + lucroAtual;
 
       // Sincronizar estado em memória com banco (para exibição correta)
       state.capital = capitalSessao;
@@ -1274,9 +1272,8 @@ export class AtlasStrategy implements IStrategy {
 
     }
 
-    // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
-    const dailyProfit = await this.getDailyProfit(state.userId);
-    const lucroSessao = dailyProfit;
+    // ✅ [ZENIX v3.1] Lucro da SESSÃO (Recalculado após a trade)
+    const lucroSessao = state.totalProfitLoss;
 
     // Atualizar saldo da sessão no banco de dados (Sincronismo para Dashboard)
     this.dataSource.query(
@@ -1326,9 +1323,7 @@ export class AtlasStrategy implements IStrategy {
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
 
-    // ✅ [ZENIX v3.1] Lucro REAL do dia
-    const dailyProfit = await this.getDailyProfit(state.userId);
-    const lucroAtual = dailyProfit;
+    const lucroAtual = parseFloat(config.sessionBalance) || 0;
     const capitalSessao = capitalInicial + lucroAtual;
 
     // 1. Meta de Lucro (Profit Target)
@@ -1549,24 +1544,6 @@ export class AtlasStrategy implements IStrategy {
     const lastChar = normalized.charAt(normalized.length - 1);
     const digit = parseInt(lastChar, 10);
     return Number.isNaN(digit) ? 0 : digit;
-  }
-
-  /**
-   * ✅ ATLAS: Obtém lucro total do dia (Soma de todos os trades de hoje)
-   */
-  private async getDailyProfit(userId: string): Promise<number> {
-    try {
-      const result = await this.dataSource.query(
-        `SELECT SUM(profit_loss) as dailyProfit 
-         FROM ai_trades 
-         WHERE user_id = ? AND created_at >= CURDATE()`,
-        [userId]
-      );
-      return parseFloat(result[0]?.dailyProfit) || 0;
-    } catch (e) {
-      this.logger.error(`[ATLAS] Erro ao buscar lucro diário: ${e.message}`);
-      return 0;
-    }
   }
 
   /**
