@@ -271,6 +271,14 @@ export class NexusStrategy implements IStrategy {
                         `• Payout: 60%`
                     );
                     return 'PAR';
+                } else {
+                    // ❌ Log de análise rejeitada
+                    this.saveNexusLog(state.userId, this.symbol, 'analise',
+                        `❌ ANÁLISE REJEITADA (VELOZ)\n` +
+                        `• Motivo: Movimento contrário detectado\n` +
+                        `• Preços: ${lastTwo[0].value.toFixed(2)} → ${lastTwo[1].value.toFixed(2)}\n` +
+                        `• Aguardando: 1 tick de alta`
+                    );
                 }
 
             } else if (state.mode === 'BALANCEADO') {
@@ -298,6 +306,22 @@ export class NexusStrategy implements IStrategy {
                         `• Payout: 60%`
                     );
                     return 'PAR';
+                } else {
+                    // ❌ Log de análise rejeitada
+                    let motivo = '';
+                    if (!upMomentum) {
+                        motivo = 'Momentum de alta não confirmado (3 ticks consecutivos)';
+                    } else if (delta <= 0.3) {
+                        motivo = `Delta insuficiente (${delta.toFixed(4)} ≤ 0.3)`;
+                    }
+
+                    this.saveNexusLog(state.userId, this.symbol, 'analise',
+                        `❌ ANÁLISE REJEITADA (BALANCEADO)\n` +
+                        `• Motivo: ${motivo}\n` +
+                        `• Delta Atual: ${delta.toFixed(4)}\n` +
+                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                        `• Aguardando: 3 ticks de alta + delta > 0.3`
+                    );
                 }
 
             } else if (state.mode === 'PRECISO') {
@@ -327,6 +351,22 @@ export class NexusStrategy implements IStrategy {
                         `• Payout: 60%`
                     );
                     return 'PAR';
+                } else {
+                    // ❌ Log de análise rejeitada
+                    let motivo = '';
+                    if (!upMomentum) {
+                        motivo = 'Momentum de alta não confirmado (5 ticks consecutivos)';
+                    } else if (delta <= 0.5) {
+                        motivo = `Delta insuficiente (${delta.toFixed(4)} ≤ 0.5)`;
+                    }
+
+                    this.saveNexusLog(state.userId, this.symbol, 'analise',
+                        `❌ ANÁLISE REJEITADA (PRECISO)\n` +
+                        `• Motivo: ${motivo}\n` +
+                        `• Delta Atual: ${delta.toFixed(4)}\n` +
+                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                        `• Aguardando: 5 ticks de alta + delta > 0.5`
+                    );
                 }
             }
 
@@ -401,6 +441,32 @@ export class NexusStrategy implements IStrategy {
                     `• Payout: 95%`
                 );
                 return 'IMPAR'; // PUT
+            }
+
+            // ❌ Log de recuperação rejeitada
+            if (!upMomentum && !downMomentum) {
+                this.saveNexusLog(state.userId, this.symbol, 'analise',
+                    `❌ RECUPERAÇÃO REJEITADA\n` +
+                    `• Motivo: Sem direção clara (movimento lateral)\n` +
+                    `• Delta Alta: ${deltaUp.toFixed(4)}\n` +
+                    `• Delta Baixa: ${deltaDown.toFixed(4)}\n` +
+                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                    `• Aguardando: ${modeInfo} em uma direção`
+                );
+            } else if (upMomentum && deltaUp <= minDelta) {
+                this.saveNexusLog(state.userId, this.symbol, 'analise',
+                    `❌ RECUPERAÇÃO REJEITADA (CALL)\n` +
+                    `• Motivo: Delta insuficiente (${deltaUp.toFixed(4)} ≤ ${minDelta})\n` +
+                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                    `• Aguardando: Delta > ${minDelta}`
+                );
+            } else if (downMomentum && deltaDown <= minDelta) {
+                this.saveNexusLog(state.userId, this.symbol, 'analise',
+                    `❌ RECUPERAÇÃO REJEITADA (PUT)\n` +
+                    `• Motivo: Delta insuficiente (${deltaDown.toFixed(4)} ≤ ${minDelta})\n` +
+                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                    `• Aguardando: Delta > ${minDelta}`
+                );
             }
         }
 
