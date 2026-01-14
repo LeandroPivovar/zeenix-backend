@@ -2171,16 +2171,17 @@ export class OrionStrategy implements IStrategy {
       }
 
       // ✅ Resultado já veio do mesmo WebSocket - processar diretamente
-      const { contractId, profit, exitSpot } = result;
+      const { contractId, profit, exitSpot, entrySpot } = result;
       const exitPrice = Number(exitSpot || 0);
+      const entryPrice = Number(entrySpot || 0); // ✅ Preço de entrada oficial da Deriv
       const confirmedStatus = profit >= 0 ? 'WON' : 'LOST';
 
       // Atualizar trade no banco
       await this.dataSource.query(
         `UPDATE ai_trades
-         SET contract_id = ?, exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
+         SET contract_id = ?, exit_price = ?, entry_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
          WHERE id = ?`,
-        [contractId, exitPrice, profit, confirmedStatus, tradeId],
+        [contractId, exitPrice, entryPrice, profit, confirmedStatus, tradeId],
       );
 
       // Emitir evento de atualização
@@ -2607,7 +2608,7 @@ export class OrionStrategy implements IStrategy {
       currency: string;
     },
     userId?: string,
-  ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
+  ): Promise<{ contractId: string; profit: number; exitSpot: any; entrySpot: any } | null> {
     try {
       // ✅ PASSO 1: Obter ou criar conexão WebSocket reutilizável
       const connection = await this.getOrCreateWebSocketConnection(token, userId);
@@ -2827,7 +2828,8 @@ export class OrionStrategy implements IStrategy {
                 if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
 
                 const profit = Number(contract.profit || 0);
-                const exitSpot = contract.exit_spot || contract.current_spot;
+                const entrySpot = contract.entry_tick || contract.entry_spot || 0;
+                const exitSpot = contract.exit_tick || contract.exit_spot || contract.current_spot;
 
                 const monitorDuration = Date.now() - monitorStartTime;
                 const timeToFirstUpdate = firstUpdateTime ? firstUpdateTime - monitorStartTime : 0;
@@ -2853,7 +2855,7 @@ export class OrionStrategy implements IStrategy {
                 }
 
                 connection.removeSubscription(contractId);
-                resolve({ contractId, profit, exitSpot });
+                resolve({ contractId, profit, exitSpot, entrySpot });
               }
             } catch (error) {
               if (!hasResolved) {
