@@ -616,7 +616,7 @@ export class AtlasStrategy implements IStrategy {
   private async executeAtlasOperation(
     state: AtlasUserState,
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
-    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT' | 'EVEN' | 'ODD',
     analysis?: string,
   ): Promise<void> {
     // ✅ [ZENIX v3.0] Bloqueio imediato para evitar race condition de múltiplos disparos por tick
@@ -801,38 +801,14 @@ export class AtlasStrategy implements IStrategy {
 
         const stopLossDisponivel = this.calculateAvailableStopLoss(state);
 
-        // ✅ LOGICA DE PARADA RIGIDA (Igual Orion)
+        // ✅ MODO SOBREVIVÊNCIA (Recalcular e Investir)
         // Se a próxima aposta do Martingale for maior que o Stop Loss disponível,
-        // O ROBÔ DEVE PARAR. Não resetar. O usuário quer respeitar o limite.
+        // O ROBÔ deve apenas recalcular para a stake mínima permitida ou resetar, para não parar.
         if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
-          const perdaSePerder = state.perdaAcumulada + stakeAmount;
-
-          // Calcular perda real para exibição
-          const perdaAtual = state.capitalInicial - state.capital;
-          const totalPerdaSeStop = perdaAtual + stakeAmount; // Estimativa do impacto
-
           this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `🛑 MARTINGALE BLOQUEADO! Próxima aposta ($${stakeAmount.toFixed(2)}) excederia o Stop Loss disponível ($${stopLossDisponivel.toFixed(2)}). IA DESATIVADA.`);
+            `�️ [SOBREVIVÊNCIA] Stake de Martingale ($${stakeAmount.toFixed(2)}) excede limite disponível ($${stopLossDisponivel.toFixed(2)}). Ajustando para tentar manter a operação.`);
 
-          // 1. Atualizar DB
-          await this.dataSource.query(
-            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
-            [`Stop Loss (Martingale): Próxima aposta $${stakeAmount.toFixed(2)} excederia limite`, state.userId],
-          );
-
-          // 2. Emitir Evento
-          this.tradeEvents.emit({
-            userId: state.userId,
-            type: 'stopped_loss',
-            strategy: 'atlas',
-            symbol: symbol,
-            profitLoss: -perdaAtual // Informa a perda atual consolidada
-          });
-
-          // 3. Parar Memória
-          this.atlasUsers.delete(state.userId);
-          state.isStopped = true;
-          return;
+          stakeAmount = stopLossDisponivel;
         }
       } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
         // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
@@ -885,51 +861,25 @@ export class AtlasStrategy implements IStrategy {
         adjustedStake = Math.round(adjustedStake * 100) / 100;
 
         if (adjustedStake < 0.35) {
-          // Não há margem nem para a aposta mínima. STOP!
+          // ✅ [MODO SOBREVIVÊNCIA] Não há margem nem para a aposta mínima.
+          // Em vez de parar, resetamos o Martingale para a stake base (Recalcular e Investir)
 
-          let logMsg = '';
-          const status = state.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
-          const reason = state.blindadoActive ? 'Meta Parcial (Blindado)' : 'Stop Loss Atingido';
-
-          if (state.blindadoActive) {
-            const lucroProtegido = state.capital - state.capitalInicial;
-            logMsg = `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`;
-          } else {
-            // Calcular perda atual para exibição (simulando que atingiu o limite, já que não pode mais operar)
-            const perdaAtual = state.capitalInicial - state.capital;
-            const stopLimit = state.stopLoss ? Math.abs(state.stopLoss) : 0;
-            logMsg = `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${stopLimit.toFixed(2)} - IA DESATIVADA`;
-          }
-
-          // ✅ Usar 'symbol' em vez de 'SISTEMA' para consistência (frontend pode filtrar)
-          this.saveAtlasLog(state.userId, symbol, state.blindadoActive ? 'alerta' : 'alerta', logMsg);
-
-          await this.dataSource.query(
-            `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
-            [status, `${reason}: $${state.capital.toFixed(2)}`, state.userId],
-          );
-
-          // ✅ EMITIR EVENTO PARA O FRONTEND PAUSAR VISUALMENTE
-          this.tradeEvents.emit({
-            userId: state.userId,
-            type: state.blindadoActive ? 'stopped_blindado' : 'stopped_loss',
-            strategy: 'atlas',
-            symbol: symbol,
-            profitLoss: state.blindadoActive ? state.capital - state.capitalInicial : -(state.capitalInicial - state.capital),
-            profitProtected: state.blindadoActive ? state.capital - state.capitalInicial : undefined
-          });
-
-          this.atlasUsers.delete(state.userId);
-          state.isStopped = true;
-          return;
-        }
-
-        // Se ajustou, logar o ajuste
-        if (adjustedStake !== stakeAmount) {
           this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`);
-          stakeAmount = adjustedStake;
-          state.ultimaApostaUsada = stakeAmount; // Atualizar referência
+            `🛡️ [SOBREVIVÊNCIA] Sem margem de risco para Martingale. Resetando ciclo para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`);
+
+          state.martingaleStep = 0;
+          state.perdaAcumulada = 0;
+          state.isInRecovery = false;
+          stakeAmount = state.apostaBase;
+          // Não aplicamos o 'return', deixamos seguir com a stake base
+        } else {
+          // Se ajustou mas ainda é viável, logar o ajuste
+          if (adjustedStake !== stakeAmount) {
+            this.saveAtlasLog(state.userId, symbol, 'alerta',
+              `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`);
+            stakeAmount = adjustedStake;
+            state.ultimaApostaUsada = stakeAmount; // Atualizar referência
+          }
         }
       }
 
@@ -1208,7 +1158,7 @@ export class AtlasStrategy implements IStrategy {
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
     isWin: boolean,
     stakeAmount: number,
-    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT' | 'EVEN' | 'ODD',
     profit: number = 0,
     exitPrice: number = 0,
     tradeId?: number | null,
@@ -1641,7 +1591,7 @@ export class AtlasStrategy implements IStrategy {
     contractType: string;
     entryPrice: number;
     stakeAmount: number;
-    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT';
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT' | 'EVEN' | 'ODD';
     mode: string;
   }): Promise<number | null> {
     try {
@@ -1662,8 +1612,11 @@ export class AtlasStrategy implements IStrategy {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
           [
             trade.userId,
-            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
-            (trade.operation === 'CALL' ? 'Rise' : (trade.operation === 'PUT' ? 'Fall' : trade.operation)),
+            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' ou 'PAR'/'IMPAR' para garantir seta correta no frontend
+            (trade.operation === 'CALL' ? 'Rise' :
+              trade.operation === 'PUT' ? 'Fall' :
+                trade.operation === 'EVEN' ? 'PAR' :
+                  trade.operation === 'ODD' ? 'IMPAR' : trade.operation),
             trade.entryPrice,
             trade.stakeAmount,
             'PENDING',
