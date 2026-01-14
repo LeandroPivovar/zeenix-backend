@@ -844,24 +844,31 @@ export class OrionStrategy implements IStrategy {
    */
   /**
    * ⚡ VELOZ: Momentum (2 Ticks / 2 Movimentos)
-   * Lógica Nexus: 2 Ticks (1 Movimento) + Força (> 0.01)
+  /**
+   * ⚡ VELOZ: Price Action Dinâmico (3 Ticks / 2 Movimentos)
+   * Refinamento: Pede consistência de 2 movimentos + Força no último.
    */
   private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 2) return null;
+    if (this.ticks.length < 3) return null;
 
     const tCurrent = this.ticks[this.ticks.length - 1];
     const tPrev = this.ticks[this.ticks.length - 2];
+    const tAntePrev = this.ticks[this.ticks.length - 3];
 
     const diff = tCurrent.value - tPrev.value;
+    const prevDiff = tPrev.value - tAntePrev.value;
     const force = Math.abs(diff);
 
-    // ✅ Logic: Force Filter > 0.01 (Dynamic Price Action)
-    if (force > 0.01) {
+    // Consistência: 2 movimentos na mesma direção
+    const isConsistent = (diff > 0 && prevDiff > 0) || (diff < 0 && prevDiff < 0);
+
+    // ✅ Logic: Consistência + Força (> 0.01)
+    if (isConsistent && force > 0.01) {
       let signal: 'CALL' | 'PUT' | null = null;
       if (diff > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.logDefenseSignal(state, 'VELOZ (Price Action Dinâmico)', `Força ${force.toFixed(3)} > 0.01`, signal);
+      this.logDefenseSignal(state, 'VELOZ (2 Movimentos)', `Consistência + Força ${force.toFixed(3)} > 0.01`, signal);
       return signal;
     }
 
@@ -869,7 +876,7 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Dinâmica: Aguardando movimento forte (>0.01)...`);
+      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Dinâmica: Aguardando 2 movimentos c/ força...`);
     }
 
     return null;
@@ -905,34 +912,38 @@ export class OrionStrategy implements IStrategy {
    * Lógica: 3 ticks subindo -> CALL.
    */
   /**
-   * 🎯 LENTA: Pullback (Nexus Logic)
-   * Lógica Nexus: 2 Ticks (1 Movimento) + Força (> 0.01)
-   * Adotando a mesma lógica robusta para evitar congelamento.
+  /**
+   * 🎯 LENTA: Pullback (4 Ticks / 3 Movimentos)
+   * Refinamento: 3 movimentos consecutivos na mesma direção + Força no último.
    */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 3) return null; // Precisa de 3 ticks para verificar consistência (tAtual, tPrev, tAntePrev)
+    if (this.ticks.length < 4) return null; // Precisa de 4 ticks para 3 movimentos
 
     const tCurrent = this.ticks[this.ticks.length - 1];
     const tPrev = this.ticks[this.ticks.length - 2];
     const tAntePrev = this.ticks[this.ticks.length - 3];
+    const tAnteAntePrev = this.ticks[this.ticks.length - 4];
 
     const diff = tCurrent.value - tPrev.value;
+    const diff2 = tPrev.value - tAntePrev.value;
+    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+
     const force = Math.abs(diff);
 
-    // 🎯 REFINAMENTO LENTO: Exige "Consistência" (2 movimentos na mesma direção)
-    // Evita entrar em "V-Shape" (Caiu -> Subiu do nada). Garante tendência mínima.
+    // ✅ Logic: 3 Movimentos na mesma direção
+    const is3MovementsConsistent = (diff > 0 && diff2 > 0 && diff3 > 0) || (diff < 0 && diff2 < 0 && diff3 < 0);
 
-    const prevDiff = tPrev.value - tAntePrev.value;
-
-    // Verifica se os sinais são iguais (Sobe/Sobe ou Desce/Desce)
-    const isConsistent = (diff > 0 && prevDiff > 0) || (diff < 0 && prevDiff < 0);
-
-    if (force > 0.01 && isConsistent) {
+    /*
+     * Lógica Nexus Force integrada:
+     * - Exige os 3 movimentos (Direção Clara)
+     * - Exige Força no último movimento (> 0.01) (Evita perder força no final)
+     */
+    if (is3MovementsConsistent && force > 0.01) {
       let signal: 'CALL' | 'PUT' | null = null;
       if (diff > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Recuperação Dinâmica): Consistência + Força ${force.toFixed(3)} (${signal})`);
+      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (3 Movimentos): Consistência Tripla + Força ${force.toFixed(3)} (${signal})`);
       return signal;
     }
 
@@ -940,7 +951,7 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Dinâmica: Aguardando movimento forte (>0.01)...`);
+      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Extrema: Aguardando 3 movimentos c/ força...`);
     }
 
     return null;
@@ -1038,7 +1049,7 @@ export class OrionStrategy implements IStrategy {
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Força (>0.01)...`);
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando 2 Movimentos (>0.01)...`);
           }
           continue;
         }
@@ -1048,7 +1059,7 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = novoSinal;
 
         this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Price Action Dinâmico (${novoSinal})`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Price Action (2 Movimentos) (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
@@ -1370,7 +1381,7 @@ export class OrionStrategy implements IStrategy {
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Força (>0.01)...`);
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando 3 Movimentos (>0.01)...`);
           }
           continue;
         }
@@ -1380,7 +1391,7 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = novoSinal;
 
         this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Price Action Dinâmico (${novoSinal})`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Price Action (3 Movimentos) (${novoSinal})`);
 
         // Atualiza timestamp também na recuperação
         state.lastOperationTimestamp = Date.now();
