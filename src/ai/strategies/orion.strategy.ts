@@ -854,13 +854,13 @@ export class OrionStrategy implements IStrategy {
     const diff = tCurrent.value - tPrev.value;
     const force = Math.abs(diff);
 
-    // ✅ Nexus Logic: Force Filter > 0.01
+    // ✅ Logic: Force Filter > 0.01 (Dynamic Price Action)
     if (force > 0.01) {
       let signal: 'CALL' | 'PUT' | null = null;
       if (diff > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.logDefenseSignal(state, 'VELOZ (Nexus Force)', `Força ${force.toFixed(3)} > 0.01`, signal);
+      this.logDefenseSignal(state, 'VELOZ (Price Action Dinâmico)', `Força ${force.toFixed(3)} > 0.01`, signal);
       return signal;
     }
 
@@ -868,7 +868,7 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Nexus: Aguardando movimento forte (>0.01)...`);
+      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Dinâmica: Aguardando movimento forte (>0.01)...`);
     }
 
     return null;
@@ -918,7 +918,6 @@ export class OrionStrategy implements IStrategy {
     const diff = tCurrent.value - tPrev.value;
     const force = Math.abs(diff);
 
-    // ✅ Nexus Logic: Force Filter > 0.01
     // 🎯 REFINAMENTO LENTO: Exige "Consistência" (2 movimentos na mesma direção)
     // Evita entrar em "V-Shape" (Caiu -> Subiu do nada). Garante tendência mínima.
 
@@ -932,7 +931,7 @@ export class OrionStrategy implements IStrategy {
       if (diff > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Refinada): Consistência + Força ${force.toFixed(3)} (${signal})`);
+      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Recuperação Dinâmica): Consistência + Força ${force.toFixed(3)} (${signal})`);
       return signal;
     }
 
@@ -940,7 +939,7 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Nexus: Aguardando movimento forte (>0.01)...`);
+      this.logger.debug(`[ORION][Lenta] 🛡️ Defesa Dinâmica: Aguardando movimento forte (>0.01)...`);
     }
 
     return null;
@@ -1038,7 +1037,7 @@ export class OrionStrategy implements IStrategy {
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Força Nexus (>0.01)...`);
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Força (>0.01)...`);
           }
           continue;
         }
@@ -1047,8 +1046,8 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Nexus Force) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Nexus Logic (${novoSinal})`);
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Price Action Dinâmico (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
@@ -1355,7 +1354,7 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (Nexus Logic)
+        // ✅ [ZENIX v2.0] Active Fallback: Usar Pullback (Dynamic Logic)
         const pullbackSignal = this.checkPullback(state);
 
         if (!pullbackSignal) {
@@ -1363,7 +1362,7 @@ export class OrionStrategy implements IStrategy {
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Força Nexus (>0.01)...`);
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Força (>0.01)...`);
           }
           continue;
         }
@@ -1372,8 +1371,8 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Nexus Force) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Nexus Logic (${novoSinal})`);
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Price Action Dinâmico (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
         continue;
