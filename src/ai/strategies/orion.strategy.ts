@@ -514,6 +514,14 @@ export class OrionStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
+    // ✅ PREVENÇÃO DE DUPLICATAS: Ignorar se tiver o mesmo epoch do último tick
+    if (this.ticks.length > 0) {
+      const lastTick = this.ticks[this.ticks.length - 1];
+      if (tick.epoch === lastTick.epoch) {
+        return; // Tick duplicado, ignorar
+      }
+    }
+
     this.ticks.push(tick);
     // ✅ Limitar a 100 ticks para evitar consumo excessivo de memória
     if (this.ticks.length > 100) {
@@ -796,7 +804,9 @@ export class OrionStrategy implements IStrategy {
       this.logger.log(`[ORION] 🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}`);
 
       lastDigits.forEach((d, i) => {
-        this.logger.log(`[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Perdedor < 4)`);
+        // ✅ Debug: Mostrar valor real para provar que são ticks diferentes
+        const val = lastTicks[i].value;
+        this.logger.log(`[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${val}) (Perdedor < 4)`);
       });
 
       this.logger.log(`[ORION] ✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.`);
@@ -812,7 +822,7 @@ export class OrionStrategy implements IStrategy {
         this.symbol,
         'sinal',
         `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
-        lastDigits.map((d, i) => `✅ FILTRO ${i + 1}: Dígito ${d} (Perdedor < 4)`).join('\n') + '\n' +
+        lastDigits.map((d, i) => `✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`).join('\n') + '\n' +
         `✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.\n` +
         `💪 FORÇA DO SINAL: ${strength}%\n` +
         `📊 ENTRADA: DIGIT OVER 3`
@@ -827,48 +837,49 @@ export class OrionStrategy implements IStrategy {
   // --- Helpers de Price Action (Defesa) ---
 
   /**
-   * ⚡ VELOZ: Momentum
-   * Se os últimos 3 ticks foram iguais (ex: Sobe, Sobe, Sobe), entra a favor.
-   */
   /**
-   * ⚡ VELOZ: Momentum (2 Ticks / 2 Movimentos)
-   * Lógica Simplificada "Bypass": Só precisa de 2 movimentos na mesma direção.
-   */
-  /**
-   * ⚡ VELOZ: Momentum (2 Ticks / 2 Movimentos)
-  /**
-   * ⚡ VELOZ: Price Action Dinâmico (3 Ticks / 2 Movimentos)
-   * Refinamento: Pede consistência de 2 movimentos + Força no último.
+   * ⚡ VELOZ: Price Action Dinâmico (4 Ticks / 3 Movimentos)
+   * Refinamento: Pede consistência de 3 movimentos + Força no último.
    */
   private checkPriceMomentum(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 3) return null;
+    if (this.ticks.length < 4) return null; // PRECISA DE 4 TICKS PARA 3 MOVIMENTOS
 
     const tCurrent = this.ticks[this.ticks.length - 1];
     const tPrev = this.ticks[this.ticks.length - 2];
     const tAntePrev = this.ticks[this.ticks.length - 3];
+    const tAnteAntePrev = this.ticks[this.ticks.length - 4];
 
-    const diff = tCurrent.value - tPrev.value;
-    const prevDiff = tPrev.value - tAntePrev.value;
-    const force = Math.abs(diff);
+    const diff1 = tCurrent.value - tPrev.value;
+    const diff2 = tPrev.value - tAntePrev.value;
+    const diff3 = tAntePrev.value - tAnteAntePrev.value;
 
-    // Consistência: 2 movimentos na mesma direção
-    const isConsistent = (diff > 0 && prevDiff > 0) || (diff < 0 && prevDiff < 0);
+    const force = Math.abs(diff1);
 
-    // ✅ Logic: Consistência + Força (> 0.01)
+    // ✅ Consistência: 3 movimentos na mesma direção (Mais robusto)
+    const isConsistent = (diff1 > 0 && diff2 > 0 && diff3 > 0) || (diff1 < 0 && diff2 < 0 && diff3 < 0);
+
     if (isConsistent && force > 0.01) {
       let signal: 'CALL' | 'PUT' | null = null;
-      if (diff > 0) signal = 'CALL';
+      if (diff1 > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.logDefenseSignal(state, 'VELOZ (2 Movimentos)', `Consistência + Força ${force.toFixed(3)} > 0.01`, signal);
+      const logDetail = `Consistência (3 Ticks) + Força ${force.toFixed(3)} > 0.01\n` +
+        `• Movimentos: ${diff3.toFixed(2)} -> ${diff2.toFixed(2)} -> ${diff1.toFixed(2)}\n` +
+        `• Ticks: ${tAnteAntePrev.value} -> ${tAntePrev.value} -> ${tPrev.value} -> ${tCurrent.value}`;
+
+      this.logDefenseSignal(state, 'VELOZ (3 Movimentos)', logDetail, signal);
       return signal;
     }
 
     // Feedback visual se estiver em defesa
+    // Log apenas se 'lastRecLog2' expirar (evita spam)
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa Dinâmica: Aguardando 2 movimentos c/ força...`);
+      this.logger.debug(`[ORION][Veloz] 🛡️ Defesa: Aguardando 3 movimentos consistentes c/ força...`);
+      // Log extra para mostrar que está analisando
+      const debugDiffs = `(${diff3.toFixed(2)}, ${diff2.toFixed(2)}, ${diff1.toFixed(2)})`;
+      this.logger.debug(`[ORION] 🔍 Análise Price Action: Movimentos ${debugDiffs} | Força: ${force.toFixed(3)}`);
     }
 
     return null;
@@ -1031,6 +1042,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
+        // ✅ THRESHOLD: Aguardar pelo menos 5 segundos entre recuperações rápidas para evitar "metralhadora"
+        const now = Date.now();
+        const lastOpTime = (state as any).lastOperationTimestamp || 0;
+        if (now - lastOpTime < 5000) {
+          // Log throttled
+          if (now - ((state as any).lastCooldownLog || 0) > 2000) {
+            (state as any).lastCooldownLog = now;
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando cooldown de recuperação (5s)...`);
+          }
+          continue;
+        }
+
         // ✅ [ZENIX v2.0] Active Fallback (NEXUS LOGIC)
         // Usa a mesma função checkPriceMomentum que agora tem a lógica Nexus (Force > 0.01)
         const nexusSignal = this.checkPriceMomentum(state);
@@ -1038,7 +1061,6 @@ export class OrionStrategy implements IStrategy {
         if (!nexusSignal) {
           // Aguardando força...
           // Log throttled
-          const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
             this.logger.debug(`[ORION][Veloz] ⏳ Aguardando 2 Movimentos (>0.01)...`);
@@ -1144,6 +1166,18 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
+        // ✅ THRESHOLD: Aguardar pelo menos 5 segundos entre recuperações rápidas para evitar "metralhadora"
+        const now = Date.now();
+        const lastOpTime = (state as any).lastOperationTimestamp || 0;
+        if (now - lastOpTime < 5000) {
+          // Log throttled
+          if (now - ((state as any).lastCooldownLog || 0) > 2000) {
+            (state as any).lastCooldownLog = now;
+            this.logger.debug(`[ORION][Moderado] ⏳ Aguardando cooldown de recuperação (5s)...`);
+          }
+          continue;
+        }
+
         // ✅ [ZENIX v2.0] Active Fallback: Usar Tendência (SMA)
         const smaSignal = this.checkTrendSMA(state);
 
