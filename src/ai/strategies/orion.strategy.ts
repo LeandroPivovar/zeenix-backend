@@ -2234,7 +2234,7 @@ export class OrionStrategy implements IStrategy {
         [
           userId,
           operation,
-          null, // ✅ Entry price será preenchido apenas ao finalizar o trade
+          0, // ✅ Entry price será preenchido ao finalizar o trade (0 = pendente)
           stakeAmount,
           'PENDING',
           1,
@@ -2254,7 +2254,7 @@ export class OrionStrategy implements IStrategy {
           [
             userId,
             operation,
-            null, // ✅ Entry price será preenchido apenas ao finalizar o trade
+            0, // ✅ Entry price será preenchido ao finalizar o trade (0 = pendente)
             stakeAmount,
             'PENDING',
             1,
