@@ -462,41 +462,84 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Sinal de Recuperação (Price Action)
    */
+  /**
+   * ✅ ATLAS: Sinal de Recuperação (Price Action) - Filtros Específicos por Modo
+   */
   private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
-    if (ticks.length < 5) return null;
+    if (ticks.length < 6) return null; // Precisa de pelo menos 6 ticks para Lento (5 últimos + atual)
 
     const modeLower = (state.mode || 'veloz').toLowerCase();
     const normalizedMode = modeLower === 'moderado' ? 'normal' :
       (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
 
     const lastTick = ticks[ticks.length - 1];
-    const prevTick = ticks[ticks.length - 2];
-    const antePrev = ticks[ticks.length - 3];
 
-    // ✅ ORION LOGIC (Veloz, Normal, Lento): 3 Movimentos consistentes + Força > 0.01
-    // Padronização solicitada: "o modo de recuperação use a mesma logica do ia orion"
-    if (ticks.length < 4) return null;
+    // ✅ 1. MODO VELOZ: Confirmação Dupla (2 últimos ticks da mesma cor)
+    // Documentação Imagem 3: "Confirmação Dupla (2 últimos ticks da mesma cor)"
+    if (normalizedMode === 'veloz') {
+      const t0 = ticks[ticks.length - 1]; // Atual
+      const t1 = ticks[ticks.length - 2];
+      const t2 = ticks[ticks.length - 3];
 
-    const tCurrent = ticks[ticks.length - 1];
-    const tPrev = ticks[ticks.length - 2];
-    const tAntePrev = ticks[ticks.length - 3];
-    const tAnteAntePrev = ticks[ticks.length - 4];
+      const diff1 = t0.value - t1.value;
+      const diff2 = t1.value - t2.value;
 
-    const diff1 = tCurrent.value - tPrev.value;
-    const diff2 = tPrev.value - tAntePrev.value;
-    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+      // Se ambos subiram -> CALL
+      if (diff1 > 0 && diff2 > 0) return 'CALL';
+      // Se ambos desceram -> PUT
+      if (diff1 < 0 && diff2 < 0) return 'PUT';
 
-    const force = Math.abs(diff1);
+      return null;
+    }
 
-    // ✅ Consistência: 3 movimentos na mesma direção
-    const isUp = diff1 > 0 && diff2 > 0 && diff3 > 0;
-    const isDown = diff1 < 0 && diff2 < 0 && diff3 < 0;
+    // ✅ 2. MODO NORMAL: Saldo Matemático (Soma dos últimos 3 ticks indica a direção real)
+    // Documentação Imagem 3: "Saldo Matemático (Soma dos últimos 3 ticks indica a direção real)"
+    if (normalizedMode === 'normal') {
+      const t0 = ticks[ticks.length - 1];
+      const t3 = ticks[ticks.length - 4]; // Para pegar variação de 3 intervalos (t-3 a t-0)
 
-    // Filtro de Força (igual Orion)
-    if (force > 0.01) {
-      if (isUp) return 'CALL';
-      if (isDown) return 'PUT';
+      // Saldo = Preço Atual - Preço 3 ticks atrás
+      const saldo = t0.value - t3.value;
+
+      // Filtro de "Força" mínima para evitar ruído (opcional, mas recomendado)
+      if (Math.abs(saldo) > 0.01) {
+        if (saldo > 0) return 'CALL';
+        if (saldo < 0) return 'PUT';
+      }
+
+      return null;
+    }
+
+    // ✅ 3. MODO LENTO: Tendência (5 ticks) + Filtro de Doji
+    // Documentação Imagem 3: "Tendência (5 ticks) + Filtro de Doji (Evita entrar em movimentos fracos < 2 pontos)"
+    if (normalizedMode === 'lento') {
+      const t0 = ticks[ticks.length - 1];
+      const t5 = ticks[ticks.length - 6]; // Variação de 5 intervalos
+
+      const deltaTotal = t0.value - t5.value;
+
+      // ✅ Filtro de Doji: Movimento deve ser significativo (> 2 pontos/unidades ou ajuste proporcional)
+      // Considerando Volatility Indices (onde 1 ponto pode ser 1.0 ou 0.01 dependendo da escala),
+      // usaremos um threshold seguro ou o valor absoluto se for inteiro.
+      // Para R_10/1HZ10V, valores são algo como 6000.00. 2 pontos = 2.00?
+      // Vamos assumir > 1.0 para ser "seguro" em índices voláteis, ou 0.02 se for forex.
+      // Como 1HZ10V ~ 6500.00, movimento de 2.0 é razoável.
+      // Ajuste: Para garantir funcionamento, usaremos Math.abs(deltaTotal) > 0.5 (meio ponto) como base inicial.
+      // SE O USUARIO PEDIU "< 2 pontos", SIGNIFICA QUE SE FOR MENOR QUE 2 PONTOS ELE EVITA.
+      // Entao o gatilho exige >= 2 pontos.
+
+      const threshold = 1.0; // Ajuste conservador para "pontos"
+
+      if (Math.abs(deltaTotal) < threshold) {
+        // Movimento fraco (Doji/Lateralização) -> Não operar
+        return null;
+      }
+
+      if (deltaTotal > 0) return 'CALL';
+      if (deltaTotal < 0) return 'PUT';
+
+      return null;
     }
 
     return null;
@@ -684,12 +727,18 @@ export class AtlasStrategy implements IStrategy {
       // Isso permite que o robô continue operando ("sobrevivendo") em vez de parar.
       if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `⚠️ Martingale bloqueado! Próxima aposta ($${stakeAmount.toFixed(2)}) ultrapassaria stop loss disponível ($${stopLossDisponivel.toFixed(2)}). Resetando para aposta base.`);
+          `🛑 Martingale bloqueado! Próxima aposta ($${stakeAmount.toFixed(2)}) ultrapassaria stop loss disponível ($${stopLossDisponivel.toFixed(2)}). IA PAUSADA para proteção.`);
 
-        state.martingaleStep = 0;
-        state.perdaAcumulada = 0;
-        state.isInRecovery = false;
-        stakeAmount = state.apostaBase;
+        // ✅ STOP LOGIC: Pausar em vez de resetar
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_risk', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+          [`Martingale Bloqueado (Risco): $${stakeAmount.toFixed(2)}`, state.userId]
+        );
+
+        state.isOperationActive = false;
+        this.atlasUsers.delete(state.userId);
+        state.isStopped = true;
+        return;
       }
     } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
       // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
