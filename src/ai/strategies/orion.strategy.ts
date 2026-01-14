@@ -909,22 +909,30 @@ export class OrionStrategy implements IStrategy {
    * Adotando a mesma lógica robusta para evitar congelamento.
    */
   private checkPullback(state: any): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
-    if (this.ticks.length < 2) return null;
+    if (this.ticks.length < 3) return null; // Precisa de 3 ticks para verificar consistência (tAtual, tPrev, tAntePrev)
 
     const tCurrent = this.ticks[this.ticks.length - 1];
     const tPrev = this.ticks[this.ticks.length - 2];
+    const tAntePrev = this.ticks[this.ticks.length - 3];
 
     const diff = tCurrent.value - tPrev.value;
     const force = Math.abs(diff);
 
     // ✅ Nexus Logic: Force Filter > 0.01
-    // Para modo Lenta, mantemos a exigência de força para não entrar em ruído
-    if (force > 0.01) {
+    // 🎯 REFINAMENTO LENTO: Exige "Consistência" (2 movimentos na mesma direção)
+    // Evita entrar em "V-Shape" (Caiu -> Subiu do nada). Garante tendência mínima.
+
+    const prevDiff = tPrev.value - tAntePrev.value;
+
+    // Verifica se os sinais são iguais (Sobe/Sobe ou Desce/Desce)
+    const isConsistent = (diff > 0 && prevDiff > 0) || (diff < 0 && prevDiff < 0);
+
+    if (force > 0.01 && isConsistent) {
       let signal: 'CALL' | 'PUT' | null = null;
       if (diff > 0) signal = 'CALL';
       else signal = 'PUT';
 
-      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Nexus): Força ${force.toFixed(3)} > 0.01 (${signal})`);
+      this.saveOrionLog(state.userId, this.symbol, 'sinal', `🔍 ANÁLISE LENTA (Refinada): Consistência + Força ${force.toFixed(3)} (${signal})`);
       return signal;
     }
 
