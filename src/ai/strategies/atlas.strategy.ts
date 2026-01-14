@@ -651,12 +651,13 @@ export class AtlasStrategy implements IStrategy {
       const lossLimit = parseFloat(config.lossLimit) || 0;
       const profitTarget = parseFloat(config.profitTarget) || 0;
       const capitalInicial = parseFloat(config.capitalInicial) || 0;
-      const sessionBalance = parseFloat(config.sessionBalance) || 0;
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
 
-      const lucroAtual = sessionBalance;
-      const capitalSessao = capitalInicial + sessionBalance;
+      // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
+      const dailyProfit = await this.getDailyProfit(state.userId);
+      const lucroAtual = dailyProfit;
+      const capitalSessao = capitalInicial + lucroAtual; // Acompanha o capital baseado no lucro do dia
 
       // Sincronizar estado em memória com banco (para exibição correta)
       state.capital = capitalSessao;
@@ -1309,14 +1310,17 @@ export class AtlasStrategy implements IStrategy {
 
     }
 
-    // ✅ [ZENIX v3.0] Sincronizar session_balance no banco (Essencial para IA Proativa)
-    const lucroSessao = state.capital - state.capitalInicial;
-    await this.dataSource.query(
+    // ✅ [ZENIX v3.1] Lucro REAL do dia (Sincronizado com o Dashboard)
+    const dailyProfit = await this.getDailyProfit(state.userId);
+    const lucroSessao = dailyProfit;
+
+    // Atualizar saldo da sessão no banco de dados (Sincronismo para Dashboard)
+    this.dataSource.query(
       `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
       [lucroSessao, state.userId]
-    ).catch(err => this.logger.error(`[ATLAS] Erro ao sincronizar session_balance:`, err));
+    ).catch(e => { });
 
-    // Verificar limites (Segunda camada de proteção)
+    // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
 
     // Atualizar trade
@@ -1357,9 +1361,11 @@ export class AtlasStrategy implements IStrategy {
     const lossLimit = parseFloat(config.lossLimit) || 0;
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
-    const sessionBalance = parseFloat(config.sessionBalance) || 0;
-    const lucroAtual = sessionBalance;
-    const capitalSessao = capitalInicial + sessionBalance;
+
+    // ✅ [ZENIX v3.1] Lucro REAL do dia
+    const dailyProfit = await this.getDailyProfit(state.userId);
+    const lucroAtual = dailyProfit;
+    const capitalSessao = capitalInicial + lucroAtual;
 
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
@@ -1579,6 +1585,24 @@ export class AtlasStrategy implements IStrategy {
     const lastChar = normalized.charAt(normalized.length - 1);
     const digit = parseInt(lastChar, 10);
     return Number.isNaN(digit) ? 0 : digit;
+  }
+
+  /**
+   * ✅ ATLAS: Obtém lucro total do dia (Soma de todos os trades de hoje)
+   */
+  private async getDailyProfit(userId: string): Promise<number> {
+    try {
+      const result = await this.dataSource.query(
+        `SELECT SUM(profit_loss) as dailyProfit 
+         FROM ai_trades 
+         WHERE user_id = ? AND created_at >= CURDATE()`,
+        [userId]
+      );
+      return parseFloat(result[0]?.dailyProfit) || 0;
+    } catch (e) {
+      this.logger.error(`[ATLAS] Erro ao buscar lucro diário: ${e.message}`);
+      return 0;
+    }
   }
 
   /**
