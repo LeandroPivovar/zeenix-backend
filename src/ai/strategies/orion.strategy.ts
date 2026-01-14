@@ -2117,8 +2117,7 @@ export class OrionStrategy implements IStrategy {
 
       if (operation === 'DIGITOVER') {
         contractParams.contract_type = 'DIGITOVER';
-        contractParams.barrier = '3'; // Over 3
-        contractParams.duration = 1;
+        contractParams.barrier = 3; // ✅ Over 3 (número ao invés de string)
         contractParams.duration = 1;
         contractParams.duration_unit = 't';
       } else if (operation === 'CALL') {
