@@ -920,24 +920,13 @@ export class OrionStrategy implements IStrategy {
     // Verificar força do último movimento (Delta)
     const lastDelta = Math.abs(deltas[deltas.length - 1]);
 
-    // Pegar referências para log
-    const lastTick = relevantTicks[relevantTicks.length - 1];
-    const prevTick = relevantTicks[relevantTicks.length - 2];
-
     if (lastDelta >= minDelta) {
       const signal = allPositive ? 'CALL' : 'PUT';
       const directionStr = allPositive ? 'SUBIU' : 'CAIU';
 
-      // Detalhes para log user-friendly
-      const priceHistory = relevantTicks.map(t => t.value.toFixed(2)).join(' -> ');
-      const calcDetail = `|${lastTick.value} - ${prevTick.value}| = ${lastDelta.toFixed(3)}`;
-
       const logMsg = `🛡️ RECUPERAÇÃO ${modeLabel} DETECTADA\n` +
-        `• Onde: Últimos ${ticksCount} movimentos (${priceHistory})\n` +
-        `• O que aconteceu: O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
-        `• Cálculo da Força: ${calcDetail}\n` +
-        `• Força Final: ${lastDelta.toFixed(3)} (Mínimo: ${minDelta}) ✅\n` +
-        `• Conclusão: Mercado com força para continuar ${allPositive ? 'SUBINDO' : 'CAINDO'}.`;
+        `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
+        `• Mercado com força para continuar ${allPositive ? 'SUBINDO' : 'CAINDO'}.`;
 
       // Logar
       this.saveOrionLog(state.userId, this.symbol, 'sinal', logMsg);
@@ -2112,7 +2101,6 @@ export class OrionStrategy implements IStrategy {
         state.userId,
         operation,
         stakeAmount,
-        currentPrice,
         mode,
       );
 
@@ -2227,7 +2215,6 @@ export class OrionStrategy implements IStrategy {
     userId: string,
     operation: OrionSignal,
     stakeAmount: number,
-    entryPrice: number,
     mode: string,
   ): Promise<number> {
     const analysisData = {
@@ -2247,7 +2234,7 @@ export class OrionStrategy implements IStrategy {
         [
           userId,
           operation,
-          entryPrice,
+          null, // ✅ Entry price será preenchido apenas ao finalizar o trade
           stakeAmount,
           'PENDING',
           1,
@@ -2267,7 +2254,7 @@ export class OrionStrategy implements IStrategy {
           [
             userId,
             operation,
-            entryPrice,
+            null, // ✅ Entry price será preenchido apenas ao finalizar o trade
             stakeAmount,
             'PENDING',
             1,
