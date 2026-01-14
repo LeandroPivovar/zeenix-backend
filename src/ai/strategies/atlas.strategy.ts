@@ -23,12 +23,12 @@ function calcularProximaApostaAtlas(
       aposta = perdasTotais / payout;
       break;
     case 'moderado':
-      // Recupera 100% da perda + 25% de lucro
-      aposta = (perdasTotais * 1.25) / payout;
+      // Recupera 100% da perda + 15% de lucro (Conforme Documentação Atlas v3)
+      aposta = (perdasTotais * 1.15) / payout;
       break;
     case 'agressivo':
-      // Recupera 100% da perda + 50% de lucro
-      aposta = (perdasTotais * 1.50) / payout;
+      // Recupera 100% da perda + 30% de lucro (Conforme Documentação Atlas v3)
+      aposta = (perdasTotais * 1.30) / payout;
       break;
   }
 
@@ -412,45 +412,46 @@ export class AtlasStrategy implements IStrategy {
       return { canTrade: false, analysis };
     }
 
-    const lastDigits = state.digitBuffer.slice(-3); // Olhamos apenas os últimos 3
-    const lastDigit = lastDigits[lastDigits.length - 1];
+    const lastDigit = state.digitBuffer[state.digitBuffer.length - 1];
 
-    analysis += ` • Últimos Dígitos: [${lastDigits.join(', ')}]\n`;
+    analysis += ` • Últimos Dígitos: [${state.digitBuffer.slice(-5).join(', ')}]\n`;
 
-    // ✅ 1. MODO VELOZ: Último dígito > 3
+    // ✅ 1. MODO VELOZ: Último dígito > 2
     if (normalizedMode === 'veloz') {
-      if (lastDigit > 3) {
-        analysis += `✅ GATILHO: Último dígito (${lastDigit}) > 3.\n`;
+      if (lastDigit > 2) {
+        analysis += `✅ GATILHO: Último dígito (${lastDigit}) > 2.\n`;
         analysis += `🌊 [DECISÃO] Entrada: OVER`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 3.\n`;
+        analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 2.\n`;
         return { canTrade: false, analysis };
       }
     }
 
-    // ✅ 2. MODO NORMAL: 2 dos últimos 3 > 3
+    // ✅ 2. MODO NORMAL: 3 dos últimos 5 > 2 (60% consistência)
     if (normalizedMode === 'normal') {
-      const countOver3 = lastDigits.filter(d => d > 3).length;
-      if (countOver3 >= 2) {
-        analysis += `✅ GATILHO: Maioria recente (${countOver3}/3) > 3.\n`;
+      const window = state.digitBuffer.slice(-5);
+      const countOver2 = window.filter(d => d > 2).length;
+      if (countOver2 >= 3) {
+        analysis += `✅ GATILHO: Consistência (${countOver2}/5) > 2.\n`;
         analysis += `🌊 [DECISÃO] Entrada: OVER`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Apenas ${countOver3}/3 > 3.\n`;
+        analysis += `❌ Aguardando: Apenas ${countOver2}/5 > 2.\n`;
         return { canTrade: false, analysis };
       }
     }
 
-    // ✅ 3. MODO LENTO: 3 dos últimos 3 > 3 (Céu de Brigadeiro)
+    // ✅ 3. MODO LENTO: 8 dos últimos 10 > 2 (80% dominância)
     if (normalizedMode === 'lento') {
-      const countOver3 = lastDigits.filter(d => d > 3).length;
-      if (countOver3 === 3) {
-        analysis += `✅ GATILHO: Dominância total (3/3) > 3.\n`;
+      const window = state.digitBuffer.slice(-10);
+      const countOver2 = window.filter(d => d > 2).length;
+      if (countOver2 >= 8) {
+        analysis += `✅ GATILHO: Dominância (${countOver2}/10) > 2.\n`;
         analysis += `🌊 [DECISÃO] Entrada: OVER`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ Aguardando: Apenas ${countOver3}/3 > 3.\n`;
+        analysis += `❌ Aguardando: Apenas ${countOver2}/10 > 2.\n`;
         return { canTrade: false, analysis };
       }
     }
@@ -691,10 +692,8 @@ export class AtlasStrategy implements IStrategy {
         stakeAmount = state.apostaBase;
       }
     } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
-      // ✅ SOROS NÍVEL 1 APENAS (Pedido do usuário)
-      // Ganhou uma -> aplica lucro na próxima.
-      // Se ganhar a segunda -> reseta para mão fixa (não faz nível 2)
-      const SOROS_FACTOR = 0.9;
+      // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
+      const SOROS_FACTOR = 1.0;
       stakeAmount = state.apostaBase + (state.ultimoLucro * SOROS_FACTOR);
     }
 
@@ -883,7 +882,7 @@ export class AtlasStrategy implements IStrategy {
 
       const proposalStartTime = Date.now();
       // ✅ ATLAS: Para DIGITOVER/DIGITUNDER, é necessário o parâmetro barrier (dígito de comparação)
-      // ATLAS opera com OVER/UNDER baseado em dígito > 3, então barrier = 3
+      // ATLAS opera com OVER/UNDER baseado em dígito > 2, então barrier = 2
       const proposalPayload: any = {
         proposal: 1,
         amount: contractParams.amount,
@@ -897,7 +896,7 @@ export class AtlasStrategy implements IStrategy {
 
       // ✅ Adicionar barrier para contratos DIGITOVER/DIGITUNDER
       if (contractParams.contract_type === 'DIGITOVER' || contractParams.contract_type === 'DIGITUNDER') {
-        proposalPayload.barrier = 3; // Dígito de comparação: > 3 (OVER) ou ≤ 3 (UNDER)
+        proposalPayload.barrier = 2; // Dígito de comparação: > 2 (OVER) ou ≤ 2 (UNDER)
       }
       // ✅ Contratos CALL/PUT (Rise/Fall) não usam barrier na Deriv padrão (apenas duration)
       // Se fosse barrier trading, precisaria. Mas Rise/Fall padrão não precisa.
