@@ -894,9 +894,14 @@ export class OrionStrategy implements IStrategy {
    * ✅ UNIFICADO: Momentum + Força do Mercado (Delta)
    * Verifica consistência direcional em N intervalos + força mínima no último movimento.
    * 
+   * MODO VELOZ: 2 ticks + delta 0.3
+   * MODO NORMAL: 3 ticks + delta 0.5
+   * MODO LENTO: 3 ticks + delta 0.5
+   * 
    * @param ticksCount - Número de intervalos a verificar (Ex: 2 ticks = 3 pontos de dados)
    * @param minDelta - Diferença mínima absoluta no último intervalo
    * @param modeLabel - Nome do modo para exibição nos logs (Ex: VELOZ, NORMAL)
+   * @returns CALL ou PUT baseado no momentum, ou null se não houver sinal
    */
   private checkMomentumAndStrength(state: any, ticksCount: number, minDelta: number, modeLabel: string): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
     // Precisa de N+1 pontos de dados para N intervalos
@@ -938,14 +943,18 @@ export class OrionStrategy implements IStrategy {
     if (lastDelta >= minDelta) {
       const signal = allPositive ? 'CALL' : 'PUT';
       const directionStr = allPositive ? 'SUBIU' : 'CAIU';
+      const direction = allPositive ? 'ALTA' : 'BAIXA';
 
       const logMsg = `🛡️ RECUPERAÇÃO ${modeLabel} DETECTADA\n` +
         `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
+        `• Delta: ${lastDelta.toFixed(3)} (Mínimo: ${minDelta})\n` +
+        `• Direção: ${direction}\n` +
+        `• Payout: 95%\n` +
         `• Mercado com força para continuar ${allPositive ? 'SUBINDO' : 'CAINDO'}.`;
 
       // Logar
       this.saveOrionLog(state.userId, this.symbol, 'sinal', logMsg);
-      this.logger.log(`[ORION] 🛡️ Defesa ${modeLabel}: ${signal} (Força ${lastDelta.toFixed(3)} >= ${minDelta})`);
+      this.logger.log(`[ORION] 🛡️ Defesa ${modeLabel}: ${signal} | Delta: ${lastDelta.toFixed(3)} >= ${minDelta} | Direção: ${direction} | Payout: 95%`);
 
       return signal;
     }
