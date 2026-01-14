@@ -45,6 +45,7 @@ export interface AtlasUserState {
   maxBalance: number; // ✅ ATLAS: High Water Mark para Stop Blindado
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
+  originalMode: string; // ✅ ATLAS: Modo original configurado pelo usuário
   symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
 
   // Estado de operação
@@ -533,6 +534,17 @@ export class AtlasStrategy implements IStrategy {
 
       if (Math.abs(deltaTotal) < threshold) {
         // Movimento fraco (Doji/Lateralização) -> Não operar
+
+        // ✅ Log periódico explicativo (para o usuário saber que o robô está pensando)
+        const key = `${symbol}_${state.userId}_doji_wait`;
+        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
+          this.saveAtlasLog(state.userId, symbol, 'analise',
+            `🐢 [RECUPERAÇÃO LENTA] Aguardando tendência forte.\n` +
+            `• Variação (5 ticks): ${deltaTotal.toFixed(2)}\n` +
+            `• Mínimo Exigido: > ${threshold}\n` +
+            `• Status: Mercado Lateral (Doji) ✋`);
+          this.intervaloLogsEnviados.set(key, true);
+        }
         return null;
       }
 
@@ -727,18 +739,12 @@ export class AtlasStrategy implements IStrategy {
       // Isso permite que o robô continue operando ("sobrevivendo") em vez de parar.
       if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `🛑 Martingale bloqueado! Próxima aposta ($${stakeAmount.toFixed(2)}) ultrapassaria stop loss disponível ($${stopLossDisponivel.toFixed(2)}). IA PAUSADA para proteção.`);
+          `⚠️ Martingale bloqueado! Próxima aposta ($${stakeAmount.toFixed(2)}) ultrapassaria stop loss disponível ($${stopLossDisponivel.toFixed(2)}). Resetando para aposta base.`);
 
-        // ✅ STOP LOGIC: Pausar em vez de resetar
-        await this.dataSource.query(
-          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_risk', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
-          [`Martingale Bloqueado (Risco): $${stakeAmount.toFixed(2)}`, state.userId]
-        );
-
-        state.isOperationActive = false;
-        this.atlasUsers.delete(state.userId);
-        state.isStopped = true;
-        return;
+        state.martingaleStep = 0;
+        state.perdaAcumulada = 0;
+        state.isInRecovery = false;
+        stakeAmount = state.apostaBase;
       }
     } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
       // ✅ SOROS NÍVEL 1: Próxima entrada = Stake Base + 100% Lucro (Conforme Documentação)
@@ -1139,6 +1145,13 @@ export class AtlasStrategy implements IStrategy {
         state.isInRecovery = false;
         state.apostaInicial = state.apostaBase;
         state.virtualLossCount = 0; // ✅ ATLAS: Resetar loss virtual na recuperação
+
+        // ✅ ATLAS: Auto-Revert -> Voltar ao modo original após recuperar
+        if (state.mode !== state.originalMode) {
+          this.saveAtlasLog(state.userId, symbol, 'info',
+            `🔄 Recuperação Concluída: Retornando ao modo ${state.originalMode.toUpperCase()}`);
+          state.mode = state.originalMode;
+        }
       }
       // ✅ Soros: verificar ciclo (Apenas se NÃO estava em recuperação)
       else if (!state.isInRecovery) {
@@ -1426,12 +1439,17 @@ export class AtlasStrategy implements IStrategy {
         existing.symbol !== params.symbol ||
         existing.apostaBase !== params.apostaInicial;
 
+      const configChanged = existing.originalMode !== params.mode;
+
       Object.assign(existing, {
         capital: params.stakeAmount,
         capitalInicial: params.stakeAmount,
         derivToken: params.derivToken,
         currency: params.currency,
-        mode: params.mode,
+        // ✅ ATLAS: Só atualiza o mode SE o usuário mudou a configuração explicitamente
+        // Se for apenas uma reconexão/update e estivermos em defesa (mode != originalMode), mantemos a defesa.
+        mode: configChanged ? params.mode : existing.mode,
+        originalMode: params.mode, // Sempre atualiza a preferência do usuário
         modoMartingale: params.modoMartingale || 'conservador',
         profitTarget: params.profitTarget || null,
         stopLoss: stopLossNormalized,
@@ -1462,6 +1480,7 @@ export class AtlasStrategy implements IStrategy {
       maxBalance: params.stakeAmount,
       modoMartingale: params.modoMartingale || 'conservador',
       mode: params.mode,
+      originalMode: params.mode, // Inicializa com o modo escolhido
       symbol: params.symbol,
 
       isOperationActive: false,
