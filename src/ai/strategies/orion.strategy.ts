@@ -110,6 +110,7 @@ export interface PrecisoUserState {
   // ✅ NOVOS CAMPOS PARA ORION HÍBRIDA
   currentPhase: OrionPhase;
   lastLowDigitsCount: number;
+  lastOperationTimestamp?: number; // ✅ Timestamp da última operação para cooldown de tempo (10s)
 }
 
 // ============================================
@@ -1351,6 +1352,13 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
+      // ✅ [ZENIX v2.0] Cooldown DE TEMPO (10s) - Pedido explícito de precisão
+      const now = Date.now();
+      if (state.lastOperationTimestamp && (now - state.lastOperationTimestamp < 10000)) {
+        // Aguardando tempo...
+        continue;
+      }
+
       // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
@@ -1374,6 +1382,8 @@ export class OrionStrategy implements IStrategy {
         this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
         this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Price Action Dinâmico (${novoSinal})`);
 
+        // Atualiza timestamp também na recuperação
+        state.lastOperationTimestamp = Date.now();
         await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
         continue;
       }
@@ -1407,6 +1417,7 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = sinal;
       }
 
+      state.lastOperationTimestamp = Date.now(); // ✅ Atualiza timestamp da operação
       await this.executeOrionOperation(state, sinal, 'lenta', entryNumber);
     }
   }
