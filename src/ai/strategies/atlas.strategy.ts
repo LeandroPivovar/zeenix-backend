@@ -1449,7 +1449,7 @@ export class AtlasStrategy implements IStrategy {
 
     if (existing) {
       hasConfigChanges =
-        existing.capital !== params.stakeAmount ||
+        existing.capitalInicial !== params.stakeAmount ||
         existing.mode !== params.mode ||
         existing.modoMartingale !== (params.modoMartingale || 'conservador') ||
         existing.profitTarget !== (params.profitTarget || null) ||
