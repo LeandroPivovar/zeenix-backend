@@ -1199,7 +1199,7 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (MODERADO: 3 Ticks + Delta 0.5)
-        const smaSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'NORMAL');
+        const smaSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'MODERADO');
 
         if (!smaSignal) {
           // Aguardando...
@@ -1299,7 +1299,7 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Active Fallback usando Momentum + Delta (PRECISO: 3 Ticks + Delta 0.5)
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
         // Usar lógica "Momentum + Delta" também para Preciso
-        const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'NORMAL');
+        const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
 
         if (!momentumSignal) continue;
 
