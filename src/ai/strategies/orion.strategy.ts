@@ -2850,7 +2850,7 @@ export class OrionStrategy implements IStrategy {
                     userId,
                     this.symbol,
                     'resultado',
-                    `✅ Contrato finalizado em ${monitorDuration}ms | Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`,
+                    `✅ Contrato finalizado em ${monitorDuration}ms\n• Entrada: ${Number(entrySpot).toFixed(2)} | Saída: ${Number(exitSpot).toFixed(2)}\n• Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`,
                   );
                 }
 
