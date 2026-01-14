@@ -2604,6 +2604,21 @@ export class OrionStrategy implements IStrategy {
       const proposalStartTime = Date.now();
       this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
 
+      // Log para o usuário ver os parâmetros enviados
+      if (userId) {
+        this.saveOrionLog(
+          userId,
+          this.symbol,
+          'info',
+          `📤 ENVIANDO PARA DERIV\n` +
+          `• Tipo de Contrato: ${contractParams.contract_type}\n` +
+          `• Barreira: ${(contractParams as any).barrier || 'N/A'}\n` +
+          `• Valor: $${contractParams.amount}\n` +
+          `• Duração: ${(contractParams as any).duration || 1} tick(s)\n` +
+          `• Símbolo: ${this.symbol}`
+        );
+      }
+
       const proposalResponse: any = await connection.sendRequest({
         proposal: 1,
         amount: contractParams.amount,
@@ -2843,6 +2858,26 @@ export class OrionStrategy implements IStrategy {
                 );
 
                 if (userId) {
+                  // Log completo do resultado recebido da Deriv
+                  const resultStatus = profit >= 0 ? 'WON ✅' : 'LOST ❌';
+                  const lastDigit = String(exitSpot).split('.')[1]?.slice(-1) || String(Math.floor(exitSpot)).slice(-1);
+
+                  this.saveOrionLog(
+                    userId,
+                    this.symbol,
+                    'info',
+                    `📥 RESULTADO RECEBIDO DA DERIV\n` +
+                    `• Status: ${resultStatus}\n` +
+                    `• Contrato ID: ${contractId}\n` +
+                    `• Tipo: ${contract.contract_type || 'N/A'}\n` +
+                    `• Barreira: ${contract.barrier || 'N/A'}\n` +
+                    `• Preço de Entrada: ${entrySpot}\n` +
+                    `• Preço de Saída: ${exitSpot}\n` +
+                    `• Último Dígito: ${lastDigit}\n` +
+                    `• Lucro/Prejuízo: $${profit.toFixed(2)}\n` +
+                    `• Duração: ${monitorDuration}ms`
+                  );
+
                   this.saveOrionLog(
                     userId,
                     this.symbol,
