@@ -45,7 +45,7 @@ export interface AtlasUserState {
   maxBalance: number; // ✅ ATLAS: High Water Mark para Stop Blindado
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
-  symbol: 'R_10' | 'R_25' | 'R_100';
+  symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
 
   // Estado de operação
   isOperationActive: boolean;
@@ -96,10 +96,12 @@ export class AtlasStrategy implements IStrategy {
     R_10: Tick[];
     R_25: Tick[];
     R_100: Tick[];
+    '1HZ100V': Tick[];
   } = {
       R_10: [],
       R_25: [],
       R_100: [],
+      '1HZ100V': [],
     };
 
   private appId: string;
@@ -108,7 +110,7 @@ export class AtlasStrategy implements IStrategy {
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
     userId: string;
-    symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
     message: string;
     details?: any;
@@ -146,15 +148,15 @@ export class AtlasStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    if (!symbol || !['R_10', 'R_25', 'R_100'].includes(symbol)) {
+    if (!symbol || !['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
       // ✅ DIAGNÓSTICO: Log quando recebe símbolo inválido
       if (symbol) {
-        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25 ou R_100)`);
+        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25, R_100 ou 1HZ100V)`);
       }
       return;
     }
 
-    const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100';
+    const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     this.logger.debug(`[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`);
 
     // Atualizar ticks globais
@@ -214,15 +216,20 @@ export class AtlasStrategy implements IStrategy {
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    // ✅ Determinar símbolo: R_10 (vol10), R_25 (vol25) ou R_100 (vol100)
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' = 'R_100'; // Default agora é R_100 (Solicitado: APENAS R_100)
-    if (symbol && ['R_10', 'R_25', 'R_100'].includes(symbol)) {
-      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100';
+    // ✅ Determinar símbolo: R_10, R_25, R_100 ou 1HZ100V
+    // Default alterado para 1HZ100V conforme pedido do usuário
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' = '1HZ100V';
+
+    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
+      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
-      // Mapeamento preciso: evitar que 'vol100' combine com 'vol10'
+
+      // ✅ Mapear preferência "Vol 100" para "1HZ100V" (1s)
       if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
-        atlasSymbol = 'R_100';
+        atlasSymbol = '1HZ100V'; // ✅ Forçar 1s Index se pedir Vol 100
+      } else if (marketLower.includes('1hz100v') || marketLower.includes('1s')) {
+        atlasSymbol = '1HZ100V';
       } else if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
         atlasSymbol = 'R_10';
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
@@ -230,7 +237,7 @@ export class AtlasStrategy implements IStrategy {
       } else {
         // Fallback robusto
         if (marketLower.includes('vol100') || marketLower.includes('r_100')) {
-          atlasSymbol = 'R_100';
+          atlasSymbol = '1HZ100V'; // ✅ Preferência para 1HZ100V
         } else if (marketLower.includes('vol10') || marketLower.includes('r_10')) {
           atlasSymbol = 'R_10';
         } else if (marketLower.includes('vol25') || marketLower.includes('r_25')) {
@@ -334,12 +341,31 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
 
-    // ✅ ATLAS: Lógica de Recuperação/Soros Imediata
-    if (state.isInRecovery || state.isInSoros) {
-      // Recuperação imediata: executar no próximo tick disponível
-      await this.executeAtlasOperation(state, symbol, 'OVER');
+    // ✅ ATLAS: Lógica de Recuperação (Price Action - Rise/Fall)
+    if (state.isInRecovery) {
+      // Tentar obter sinal de Price Action para recuperação
+      const recoverySignal = this.getRecoverySignal(state, symbol);
+
+      if (recoverySignal) {
+        // Se encontrou sinal de recuperação, entra com a stake de recuperação
+        const signalOp = recoverySignal === 'CALL' ? 'CALL' : 'PUT';
+        const typeLabel = recoverySignal === 'CALL' ? 'Rise' : 'Fall';
+        await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal} (${typeLabel})`);
+      } else {
+        // Se não encontrou sinal, aguarda e loga (mas com moderação)
+        const key = `${symbol}_${state.userId}_waiting_recovery`;
+        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
+          // this.saveAtlasLog(state.userId, symbol, 'info', `🛡️ Buscando oportunidade de recuperação (${state.mode})...`);
+          this.intervaloLogsEnviados.set(key, true);
+        }
+      }
       return;
     }
+
+    // ✅ ATLAS: Se for SOROS, usa a lógica de entrada normal (Gatilhos)
+    // Mas se quiser usar a mesma lógica de recuperação para Soros, altere aqui.
+    // Por padrão, Soros segue a lógica de entrada da estratégia (Digit Over).
+
 
     // ✅ ATLAS: Verificar gatilho e análise ultrarrápida
     const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
@@ -360,10 +386,9 @@ export class AtlasStrategy implements IStrategy {
   }
 
   /**
-   * ✅ ATLAS: Verifica gatilhos ultrarrápidos
+   * ✅ ATLAS: Verifica gatilhos ultrarrápidos (Conforme Documentação)
    */
   private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): { canTrade: boolean; analysis: string } {
-    // ✅ CORREÇÃO: Normalizar modo para mapeamento correto
     const modeLower = (state.mode || 'veloz').toLowerCase();
     const normalizedMode = modeLower === 'moderado' ? 'normal' :
       (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
@@ -372,71 +397,112 @@ export class AtlasStrategy implements IStrategy {
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
     const requiredLossCount = requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
 
-    let analysis = `🔍 [ANÁLISE ATLAS ${state.mode.toUpperCase()}]\n`;
+    let analysis = `🔍 [ANÁLISE ATLAS ${normalizedMode.toUpperCase()}]\n`;
     analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
 
-    // ✅ CORREÇÃO: Permitir primeira operação sem loss virtual (evita deadlock)
-    // Se nunca operou (lastOperationTimestamp é null), permitir operar sem loss virtual
+    // Lógica de Bypass de Virtual Loss (Primeira operação ou Win recente)
     const isFirstOperation = state.lastOperationTimestamp === null;
-
-    // ✅ CORREÇÃO: Se ganhou recentemente (virtualLossCount = 0), permitir operar após intervalo
-    // Isso evita que o sistema fique travado após uma vitória
-    // O intervalo já é verificado em canProcessAtlasAsset, então aqui apenas verificamos se passou
     const hasRecentWin = state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
     const timeSinceLastOp = state.lastOperationTimestamp
       ? (Date.now() - state.lastOperationTimestamp.getTime()) / 1000
       : 0;
     const intervalPassed = !modeConfig.intervaloSegundos || timeSinceLastOp >= modeConfig.intervaloSegundos;
-
-    // ✅ Permitir operar se:
-    // 1. É a primeira operação, OU
-    // 2. Ganhou recentemente (virtualLossCount = 0) E passou intervalo mínimo, OU
-    // 3. Atingiu o loss virtual necessário (virtualLossCount >= requiredLossCount)
     const canBypassVirtualLoss = isFirstOperation || (hasRecentWin && intervalPassed);
 
     if (!canBypassVirtualLoss && state.virtualLossCount < requiredLossCount) {
-      // ✅ Log mais informativo sobre por que não pode operar
       if (hasRecentWin && !intervalPassed) {
         analysis += ` • Aguardando intervalo: ${timeSinceLastOp.toFixed(1)}s / ${modeConfig.intervaloSegundos}s ⏱️\n`;
       }
-      return { canTrade: false, analysis }; // Ainda não atingiu o gatilho de loss virtual
+      return { canTrade: false, analysis };
     }
 
-    const lastDigits = state.digitBuffer.slice(-modeConfig.amostraInicial);
+    const lastDigits = state.digitBuffer.slice(-3); // Olhamos apenas os últimos 3
+    const lastDigit = lastDigits[lastDigits.length - 1];
+
     analysis += ` • Últimos Dígitos: [${lastDigits.join(', ')}]\n`;
 
-    // ✅ ATLAS VELOZ: Análise mínima - apenas verificar sequência imediata
+    // ✅ 1. MODO VELOZ: Último dígito > 3
     if (normalizedMode === 'veloz') {
-      // Se os últimos 3 dígitos foram todos Over (> 3), evitar entrada
-      const last3 = state.digitBuffer.slice(-3);
-      if (last3.length === 3 && last3.every(d => d > 3)) {
-        analysis += ` • Filtro de Pico (>3): ${last3.filter(d => d > 3).length}/3 (Saturado) ❌\n`;
-        return { canTrade: false, analysis }; // Evita entrar no pico de sequência
-      }
-      analysis += ` • Filtro de Pico (>3): ${last3.filter(d => d > 3).length}/3 (OK) ✅\n`;
-      analysis += `🌊 [DECISÃO] Critérios atendidos. Entrada: OVER`;
-      return { canTrade: true, analysis }; // ✅ Pode operar (gatilho = 0)
-    }
-
-    // ✅ ATLAS NORMAL/LENTO: Análise de desequilíbrio
-    if (normalizedMode === 'normal' || normalizedMode === 'lento') {
-      const over3Count = lastDigits.filter(d => d > 3).length;
-      const over3Ratio = over3Count / lastDigits.length;
-      const over3Percent = Math.round(over3Ratio * 100);
-      const metaPercent = Math.round(modeConfig.desequilibrioMin * 100);
-
-      analysis += ` • Frequência Over (>3): ${over3Percent}% (Meta ≤ ${metaPercent}%) ${over3Ratio <= modeConfig.desequilibrioMin ? '✅' : '❌'}\n`;
-
-      // Se a frequência de Over está muito alta, aguardar
-      if (over3Ratio > modeConfig.desequilibrioMin) {
+      if (lastDigit > 3) {
+        analysis += `✅ GATILHO: Último dígito (${lastDigit}) > 3.\n`;
+        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+        return { canTrade: true, analysis };
+      } else {
+        analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 3.\n`;
         return { canTrade: false, analysis };
       }
+    }
 
-      analysis += `🌊 [DECISÃO] Critérios atendidos. Entrada: OVER`;
-      return { canTrade: true, analysis };
+    // ✅ 2. MODO NORMAL: 2 dos últimos 3 > 3
+    if (normalizedMode === 'normal') {
+      const countOver3 = lastDigits.filter(d => d > 3).length;
+      if (countOver3 >= 2) {
+        analysis += `✅ GATILHO: Maioria recente (${countOver3}/3) > 3.\n`;
+        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+        return { canTrade: true, analysis };
+      } else {
+        analysis += `❌ Aguardando: Apenas ${countOver3}/3 > 3.\n`;
+        return { canTrade: false, analysis };
+      }
+    }
+
+    // ✅ 3. MODO LENTO: 3 dos últimos 3 > 3 (Céu de Brigadeiro)
+    if (normalizedMode === 'lento') {
+      const countOver3 = lastDigits.filter(d => d > 3).length;
+      if (countOver3 === 3) {
+        analysis += `✅ GATILHO: Dominância total (3/3) > 3.\n`;
+        analysis += `🌊 [DECISÃO] Entrada: OVER`;
+        return { canTrade: true, analysis };
+      } else {
+        analysis += `❌ Aguardando: Apenas ${countOver3}/3 > 3.\n`;
+        return { canTrade: false, analysis };
+      }
     }
 
     return { canTrade: false, analysis };
+  }
+
+  /**
+   * ✅ ATLAS: Sinal de Recuperação (Price Action)
+   */
+  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): 'CALL' | 'PUT' | null {
+    const ticks = this.atlasTicks[symbol];
+    if (ticks.length < 5) return null;
+
+    const modeLower = (state.mode || 'veloz').toLowerCase();
+    const normalizedMode = modeLower === 'moderado' ? 'normal' :
+      (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
+
+    const lastTick = ticks[ticks.length - 1];
+    const prevTick = ticks[ticks.length - 2];
+    const antePrev = ticks[ticks.length - 3];
+
+    // ✅ ORION LOGIC (Veloz, Normal, Lento): 3 Movimentos consistentes + Força > 0.01
+    // Padronização solicitada: "o modo de recuperação use a mesma logica do ia orion"
+    if (ticks.length < 4) return null;
+
+    const tCurrent = ticks[ticks.length - 1];
+    const tPrev = ticks[ticks.length - 2];
+    const tAntePrev = ticks[ticks.length - 3];
+    const tAnteAntePrev = ticks[ticks.length - 4];
+
+    const diff1 = tCurrent.value - tPrev.value;
+    const diff2 = tPrev.value - tAntePrev.value;
+    const diff3 = tAntePrev.value - tAnteAntePrev.value;
+
+    const force = Math.abs(diff1);
+
+    // ✅ Consistência: 3 movimentos na mesma direção
+    const isUp = diff1 > 0 && diff2 > 0 && diff3 > 0;
+    const isDown = diff1 < 0 && diff2 < 0 && diff3 < 0;
+
+    // Filtro de Força (igual Orion)
+    if (force > 0.01) {
+      if (isUp) return 'CALL';
+      if (isDown) return 'PUT';
+    }
+
+    return null;
   }
 
   /**
@@ -485,8 +551,8 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasOperation(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25' | 'R_100',
-    operation: 'OVER' | 'UNDER',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
     analysis?: string,
   ): Promise<void> {
     // ✅ Verificações pré-entrada: meta, stop-loss e stop-blindado
@@ -735,7 +801,11 @@ export class AtlasStrategy implements IStrategy {
       this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
     }
 
-    const contractType = operation === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER';
+    let contractType = '';
+    if (operation === 'OVER') contractType = 'DIGITOVER';
+    else if (operation === 'UNDER') contractType = 'DIGITUNDER';
+    else if (operation === 'CALL') contractType = 'CALL';
+    else if (operation === 'PUT') contractType = 'PUT';
 
     this.logger.log(
       `[ATLAS][${symbol}] 🎲 EXECUTANDO | User: ${state.userId} | ` +
@@ -808,7 +878,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasTradeDirect(
     userId: string,
-    symbol: 'R_10' | 'R_25' | 'R_100',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     token: string,
     contractParams: any,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
@@ -833,6 +903,9 @@ export class AtlasStrategy implements IStrategy {
       if (contractParams.contract_type === 'DIGITOVER' || contractParams.contract_type === 'DIGITUNDER') {
         proposalPayload.barrier = 3; // Dígito de comparação: > 3 (OVER) ou ≤ 3 (UNDER)
       }
+      // ✅ Contratos CALL/PUT (Rise/Fall) não usam barrier na Deriv padrão (apenas duration)
+      // Se fosse barrier trading, precisaria. Mas Rise/Fall padrão não precisa.
+
 
       const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
 
@@ -973,10 +1046,10 @@ export class AtlasStrategy implements IStrategy {
    */
   private async processAtlasResult(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25' | 'R_100',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     isWin: boolean,
     stakeAmount: number,
-    operation: 'OVER' | 'UNDER',
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
     profit: number = 0,
     exitPrice: number = 0,
     tradeId?: number | null,
@@ -986,14 +1059,24 @@ export class AtlasStrategy implements IStrategy {
     state.lastOperationTimestamp = new Date();
     state.creationCooldownUntil = Date.now() + 500; // ✅ ATLAS: Cooldown mínimo para EHF
 
+    // ✅ ATLAS: Modo Normal Recovery Payout Override
+    // Rise/Fall tem payout maior (~95.4%) que Digit Over (~63%)
+    // Ajustar payout se necessário para cálculo de lucro correto
+
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return;
+
+    // Se foi operação de Price Action (CALL/PUT), o payout é diferente (~0.95)
+    // Se foi OVER/UNDER, é (~0.63)
+    const isPriceAction = operation === 'CALL' || operation === 'PUT';
+    const currentPayout = isPriceAction ? 0.95 : modeConfig.payout;
+
 
     if (isWin) {
       // ✅ VITÓRIA
       // O profit da API Deriv já é o lucro líquido (ganho bruto - aposta)
       // Se profit > 0, usar diretamente; se não, calcular ganho bruto - aposta
-      const lucro = profit > 0 ? profit : (stakeAmount * modeConfig.payout - stakeAmount);
+      const lucro = profit > 0 ? profit : (stakeAmount * currentPayout - stakeAmount);
       state.capital += lucro;
       state.totalProfitLoss += lucro;
 
@@ -1036,6 +1119,9 @@ export class AtlasStrategy implements IStrategy {
         }
       }
 
+
+
+      // Para CALL/PUT, não temos "dígito resultado" no mesmo sentido, mas podemos extrair o último dígito do exitPrice
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
       // ✅ O profit da API Deriv já é lucro líquido (ganho bruto - aposta)
       // Para exibir o ganho bruto, somamos a aposta de volta
@@ -1045,9 +1131,12 @@ export class AtlasStrategy implements IStrategy {
       state.virtualLossCount = 0;
       state.virtualLossActive = false;
 
+      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `✅ VITÓRIA! | Dígito: ${digitoResultado} (${digitoResultado > 3 ? 'OVER' : 'UNDER'}) ✅ | ` +
+        `✅ VITÓRIA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Ganho: $${ganhoBruto.toFixed(2)} | Lucro: $${lucro.toFixed(2)} | Capital: $${state.capital.toFixed(2)}`);
+
 
     } else {
       // ✅ DERROTA
@@ -1083,11 +1172,21 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 3 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
+        state.mode = 'lento';
+        this.saveAtlasLog(state.userId, symbol, 'alerta',
+          `🛡️ Defesa Automática: Mudança para modo LENTO devido a sequências de perdas (M${state.martingaleStep}).`);
+      }
+
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `❌ DERROTA! | Dígito: ${digitoResultado} (${digitoResultado > 3 ? 'OVER' : 'UNDER'}) ❌ | ` +
+        `❌ DERROTA! | Op: ${opLabel} | Dígito: ${digitoResultado} | ` +
         `Aposta: $${stakeAmount.toFixed(2)} | Perda: -$${perda.toFixed(2)} | Capital: $${state.capital.toFixed(2)} | ` +
         `Martingale: M${state.martingaleStep} | Recovery: ${state.isInRecovery ? 'SIM' : 'NÃO'}`);
+
     }
 
     // Verificar limites
@@ -1266,7 +1365,7 @@ export class AtlasStrategy implements IStrategy {
     profitTarget?: number | null;
     lossLimit?: number | null;
     stopLossBlindado?: boolean | null;
-    symbol: 'R_10' | 'R_25' | 'R_100';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
   }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.atlasUsers.get(params.userId);
     const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
@@ -1372,11 +1471,11 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasTrade(trade: {
     userId: string;
     contractId: string | null;
-    symbol: 'R_10' | 'R_25' | 'R_100';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     contractType: string;
     entryPrice: number;
     stakeAmount: number;
-    operation: 'OVER' | 'UNDER';
+    operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT';
     mode: string;
   }): Promise<number | null> {
     try {
@@ -1476,6 +1575,9 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Atualiza trade no banco
    */
+  /**
+   * ✅ ATLAS: Atualiza trade no banco
+   */
   private async updateAtlasTrade(
     tradeId: number | null,
     userId: string,
@@ -1567,7 +1669,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private saveAtlasLog(
     userId: string,
-    symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA',
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
     message: string,
     details?: any,
@@ -1629,7 +1731,7 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasLogsBatch(
     userId: string,
     logs: Array<{
-      symbol: 'R_10' | 'R_25' | 'R_100' | 'SISTEMA';
+      symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
       type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
       message: string;
       details?: any;
@@ -1931,7 +2033,7 @@ export class AtlasStrategy implements IStrategy {
   }
 
   // Getters
-  getTicks(symbol: 'R_10' | 'R_25'): Tick[] {
+  getTicks(symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): Tick[] {
     return this.atlasTicks[symbol];
   }
 

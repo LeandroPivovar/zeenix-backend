@@ -4107,4 +4107,3 @@ export class OrionStrategy implements IStrategy {
     this.saveOrionLog(userId, this.symbol, 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`);
   }
 }
-

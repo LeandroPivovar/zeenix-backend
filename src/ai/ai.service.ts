@@ -580,9 +580,10 @@ export class AiService implements OnModuleInit {
         await this.saveWebSocketState();
 
         this.subscribeToTicks();
-        // ✅ Subscritar também R_10 e R_25 para AtlasStrategy
+        // ✅ Subscritar também R_10, R_25 e 1HZ100V (Vol 100 1s) para Atlas/Orion
         this.subscribeToSymbol('R_10');
         this.subscribeToSymbol('R_25');
+        this.subscribeToSymbol('1HZ100V');
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
         resolve();
@@ -801,7 +802,7 @@ export class AiService implements OnModuleInit {
             this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
           }
           // Mapear subscriptionId para símbolo
-          if (symbolFromReq && ['R_10', 'R_25', 'R_100'].includes(symbolFromReq)) {
+          if (symbolFromReq && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbolFromReq)) {
             this.subscriptionIds.set(symbolFromReq, subId);
             this.logger.log(`[AiService] 📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromReq}`);
           }
