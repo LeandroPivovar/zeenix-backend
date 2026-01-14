@@ -580,9 +580,10 @@ export class AiService implements OnModuleInit {
         await this.saveWebSocketState();
 
         this.subscribeToTicks();
-        // ✅ Subscritar também R_10, R_25
+        // ✅ Subscritar também R_10, R_25 e 1HZ10V (Vol 10 1s) para Atlas/Orion
         this.subscribeToSymbol('R_10');
         this.subscribeToSymbol('R_25');
+        this.subscribeToSymbol('1HZ10V');
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
         resolve();

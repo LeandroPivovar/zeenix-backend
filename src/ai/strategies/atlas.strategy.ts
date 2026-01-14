@@ -45,7 +45,7 @@ export interface AtlasUserState {
   maxBalance: number; // ✅ ATLAS: High Water Mark para Stop Blindado
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
-  symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
+  symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
 
   // Estado de operação
   isOperationActive: boolean;
@@ -96,12 +96,12 @@ export class AtlasStrategy implements IStrategy {
     R_10: Tick[];
     R_25: Tick[];
     R_100: Tick[];
-    '1HZ100V': Tick[];
+    '1HZ10V': Tick[];
   } = {
       R_10: [],
       R_25: [],
       R_100: [],
-      '1HZ100V': [],
+      '1HZ10V': [],
     };
 
   private appId: string;
@@ -110,7 +110,7 @@ export class AtlasStrategy implements IStrategy {
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
     userId: string;
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA';
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
     message: string;
     details?: any;
@@ -144,19 +144,19 @@ export class AtlasStrategy implements IStrategy {
 
   async initialize(): Promise<void> {
     this.logger.log('[ATLAS] 🔵 Estratégia ATLAS v2.0 (EHF) inicializada');
-    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100)...');
+    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100, 1HZ10V)...');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    if (!symbol || !['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
+    if (!symbol || !['R_10', 'R_25', 'R_100', '1HZ10V'].includes(symbol)) {
       // ✅ DIAGNÓSTICO: Log quando recebe símbolo inválido
       if (symbol) {
-        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25, R_100 ou 1HZ100V)`);
+        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25, R_100 ou 1HZ10V)`);
       }
       return;
     }
 
-    const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
+    const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
     this.logger.debug(`[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`);
 
     // Atualizar ticks globais
@@ -216,24 +216,29 @@ export class AtlasStrategy implements IStrategy {
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    // ✅ Determinar símbolo: R_10, R_25 ou R_100
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' = 'R_100';
+    // ✅ Determinar símbolo: R_10, R_25, R_100 ou 1HZ10V
+    // Default alterado para 1HZ10V conforme recomendação
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' = '1HZ10V';
 
-    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
-      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
+    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ10V'].includes(symbol)) {
+      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
 
-      // ✅ Mapear preferência
-      if (marketLower.includes('1hz100v') || marketLower.includes('1s')) {
-        atlasSymbol = '1HZ100V';
-      } else if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
-        atlasSymbol = 'R_10';
+      // ✅ Mapear preferência "Vol 10" para "1HZ10V" (1s)
+      if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
+        atlasSymbol = '1HZ10V';
+      } else if (marketLower.includes('1hz10v') || marketLower.includes('1s')) {
+        atlasSymbol = '1HZ10V';
+      } else if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
+        atlasSymbol = 'R_100';
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
       } else {
-        // Default ou Vol 100
-        atlasSymbol = 'R_100';
+        // Fallback robusto
+        if (marketLower.includes('vol10') || marketLower.includes('r_10')) {
+          atlasSymbol = '1HZ10V'; // ✅ Preferência para 1HZ10V
+        }
       }
     }
 
@@ -456,7 +461,7 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Sinal de Recuperação (Price Action)
    */
-  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): 'CALL' | 'PUT' | null {
+  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
     if (ticks.length < 5) return null;
 
@@ -542,7 +547,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasOperation(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
     operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
     analysis?: string,
   ): Promise<void> {
@@ -869,7 +874,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async executeAtlasTradeDirect(
     userId: string,
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
     token: string,
     contractParams: any,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
@@ -1037,7 +1042,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private async processAtlasResult(
     state: AtlasUserState,
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
     isWin: boolean,
     stakeAmount: number,
     operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT',
@@ -1356,7 +1361,7 @@ export class AtlasStrategy implements IStrategy {
     profitTarget?: number | null;
     lossLimit?: number | null;
     stopLossBlindado?: boolean | null;
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
   }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.atlasUsers.get(params.userId);
     const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
@@ -1462,7 +1467,7 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasTrade(trade: {
     userId: string;
     contractId: string | null;
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
     contractType: string;
     entryPrice: number;
     stakeAmount: number;
@@ -1660,7 +1665,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private saveAtlasLog(
     userId: string,
-    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA',
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA',
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
     message: string,
     details?: any,
@@ -1722,7 +1727,7 @@ export class AtlasStrategy implements IStrategy {
   private async saveAtlasLogsBatch(
     userId: string,
     logs: Array<{
-      symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
+      symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA';
       type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
       message: string;
       details?: any;
@@ -2024,7 +2029,7 @@ export class AtlasStrategy implements IStrategy {
   }
 
   // Getters
-  getTicks(symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): Tick[] {
+  getTicks(symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): Tick[] {
     return this.atlasTicks[symbol];
   }
 
