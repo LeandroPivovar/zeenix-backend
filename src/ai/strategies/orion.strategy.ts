@@ -797,7 +797,13 @@ export class OrionStrategy implements IStrategy {
     const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
 
     // Verificar se TODOS são < 4 (Dígitos Perdedores)
-    const isSignal = lastDigits.every(d => d < 4);
+    const analysisResults = lastDigits.map((d, i) => ({
+      digit: d,
+      value: lastTicks[i].value,
+      passed: d < 4,
+    }));
+
+    const isSignal = analysisResults.every((r) => r.passed);
 
     if (isSignal) {
       // ✅ LOGS EXATOS DA REFERÊNCIA
@@ -806,10 +812,14 @@ export class OrionStrategy implements IStrategy {
       lastDigits.forEach((d, i) => {
         // ✅ Debug: Mostrar valor real para provar que são ticks diferentes
         const val = lastTicks[i].value;
-        this.logger.log(`[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${val}) (Perdedor < 4)`);
+        this.logger.log(
+          `[ORION] ✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${val}) (Perdedor < 4)`,
+        );
       });
 
-      this.logger.log(`[ORION] ✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.`);
+      this.logger.log(
+        `[ORION] ✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.`,
+      );
 
       // Calcular Força (Simulada para alinhar com referência)
       const strength = 60 + requiredLosses * 5;
@@ -822,13 +832,39 @@ export class OrionStrategy implements IStrategy {
         this.symbol,
         'sinal',
         `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
-        lastDigits.map((d, i) => `✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`).join('\n') + '\n' +
+        lastDigits
+          .map(
+            (d, i) =>
+              `✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`,
+          )
+          .join('\n') +
+        '\n' +
         `✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.\n` +
         `💪 FORÇA DO SINAL: ${strength}%\n` +
-        `📊 ENTRADA: DIGIT OVER 3`
+        `📊 ENTRADA: DIGIT OVER 3`,
       );
 
       return 'DIGITOVER';
+    } else {
+      // ✅ LOG DE ANÁLISE RECUSADA (100% de Transparência por solicitação do usuário)
+      const failedFilters = analysisResults.filter((r) => !r.passed).length;
+      const totalFilters = analysisResults.length;
+
+      // Montar log detalhado da recusa
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'analise',
+        `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()} (RECUSADA)\n` +
+        analysisResults
+          .map(
+            (r, i) =>
+              `${r.passed ? '✅' : '❌'} FILTRO ${i + 1}: Dígito ${r.digit} (Valor: ${r.value}) ${r.passed ? '(OK < 4)' : '(FALHA >= 4)'}`,
+          )
+          .join('\n') +
+        '\n' +
+        `❌ RESULTADO: ${failedFilters}/${totalFilters} filtros falharam. Aguardando sequência...`,
+      );
     }
 
     return null;
