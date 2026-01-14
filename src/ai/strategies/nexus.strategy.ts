@@ -121,12 +121,12 @@ class RiskManager {
                     }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                // Modificado para Nexus v2: (TotalLoss * 1.10) / 0.95 (Recupera + 10%)
-                const targetRecovery = this.totalLossAccumulated * 1.10;
+                // ✅ Python Nexus v2: (TotalLoss * 1.25) / payout (Recupera + 25%)
+                const targetRecovery = this.totalLossAccumulated * 1.25;
                 nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                // Modificado para Nexus v2: (TotalLoss * 1.30) / 0.95 (Recupera + 30%) -> Resulta em ~1.37x
-                const targetRecovery = this.totalLossAccumulated * 1.30;
+                // ✅ Python Nexus v2: (TotalLoss * 1.50) / payout (Recupera + 50%)
+                const targetRecovery = this.totalLossAccumulated * 1.50;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
@@ -247,96 +247,164 @@ export class NexusStrategy implements IStrategy {
     }
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
-        let requiredTicks = 5; // ✅ Documentação: Meta de coleta 5 ticks
+        // ✅ Python Nexus v2: Entrada Principal (Higher -0.15) + Recuperação (Rise/Fall)
 
-        // Log de Coleta
-        if (state.ticksColetados < requiredTicks) {
-            if (state.ticksColetados % 5 === 0 || state.ticksColetados === 3) {
-                this.saveNexusLog(state.userId, this.symbol, 'info', `📡 COLETANDO DADOS...\n• META DE COLETA: ${requiredTicks} TICKS (Modo ${state.mode})\n• CONTAGEM: ${state.ticksColetados}/${requiredTicks}`);
-            }
-            return null;
-        }
+        // Verificar se está em recuperação
+        const isRecovering = riskManager.consecutiveLosses > 0;
 
-        // Log de Início de Análise
-        if (state.ticksColetados === requiredTicks) {
-            this.saveNexusLog(state.userId, this.symbol, 'info', `🧠 ANÁLISE INICIADA...\n• Verificando condições para o modo: ${state.mode}`);
-        }
+        if (!isRecovering) {
+            // ═══════════════════════════════════════════════════════════════
+            // ANÁLISE PRINCIPAL (ENTRADA Higher -0.15)
+            // ═══════════════════════════════════════════════════════════════
 
-        const lastTicks = this.ticks.slice(-requiredTicks);
-        if (lastTicks.length < 5) return null;
+            if (state.mode === 'VELOZ') {
+                // VELOZ: 1 tick a favor da direção
+                if (this.ticks.length < 2) return null;
 
-        let signal: DigitParity | null = null;
-        let analysisMsg = '';
-
-        if (state.mode === 'VELOZ') {
-            const t = lastTicks.slice(-3);
-            if (t[2].value > t[1].value && t[1].value > t[0].value) {
-                signal = 'PAR';
-                analysisMsg = `✅ FILTRO 1: Padrão de Alta Identificado\n✅ FILTRO 2: Momentum confirmado\n✅ GATILHO: 2 subidas consecutivas`;
-            } else {
-                analysisMsg = `❌ Filtro 1: Sem Momentum (${t[0].value} -> ${t[1].value} -> ${t[2].value})`;
-            }
-        } else if (state.mode === 'BALANCEADO') {
-            const sma20 = this.calculateSMA(20); // Usando SMA 20 como padrão macro
-            const currentPrice = lastTicks[lastTicks.length - 1].value;
-
-            if (currentPrice > sma20) {
-                const t = lastTicks.slice(-3);
-                // Documentação: SMA > Preço + 2 ticks de queda (correção) + Entrada na reversão
-                if (t[0].value > t[1].value && t[1].value > t[2].value) { // 2 ticks de queda
-                    signal = 'PAR';
-                    analysisMsg = `✅ FILTRO 1: Tendência Macro Confirmada (SMA > Preço)\n✅ FILTRO 2: Correção Detectada (2 ticks de queda)\n✅ GATILHO: Padrão de Pullback Válido`;
-                } else {
-                    analysisMsg = `❌ Filtro 2: Aguardando Correção (Pullback)`;
+                const lastTwo = this.ticks.slice(-2);
+                if (lastTwo[1].value > lastTwo[0].value) {
+                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
+                        `🔍 SINAL DE ENTRADA\n` +
+                        `• Modo: ${state.mode}\n` +
+                        `• Filtro: 1 tick a favor da direção\n` +
+                        `• Contrato: Higher (-0.15)\n` +
+                        `• Payout: 60%`
+                    );
+                    return 'PAR';
                 }
-            } else {
-                analysisMsg = `❌ Filtro 1: Preço (${currentPrice}) abaixo da SMA (${sma20.toFixed(2)})`;
-            }
-        } else if (state.mode === 'PRECISO') {
-            const rsi = this.calculateRSI(14);
-            // Relaxed from 20 to 30 to ensure execution
-            if (rsi < 30) {
-                signal = 'PAR';
-                analysisMsg = `✅ FILTRO 1: RSI em zona de sobrevenda (${rsi.toFixed(2)})\n✅ GATILHO: Exaustão de venda detectada`;
-            } else {
-                analysisMsg = `❌ Filtro 1: RSI Neutro/Alto (${rsi.toFixed(2)} >= 30)`;
-            }
-        }
 
-        // ✅ Lógica de Recuperação/Lento Bidirecional (Rise/Fall)
-        if (riskManager.consecutiveLosses > 0 || state.mode === 'PRECISO') {
-            const t = lastTicks.slice(-2);
-            const force = Math.abs(t[1].value - t[0].value);
+            } else if (state.mode === 'BALANCEADO') {
+                // BALANCEADO (NORMAL): 3 ticks consecutivos + delta > 0.3
+                if (this.ticks.length < 4) return null;
 
-            // Filtro de Força (> 0.01)
-            if (force > 0.01) {
-                if (t[1].value > t[0].value) {
-                    signal = 'PAR'; // CALL
-                    analysisMsg = `✅ FILTRO EXTRA: Força Detectada (${force.toFixed(3)})\n✅ GATILHO: 2 ticks de alta (CALL)`;
-                } else if (t[1].value < t[0].value) {
-                    signal = 'IMPAR'; // PUT
-                    analysisMsg = `✅ FILTRO EXTRA: Força Detectada (${force.toFixed(3)})\n✅ GATILHO: 2 ticks de queda (PUT)`;
+                const last4 = this.ticks.slice(-4);
+                const prices = last4.map(t => t.value);
+
+                // Verifica momentum de alta (3 ticks consecutivos)
+                const upMomentum = prices[1] > prices[0] &&
+                    prices[2] > prices[1] &&
+                    prices[3] > prices[2];
+
+                const delta = prices[3] - prices[0];
+
+                if (upMomentum && delta > 0.3) {
+                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
+                        `🔍 SINAL DE ENTRADA\n` +
+                        `• Modo: ${state.mode}\n` +
+                        `• Filtro: 3 ticks + delta 0.3\n` +
+                        `• Delta: ${delta.toFixed(4)}\n` +
+                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                        `• Contrato: Higher (-0.15)\n` +
+                        `• Payout: 60%`
+                    );
+                    return 'PAR';
                 }
-            } else if (state.mode === 'PRECISO' || riskManager.consecutiveLosses > 0) {
-                analysisMsg = `❌ Filtro Extra: Movimento fraco (${force.toFixed(3)} < 0.01)`;
-            }
-        }
 
-        // Logic for Batched Logging or Immediate Signal
-        if (signal) {
-            state.rejectedAnalysisCount = 0; // Reset
-            const entryType = riskManager.consecutiveLosses > 0 ? (signal === 'PAR' ? 'RISE (CALL)' : 'FALL (PUT)') : 'HIGHER (-0.15)';
-            this.saveNexusLog(state.userId, this.symbol, 'analise', `🔍 ANÁLISE: MODO ${state.mode}\n${analysisMsg}\n💪 FORÇA DO SINAL: 75%\n📊 ENTRADA: ${entryType}`);
+            } else if (state.mode === 'PRECISO') {
+                // PRECISO (LENTO): 5 ticks consecutivos + delta > 0.5
+                if (this.ticks.length < 6) return null;
+
+                const last6 = this.ticks.slice(-6);
+                const prices = last6.map(t => t.value);
+
+                // Verifica momentum de alta (5 ticks consecutivos)
+                const upMomentum = prices[1] > prices[0] &&
+                    prices[2] > prices[1] &&
+                    prices[3] > prices[2] &&
+                    prices[4] > prices[3] &&
+                    prices[5] > prices[4];
+
+                const delta = prices[5] - prices[0];
+
+                if (upMomentum && delta > 0.5) {
+                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
+                        `🔍 SINAL DE ENTRADA\n` +
+                        `• Modo: ${state.mode}\n` +
+                        `• Filtro: 5 ticks + delta 0.5\n` +
+                        `• Delta: ${delta.toFixed(4)}\n` +
+                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                        `• Contrato: Higher (-0.15)\n` +
+                        `• Payout: 60%`
+                    );
+                    return 'PAR';
+                }
+            }
+
         } else {
-            state.rejectedAnalysisCount = (state.rejectedAnalysisCount || 0) + 1;
+            // ═══════════════════════════════════════════════════════════════
+            // RECUPERAÇÃO (RISE/FALL)
+            // ═══════════════════════════════════════════════════════════════
 
-            if (state.rejectedAnalysisCount >= 5) {
-                // this.saveNexusLog(state.userId, this.symbol, 'info', `📋 [RESUMO] Últimas 5 análises recusadas. | Padrão Atual: ${analysisMsg} | Aguardando gatilho...`);
-                state.rejectedAnalysisCount = 0;
+            let requiredTicks: number;
+            let minDelta: number;
+            let modeInfo: string;
+
+            if (state.mode === 'VELOZ') {
+                // VELOZ: 2 ticks + delta 0.3
+                requiredTicks = 2;
+                minDelta = 0.3;
+                modeInfo = '2 ticks + delta 0.3';
+            } else {
+                // BALANCEADO/PRECISO: 3 ticks + delta 0.5
+                requiredTicks = 3;
+                minDelta = 0.5;
+                modeInfo = '3 ticks + delta 0.5';
+            }
+
+            if (this.ticks.length < requiredTicks + 1) return null;
+
+            const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
+
+            // === CALL (ALTA) ===
+            let upMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] <= prices[i]) {
+                    upMomentum = false;
+                    break;
+                }
+            }
+            const deltaUp = prices[prices.length - 1] - prices[0];
+
+            if (upMomentum && deltaUp > minDelta) {
+                this.saveNexusLog(state.userId, this.symbol, 'sinal',
+                    `🔍 SINAL DE RECUPERAÇÃO\n` +
+                    `• Modo: ${state.mode}\n` +
+                    `• Filtro: ${modeInfo}\n` +
+                    `• Direção: ALTA (CALL)\n` +
+                    `• Delta: ${deltaUp.toFixed(4)}\n` +
+                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                    `• Contrato: CALL\n` +
+                    `• Payout: 95%`
+                );
+                return 'PAR'; // CALL
+            }
+
+            // === PUT (BAIXA) ===
+            let downMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] >= prices[i]) {
+                    downMomentum = false;
+                    break;
+                }
+            }
+            const deltaDown = prices[0] - prices[prices.length - 1];
+
+            if (downMomentum && deltaDown > minDelta) {
+                this.saveNexusLog(state.userId, this.symbol, 'sinal',
+                    `🔍 SINAL DE RECUPERAÇÃO\n` +
+                    `• Modo: ${state.mode}\n` +
+                    `• Filtro: ${modeInfo}\n` +
+                    `• Direção: BAIXA (PUT)\n` +
+                    `• Delta: ${deltaDown.toFixed(4)}\n` +
+                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
+                    `• Contrato: PUT\n` +
+                    `• Payout: 95%`
+                );
+                return 'IMPAR'; // PUT
             }
         }
 
-        return signal;
+        return null;
     }
 
     private calculateSMA(period: number): number {
@@ -427,18 +495,19 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier: string | undefined = '-0.15'; // Restored Original Attack Mode
+        let barrier: string | undefined = '-0.15'; // ✅ Python Nexus v2: Higher (-0.15) entrada principal
 
-        // Hybrid Defense Mode (Nexus v2)
+        // ✅ Python Nexus v2: Recuperação Rise/Fall
         // Se estiver em recuperação (Losses > 0), remove barreira e opera Rise/Fall (Payout ~95%)
         if (riskManager.consecutiveLosses > 0) {
             barrier = undefined;
 
             // ✅ Log de Troca de Contrato (ANTES da execução)
             const riskMode = (riskManager as any).riskMode;
-            const multiplier = riskMode === 'AGRESSIVO' ? '1.37x' : riskMode === 'MODERADO' ? '1.16x' : '1.05x';
+            // Python: Moderado 1.25 / 0.95 = 1.32x | Agressivo 1.50 / 0.95 = 1.58x
+            const multiplier = riskMode === 'AGRESSIVO' ? '1.58x' : riskMode === 'MODERADO' ? '1.32x' : '1.05x';
 
-            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos 2 ticks.\n• Multiplicador: ${multiplier} (Modo ${riskMode})`);
+            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos ticks.\n• Multiplicador: ${multiplier} (Modo ${riskMode})`);
         }
 
         state.isOperationActive = true;
@@ -483,12 +552,20 @@ export class NexusStrategy implements IStrategy {
                         this.saveNexusLog(state.userId, this.symbol, 'resultado', `❌ Soros Nível 1 falhou! Entrando em recuperação`);
                     }
 
+
                     state.vitoriasConsecutivas = 0;
                     this.saveNexusLog(state.userId, this.symbol, 'resultado', `🏁 RESULTADO DA ENTRADA\n• Status: LOSS\n• Lucro/Prejuízo: -$${Math.abs(result.profit).toFixed(2)}\n• Saldo Atual: $${state.capital.toFixed(2)}`);
 
-                    if (riskManager.consecutiveLosses >= 3) {
-                        this.saveNexusLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas.\n• Ação: Mudando análise para MODO LENTO para recuperação segura.`);
-                        state.mode = 'PRECISO'; // ✅ Ativa o modo LENTO (PRECISO) após 3 perdas
+                    // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
+                    if (riskManager.consecutiveLosses >= 4) {
+                        this.saveNexusLog(state.userId, this.symbol, 'alerta',
+                            `🚨 DEFESA AUTOMÁTICA ATIVADA\n` +
+                            `• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas\n` +
+                            `• Ação: Mudando para MODO LENTO\n` +
+                            `• Entrada: 5 ticks + delta 0.5\n` +
+                            `• Recuperação: 3 ticks + delta 0.5`
+                        );
+                        state.mode = 'PRECISO'; // ✅ Ativa o modo LENTO (PRECISO) após 4 perdas
                     }
                 }
 
