@@ -2833,11 +2833,10 @@ export class OrionStrategy implements IStrategy {
                 // Debug: logar contrato completo para análise
                 this.logger.debug(`[ORION] Contract ${contractId} FULL DATA: ${JSON.stringify(contract, null, 2)}`);
 
-                // Para contratos Digit de 1 tick, entry_spot_time e exit_spot_time são diferentes
-                // mas entry_spot e exit_spot podem ser o mesmo tick
-                // Vamos usar buy_price como referência de entrada e exit_spot para saída
-                const entrySpot = contract.entry_spot_display_value || contract.entry_spot || contract.buy_price || 0;
-                const exitSpot = contract.exit_spot_display_value || contract.exit_spot || contract.current_spot || 0;
+                // ✅ USAR entry_tick e exit_tick - são os valores EXATOS que a Deriv usa para determinar o resultado
+                // Fallback para entry_spot e exit_spot caso entry_tick/exit_tick não existam
+                const entrySpot = contract.entry_tick || contract.entry_spot || 0;
+                const exitSpot = contract.exit_tick || contract.exit_spot || contract.current_spot || 0;
 
                 // Debug: logar os valores para verificar
                 this.logger.debug(`[ORION] Contract ${contractId} - Entry: ${entrySpot}, Exit: ${exitSpot}, Profit: ${profit}`);
