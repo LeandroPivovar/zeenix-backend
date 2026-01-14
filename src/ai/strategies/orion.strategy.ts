@@ -2612,9 +2612,9 @@ export class OrionStrategy implements IStrategy {
           'info',
           `📤 ENVIANDO PARA DERIV\n` +
           `• Tipo de Contrato: ${contractParams.contract_type}\n` +
-          `• Barreira: ${contractParams.barrier || 'N/A'}\n` +
+          `• Barreira: ${(contractParams as any).barrier || 'N/A'}\n` +
           `• Valor: $${contractParams.amount}\n` +
-          `• Duração: ${contractParams.duration || 1} tick(s)\n` +
+          `• Duração: ${(contractParams as any).duration || 1} tick(s)\n` +
           `• Símbolo: ${this.symbol}`
         );
       }
