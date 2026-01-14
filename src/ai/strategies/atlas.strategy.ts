@@ -277,11 +277,15 @@ export class AtlasStrategy implements IStrategy {
         ? (profitTargetNum ? `ATIVADO (Gatilho: $${(profitTargetNum * 0.40).toFixed(2)})` : 'ATIVADO (Sem meta!)')
         : 'DESATIVADO';
 
+      const state = this.atlasUsers.get(userId);
+      const saldoAtual = state ? state.capital : stakeAmountNum;
+
       this.saveAtlasLog(userId, 'SISTEMA', 'info',
         `⚙️ CONFIGURAÇÕES INICIAIS\n` +
         `• Estratégia: ATLAS\n` +
         `• Modo de Negociação: ${mode || 'veloz'}\n` +
         `• Asset: ${atlasSymbol}\n` +
+        `• Saldo Atual: $${saldoAtual.toFixed(2)}\n` +
         `• Gerenciamento: ${modoMartingale || 'conservador'}\n` +
         `• Meta de Lucro: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'}\n` +
         `• Stop Loss Normal: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'}\n` +
@@ -1450,7 +1454,7 @@ export class AtlasStrategy implements IStrategy {
     if (existing) {
       hasConfigChanges =
         existing.capitalInicial !== params.stakeAmount ||
-        existing.mode !== params.mode ||
+        existing.originalMode !== params.mode ||
         existing.modoMartingale !== (params.modoMartingale || 'conservador') ||
         existing.profitTarget !== (params.profitTarget || null) ||
         existing.stopLoss !== stopLossNormalized ||
