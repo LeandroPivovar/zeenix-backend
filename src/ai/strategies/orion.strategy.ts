@@ -915,7 +915,22 @@ export class OrionStrategy implements IStrategy {
     const allPositive = deltas.every(d => d > 0);
     const allNegative = deltas.every(d => d < 0);
 
-    if (!allPositive && !allNegative) return null;
+    if (!allPositive && !allNegative) {
+      // Log throttled para não spammar
+      const now = Date.now();
+      if (now - (state.lastRecoveryLog || 0) > 4000) {
+        state.lastRecoveryLog = now;
+        this.saveOrionLog(
+          state.userId,
+          this.symbol,
+          'info',
+          `⏳ ANÁLISE DE RECUPERAÇÃO ${modeLabel}\n` +
+          `• Movimento inconsistente nos últimos ${ticksCount} ticks.\n` +
+          `• Aguardando direção clara (${ticksCount} movimentos consecutivos na mesma direção)...`
+        );
+      }
+      return null;
+    }
 
     // Verificar força do último movimento (Delta)
     const lastDelta = Math.abs(deltas[deltas.length - 1]);
@@ -940,6 +955,18 @@ export class OrionStrategy implements IStrategy {
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
       this.logger.debug(`[ORION] ⏳ Aguardando Momentum (${ticksCount}t) + Delta >= ${minDelta}... (Atual: ${lastDelta.toFixed(3)})`);
+
+      // Log para o usuário
+      const directionStr = allPositive ? 'SUBIU' : allNegative ? 'CAIU' : 'INDEFINIDO';
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'info',
+        `⏳ ANÁLISE DE RECUPERAÇÃO ${modeLabel}\n` +
+        `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
+        `• Força atual: ${lastDelta.toFixed(3)} (Mínimo necessário: ${minDelta})\n` +
+        `• Aguardando força suficiente para entrada...`
+      );
     }
 
     return null;
