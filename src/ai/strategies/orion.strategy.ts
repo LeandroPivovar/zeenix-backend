@@ -784,7 +784,7 @@ export class OrionStrategy implements IStrategy {
 
     // ✅ stateless implementation aligned with reference
     let requiredLosses = 3;
-    if (currentMode === 'veloz') requiredLosses = 1; // ✅ Alterado para 1 (Espera 1, entra no 2º)
+    if (currentMode === 'veloz') requiredLosses = 0; // ✅ Alterado para 1 (Espera 1, entra no 2º)
     else if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
     else if (currentMode === 'lenta') requiredLosses = 5;
     else if (currentMode === 'preciso') requiredLosses = 5;
@@ -3379,10 +3379,13 @@ export class OrionStrategy implements IStrategy {
 
   /**
    * ✅ Extrai o último dígito de um valor (mesma lógica do ai.service.ts)
+   * CORREÇÃO: Forçar 2 casas decimais para garantir que 930.60 seja tratado como dígito 0 (e não 6)
    */
   private extractLastDigit(value: number): number {
     const numeric = Math.abs(value);
-    const normalized = numeric.toString().replace('.', '').replace('-', '');
+    // ✅ Forçar 2 casas decimais (padrão para Volatility 100 1s Index e maioria dos sintéticos)
+    // Isso evita que o JS remova zeros à direita (ex: 930.60 -> 930.6 -> dígito 6 incorreto)
+    const normalized = numeric.toFixed(2);
     const lastChar = normalized.charAt(normalized.length - 1);
     const digit = parseInt(lastChar, 10);
     return Number.isNaN(digit) ? 0 : digit;
