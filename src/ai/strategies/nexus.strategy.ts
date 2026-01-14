@@ -652,8 +652,13 @@ export class NexusStrategy implements IStrategy {
         // 1. Salvar Log
         this.saveNexusLog(state.userId, this.symbol, logType, logMessage);
 
-        // 2. Emitir Evento
-        this.tradeEvents.emit({ userId: state.userId, type: reason, strategy: 'nexus' });
+        // 2. Emitir Evento (Informa ao frontend para mostrar o modal IMEDIATAMENTE)
+        this.tradeEvents.emit({
+            userId: state.userId,
+            type: reason as any,
+            strategy: 'nexus',
+            profitLoss: profit
+        });
 
         // 3. Atualizar Banco de Dados (autonomous_agent_config)
         // Mantemos is_active = 1 (TRUE) para permitir o reset diário, mas mudamos o status para stopped_X
