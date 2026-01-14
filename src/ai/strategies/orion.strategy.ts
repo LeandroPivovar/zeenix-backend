@@ -782,10 +782,33 @@ export class OrionStrategy implements IStrategy {
     // --- 2. FASE DE ATAQUE (Digit Over 3) ---
     // Busca falhas na sequência de dígitos baixos (< 4)
 
+    // ✅ MODO VELOZ: SEM FILTRO (Compra em todos os ticks)
+    if (currentMode === 'veloz') {
+      // Log simplificado para não spammar
+      // const now = Date.now();
+      // if (now - ((state as any).lastVelozLog || 0) > 1000) {
+      //   (state as any).lastVelozLog = now;
+      //   this.logger.log(`[ORION][VELOZ] 🚀 Modo Veloz: Entrada Direta (Sem Filtro)`);
+      // }
+
+      // Salvar log para frontend (Rate limited pelo próprio RiskManager/UI se necessário, mas aqui enviamos o sinal)
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'sinal',
+        `🚀 MODO VELOZ (SEM FILTRO)\n` +
+        `• Ação: Compra Imediata (Tick a Tick)\n` +
+        `• Motivo: Estratégia de Alta Frequência\n` +
+        `📊 ENTRADA: DIGIT OVER 3`
+      );
+
+      return 'DIGITOVER';
+    }
+
     // ✅ stateless implementation aligned with reference
     let requiredLosses = 3;
-    if (currentMode === 'veloz') requiredLosses = 0; // ✅ Alterado para 1 (Espera 1, entra no 2º)
-    else if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
+    // if (currentMode === 'veloz') requiredLosses = 0; // REMOVIDO: Veloz agora é tratado acima
+    if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
     else if (currentMode === 'lenta') requiredLosses = 5;
     else if (currentMode === 'preciso') requiredLosses = 5;
 
@@ -847,6 +870,7 @@ export class OrionStrategy implements IStrategy {
       return 'DIGITOVER';
     } else {
       // ✅ LOG DE ANÁLISE RECUSADA (100% de Transparência por solicitação do usuário)
+      // APENAS SE NÃO FOR VELOZ (Veloz já retornou acima)
       const failedFilters = analysisResults.filter((r) => !r.passed).length;
       const totalFilters = analysisResults.length;
 
