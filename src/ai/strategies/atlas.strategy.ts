@@ -27,8 +27,8 @@ function calcularProximaApostaAtlas(
       aposta = (perdasTotais * 1.15) / payout;
       break;
     case 'agressivo':
-      // Recupera 100% da perda + 30% de lucro (Conforme Documentação Atlas v3)
-      aposta = (perdasTotais * 1.30) / payout;
+      // Recupera 100% da perda + 15% de lucro (Igual ao Moderado conforme solicitado)
+      aposta = (perdasTotais * 1.15) / payout;
       break;
   }
 
@@ -787,7 +787,10 @@ export class AtlasStrategy implements IStrategy {
 
       // Martingale ou Soros
       if (state.isInRecovery && state.martingaleStep > 0) {
-        const payout = modeConfig.payout;
+        // ✅ [ZENIX v3.2] Payout dinâmico para Martingale: 0.95 para Price Action (CALL/PUT), ou modeConfig.payout (~0.40)
+        const isPriceAction = operation === 'CALL' || operation === 'PUT';
+        const payout = isPriceAction ? 0.95 : modeConfig.payout;
+
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
 
@@ -1252,12 +1255,12 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
-      // ✅ ATLAS: Defesa Automática (Switch to Lento após 3 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 4 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 4 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 3 Perdas Consecutivas.\n` +
+          `• Motivo: 4 Perdas Consecutivas.\n` +
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
@@ -1581,11 +1584,9 @@ export class AtlasStrategy implements IStrategy {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
           [
             trade.userId,
-            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' ou 'PAR'/'IMPAR' para garantir seta correta no frontend
+            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
             (trade.operation === 'CALL' ? 'Rise' :
-              trade.operation === 'PUT' ? 'Fall' :
-                trade.operation === 'EVEN' ? 'PAR' :
-                  trade.operation === 'ODD' ? 'IMPAR' : trade.operation),
+              trade.operation === 'PUT' ? 'Fall' : trade.operation),
             trade.entryPrice,
             trade.stakeAmount,
             'PENDING',
