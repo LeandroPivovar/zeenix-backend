@@ -574,10 +574,10 @@ export class NexusStrategy implements IStrategy {
                         }
                     }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `🏁 RESULTADO DA ENTRADA\n` +
+                        `\x1b[32m🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: VITÓRIA ✅\n` +
                         `• Lucro: $${result.profit.toFixed(2)}\n` +
-                        `• Saldo Atual: $${state.capital.toFixed(2)}`
+                        `• Saldo Atual: $${state.capital.toFixed(2)}\x1b[0m`
                     );
                 } else {
                     // ✅ Log de Soros Falhou (Igual Orion)
@@ -587,12 +587,12 @@ export class NexusStrategy implements IStrategy {
 
                     state.vitoriasConsecutivas = 0;
                     this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `🏁 RESULTADO DA ENTRADA\n` +
+                        `\x1b[31m🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: DERROTA ❌\n` +
                         `• Operação: ${barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall')}\n` +
                         `• Perda: -$${Math.abs(result.profit).toFixed(2)}\n` +
                         `• Capital: $${state.capital.toFixed(2)}\n` +
-                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)`
+                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)\x1b[0m`
                     );
 
                     // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
@@ -653,7 +653,7 @@ export class NexusStrategy implements IStrategy {
                 logType = 'alerta';
                 break;
             case 'stopped_blindado':
-                logMessage = `Shield Ativado! 🛡️\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
+                logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
                 break;
         }

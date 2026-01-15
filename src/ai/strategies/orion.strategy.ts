@@ -3083,7 +3083,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const tipoOperacao = estavaEmMartingale ? 'MARTINGALE' : (state.vitoriasConsecutivas > 1 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1) ? 'SOROS' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'resultado', `🏁 TRADE FINALIZADO: WIN\n💰 LUCRO: +$${profit.toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `\x1b[32m🏁 TRADE FINALIZADO: WIN\n💰 LUCRO: +$${profit.toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`);
     } else {
       // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
       const consecutiveLossesAntes = state.consecutive_losses || 0;
@@ -3116,7 +3116,7 @@ export class OrionStrategy implements IStrategy {
 
       this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
       const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
-      this.saveOrionLog(state.userId, this.symbol, 'erro', `🏁 TRADE FINALIZADO: LOSS\n📉 PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}`);
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `\x1b[31m🏁 TRADE FINALIZADO: LOSS\n📉 PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
@@ -3350,7 +3350,7 @@ export class OrionStrategy implements IStrategy {
               state.userId,
               this.symbol,
               'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO! Capital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
+              `🛡️ STOP-LOSS BLINDADO ATIVADO!\nCapital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
             );
 
             const deactivationReason =

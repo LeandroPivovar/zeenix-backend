@@ -1216,10 +1216,10 @@ export class AtlasStrategy implements IStrategy {
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `🏁 RESULTADO DA ENTRADA\n` +
+        `\x1b[32m🏁 RESULTADO DA ENTRADA\n` +
         `• Status: VITÓRIA ✅\n` +
         `• Lucro: $${lucro.toFixed(2)}\n` +
-        `• Saldo Atual: $${state.capital.toFixed(2)}`);
+        `• Saldo Atual: $${state.capital.toFixed(2)}\x1b[0m`);
 
     } else {
       // ✅ DERROTA
@@ -1265,14 +1265,14 @@ export class AtlasStrategy implements IStrategy {
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
       this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `🏁 RESULTADO DA ENTRADA\n` +
+        `\x1b[31m🏁 RESULTADO DA ENTRADA\n` +
         `• Status: DERROTA ❌\n` +
         `• Operação: ${opLabel}\n` +
         `• Dígito: ${digitoResultado}\n` +
         `• Aposta: $${stakeAmount.toFixed(2)}\n` +
         `• Perda: -$${perda.toFixed(2)}\n` +
         `• Capital: $${state.capital.toFixed(2)}\n` +
-        `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}`);
+        `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}\x1b[0m`);
 
     }
 
