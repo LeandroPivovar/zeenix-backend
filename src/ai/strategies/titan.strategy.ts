@@ -566,13 +566,13 @@ export class TitanStrategy implements IStrategy {
             const momentumDetail = `${details.momentum.firstHalf} vs ${details.momentum.secondHalf}`;
 
             const logMessage =
-                `🔍 [ANÁLISE ${analysisMode}] (Sem Sinal - ${result.reason})\n` +
+                `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\n` +
                 `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
                 `• Momentum: ${momentumStatus} (${momentumDetail})\n` +
                 `• Ruído: ${details.alternations} Alternâncias`;
 
-            // Usar tipo 'analise' para logs detalhados
-            this.saveTitanLog(state.userId, this.symbol, 'analise', logMessage);
+            // Usar tipo 'info' com ícone para aparecer no frontend
+            this.saveTitanLog(state.userId, this.symbol, 'info', logMessage);
             return null;
         }
 
