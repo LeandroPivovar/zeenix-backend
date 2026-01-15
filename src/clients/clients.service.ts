@@ -17,17 +17,21 @@ export class ClientsService {
 
   async getMetrics(): Promise<ClientMetricsDto> {
     const now = new Date();
-    
+
     // Data de início de hoje (00:00:00)
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+
     // Data de início da semana (segunda-feira)
     const startOfWeek = new Date(now);
     const dayOfWeek = startOfWeek.getDay();
     const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Ajusta para segunda-feira
     startOfWeek.setDate(startOfWeek.getDate() - diff);
     startOfWeek.setHours(0, 0, 0, 0);
-    
+
     // Data de início do mês
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -64,7 +68,7 @@ export class ClientsService {
       .select('COUNT(DISTINCT session.userId)', 'count')
       .where('session.lastActivity >= :startOfWeek', { startOfWeek })
       .getRawOne()
-      .then(result => parseInt(result.count) || 0);
+      .then((result) => parseInt(result.count) || 0);
 
     // Usuários ativos este mês
     const activeThisMonth = await this.sessionRepository
@@ -72,7 +76,7 @@ export class ClientsService {
       .select('COUNT(DISTINCT session.userId)', 'count')
       .where('session.lastActivity >= :startOfMonth', { startOfMonth })
       .getRawOne()
-      .then(result => parseInt(result.count) || 0);
+      .then((result) => parseInt(result.count) || 0);
 
     // Usuários com saldo < $100
     const balanceLess100 = await this.userRepository
@@ -117,7 +121,10 @@ export class ClientsService {
     };
   }
 
-  async getClients(search?: string, balanceFilter?: string): Promise<ClientListResponseDto> {
+  async getClients(
+    search?: string,
+    balanceFilter?: string,
+  ): Promise<ClientListResponseDto> {
     let query = this.userRepository
       .createQueryBuilder('user')
       .select([
@@ -134,7 +141,7 @@ export class ClientsService {
     if (search) {
       query = query.where(
         '(user.name LIKE :search OR user.email LIKE :search OR user.derivLoginId LIKE :search)',
-        { search: `%${search}%` }
+        { search: `%${search}%` },
       );
     }
 
@@ -143,16 +150,24 @@ export class ClientsService {
       const filterCondition = search ? 'andWhere' : 'where';
       switch (balanceFilter) {
         case 'less100':
-          query = query[filterCondition]('user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) < 100');
+          query = query[filterCondition](
+            'user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) < 100',
+          );
           break;
         case 'more500':
-          query = query[filterCondition]('user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 500');
+          query = query[filterCondition](
+            'user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 500',
+          );
           break;
         case 'more1000':
-          query = query[filterCondition]('user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 1000');
+          query = query[filterCondition](
+            'user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 1000',
+          );
           break;
         case 'more5000':
-          query = query[filterCondition]('user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 5000');
+          query = query[filterCondition](
+            'user.derivBalance IS NOT NULL AND CAST(user.derivBalance AS DECIMAL) > 5000',
+          );
           break;
       }
     }
@@ -171,7 +186,7 @@ export class ClientsService {
 
         let totalMinutes = 0;
         let lastActivity = '-';
-        
+
         // Estimar tempo gasto baseado nas sessões
         for (const session of sessions) {
           const sessionStart = new Date(session.createdAt);
@@ -182,10 +197,14 @@ export class ClientsService {
 
         // Obter última atividade
         if (sessions.length > 0) {
-          const latestSession = sessions.reduce((latest, current) => 
-            new Date(current.lastActivity) > new Date(latest.lastActivity) ? current : latest
+          const latestSession = sessions.reduce((latest, current) =>
+            new Date(current.lastActivity) > new Date(latest.lastActivity)
+              ? current
+              : latest,
           );
-          lastActivity = new Date(latestSession.lastActivity).toISOString().split('T')[0];
+          lastActivity = new Date(latestSession.lastActivity)
+            .toISOString()
+            .split('T')[0];
         }
 
         const hours = Math.floor(totalMinutes / 60);
@@ -204,7 +223,7 @@ export class ClientsService {
           whatsapp: false, // Pode ser adicionado posteriormente
           role: user.userRole || 'user',
         };
-      })
+      }),
     );
 
     return {
@@ -218,22 +237,30 @@ export class ClientsService {
     return clients;
   }
 
-  async updateUserRole(userId: string, role: string): Promise<{ success: boolean; message: string }> {
+  async updateUserRole(
+    userId: string,
+    role: string,
+  ): Promise<{ success: boolean; message: string }> {
     const validRoles = ['user', 'admin', 'master_trader', 'expert'];
-    
+
     if (!validRoles.includes(role)) {
-      return { success: false, message: `Role inválida. Roles permitidas: ${validRoles.join(', ')}` };
+      return {
+        success: false,
+        message: `Role inválida. Roles permitidas: ${validRoles.join(', ')}`,
+      };
     }
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
-    
+
     if (!user) {
       return { success: false, message: 'Usuário não encontrado' };
     }
 
     await this.userRepository.update(userId, { role });
-    
-    return { success: true, message: `Role do usuário atualizada para ${role}` };
+
+    return {
+      success: true,
+      message: `Role do usuário atualizada para ${role}`,
+    };
   }
 }
-

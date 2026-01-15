@@ -1,4 +1,12 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { UserEntity } from './user.entity';
 import { LessonEntity } from './lesson.entity';
 
@@ -33,7 +41,3 @@ export class UserLessonProgressEntity {
   @JoinColumn({ name: 'lesson_id' })
   lesson?: LessonEntity;
 }
-
-
-
-

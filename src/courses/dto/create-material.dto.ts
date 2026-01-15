@@ -21,5 +21,3 @@ export class CreateMaterialDto {
   @IsNumber()
   orderIndex?: number;
 }
-
-

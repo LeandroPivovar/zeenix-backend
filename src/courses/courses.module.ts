@@ -14,7 +14,13 @@ import { CoursesService } from './courses.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CourseEntity, LessonEntity, ModuleEntity, MaterialEntity, UserLessonProgressEntity]),
+    TypeOrmModule.forFeature([
+      CourseEntity,
+      LessonEntity,
+      ModuleEntity,
+      MaterialEntity,
+      UserLessonProgressEntity,
+    ]),
     JwtModule,
   ],
   controllers: [CoursesController],
@@ -29,4 +35,3 @@ import { CoursesService } from './courses.service';
   exports: [COURSE_REPOSITORY_TOKEN, TypeOrmLessonRepository],
 })
 export class CoursesModule {}
-

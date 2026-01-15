@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import WebSocket from 'ws';
@@ -14,7 +20,7 @@ import { LogQueueService } from '../../utils/log-queue.service';
 
 /**
  * 🛡️ SENTINEL Strategy para Agente Autônomo
- * 
+ *
  * Implementação completa do Agente Sentinel conforme documentação:
  * - Análise Híbrida (Técnica + Estatística)
  * - Modos de Negociação (Veloz, Normal, Lento)
@@ -25,10 +31,13 @@ import { LogQueueService } from '../../utils/log-queue.service';
  * - Sistema de logs detalhado
  */
 @Injectable()
-export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit {
+export class SentinelStrategy
+  implements IAutonomousAgentStrategy, OnModuleInit
+{
   name = 'sentinel';
   displayName = '🛡️ SENTINEL';
-  description = 'Agente autônomo com análise híbrida, Martingale Inteligente e Soros';
+  description =
+    'Agente autônomo com análise híbrida, Martingale Inteligente e Soros';
 
   private readonly logger = new Logger(SentinelStrategy.name);
   private readonly userConfigs = new Map<string, SentinelUserConfig>();
@@ -46,7 +55,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       authorized: boolean;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
-      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      pendingRequests: Map<
+        string,
+        {
+          resolve: (value: any) => void;
+          reject: (error: any) => void;
+          timeout: NodeJS.Timeout;
+        }
+      >;
       subscriptions: Map<string, (msg: any) => void>;
     }
   > = new Map();
@@ -60,9 +76,24 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
   // Configurações por modo de gerenciamento
   private readonly managementModeConfigs = {
-    conservador: { recoveryTarget: 1.0, recoveryProfit: 0, maxRecoveryAttempts: 3, sorosLevels: 1 },
-    moderado: { recoveryTarget: 1.15, recoveryProfit: 0.15, maxRecoveryAttempts: -1, sorosLevels: 2 },
-    agressivo: { recoveryTarget: 1.20, recoveryProfit: 0.20, maxRecoveryAttempts: -1, sorosLevels: 3 },
+    conservador: {
+      recoveryTarget: 1.0,
+      recoveryProfit: 0,
+      maxRecoveryAttempts: 3,
+      sorosLevels: 1,
+    },
+    moderado: {
+      recoveryTarget: 1.15,
+      recoveryProfit: 0.15,
+      maxRecoveryAttempts: -1,
+      sorosLevels: 2,
+    },
+    agressivo: {
+      recoveryTarget: 1.2,
+      recoveryProfit: 0.2,
+      maxRecoveryAttempts: -1,
+      sorosLevels: 3,
+    },
   };
 
   constructor(
@@ -106,7 +137,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           derivToken: user.deriv_token,
           currency: user.currency,
           symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se banco tiver R_75)
-          tradingMode: (user.trading_mode || 'normal').toLowerCase() as 'veloz' | 'normal' | 'lento',
+          tradingMode: (user.trading_mode || 'normal').toLowerCase() as
+            | 'veloz'
+            | 'normal'
+            | 'lento',
           managementMode: 'moderado', // Default, pode ser configurado
           stopLossType: 'normal', // Default, pode ser configurado
           initialBalance: parseFloat(user.initial_balance) || 0,
@@ -116,7 +150,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         this.initializeUserState(userId, config);
       }
 
-      this.logger.log(`[Sentinel] Sincronizados ${activeUsers.length} usuários ativos`);
+      this.logger.log(
+        `[Sentinel] Sincronizados ${activeUsers.length} usuários ativos`,
+      );
     } catch (error) {
       this.logger.error('[Sentinel] Erro ao sincronizar usuários:', error);
     }
@@ -125,7 +161,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Inicializa estado do usuário
    */
-  private initializeUserState(userId: string, config: SentinelUserConfig): void {
+  private initializeUserState(
+    userId: string,
+    config: SentinelUserConfig,
+  ): void {
     const state: SentinelUserState = {
       userId,
       isActive: true,
@@ -151,7 +190,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     this.ticks.set(userId, []);
   }
 
-  async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
+  async activateUser(
+    userId: string,
+    config: AutonomousAgentConfig,
+  ): Promise<void> {
     const sentinelConfig: SentinelUserConfig = {
       userId: config.userId,
       initialStake: config.initialStake,
@@ -160,9 +202,16 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       derivToken: config.derivToken,
       currency: config.currency,
       symbol: 'R_100', // ✅ Todos os agentes autônomos sempre usam R_100 (forçar mesmo se config tiver R_75)
-      tradingMode: ((config as any).tradingMode || 'normal').toLowerCase() as 'veloz' | 'normal' | 'lento',
-      managementMode: ((config as any).managementMode || 'moderado').toLowerCase() as 'conservador' | 'moderado' | 'agressivo',
-      stopLossType: ((config as any).stopLossType || 'normal').toLowerCase() as 'normal' | 'blindado',
+      tradingMode: ((config as any).tradingMode || 'normal').toLowerCase() as
+        | 'veloz'
+        | 'normal'
+        | 'lento',
+      managementMode: (
+        (config as any).managementMode || 'moderado'
+      ).toLowerCase() as 'conservador' | 'moderado' | 'agressivo',
+      stopLossType: ((config as any).stopLossType || 'normal').toLowerCase() as
+        | 'normal'
+        | 'blindado',
       initialBalance: config.initialBalance || 0,
     };
 
@@ -171,11 +220,18 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
     try {
-      this.logger.log(`[Sentinel][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`);
+      this.logger.log(
+        `[Sentinel][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`,
+      );
       await this.warmUpConnection(sentinelConfig.derivToken);
-      this.logger.log(`[Sentinel][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`);
+      this.logger.log(
+        `[Sentinel][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`,
+      );
     } catch (error) {
-      this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
+      this.logger.warn(
+        `[Sentinel][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`,
+        error.message,
+      );
       // Não bloquear ativação se pré-aquecimento falhar
     }
 
@@ -187,7 +243,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       'CORE',
       `Usuário ATIVADO | Modo: ${sentinelConfig.tradingMode || 'normal'} | Capital: $${sentinelConfig.initialStake.toFixed(2)} | Meta: $${sentinelConfig.dailyProfitTarget.toFixed(2)} | Stop: $${sentinelConfig.dailyLossLimit.toFixed(2)}`,
     );
-    const modeConfig = this.tradingModeConfigs[sentinelConfig.tradingMode || 'normal'];
+    const modeConfig =
+      this.tradingModeConfigs[sentinelConfig.tradingMode || 'normal'];
     await this.saveLog(
       userId,
       'INFO',
@@ -215,15 +272,22 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // ✅ Log de debug para verificar se está recebendo ticks
     if (this.userConfigs.size > 0) {
-      this.logger.debug(`[Sentinel] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
+      this.logger.debug(
+        `[Sentinel] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`,
+      );
     }
 
     for (const [userId, config] of this.userConfigs.entries()) {
       // Sempre processar se o tick for R_100 (todos os agentes autônomos usam R_100)
       if (tickSymbol === 'R_100') {
-        promises.push(this.processTickForUser(userId, tick).catch((error) => {
-          this.logger.error(`[Sentinel][${userId}] Erro ao processar tick:`, error);
-        }));
+        promises.push(
+          this.processTickForUser(userId, tick).catch((error) => {
+            this.logger.error(
+              `[Sentinel][${userId}] Erro ao processar tick:`,
+              error,
+            );
+          }),
+        );
       }
     }
 
@@ -342,10 +406,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             // ✅ Log de decisão de compra
             const reasons: string[] = [];
             if (analysis.technical.direction === analysis.direction) {
-              reasons.push(`Técnica: ${analysis.technical.direction} (Score: ${analysis.technical.score.toFixed(1)}%)`);
+              reasons.push(
+                `Técnica: ${analysis.technical.direction} (Score: ${analysis.technical.score.toFixed(1)}%)`,
+              );
             }
             if (analysis.statistical.direction === analysis.direction) {
-              reasons.push(`Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`);
+              reasons.push(
+                `Estatística: ${analysis.statistical.digitPattern} (Score: ${analysis.statistical.score.toFixed(1)}%)`,
+              );
             }
 
             // ✅ Log de sinal no padrão Orion
@@ -359,7 +427,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             // ✅ Verificar novamente ANTES de executar (última verificação)
             const execState = this.userStates.get(userId);
             if (!execState || execState.isWaitingContract) {
-              await this.saveLog(userId, 'INFO', 'DECISION', '⏸️ Compra bloqueada: aguardando resultado de contrato anterior');
+              await this.saveLog(
+                userId,
+                'INFO',
+                'DECISION',
+                '⏸️ Compra bloqueada: aguardando resultado de contrato anterior',
+              );
               this.processingLocks.set(userId, false); // Liberar lock antes de retornar
               return;
             }
@@ -367,13 +440,21 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             await this.executeTrade(userId, decision, analysis);
           } else {
             // ✅ Log de motivo para não comprar
-            const reasonMsg = decision.reason === 'STOP_LOSS' ? 'Stop Loss ativado' :
-              decision.reason === 'STOP_LOSS_BLINDADO' ? 'Stop Loss Blindado ativado' :
-                decision.reason === 'INVALID_STAKE' ? 'Stake inválido' :
-                  'Aguardando condições ideais';
+            const reasonMsg =
+              decision.reason === 'STOP_LOSS'
+                ? 'Stop Loss ativado'
+                : decision.reason === 'STOP_LOSS_BLINDADO'
+                  ? 'Stop Loss Blindado ativado'
+                  : decision.reason === 'INVALID_STAKE'
+                    ? 'Stake inválido'
+                    : 'Aguardando condições ideais';
 
-            await this.saveLog(userId, 'INFO', 'DECISION',
-              `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
+            await this.saveLog(
+              userId,
+              'INFO',
+              'DECISION',
+              `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`,
+            );
           }
         } else {
           // ✅ Log de análise insuficiente com detalhes
@@ -387,8 +468,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
             if (techDir === 'N/A' && statDir === 'N/A') {
               reasons.push('Nenhuma análise indicou direção');
-            } else if (techDir !== statDir && techDir !== 'N/A' && statDir !== 'N/A') {
-              reasons.push(`Análises divergem: Técnica=${techDir}, Estatística=${statDir} (priorizando técnica)`);
+            } else if (
+              techDir !== statDir &&
+              techDir !== 'N/A' &&
+              statDir !== 'N/A'
+            ) {
+              reasons.push(
+                `Análises divergem: Técnica=${techDir}, Estatística=${statDir} (priorizando técnica)`,
+              );
             } else {
               reasons.push('Direção indefinida');
             }
@@ -396,13 +483,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
           // Verificar score
           if (analysis.score < modeConfig.scoreMinimum) {
-            reasons.push(`Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)`);
+            reasons.push(
+              `Score ${analysis.score.toFixed(1)}% abaixo do mínimo ${modeConfig.scoreMinimum}% (faltam ${missingScore.toFixed(1)}%)`,
+            );
           }
 
-          const reasonMsg = reasons.length > 0 ? reasons.join(' | ') : 'Análise insuficiente';
+          const reasonMsg =
+            reasons.length > 0 ? reasons.join(' | ') : 'Análise insuficiente';
 
-          await this.saveLog(userId, 'INFO', 'DECISION',
-            `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`);
+          await this.saveLog(
+            userId,
+            'INFO',
+            'DECISION',
+            `⏸️ COMPRA NEGADA | Score: ${analysis.score.toFixed(1)}% | Direção: ${analysis.direction || 'N/A'} | Motivo: ${reasonMsg}`,
+          );
         }
       }
     } finally {
@@ -414,21 +508,30 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Análise híbrida (Técnica + Estatística)
    */
-  private async analyze(userId: string, ticks: Tick[]): Promise<SentinelAnalysis | null> {
+  private async analyze(
+    userId: string,
+    ticks: Tick[],
+  ): Promise<SentinelAnalysis | null> {
     const config = this.userConfigs.get(userId);
     if (!config) return null;
 
     const modeConfig = this.tradingModeConfigs[config.tradingMode];
-    const prices = ticks.slice(-modeConfig.ticksToCollect).map(t => t.value);
+    const prices = ticks.slice(-modeConfig.ticksToCollect).map((t) => t.value);
 
     // Análise Técnica
-    const technicalAnalysis = this.performTechnicalAnalysis(prices, modeConfig.emaPeriods);
+    const technicalAnalysis = this.performTechnicalAnalysis(
+      prices,
+      modeConfig.emaPeriods,
+    );
 
     // Análise Estatística
-    const statisticalAnalysis = this.performStatisticalAnalysis(ticks.slice(-modeConfig.ticksToCollect));
+    const statisticalAnalysis = this.performStatisticalAnalysis(
+      ticks.slice(-modeConfig.ticksToCollect),
+    );
 
     // Combinar análises
-    const combinedScore = (technicalAnalysis.score * 0.6) + (statisticalAnalysis.score * 0.4);
+    const combinedScore =
+      technicalAnalysis.score * 0.6 + statisticalAnalysis.score * 0.4;
 
     // ✅ LÓGICA MELHORADA: Determinar direção de forma mais flexível
     // 1. Se ambas concordam → usar essa direção (melhor caso)
@@ -461,7 +564,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     return {
       score: combinedScore,
-      direction: direction as 'CALL' | 'PUT' | null,
+      direction: direction,
       technical: technicalAnalysis,
       statistical: statisticalAnalysis,
       confidence: combinedScore / 100,
@@ -471,9 +574,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Análise Técnica: EMA, RSI, Momentum, MACD
    */
-  private performTechnicalAnalysis(prices: number[], emaPeriods: number[]): TechnicalAnalysis {
+  private performTechnicalAnalysis(
+    prices: number[],
+    emaPeriods: number[],
+  ): TechnicalAnalysis {
     // Calcular EMAs
-    const emas = emaPeriods.map(period => this.calculateEMA(prices, period));
+    const emas = emaPeriods.map((period) => this.calculateEMA(prices, period));
     const emaFast = emas[0];
     const emaSlow = emas[emas.length - 1];
 
@@ -542,14 +648,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    */
   private performStatisticalAnalysis(ticks: Tick[]): StatisticalAnalysis {
     // Extrair últimos dígitos
-    const lastDigits = ticks.slice(-20).map(t => {
+    const lastDigits = ticks.slice(-20).map((t) => {
       const value = t.value.toString();
       return parseInt(value[value.length - 1]);
     });
 
     // Contar pares e ímpares
-    const evenCount = lastDigits.filter(d => d % 2 === 0).length;
-    const oddCount = lastDigits.filter(d => d % 2 === 1).length;
+    const evenCount = lastDigits.filter((d) => d % 2 === 0).length;
+    const oddCount = lastDigits.filter((d) => d % 2 === 1).length;
 
     // Determinar padrão
     let digitPattern: 'strongeven' | 'strongodd' | 'balanced' = 'balanced';
@@ -587,7 +693,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
 
     for (let i = period; i < prices.length; i++) {
-      ema = (prices[i] * multiplier) + (ema * (1 - multiplier));
+      ema = prices[i] * multiplier + ema * (1 - multiplier);
     }
 
     return ema;
@@ -606,16 +712,18 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       changes.push(prices[i] - prices[i - 1]);
     }
 
-    const gains = changes.filter(c => c > 0);
-    const losses = changes.filter(c => c < 0).map(c => Math.abs(c));
+    const gains = changes.filter((c) => c > 0);
+    const losses = changes.filter((c) => c < 0).map((c) => Math.abs(c));
 
-    const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / period : 0;
-    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / period : 0;
+    const avgGain =
+      gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / period : 0;
+    const avgLoss =
+      losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / period : 0;
 
     if (avgLoss === 0) return 100;
 
     const rs = avgGain / avgLoss;
-    return 100 - (100 / (1 + rs));
+    return 100 - 100 / (1 + rs);
   }
 
   /**
@@ -645,7 +753,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Toma decisão de trade baseada na análise e estado atual
    */
-  private async makeTradeDecision(userId: string, analysis: SentinelAnalysis): Promise<TradeDecision> {
+  private async makeTradeDecision(
+    userId: string,
+    analysis: SentinelAnalysis,
+  ): Promise<TradeDecision> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
@@ -674,7 +785,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       action: 'BUY',
       stake: finalStake,
       contractType: analysis.direction === 'CALL' ? 'CALL' : 'PUT',
-      reason: stopLossCheck.reason === 'STOP_LOSS_ADJUSTED' ? 'STOP_LOSS_ADJUSTED' : 'SIGNAL_FOUND',
+      reason:
+        stopLossCheck.reason === 'STOP_LOSS_ADJUSTED'
+          ? 'STOP_LOSS_ADJUSTED'
+          : 'SIGNAL_FOUND',
       mode: config.tradingMode,
     };
   }
@@ -692,9 +806,15 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // Se está em Soros, usar stake de Soros
     if (state.sorosLevel > 0 && state.lastTradeResult?.win) {
-      const sorosStake = Math.round((state.lastTradeResult.profit + config.initialStake) * 100) / 100;
-      await this.saveLog(userId, 'INFO', 'RISK',
-        `Ativando Soros Nível ${state.sorosLevel}. stakeanterior=${config.initialStake}, lucro=${state.lastTradeResult.profit.toFixed(2)}, proximostake=${sorosStake.toFixed(2)}`);
+      const sorosStake =
+        Math.round((state.lastTradeResult.profit + config.initialStake) * 100) /
+        100;
+      await this.saveLog(
+        userId,
+        'INFO',
+        'RISK',
+        `Ativando Soros Nível ${state.sorosLevel}. stakeanterior=${config.initialStake}, lucro=${state.lastTradeResult.profit.toFixed(2)}, proximostake=${sorosStake.toFixed(2)}`,
+      );
       return sorosStake;
     }
 
@@ -705,7 +825,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // Stake inicial (já deve estar arredondado, mas garantir)
     const initialStake = Math.round(config.initialStake * 100) / 100;
-    await this.saveLog(userId, 'INFO', 'RISK', `Verificando entrada normal (M0). Stake inicial: $${initialStake.toFixed(2)}`);
+    await this.saveLog(
+      userId,
+      'INFO',
+      'RISK',
+      `Verificando entrada normal (M0). Stake inicial: $${initialStake.toFixed(2)}`,
+    );
     return initialStake;
   }
 
@@ -728,12 +853,24 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // ✅ Arredondar para 2 casas decimais (requisito da API Deriv)
     const recoveryStake = Math.round((target / payout) * 100) / 100;
 
-    await this.saveLog(userId, 'WARN', 'RISK',
-      `Ativando recuperação (Martingale M${state.martingaleLevel}). perdas_totais=${state.totalLosses.toFixed(2)}, modo=${config.managementMode}`);
-    await this.saveLog(userId, 'INFO', 'RISK',
-      `Usando Martingale Inteligente: mudando para contrato Higher/Lower`);
-    await this.saveLog(userId, 'INFO', 'RISK',
-      `Calculando stake de recuperação: meta=${target.toFixed(2)}, payout=${(payout * 100).toFixed(2)}%, proximo_stake=${recoveryStake.toFixed(2)}`);
+    await this.saveLog(
+      userId,
+      'WARN',
+      'RISK',
+      `Ativando recuperação (Martingale M${state.martingaleLevel}). perdas_totais=${state.totalLosses.toFixed(2)}, modo=${config.managementMode}`,
+    );
+    await this.saveLog(
+      userId,
+      'INFO',
+      'RISK',
+      `Usando Martingale Inteligente: mudando para contrato Higher/Lower`,
+    );
+    await this.saveLog(
+      userId,
+      'INFO',
+      'RISK',
+      `Calculando stake de recuperação: meta=${target.toFixed(2)}, payout=${(payout * 100).toFixed(2)}%, proximo_stake=${recoveryStake.toFixed(2)}`,
+    );
 
     return recoveryStake;
   }
@@ -743,7 +880,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    * @param userId ID do usuário
    * @param nextStake Stake já calculado (opcional, para evitar recalcular)
    */
-  private async checkStopLoss(userId: string, nextStake?: number): Promise<TradeDecision> {
+  private async checkStopLoss(
+    userId: string,
+    nextStake?: number,
+  ): Promise<TradeDecision> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
@@ -752,26 +892,44 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     }
 
     // ✅ Usar stake fornecido ou calcular se não foi fornecido
-    const stake = nextStake !== undefined ? nextStake : await this.getNextStake(userId);
+    const stake =
+      nextStake !== undefined ? nextStake : await this.getNextStake(userId);
 
     // Stop Loss Normal
     if (config.stopLossType === 'normal') {
       const totalAtRisk = state.currentLoss + stake;
       if (totalAtRisk >= config.dailyLossLimit) {
-        await this.saveLog(userId, 'WARN', 'RISK',
-          `Risco de ultrapassar Stop Loss! perdasatuais=${state.currentLoss.toFixed(2)}, proximaentrada_calculada=${stake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`);
-        await this.saveLog(userId, 'WARN', 'RISK',
-          `Reduzindo stake para ${(config.dailyLossLimit - state.currentLoss).toFixed(2)} e resetando martingale.`);
+        await this.saveLog(
+          userId,
+          'WARN',
+          'RISK',
+          `Risco de ultrapassar Stop Loss! perdasatuais=${state.currentLoss.toFixed(2)}, proximaentrada_calculada=${stake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}`,
+        );
+        await this.saveLog(
+          userId,
+          'WARN',
+          'RISK',
+          `Reduzindo stake para ${(config.dailyLossLimit - state.currentLoss).toFixed(2)} e resetando martingale.`,
+        );
 
         // Resetar martingale e reduzir stake
         state.martingaleLevel = 0;
         state.recoveryAttempts = 0;
 
         // ✅ Arredondar stake para 2 casas decimais (requisito da API Deriv)
-        const adjustedStake = Math.round(Math.max(0, config.dailyLossLimit - state.currentLoss) * 100) / 100;
+        const adjustedStake =
+          Math.round(
+            Math.max(0, config.dailyLossLimit - state.currentLoss) * 100,
+          ) / 100;
 
-        if (adjustedStake < 0.35) { // Stake mínimo Deriv
-          await this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido (Margem insuficiente para trade mínimo). Parando.`);
+        if (adjustedStake < 0.35) {
+          // Stake mínimo Deriv
+          await this.saveLog(
+            userId,
+            'WARN',
+            'RISK',
+            `Stop Loss atingido (Margem insuficiente para trade mínimo). Parando.`,
+          );
           return { action: 'STOP', reason: 'STOP_LOSS_LIMIT' };
         }
 
@@ -787,30 +945,44 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     if (config.stopLossType === 'blindado') {
       if (!state.stopBlindadoAtivo) {
         // Ativação (40% da Meta)
-        if (state.currentProfit >= config.dailyProfitTarget * 0.40) {
+        if (state.currentProfit >= config.dailyProfitTarget * 0.4) {
           state.stopBlindadoAtivo = true;
           state.picoLucro = state.currentProfit;
-          state.pisoBlindado = state.picoLucro * 0.50; // Piso é 50% do pico
+          state.pisoBlindado = state.picoLucro * 0.5; // Piso é 50% do pico
 
-          this.logger.log(`[Sentinel][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`);
-          await this.saveLog(userId, 'INFO', 'RISK',
-            `Lucro atual: $${state.currentProfit.toFixed(2)}. Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`);
+          this.logger.log(
+            `[Sentinel][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`,
+          );
+          await this.saveLog(
+            userId,
+            'INFO',
+            'RISK',
+            `Lucro atual: $${state.currentProfit.toFixed(2)}. Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`,
+          );
         }
       } else {
         // Atualização Dinâmica (Trailing Stop)
         if (state.currentProfit > state.picoLucro) {
           state.picoLucro = state.currentProfit;
-          state.pisoBlindado = state.picoLucro * 0.50;
+          state.pisoBlindado = state.picoLucro * 0.5;
 
-          this.logger.log(`[Sentinel][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`);
+          this.logger.log(
+            `[Sentinel][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`,
+          );
         }
 
         // Gatilho de Saída
         if (state.currentProfit <= state.pisoBlindado) {
-          this.logger.log(`[Sentinel][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
+          this.logger.log(
+            `[Sentinel][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`,
+          );
 
-          await this.saveLog(userId, 'WARN', 'RISK',
-            `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.currentProfit.toFixed(2)}. Encerrando operações do dia.`);
+          await this.saveLog(
+            userId,
+            'WARN',
+            'RISK',
+            `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.currentProfit.toFixed(2)}. Encerrando operações do dia.`,
+          );
 
           // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
           // Mantém is_active = TRUE para permitir reset automático no dia seguinte
@@ -831,31 +1003,47 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * Executa trade
    */
-  private async executeTrade(userId: string, decision: TradeDecision, analysis: SentinelAnalysis): Promise<void> {
+  private async executeTrade(
+    userId: string,
+    decision: TradeDecision,
+    analysis: SentinelAnalysis,
+  ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
-    this.logger.log(`[Sentinel][${userId}] 🎬 executeTrade chamado: action=${decision.action}, stake=$${decision.stake?.toFixed(2) || '0.00'}`);
+    this.logger.log(
+      `[Sentinel][${userId}] 🎬 executeTrade chamado: action=${decision.action}, stake=$${decision.stake?.toFixed(2) || '0.00'}`,
+    );
 
     if (!config || !state || decision.action !== 'BUY') {
-      this.logger.warn(`[Sentinel][${userId}] ⚠️ executeTrade abortado: config=${!!config}, state=${!!state}, action=${decision.action}`);
+      this.logger.warn(
+        `[Sentinel][${userId}] ⚠️ executeTrade abortado: config=${!!config}, state=${!!state}, action=${decision.action}`,
+      );
       return;
     }
 
     // ✅ Verificar se já está aguardando resultado de contrato (dupla verificação de segurança)
     if (state.isWaitingContract) {
-      this.logger.warn(`[Sentinel][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`);
+      this.logger.warn(
+        `[Sentinel][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`,
+      );
       return;
     }
 
     // ✅ Verificar Stop Loss antes de executar, passando o stake já calculado
-    const stopLossCheck = await this.checkStopLoss(userId, decision.stake || config.initialStake);
+    const stopLossCheck = await this.checkStopLoss(
+      userId,
+      decision.stake || config.initialStake,
+    );
     if (stopLossCheck.action === 'STOP') {
-      this.logger.warn(`[Sentinel][${userId}] 🛑 executeTrade bloqueado por Stop Loss: ${stopLossCheck.reason}`);
+      this.logger.warn(
+        `[Sentinel][${userId}] 🛑 executeTrade bloqueado por Stop Loss: ${stopLossCheck.reason}`,
+      );
       return;
     }
 
-    const contractType = decision.contractType || (analysis.direction === 'CALL' ? 'CALL' : 'PUT');
+    const contractType =
+      decision.contractType || (analysis.direction === 'CALL' ? 'CALL' : 'PUT');
 
     // ✅ Para R_100, sempre usar CALL/PUT (não HIGHER/LOWER)
     const finalContractType = contractType;
@@ -871,19 +1059,18 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     try {
       // ✅ Criar registro de trade ANTES de executar
-      const tradeId = await this.createTradeRecord(
-        userId,
-        {
-          contractType: finalContractType,
-          stakeAmount: decision.stake || config.initialStake,
-          duration: 5,
-          analysis: analysis,
-          payout: zenixPayout,
-          entryPrice: 0, // Será atualizado via proposal_open_contract
-        },
-      );
+      const tradeId = await this.createTradeRecord(userId, {
+        contractType: finalContractType,
+        stakeAmount: decision.stake || config.initialStake,
+        duration: 5,
+        analysis: analysis,
+        payout: zenixPayout,
+        entryPrice: 0, // Será atualizado via proposal_open_contract
+      });
 
-      this.logger.log(`[Sentinel][${userId}] 🛒 Chamando buyContract: ${finalContractType} | Stake: $${(decision.stake || config.initialStake).toFixed(2)} | Duration: 5 ticks`);
+      this.logger.log(
+        `[Sentinel][${userId}] 🛒 Chamando buyContract: ${finalContractType} | Stake: $${(decision.stake || config.initialStake).toFixed(2)} | Duration: 5 ticks`,
+      );
 
       const contractId = await this.buyContract(
         userId,
@@ -894,7 +1081,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         5, // duration em ticks
       );
 
-      this.logger.log(`[Sentinel][${userId}] ${contractId ? '✅' : '❌'} buyContract retornou: ${contractId || 'NULL'}`);
+      this.logger.log(
+        `[Sentinel][${userId}] ${contractId ? '✅' : '❌'} buyContract retornou: ${contractId || 'NULL'}`,
+      );
 
       if (contractId) {
         state.currentContractId = contractId;
@@ -921,20 +1110,35 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           status: 'ERROR',
           errorMessage: 'Falha ao comprar contrato',
         });
-        await this.saveLog(userId, 'ERROR', 'API', 'Falha ao comprar contrato. Aguardando novo sinal...');
+        await this.saveLog(
+          userId,
+          'ERROR',
+          'API',
+          'Falha ao comprar contrato. Aguardando novo sinal...',
+        );
       }
     } catch (error) {
       // Se houve erro, resetar isWaitingContract
       state.isWaitingContract = false;
       this.logger.error(`[Sentinel][${userId}] Erro ao executar trade:`, error);
-      await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}. Aguardando novo sinal...`);
+      await this.saveLog(
+        userId,
+        'ERROR',
+        'API',
+        `Erro ao executar trade: ${error.message}. Aguardando novo sinal...`,
+      );
     }
   }
 
   /**
    * Obtém payout de um contrato via Deriv API
    */
-  private async getPayout(token: string, contractType: string, symbol: string, duration: number): Promise<number> {
+  private async getPayout(
+    token: string,
+    contractType: string,
+    symbol: string,
+    duration: number,
+  ): Promise<number> {
     try {
       // ✅ Obter conexão do pool interno
       const connection = await this.getOrCreateWebSocketConnection(token);
@@ -985,11 +1189,15 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
       // Enviar ping para confirmar que está funcionando
       await connection.sendRequest({ ping: 1 }, 5000);
-      this.logger.debug(`[Sentinel] ✅ Conexão WebSocket pré-aquecida com sucesso`);
+      this.logger.debug(
+        `[Sentinel] ✅ Conexão WebSocket pré-aquecida com sucesso`,
+      );
     } catch (error) {
       // Ignorar erro de ping, o importante é criar a conexão
       // A conexão foi criada mesmo que o ping tenha falhado
-      this.logger.debug(`[Sentinel] 🔌 Conexão criada (ping falhou mas conexão foi estabelecida)`);
+      this.logger.debug(
+        `[Sentinel] 🔌 Conexão criada (ping falhou mas conexão foi estabelecida)`,
+      );
     }
   }
 
@@ -1010,7 +1218,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
     // ✅ CORREÇÃO: Delay inicial de 3000ms antes da primeira tentativa
     // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1018,12 +1226,17 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         if (attempt > 0) {
           // ✅ Backoff exponencial: 1s, 2s, 4s...
           const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-          this.logger.warn(`[Sentinel][${userId}] 🔄 Tentativa ${attempt + 1}/${maxRetries + 1} após ${delayMs}ms | Erro anterior: ${lastError?.message}`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
+          this.logger.warn(
+            `[Sentinel][${userId}] 🔄 Tentativa ${attempt + 1}/${maxRetries + 1} após ${delayMs}ms | Erro anterior: ${lastError?.message}`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
 
         // ✅ Obter conexão do pool interno
-        const connection = await this.getOrCreateWebSocketConnection(token, userId);
+        const connection = await this.getOrCreateWebSocketConnection(
+          token,
+          userId,
+        );
 
         // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
         const proposalResponse = await connection.sendRequest(
@@ -1041,26 +1254,42 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         );
 
         // ✅ Verificar erros na resposta (pode estar em error ou proposal.error) - igual Orion
-        const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+        const errorObj =
+          proposalResponse.error || proposalResponse.proposal?.error;
         if (errorObj) {
           const errorCode = errorObj?.code || '';
           const errorMessage = errorObj?.message || JSON.stringify(errorObj);
 
           // ✅ Alguns erros não devem ser retentados (ex: saldo insuficiente, parâmetros inválidos)
-          const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol'];
-          if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
-            this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
+          const nonRetryableErrors = [
+            'InvalidAmount',
+            'InsufficientBalance',
+            'InvalidContract',
+            'InvalidSymbol',
+          ];
+          if (
+            nonRetryableErrors.some(
+              (code) => errorCode.includes(code) || errorMessage.includes(code),
+            )
+          ) {
+            this.logger.error(
+              `[Sentinel][${userId}] ❌ Erro não retentável na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`,
+            );
             throw new Error(errorMessage);
           }
 
           // ✅ Erros retentáveis: tentar novamente
           lastError = new Error(errorMessage);
           if (attempt < maxRetries) {
-            this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+            this.logger.warn(
+              `[Sentinel][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`,
+            );
             continue;
           }
 
-          this.logger.error(`[Sentinel][${userId}] ❌ Erro na proposta após ${maxRetries + 1} tentativas: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Erro na proposta após ${maxRetries + 1} tentativas: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`,
+          );
           throw lastError;
         }
 
@@ -1070,10 +1299,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
           lastError = new Error('Resposta de proposta inválida');
           if (attempt < maxRetries) {
-            this.logger.warn(`[Sentinel][${userId}] ⚠️ Proposta inválida (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(proposalResponse)}`);
+            this.logger.warn(
+              `[Sentinel][${userId}] ⚠️ Proposta inválida (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(proposalResponse)}`,
+            );
             continue;
           }
-          this.logger.error(`[Sentinel][${userId}] ❌ Proposta inválida recebida após ${maxRetries + 1} tentativas: ${JSON.stringify(proposalResponse)}`);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Proposta inválida recebida após ${maxRetries + 1} tentativas: ${JSON.stringify(proposalResponse)}`,
+          );
           throw lastError;
         }
 
@@ -1090,34 +1323,55 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
         if (buyErrorObj) {
           const errorCode = buyErrorObj?.code || '';
-          const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
+          const errorMessage =
+            buyErrorObj?.message || JSON.stringify(buyErrorObj);
 
           // ✅ Alguns erros não devem ser retentados
-          const nonRetryableErrors = ['InvalidProposal', 'ProposalExpired', 'InsufficientBalance'];
-          if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
-            this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+          const nonRetryableErrors = [
+            'InvalidProposal',
+            'ProposalExpired',
+            'InsufficientBalance',
+          ];
+          if (
+            nonRetryableErrors.some(
+              (code) => errorCode.includes(code) || errorMessage.includes(code),
+            )
+          ) {
+            this.logger.error(
+              `[Sentinel][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`,
+            );
             throw new Error(errorMessage);
           }
 
           // ✅ Erros retentáveis: tentar novamente (mas precisa obter nova proposta)
           lastError = new Error(errorMessage);
           if (attempt < maxRetries) {
-            this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável ao comprar (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+            this.logger.warn(
+              `[Sentinel][${userId}] ⚠️ Erro retentável ao comprar (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`,
+            );
             continue;
           }
 
-          this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`,
+          );
           throw lastError;
         }
 
         const contractId = buyResponse.buy?.contract_id;
         if (!contractId) {
-          lastError = new Error('Resposta de compra inválida - sem contract_id');
+          lastError = new Error(
+            'Resposta de compra inválida - sem contract_id',
+          );
           if (attempt < maxRetries) {
-            this.logger.warn(`[Sentinel][${userId}] ⚠️ Contrato sem contract_id (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(buyResponse)}`);
+            this.logger.warn(
+              `[Sentinel][${userId}] ⚠️ Contrato sem contract_id (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(buyResponse)}`,
+            );
             continue;
           }
-          this.logger.error(`[Sentinel][${userId}] ❌ Contrato criado mas sem contract_id após ${maxRetries + 1} tentativas: ${JSON.stringify(buyResponse)}`);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Contrato criado mas sem contract_id após ${maxRetries + 1} tentativas: ${JSON.stringify(buyResponse)}`,
+          );
           throw lastError;
         }
 
@@ -1134,28 +1388,42 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
               const state = this.userStates.get(userId);
 
               // ✅ Log de debug para rastrear atualizações do contrato
-              this.logger.debug(`[Sentinel][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+              this.logger.debug(
+                `[Sentinel][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`,
+              );
 
               // ✅ Atualizar entry_price quando disponível
               if (contract.entry_spot && state?.currentTradeId) {
                 this.updateTradeRecord(state.currentTradeId, {
                   entryPrice: Number(contract.entry_spot),
                 }).catch((error) => {
-                  this.logger.error(`[Sentinel][${userId}] Erro ao atualizar entry_price:`, error);
+                  this.logger.error(
+                    `[Sentinel][${userId}] Erro ao atualizar entry_price:`,
+                    error,
+                  );
                 });
               }
 
               // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
-              if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
+              if (
+                contract.status === 'rejected' ||
+                contract.status === 'cancelled' ||
+                contract.status === 'expired'
+              ) {
                 const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
-                this.logger.error(`[Sentinel][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`);
+                this.logger.error(
+                  `[Sentinel][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`,
+                );
 
                 if (state?.currentTradeId) {
                   this.updateTradeRecord(state.currentTradeId, {
                     status: 'ERROR',
                     errorMessage: errorMsg,
                   }).catch((error) => {
-                    this.logger.error(`[Sentinel][${userId}] Erro ao atualizar trade com status ERROR:`, error);
+                    this.logger.error(
+                      `[Sentinel][${userId}] Erro ao atualizar trade com status ERROR:`,
+                      error,
+                    );
                   });
                 }
 
@@ -1172,22 +1440,35 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
               // ✅ Verificar se contrato foi finalizado (igual Orion)
               // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
-              const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
-                contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
+              const isFinalized =
+                contract.is_sold === 1 ||
+                contract.is_sold === true ||
+                contract.status === 'won' ||
+                contract.status === 'lost' ||
+                contract.status === 'sold';
 
               if (isFinalized) {
                 const profit = Number(contract.profit || 0);
                 const win = profit > 0;
-                const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
+                const exitPrice = Number(
+                  contract.exit_spot || contract.current_spot || 0,
+                );
 
-                this.logger.log(`[Sentinel][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
+                this.logger.log(
+                  `[Sentinel][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`,
+                );
 
                 // Processar resultado com userId correto
-                this.onContractFinish(
-                  userId,
-                  { win, profit, contractId, exitPrice },
-                ).catch((error) => {
-                  this.logger.error(`[Sentinel][${userId}] Erro ao processar resultado:`, error);
+                this.onContractFinish(userId, {
+                  win,
+                  profit,
+                  contractId,
+                  exitPrice,
+                }).catch((error) => {
+                  this.logger.error(
+                    `[Sentinel][${userId}] Erro ao processar resultado:`,
+                    error,
+                  );
                 });
 
                 // Remover subscription usando pool interno
@@ -1206,46 +1487,67 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         const errorMessage = error?.message || JSON.stringify(error);
 
         // ✅ Verificar se é erro de timeout ou conexão (retentável)
-        const isRetryableError = errorMessage.includes('Timeout') ||
+        const isRetryableError =
+          errorMessage.includes('Timeout') ||
           errorMessage.includes('WebSocket') ||
           errorMessage.includes('Conexão') ||
           errorMessage.includes('not ready') ||
           errorMessage.includes('not open');
 
         if (isRetryableError && attempt < maxRetries) {
-          this.logger.warn(`[Sentinel][${userId}] ⚠️ Erro retentável (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+          this.logger.warn(
+            `[Sentinel][${userId}] ⚠️ Erro retentável (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`,
+          );
           continue;
         }
 
         // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
         if (attempt >= maxRetries) {
-          this.logger.error(`[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`,
+            error?.stack,
+          );
         } else {
-          this.logger.error(`[Sentinel][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`, error?.stack);
+          this.logger.error(
+            `[Sentinel][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`,
+            error?.stack,
+          );
         }
         return null;
       }
     }
 
     // ✅ Se chegou aqui, todas as tentativas falharam
-    this.logger.error(`[Sentinel][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
+    this.logger.error(
+      `[Sentinel][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`,
+    );
     return null;
   }
 
-  async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {
+  async processAgent(
+    userId: string,
+    marketAnalysis: MarketAnalysis,
+  ): Promise<TradeDecision> {
     // O Sentinel processa ticks diretamente, não usa marketAnalysis
     return { action: 'WAIT', reason: 'PROCESSED_BY_TICKS' };
   }
 
   async onContractFinish(
     userId: string,
-    result: { win: boolean; profit: number; contractId: string; exitPrice?: number },
+    result: {
+      win: boolean;
+      profit: number;
+      contractId: string;
+      exitPrice?: number;
+    },
   ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
     if (!config || !state) {
-      this.logger.warn(`[Sentinel][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`);
+      this.logger.warn(
+        `[Sentinel][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`,
+      );
       return;
     }
 
@@ -1254,7 +1556,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     state.currentContractId = null;
     state.currentTradeId = null;
 
-    this.logger.log(`[Sentinel][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+    this.logger.log(
+      `[Sentinel][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`,
+    );
 
     // ✅ Atualizar trade no banco com resultado
     if (tradeId) {
@@ -1265,12 +1569,19 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           profitLoss: result.profit,
           closedAt: new Date(),
         });
-        this.logger.log(`[Sentinel][${userId}] ✅ Trade ${tradeId} atualizado no banco de dados`);
+        this.logger.log(
+          `[Sentinel][${userId}] ✅ Trade ${tradeId} atualizado no banco de dados`,
+        );
       } catch (error) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+        this.logger.error(
+          `[Sentinel][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`,
+          error,
+        );
       }
     } else {
-      this.logger.warn(`[Sentinel][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
+      this.logger.warn(
+        `[Sentinel][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`,
+      );
     }
 
     // Atualizar estado primeiro
@@ -1283,8 +1594,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       const mgmtConfig = this.managementModeConfigs[config.managementMode];
       if (state.sorosLevel < mgmtConfig.sorosLevels) {
         state.sorosLevel++;
-        await this.saveLog(userId, 'INFO', 'RISK',
-          `Ativando Soros Nível ${state.sorosLevel}. stakeanterior=${config.initialStake}, lucro=${result.profit.toFixed(2)}, proximostake=${(result.profit + config.initialStake).toFixed(2)}`);
+        await this.saveLog(
+          userId,
+          'INFO',
+          'RISK',
+          `Ativando Soros Nível ${state.sorosLevel}. stakeanterior=${config.initialStake}, lucro=${result.profit.toFixed(2)}, proximostake=${(result.profit + config.initialStake).toFixed(2)}`,
+        );
       } else {
         state.sorosLevel = 0; // Reset após máximo
       }
@@ -1302,7 +1617,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
       // Ativar Martingale Inteligente
       const mgmtConfig = this.managementModeConfigs[config.managementMode];
-      if (mgmtConfig.maxRecoveryAttempts === -1 || state.recoveryAttempts < mgmtConfig.maxRecoveryAttempts) {
+      if (
+        mgmtConfig.maxRecoveryAttempts === -1 ||
+        state.recoveryAttempts < mgmtConfig.maxRecoveryAttempts
+      ) {
         state.martingaleLevel = 1;
         state.recoveryAttempts++;
         state.sorosLevel = 0; // Reset Soros em caso de perda
@@ -1335,7 +1653,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // ✅ Logs detalhados do resultado (formato igual à Orion)
     const status = result.win ? 'WON' : 'LOST';
     const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
-    const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
+    const pnl =
+      result.profit >= 0
+        ? `+$${result.profit.toFixed(2)}`
+        : `-$${Math.abs(result.profit).toFixed(2)}`;
 
     // ✅ Log de resultado no padrão Orion: ✅ GANHOU ou ❌ PERDEU | direção | P&L: $+X.XX
     await this.saveLog(
@@ -1345,13 +1666,24 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       `${result.win ? '✅ GANHOU' : '❌ PERDEU'} | ${contractType} | P&L: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}`,
     );
 
-    this.logger.log(`[SENTINEL][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`);
+    this.logger.log(
+      `[SENTINEL][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`,
+    );
 
     // Verificar meta de lucro
     if (state.currentProfit >= config.dailyProfitTarget) {
-      await this.saveLog(userId, 'INFO', 'RISK',
-        `META DE LUCRO ATINGIDA! daily_profit=${state.currentProfit.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`);
-      await this.saveLog(userId, 'INFO', 'CORE', `Agente em modo de espera. Retornando amanhã.`);
+      await this.saveLog(
+        userId,
+        'INFO',
+        'RISK',
+        `META DE LUCRO ATINGIDA! daily_profit=${state.currentProfit.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`,
+      );
+      await this.saveLog(
+        userId,
+        'INFO',
+        'CORE',
+        `Agente em modo de espera. Retornando amanhã.`,
+      );
 
       state.isActive = false; // Pausa em memória para o dia
       // Mantém is_active = TRUE para permitir reset automático no dia seguinte
@@ -1361,14 +1693,21 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           [userId],
         );
       } catch (error) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_profit:`, error);
+        this.logger.error(
+          `[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_profit:`,
+          error,
+        );
       }
     }
 
     // Verificar limite de perda
     if (state.currentLoss >= config.dailyLossLimit) {
-      await this.saveLog(userId, 'WARN', 'RISK',
-        `LIMITE DE PERDA ATINGIDO! daily_loss=${state.currentLoss.toFixed(2)}, limit=${config.dailyLossLimit.toFixed(2)}. Pausando operações até amanhã.`);
+      await this.saveLog(
+        userId,
+        'WARN',
+        'RISK',
+        `LIMITE DE PERDA ATINGIDO! daily_loss=${state.currentLoss.toFixed(2)}, limit=${config.dailyLossLimit.toFixed(2)}. Pausando operações até amanhã.`,
+      );
 
       state.isActive = false; // Pausa em memória para o dia
       // Mantém is_active = TRUE para permitir reset automático no dia seguinte
@@ -1378,7 +1717,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           [userId],
         );
       } catch (error) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_loss:`, error);
+        this.logger.error(
+          `[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_loss:`,
+          error,
+        );
       }
     }
   }
@@ -1420,7 +1762,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       [userId],
     );
 
-    this.logger.log(`[Sentinel] ✅ Sessão diária resetada para usuário ${userId}`);
+    this.logger.log(
+      `[Sentinel] ✅ Sessão diária resetada para usuário ${userId}`,
+    );
   }
 
   /**
@@ -1467,7 +1811,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       timestamp: new Date().toISOString(),
     };
 
-    const analysisReasoning = `Análise ${config.tradingMode}: Score ${trade.analysis.score.toFixed(1)}%, ` +
+    const analysisReasoning =
+      `Análise ${config.tradingMode}: Score ${trade.analysis.score.toFixed(1)}%, ` +
       `Direção ${trade.analysis.direction}, ` +
       `EMA Fast=${trade.analysis.technical.emaFast.toFixed(2)}, ` +
       `RSI=${trade.analysis.technical.rsi.toFixed(1)}, ` +
@@ -1495,10 +1840,15 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         ],
       );
 
-      const insertId = Array.isArray(result) ? result[0]?.insertId : result?.insertId;
+      const insertId = Array.isArray(result)
+        ? result[0]?.insertId
+        : result?.insertId;
       return insertId || 0;
     } catch (error) {
-      this.logger.error(`[Sentinel][${userId}] Erro ao criar registro de trade:`, error);
+      this.logger.error(
+        `[Sentinel][${userId}] Erro ao criar registro de trade:`,
+        error,
+      );
       return 0;
     }
   }
@@ -1565,23 +1915,32 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     }
 
     if (updateFields.length === 0) {
-      this.logger.warn(`[Sentinel] ⚠️ Tentativa de atualizar trade ${tradeId} sem campos para atualizar`);
+      this.logger.warn(
+        `[Sentinel] ⚠️ Tentativa de atualizar trade ${tradeId} sem campos para atualizar`,
+      );
       return;
     }
 
     updateValues.push(tradeId);
 
     try {
-      this.logger.debug(`[Sentinel] 📝 Atualizando trade ${tradeId}: ${updateFields.join(', ')}`);
+      this.logger.debug(
+        `[Sentinel] 📝 Atualizando trade ${tradeId}: ${updateFields.join(', ')}`,
+      );
       await this.dataSource.query(
         `UPDATE autonomous_agent_trades 
          SET ${updateFields.join(', ')}
          WHERE id = ?`,
         updateValues,
       );
-      this.logger.debug(`[Sentinel] ✅ Trade ${tradeId} atualizado com sucesso`);
+      this.logger.debug(
+        `[Sentinel] ✅ Trade ${tradeId} atualizado com sucesso`,
+      );
     } catch (error) {
-      this.logger.error(`[Sentinel] ❌ Erro ao atualizar trade ${tradeId}:`, error);
+      this.logger.error(
+        `[Sentinel] ❌ Erro ao atualizar trade ${tradeId}:`,
+        error,
+      );
       throw error; // ✅ Re-throw para que o erro seja visível
     }
   }
@@ -1590,7 +1949,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    * Salva log no sistema (via LogQueueService que salva no banco)
    * ✅ Evita duplicação: salva apenas uma vez via LogQueueService
    */
-  private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
+  private async saveLog(
+    userId: string,
+    level: string,
+    module: string,
+    message: string,
+  ): Promise<void> {
     // ✅ Formatar mensagem sem duplicar prefixo do módulo
     let formattedMessage = message;
     // Remover prefixos duplicados se existirem (ex: [CORE] - mensagem)
@@ -1600,10 +1964,34 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     // O LogQueueService já salva no banco de dados automaticamente
     if (this.logQueueService) {
       // Normalizar módulo para tipo válido
-      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] =
-        ['CORE', 'API', 'ANALYZER', 'DECISION', 'TRADER', 'RISK', 'HUMANIZER'];
-      const normalizedModule = validModules.includes(module.toUpperCase() as any)
-        ? (module.toUpperCase() as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')
+      const validModules: (
+        | 'CORE'
+        | 'API'
+        | 'ANALYZER'
+        | 'DECISION'
+        | 'TRADER'
+        | 'RISK'
+        | 'HUMANIZER'
+      )[] = [
+        'CORE',
+        'API',
+        'ANALYZER',
+        'DECISION',
+        'TRADER',
+        'RISK',
+        'HUMANIZER',
+      ];
+      const normalizedModule = validModules.includes(
+        module.toUpperCase() as any,
+      )
+        ? (module.toUpperCase() as
+            | 'CORE'
+            | 'API'
+            | 'ANALYZER'
+            | 'DECISION'
+            | 'TRADER'
+            | 'RISK'
+            | 'HUMANIZER')
         : 'CORE';
 
       this.logQueueService.saveLogAsync({
@@ -1622,11 +2010,16 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
   private getLogIcon(level: string): string {
     switch (level.toUpperCase()) {
-      case 'INFO': return 'ℹ️';
-      case 'WARN': return '⚠️';
-      case 'ERROR': return '❌';
-      case 'DEBUG': return '🔍';
-      default: return '📝';
+      case 'INFO':
+        return 'ℹ️';
+      case 'WARN':
+        return '⚠️';
+      case 'ERROR':
+        return '❌';
+      case 'DEBUG':
+        return '🔍';
+      default:
+        return '📝';
     }
   }
 
@@ -1638,35 +2031,68 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
   /**
    * ✅ Obtém ou cria conexão WebSocket reutilizável por token
    */
-  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+  private async getOrCreateWebSocketConnection(
+    token: string,
+    userId?: string,
+  ): Promise<{
     ws: WebSocket;
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
-    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    subscribe: (
+      payload: any,
+      callback: (msg: any) => void,
+      subId: string,
+      timeoutMs?: number,
+    ) => Promise<void>;
     removeSubscription: (subId: string) => void;
   }> {
     // ✅ Verificar se já existe conexão para este token
     const existing = this.wsConnections.get(token);
     if (existing) {
       const readyState = existing.ws.readyState;
-      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
-        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
-          readyState === WebSocket.CLOSING ? 'CLOSING' :
-            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
+      const readyStateText =
+        readyState === WebSocket.OPEN
+          ? 'OPEN'
+          : readyState === WebSocket.CONNECTING
+            ? 'CONNECTING'
+            : readyState === WebSocket.CLOSING
+              ? 'CLOSING'
+              : readyState === WebSocket.CLOSED
+                ? 'CLOSED'
+                : 'UNKNOWN';
 
-      this.logger.debug(`[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+      this.logger.debug(
+        `[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`,
+      );
 
       if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-        this.logger.debug(`[SENTINEL] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+        this.logger.debug(
+          `[SENTINEL] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`,
+        );
 
         return {
           ws: existing.ws,
-          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+          sendRequest: (payload: any, timeoutMs = 60000) =>
+            this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (
+            payload: any,
+            callback: (msg: any) => void,
+            subId: string,
+            timeoutMs = 90000,
+          ) =>
+            this.subscribeViaConnection(
+              token,
+              payload,
+              callback,
+              subId,
+              timeoutMs,
+            ),
+          removeSubscription: (subId: string) =>
+            this.removeSubscriptionFromConnection(token, subId),
         };
       } else {
-        this.logger.warn(`[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
+        this.logger.warn(
+          `[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`,
+        );
         if (existing.keepAliveInterval) {
           clearInterval(existing.keepAliveInterval);
         }
@@ -1674,11 +2100,15 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         this.wsConnections.delete(token);
       }
     } else {
-      this.logger.debug(`[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
+      this.logger.debug(
+        `[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`,
+      );
     }
 
     // ✅ Criar nova conexão
-    this.logger.debug(`[SENTINEL] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
+    this.logger.debug(
+      `[SENTINEL] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`,
+    );
     const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
 
     const ws = await new Promise<WebSocket>((resolve, reject) => {
@@ -1689,7 +2119,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       let authResolved = false;
       const connectionTimeout = setTimeout(() => {
         if (!authResolved) {
-          this.logger.error(`[SENTINEL] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
+          this.logger.error(
+            `[SENTINEL] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`,
+          );
           socket.close();
           this.wsConnections.delete(token);
           reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
@@ -1702,25 +2134,39 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           const msg = JSON.parse(data.toString());
 
           // ✅ Ignorar ping/pong
-          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
+          if (
+            msg.msg_type === 'ping' ||
+            msg.msg_type === 'pong' ||
+            msg.ping ||
+            msg.pong
+          ) {
             return;
           }
 
           const conn = this.wsConnections.get(token);
           if (!conn) {
-            this.logger.warn(`[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
+            this.logger.warn(
+              `[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`,
+            );
             return;
           }
 
           // ✅ Processar autorização (apenas durante inicialização)
           if (msg.msg_type === 'authorize' && !authResolved) {
-            this.logger.debug(`[SENTINEL] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
+            this.logger.debug(
+              `[SENTINEL] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`,
+            );
             authResolved = true;
             clearTimeout(connectionTimeout);
 
             if (msg.error || (msg.authorize && msg.authorize.error)) {
-              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
-              this.logger.error(`[SENTINEL] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+              const errorMsg =
+                msg.error?.message ||
+                msg.authorize?.error?.message ||
+                'Erro desconhecido na autorização';
+              this.logger.error(
+                `[SENTINEL] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`,
+              );
               socket.close();
               this.wsConnections.delete(token);
               reject(new Error(`Erro na autorização: ${errorMsg}`));
@@ -1728,14 +2174,18 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             }
 
             conn.authorized = true;
-            this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+            this.logger.log(
+              `[SENTINEL] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`,
+            );
 
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
               if (socket.readyState === WebSocket.OPEN) {
                 try {
                   socket.send(JSON.stringify({ ping: 1 }));
-                  this.logger.debug(`[SENTINEL][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
+                  this.logger.debug(
+                    `[SENTINEL][KeepAlive][${token.substring(0, 8)}] Ping enviado`,
+                  );
                 } catch (error) {
                   // Ignorar erros
                 }
@@ -1757,7 +2207,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           }
 
           // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
-          if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+          if (
+            msg.proposal ||
+            msg.buy ||
+            (msg.error && !msg.proposal_open_contract)
+          ) {
             // Processar primeira requisição pendente (FIFO)
             const firstKey = conn.pendingRequests.keys().next().value;
             if (firstKey) {
@@ -1766,7 +2220,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
                 clearTimeout(pending.timeout);
                 conn.pendingRequests.delete(firstKey);
                 if (msg.error) {
-                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                  pending.reject(
+                    new Error(msg.error.message || JSON.stringify(msg.error)),
+                  );
                 } else {
                   pending.resolve(msg);
                 }
@@ -1779,7 +2235,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       });
 
       socket.on('open', () => {
-        this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
+        this.logger.log(
+          `[SENTINEL] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`,
+        );
 
         // ✅ Criar entrada no pool
         const conn = {
@@ -1794,7 +2252,9 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
         // ✅ Enviar autorização
         const authPayload = { authorize: token };
-        this.logger.debug(`[SENTINEL] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
+        this.logger.debug(
+          `[SENTINEL] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`,
+        );
         socket.send(JSON.stringify(authPayload));
       });
 
@@ -1808,14 +2268,16 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       });
 
       socket.on('close', () => {
-        this.logger.debug(`[SENTINEL] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`);
+        this.logger.debug(
+          `[SENTINEL] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`,
+        );
         const conn = this.wsConnections.get(token);
         if (conn) {
           if (conn.keepAliveInterval) {
             clearInterval(conn.keepAliveInterval);
           }
           // Rejeitar todas as requisições pendentes
-          conn.pendingRequests.forEach(pending => {
+          conn.pendingRequests.forEach((pending) => {
             clearTimeout(pending.timeout);
             pending.reject(new Error('WebSocket fechado'));
           });
@@ -1834,17 +2296,28 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const conn = this.wsConnections.get(token)!;
     return {
       ws: conn.ws,
-      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+      sendRequest: (payload: any, timeoutMs = 60000) =>
+        this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (
+        payload: any,
+        callback: (msg: any) => void,
+        subId: string,
+        timeoutMs = 90000,
+      ) =>
         this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+      removeSubscription: (subId: string) =>
+        this.removeSubscriptionFromConnection(token, subId),
     };
   }
 
   /**
    * ✅ Envia requisição via conexão existente
    */
-  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+  private async sendRequestViaConnection(
+    token: string,
+    payload: any,
+    timeoutMs: number,
+  ): Promise<any> {
     const conn = this.wsConnections.get(token);
     if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
       throw new Error('Conexão WebSocket não está disponível ou autorizada');

@@ -37,7 +37,11 @@ export class AgentManagerService implements OnModuleInit {
   /**
    * Lista todos os agentes disponíveis
    */
-  getAvailableAgents(): Array<{ name: string; displayName: string; description: string }> {
+  getAvailableAgents(): Array<{
+    name: string;
+    displayName: string;
+    description: string;
+  }> {
     return Array.from(this.agents.values()).map((agent) => ({
       name: agent.name,
       displayName: agent.displayName,
@@ -48,14 +52,20 @@ export class AgentManagerService implements OnModuleInit {
   /**
    * Ativa um usuário em um agente específico
    */
-  async activateUser(agentName: string, userId: string, config: any): Promise<void> {
+  async activateUser(
+    agentName: string,
+    userId: string,
+    config: any,
+  ): Promise<void> {
     const agent = this.getAgent(agentName);
     if (!agent) {
       throw new Error(`Agente autônomo '${agentName}' não encontrado`);
     }
 
     await agent.activateUser(userId, config);
-    this.logger.log(`[AgentManager] ✅ Usuário ${userId} ativado no agente ${agentName}`);
+    this.logger.log(
+      `[AgentManager] ✅ Usuário ${userId} ativado no agente ${agentName}`,
+    );
   }
 
   /**
@@ -68,13 +78,19 @@ export class AgentManagerService implements OnModuleInit {
     }
 
     await agent.deactivateUser(userId);
-    this.logger.log(`[AgentManager] ✅ Usuário ${userId} desativado do agente ${agentName}`);
+    this.logger.log(
+      `[AgentManager] ✅ Usuário ${userId} desativado do agente ${agentName}`,
+    );
   }
 
   /**
    * Processa um agente com análise de mercado
    */
-  async processAgent(agentName: string, userId: string, marketAnalysis: any): Promise<any> {
+  async processAgent(
+    agentName: string,
+    userId: string,
+    marketAnalysis: any,
+  ): Promise<any> {
     const agent = this.getAgent(agentName);
     if (!agent) {
       throw new Error(`Agente autônomo '${agentName}' não encontrado`);
@@ -86,7 +102,11 @@ export class AgentManagerService implements OnModuleInit {
   /**
    * Processa resultado de contrato
    */
-  async onContractFinish(agentName: string, userId: string, result: any): Promise<void> {
+  async onContractFinish(
+    agentName: string,
+    userId: string,
+    result: any,
+  ): Promise<void> {
     const agent = this.getAgent(agentName);
     if (!agent) {
       throw new Error(`Agente autônomo '${agentName}' não encontrado`);
@@ -95,5 +115,3 @@ export class AgentManagerService implements OnModuleInit {
     await agent.onContractFinish(userId, result);
   }
 }
-
-

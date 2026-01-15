@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import WebSocket from 'ws';
@@ -8,10 +14,10 @@ import { LogQueueService } from '../utils/log-queue.service';
 
 /**
  * ✅ Serviço Principal do Agente Autônomo
- * 
+ *
  * Similar ao AiService, mas específico para o agente autônomo.
  * Recebe ticks do WebSocket e distribui para o StrategyManager do agente autônomo.
- * 
+ *
  * Arquitetura:
  * - Uma conexão WebSocket compartilhada (similar à IA)
  * - Processamento REATIVO baseado em ticks
@@ -50,11 +56,14 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
       await this.initialize();
       this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
-      
+
       // Sincronizar agentes ativos do banco
       await this.syncActiveAgentsFromDb();
     } catch (error) {
-      this.logger.error('❌ Erro ao inicializar AutonomousAgentService:', error.message);
+      this.logger.error(
+        '❌ Erro ao inicializar AutonomousAgentService:',
+        error.message,
+      );
     }
   }
 
@@ -68,13 +77,17 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     return new Promise<void>((resolve, reject) => {
-      this.logger.log(`🔌 Inicializando conexão com Deriv API (app_id: ${this.appId})...`);
+      this.logger.log(
+        `🔌 Inicializando conexão com Deriv API (app_id: ${this.appId})...`,
+      );
 
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       this.ws = new WebSocket(endpoint);
 
       this.ws.on('open', async () => {
-        this.logger.log('✅ [AutonomousAgent] Conexão WebSocket aberta com sucesso');
+        this.logger.log(
+          '✅ [AutonomousAgent] Conexão WebSocket aberta com sucesso',
+        );
         this.isConnected = true;
         this.subscribeToTicks();
         this.startKeepAlive();
@@ -124,7 +137,9 @@ export class AutonomousAgentService implements OnModuleInit {
   private subscribeToTicks(): void {
     // ✅ Todos os agentes autônomos usam R_100
     const symbol = 'R_100';
-    this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
+    this.logger.log(
+      `📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`,
+    );
     const subscriptionPayload = {
       ticks_history: symbol,
       adjust_start_time: 1,
@@ -134,7 +149,9 @@ export class AutonomousAgentService implements OnModuleInit {
       style: 'ticks',
     };
     this.send(subscriptionPayload);
-    this.logger.log(`✅ [AutonomousAgent] Requisição de inscrição enviada para ${symbol}`);
+    this.logger.log(
+      `✅ [AutonomousAgent] Requisição de inscrição enviada para ${symbol}`,
+    );
   }
 
   /**
@@ -144,7 +161,9 @@ export class AutonomousAgentService implements OnModuleInit {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(payload));
     } else {
-      this.logger.warn('WebSocket não está aberto, não é possível enviar mensagem');
+      this.logger.warn(
+        'WebSocket não está aberto, não é possível enviar mensagem',
+      );
     }
   }
 
@@ -157,12 +176,16 @@ export class AutonomousAgentService implements OnModuleInit {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         try {
           this.ws.send(JSON.stringify({ ping: 1 }));
-          this.logger.debug('[KeepAlive] Ping enviado para manter conexão ativa');
+          this.logger.debug(
+            '[KeepAlive] Ping enviado para manter conexão ativa',
+          );
         } catch (error) {
           this.logger.error('[KeepAlive] Erro ao enviar ping:', error);
         }
       } else {
-        this.logger.warn('[KeepAlive] WebSocket não está aberto, parando keep-alive');
+        this.logger.warn(
+          '[KeepAlive] WebSocket não está aberto, parando keep-alive',
+        );
         this.stopKeepAlive();
       }
     }, 90000); // 90 segundos
@@ -199,7 +222,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
     switch (msg.msg_type) {
       case 'history':
-        this.logger.log(`📊 Histórico recebido: ${msg.history?.prices?.length || 0} preços`);
+        this.logger.log(
+          `📊 Histórico recebido: ${msg.history?.prices?.length || 0} preços`,
+        );
         this.processHistory(msg.history, msg.subscription?.id);
         break;
 
@@ -210,17 +235,19 @@ export class AutonomousAgentService implements OnModuleInit {
           // ✅ Tentar identificar o símbolo pela subscription
           // A API da Deriv pode retornar o símbolo na mensagem (echo contém a requisição original)
           let symbolFromMsg = this.symbol; // Default
-          
+
           // Tentar extrair do echo (requisição original)
           if (msg.echo?.ticks_history) {
             symbolFromMsg = msg.echo.ticks_history;
           } else if (msg.ticks_history) {
             symbolFromMsg = msg.ticks_history;
           }
-          
+
           // Mapear subscription ID para símbolo
           this.subscriptions.set(symbolFromMsg, subId);
-          this.logger.log(`📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`);
+          this.logger.log(
+            `📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`,
+          );
         }
         if (msg.history?.prices) {
           this.processHistory(msg.history, subId);
@@ -231,22 +258,31 @@ export class AutonomousAgentService implements OnModuleInit {
         if (msg.tick) {
           // ✅ Todos os agentes autônomos usam R_100
           const symbolForTick = 'R_100';
-          
-          if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
+
+          if (
+            msg.subscription?.id &&
+            this.subscriptionId !== msg.subscription.id
+          ) {
             this.subscriptionId = msg.subscription.id;
-            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
+            this.logger.log(
+              `📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`,
+            );
           }
-          
+
           // ✅ Log de debug para verificar se está recebendo ticks
-          this.logger.debug(`[AutonomousAgent] 📥 Tick recebido: quote=${msg.tick.quote}, symbol=${symbolForTick}`);
-          
+          this.logger.debug(
+            `[AutonomousAgent] 📥 Tick recebido: quote=${msg.tick.quote}, symbol=${symbolForTick}`,
+          );
+
           this.processTick(msg.tick, symbolForTick);
         }
         break;
 
       default:
         if (msg.msg_type) {
-          this.logger.debug(`⚠️ Mensagem desconhecida: msg_type=${msg.msg_type}`);
+          this.logger.debug(
+            `⚠️ Mensagem desconhecida: msg_type=${msg.msg_type}`,
+          );
         }
         break;
     }
@@ -265,7 +301,9 @@ export class AutonomousAgentService implements OnModuleInit {
       this.subscriptionId = subscriptionId;
     }
 
-    this.logger.log(`📊 Processando histórico: ${history.prices?.length || 0} preços recebidos`);
+    this.logger.log(
+      `📊 Processando histórico: ${history.prices?.length || 0} preços recebidos`,
+    );
 
     this.ticks = history.prices.map((price: string, index: number) => {
       const value = parseFloat(price);
@@ -331,9 +369,14 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    this.logger.debug(`[AutonomousAgent] Enviando tick para StrategyManager (symbol=${tickSymbol})`);
+    this.logger.debug(
+      `[AutonomousAgent] Enviando tick para StrategyManager (symbol=${tickSymbol})`,
+    );
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
-      this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
+      this.logger.error(
+        `[StrategyManager][${tickSymbol}] Erro ao processar tick:`,
+        error,
+      );
     });
   }
 
@@ -356,7 +399,7 @@ export class AutonomousAgentService implements OnModuleInit {
       symbol,
     );
   }
-  
+
   /**
    * ✅ NOVO: Obtém o símbolo associado a uma subscription ID
    */
@@ -396,12 +439,17 @@ export class AutonomousAgentService implements OnModuleInit {
          WHERE is_active = TRUE AND agent_type = 'orion'`,
       );
 
-      this.logger.log(`[SyncActiveAgents] Sincronizados ${activeAgents.length} agentes ativos`);
+      this.logger.log(
+        `[SyncActiveAgents] Sincronizados ${activeAgents.length} agentes ativos`,
+      );
 
       // Verificar se há agentes que precisam ser resetados (mudança de dia)
       await this.checkAndResetDailySessions();
     } catch (error) {
-      this.logger.error('[SyncActiveAgents] Erro ao sincronizar agentes:', error);
+      this.logger.error(
+        '[SyncActiveAgents] Erro ao sincronizar agentes:',
+        error,
+      );
     }
   }
 
@@ -470,10 +518,15 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       if (agentsToReset.length > 0) {
-        this.logger.log(`[ResetDailySession] ✅ ${agentsToReset.length} sessões resetadas para o novo dia`);
+        this.logger.log(
+          `[ResetDailySession] ✅ ${agentsToReset.length} sessões resetadas para o novo dia`,
+        );
       }
     } catch (error) {
-      this.logger.error('[ResetDailySession] Erro ao verificar e resetar sessões:', error);
+      this.logger.error(
+        '[ResetDailySession] Erro ao verificar e resetar sessões:',
+        error,
+      );
     }
   }
 
@@ -490,9 +543,14 @@ export class AutonomousAgentService implements OnModuleInit {
            WHERE user_id = ?`,
           [userId],
         );
-        this.logger.log(`[ActivateAgent] 🗑️ Logs anteriores deletados para usuário ${userId}`);
+        this.logger.log(
+          `[ActivateAgent] 🗑️ Logs anteriores deletados para usuário ${userId}`,
+        );
       } catch (error) {
-        this.logger.error(`[ActivateAgent] ⚠️ Erro ao deletar logs do usuário ${userId}:`, error);
+        this.logger.error(
+          `[ActivateAgent] ⚠️ Erro ao deletar logs do usuário ${userId}:`,
+          error,
+        );
         // Não bloquear a ativação se houver erro ao deletar logs
       }
 
@@ -519,7 +577,11 @@ export class AutonomousAgentService implements OnModuleInit {
       if (existing && existing.length > 0) {
         // Atualizar configuração existente (reativar se estava desativada)
         // ✅ Determinar agent_type baseado na estratégia
-        const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
+        const agentType = (
+          config.agentType ||
+          config.strategy ||
+          'orion'
+        ).toLowerCase();
         const normalizedAgentType = agentType === 'arion' ? 'orion' : agentType;
 
         await this.dataSource.query(
@@ -553,10 +615,16 @@ export class AutonomousAgentService implements OnModuleInit {
             userId,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`);
+        this.logger.log(
+          `[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`,
+        );
       } else {
         // ✅ Determinar agent_type baseado na estratégia
-        const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
+        const agentType = (
+          config.agentType ||
+          config.strategy ||
+          'orion'
+        ).toLowerCase();
         const normalizedAgentType = agentType === 'arion' ? 'orion' : agentType;
 
         // Criar nova configuração
@@ -579,34 +647,54 @@ export class AutonomousAgentService implements OnModuleInit {
             config.initialBalance || 0,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
+        this.logger.log(
+          `[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`,
+        );
       }
 
       // ✅ Determinar estratégia baseado no agentType
       // Normalizar estratégia: 'arion' -> 'orion'
-      let strategy = (config.agentType || config.strategy || 'orion').toLowerCase();
+      let strategy = (
+        config.agentType ||
+        config.strategy ||
+        'orion'
+      ).toLowerCase();
       if (strategy === 'arion') {
         strategy = 'orion';
       }
-      
+
       // ✅ Suportar Orion, Sentinel e Falcon
-      if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon') {
-        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel' e 'falcon' estão disponíveis. Usando 'orion'.`);
+      if (
+        strategy !== 'orion' &&
+        strategy !== 'sentinel' &&
+        strategy !== 'falcon'
+      ) {
+        this.logger.warn(
+          `[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel' e 'falcon' estão disponíveis. Usando 'orion'.`,
+        );
         strategy = 'orion';
       }
 
       // Verificar se strategyManager está disponível
       if (!this.strategyManager) {
-        throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
+        throw new Error(
+          'StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.',
+        );
       }
 
       // ✅ Todos os agentes autônomos usam R_100
       const agentSymbol = config.symbol || 'R_100';
-      
+
       // ✅ Garantir que estamos inscritos no símbolo necessário
-      if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      if (
+        this.isConnected &&
+        this.ws &&
+        this.ws.readyState === WebSocket.OPEN
+      ) {
         if (!this.subscriptions.has(agentSymbol)) {
-          this.logger.log(`📡 Inscrevendo-se em ${agentSymbol} para usuário ${userId}...`);
+          this.logger.log(
+            `📡 Inscrevendo-se em ${agentSymbol} para usuário ${userId}...`,
+          );
           const subscriptionPayload = {
             ticks_history: agentSymbol,
             adjust_start_time: 1,
@@ -619,7 +707,7 @@ export class AutonomousAgentService implements OnModuleInit {
           this.activeSymbols.add(agentSymbol);
         }
       }
-      
+
       // Ativar agente na estratégia
       try {
         await this.strategyManager.activateUser(strategy, userId, {
@@ -633,13 +721,22 @@ export class AutonomousAgentService implements OnModuleInit {
           tradingMode: config.tradingMode || 'normal',
           initialBalance: config.initialBalance || 0,
         });
-        this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
+        this.logger.log(
+          `[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`,
+        );
       } catch (strategyError) {
-        this.logger.error(`[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}:`, strategyError);
-        throw new Error(`Erro ao ativar agente na estratégia ${strategy}: ${strategyError.message}`);
+        this.logger.error(
+          `[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}:`,
+          strategyError,
+        );
+        throw new Error(
+          `Erro ao ativar agente na estratégia ${strategy}: ${strategyError.message}`,
+        );
       }
 
-      this.logger.log(`[ActivateAgent] ✅ Agente autônomo ativado para usuário ${userId}`);
+      this.logger.log(
+        `[ActivateAgent] ✅ Agente autônomo ativado para usuário ${userId}`,
+      );
     } catch (error) {
       this.logger.error(`[ActivateAgent] Erro ao ativar agente:`, error);
       throw error;
@@ -660,7 +757,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       await this.strategyManager.deactivateUser(userId);
 
-      this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`);
+      this.logger.log(
+        `[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`,
+      );
     } catch (error) {
       this.logger.error(`[DeactivateAgent] Erro ao desativar agente:`, error);
       throw error;
@@ -718,7 +817,7 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getSessionStats(userId: string): Promise<any> {
     // ✅ Buscar configuração do agente
-    const config = await this.dataSource.query( 
+    const config = await this.dataSource.query(
       `SELECT 
          daily_profit,
          daily_loss,
@@ -759,7 +858,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Buscar operações finalizadas da sessão atual (após session_date)
     const sessionDate = configData.session_date;
-    
+
     // ✅ Se não houver session_date, retornar valores zerados
     if (!sessionDate) {
       return {
@@ -772,8 +871,14 @@ export class AutonomousAgentService implements OnModuleInit {
         winRate: 0,
         totalProfit: 0,
         totalLoss: 0,
-        totalCapital: Number(parseFloat(configData.totalCapital || 0).toFixed(2)),
-        initialBalance: Number(parseFloat(configData.initial_balance || configData.totalCapital || 0).toFixed(2)),
+        totalCapital: Number(
+          parseFloat(configData.totalCapital || 0).toFixed(2),
+        ),
+        initialBalance: Number(
+          parseFloat(
+            configData.initial_balance || configData.totalCapital || 0,
+          ).toFixed(2),
+        ),
         operationsToday: 0,
         session_status: configData.session_status || 'active',
         session_date: null,
@@ -829,19 +934,23 @@ export class AutonomousAgentService implements OnModuleInit {
     // ✅ Lucro líquido do dia = lucros - perdas
     const netProfitToday = dailyProfitFromTrades - dailyLossFromTrades;
     const totalTradesToday = winsToday + lossesToday;
-    const winRateToday = totalTradesToday > 0 ? (winsToday / totalTradesToday) * 100 : 0;
+    const winRateToday =
+      totalTradesToday > 0 ? (winsToday / totalTradesToday) * 100 : 0;
 
     // ✅ Log para debug
     this.logger.debug(
       `[GetSessionStats][${userId}] 📊 Estatísticas do dia: ` +
-      `trades=${totalTradesToday}, wins=${winsToday}, losses=${lossesToday}, ` +
-      `profit=$${dailyProfitFromTrades.toFixed(2)}, loss=$${dailyLossFromTrades.toFixed(2)}, ` +
-      `netProfit=$${netProfitToday.toFixed(2)}`,
+        `trades=${totalTradesToday}, wins=${winsToday}, losses=${lossesToday}, ` +
+        `profit=$${dailyProfitFromTrades.toFixed(2)}, loss=$${dailyLossFromTrades.toFixed(2)}, ` +
+        `netProfit=$${netProfitToday.toFixed(2)}`,
     );
 
     // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
-    const initialBalance = parseFloat(configData.initial_balance) || parseFloat(configData.totalCapital) || 0;
-    
+    const initialBalance =
+      parseFloat(configData.initial_balance) ||
+      parseFloat(configData.totalCapital) ||
+      0;
+
     // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
     return {
       daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
@@ -865,7 +974,10 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém histórico de preços para um usuário
    * Retorna apenas ticks da sessão atual (após session_date)
    */
-  async getPriceHistoryForUser(userId: string, limit: number = 100): Promise<any[]> {
+  async getPriceHistoryForUser(
+    userId: string,
+    limit: number = 100,
+  ): Promise<any[]> {
     try {
       // Buscar data da sessão atual do usuário
       const config = await this.dataSource.query(
@@ -882,7 +994,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Filtrar ticks apenas da sessão atual (após session_date)
       const sessionTicks = this.ticks.filter((tick) => {
-        const tickTime = tick.epoch || (tick.timestamp ? new Date(tick.timestamp).getTime() / 1000 : 0);
+        const tickTime =
+          tick.epoch ||
+          (tick.timestamp ? new Date(tick.timestamp).getTime() / 1000 : 0);
         return tickTime >= sessionStartTime;
       });
 
@@ -893,7 +1007,10 @@ export class AutonomousAgentService implements OnModuleInit {
         timestamp: tick.timestamp,
       }));
     } catch (error) {
-      this.logger.error(`[GetPriceHistoryForUser] Erro ao buscar histórico:`, error);
+      this.logger.error(
+        `[GetPriceHistoryForUser] Erro ao buscar histórico:`,
+        error,
+      );
       // Em caso de erro, retornar últimos ticks globais
       return this.ticks.slice(-limit).map((tick) => ({
         value: tick.value,
@@ -907,18 +1024,21 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém logs do agente
    * ✅ OTIMIZADO: Cache de session_date para reduzir queries
    */
-  private sessionDateCache: Map<string, { date: Date | string | null; timestamp: number }> = new Map();
+  private sessionDateCache: Map<
+    string,
+    { date: Date | string | null; timestamp: number }
+  > = new Map();
   private readonly CACHE_TTL = 30000; // 30 segundos
 
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
-    
+
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;
     const cached = this.sessionDateCache.get(userId);
     const now = Date.now();
-    
-    if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+
+    if (cached && now - cached.timestamp < this.CACHE_TTL) {
       // Usar cache se ainda válido (menos de 30 segundos)
       sessionStartTime = cached.date;
     } else {
@@ -929,7 +1049,7 @@ export class AutonomousAgentService implements OnModuleInit {
          LIMIT 1`,
         [userId],
       );
-      
+
       if (config && config.length > 0 && config[0].session_date) {
         sessionStartTime = config[0].session_date;
         // Atualizar cache
@@ -945,15 +1065,13 @@ export class AutonomousAgentService implements OnModuleInit {
         });
       }
     }
-    
+
     // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
-    const whereClause = sessionStartTime 
+    const whereClause = sessionStartTime
       ? `WHERE user_id = ? AND timestamp >= ?`
       : `WHERE user_id = ?`;
-    const params = sessionStartTime 
-      ? [userId, sessionStartTime]
-      : [userId];
-    
+    const params = sessionStartTime ? [userId, sessionStartTime] : [userId];
+
     const logs = await this.dataSource.query(
       `SELECT 
          id,
@@ -969,7 +1087,7 @@ export class AutonomousAgentService implements OnModuleInit {
        ${limitClause}`,
       params,
     );
-    
+
     // ✅ Converter campos snake_case para camelCase para o frontend
     return (logs || []).map((log: any) => ({
       id: log.id,
@@ -986,9 +1104,11 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * Atualiza trades com preços faltantes
    */
-  async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<any> {
+  async updateTradesWithMissingPrices(
+    userId: string,
+    limit: number = 10,
+  ): Promise<any> {
     // Implementação similar à da IA
     return { updated: 0, deleted: 0, errors: 0 };
   }
 }
-

@@ -1,4 +1,12 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { UserEntity } from './user.entity';
 
 @Entity('user_settings')
@@ -9,7 +17,12 @@ export class UserSettingsEntity {
   @Column({ type: 'char', length: 36, name: 'user_id', unique: true })
   userId: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true, name: 'profile_picture_url' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'profile_picture_url',
+  })
   profilePictureUrl?: string | null;
 
   @Column({ type: 'varchar', length: 10, default: 'pt-BR' })
@@ -24,10 +37,20 @@ export class UserSettingsEntity {
   @Column({ type: 'boolean', default: false, name: 'two_factor_enabled' })
   twoFactorEnabled: boolean;
 
-  @Column({ type: 'varchar', length: 255, nullable: true, name: 'two_factor_secret' })
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    name: 'two_factor_secret',
+  })
   twoFactorSecret?: string | null;
 
-  @Column({ type: 'varchar', length: 10, default: 'USD', name: 'trade_currency' })
+  @Column({
+    type: 'varchar',
+    length: 10,
+    default: 'USD',
+    name: 'trade_currency',
+  })
   tradeCurrency: string;
 
   @CreateDateColumn({ name: 'created_at' })
@@ -40,7 +63,3 @@ export class UserSettingsEntity {
   @JoinColumn({ name: 'user_id' })
   user?: UserEntity;
 }
-
-
-
-

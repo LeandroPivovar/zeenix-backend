@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Tick } from '../ai.service';
@@ -21,7 +27,7 @@ export class StrategyManagerService implements OnModuleInit {
     private apolloStrategy: ApolloStrategy,
     private titanStrategy: TitanStrategy,
     private nexusStrategy: NexusStrategy,
-  ) { }
+  ) {}
 
   async onModuleInit() {
     // Registrar estratégias
@@ -38,7 +44,9 @@ export class StrategyManagerService implements OnModuleInit {
     await this.titanStrategy.initialize();
     await this.nexusStrategy.initialize();
 
-    this.logger.log(`[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')} `);
+    this.logger.log(
+      `[StrategyManager] ✅ ${this.strategies.size} estratégias registradas: ${Array.from(this.strategies.keys()).join(', ')} `,
+    );
   }
 
   /**
@@ -51,24 +59,24 @@ export class StrategyManagerService implements OnModuleInit {
     // ORION agora usa R_100 como símbolo padrão
     if (!symbol || symbol === 'R_100') {
       promises.push(
-        this.orionStrategy.processTick(tick, 'R_100').catch(error => {
+        this.orionStrategy.processTick(tick, 'R_100').catch((error) => {
           this.logger.error('[StrategyManager][Orion] Erro:', error);
         }),
-        this.titanStrategy.processTick(tick, 'R_100').catch(error => {
+        this.titanStrategy.processTick(tick, 'R_100').catch((error) => {
           this.logger.error('[StrategyManager][Titan] Erro:', error);
         }),
-        this.nexusStrategy.processTick(tick, 'R_100').catch(error => {
+        this.nexusStrategy.processTick(tick, 'R_100').catch((error) => {
           this.logger.error('[StrategyManager][Nexus] Erro:', error);
-        })
+        }),
       );
     }
 
     // ATLAS processa R_10, R_25, R_100 e 1HZ10V
     if (symbol && ['R_10', 'R_25', 'R_100', '1HZ10V'].includes(symbol)) {
       promises.push(
-        this.atlasStrategy.processTick(tick, symbol).catch(error => {
+        this.atlasStrategy.processTick(tick, symbol).catch((error) => {
           this.logger.error('[StrategyManager][Atlas] Erro:', error);
-        })
+        }),
       );
     }
 
@@ -76,9 +84,9 @@ export class StrategyManagerService implements OnModuleInit {
     if (true /* Sempre checar, pois Apollo agora filtra internamente */) {
       if (['1HZ10V', 'R_100', 'R_10', 'R_25'].includes(symbol!)) {
         promises.push(
-          this.apolloStrategy.processTick(tick, symbol).catch(error => {
+          this.apolloStrategy.processTick(tick, symbol).catch((error) => {
             this.logger.error('[StrategyManager][Apollo] Erro:', error);
-          })
+          }),
         );
       }
     }
@@ -90,14 +98,20 @@ export class StrategyManagerService implements OnModuleInit {
   /**
    * Ativa um usuário em uma estratégia específica
    */
-  async activateUser(userId: string, strategy: string, config: any): Promise<void> {
+  async activateUser(
+    userId: string,
+    strategy: string,
+    config: any,
+  ): Promise<void> {
     const strategyInstance = this.strategies.get(strategy.toLowerCase());
     if (!strategyInstance) {
       throw new Error(`Estratégia '${strategy}' não encontrada`);
     }
 
     await strategyInstance.activateUser(userId, config);
-    this.logger.log(`[StrategyManager] Usuário ${userId} ativado na estratégia ${strategy} `);
+    this.logger.log(
+      `[StrategyManager] Usuário ${userId} ativado na estratégia ${strategy} `,
+    );
   }
 
   /**
@@ -106,13 +120,18 @@ export class StrategyManagerService implements OnModuleInit {
    */
   async deactivateUser(userId: string): Promise<void> {
     await Promise.all(
-      Array.from(this.strategies.values()).map(strategy =>
-        strategy.deactivateUser(userId).catch(error => {
-          this.logger.error(`[StrategyManager] Erro ao desativar usuário ${userId}:`, error);
-        })
-      )
+      Array.from(this.strategies.values()).map((strategy) =>
+        strategy.deactivateUser(userId).catch((error) => {
+          this.logger.error(
+            `[StrategyManager] Erro ao desativar usuário ${userId}:`,
+            error,
+          );
+        }),
+      ),
     );
-    this.logger.log(`[StrategyManager] Usuário ${userId} desativado de todas as estratégias`);
+    this.logger.log(
+      `[StrategyManager] Usuário ${userId} desativado de todas as estratégias`,
+    );
   }
 
   /**
@@ -160,4 +179,3 @@ export class StrategyManagerService implements OnModuleInit {
     return this.apolloStrategy;
   }
 }
-

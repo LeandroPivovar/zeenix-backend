@@ -33,10 +33,18 @@ export class AutonomousAgentController {
       const userId = req.user?.userId || body.userId;
 
       if (!userId) {
-        throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'User ID é obrigatório',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
-      if (!body.initialStake || !body.dailyProfitTarget || !body.dailyLossLimit || !body.derivToken) {
+      if (
+        !body.initialStake ||
+        !body.dailyProfitTarget ||
+        !body.dailyLossLimit ||
+        !body.derivToken
+      ) {
         throw new HttpException(
           'Campos obrigatórios: initialStake, dailyProfitTarget, dailyLossLimit, derivToken',
           HttpStatus.BAD_REQUEST,
@@ -46,7 +54,8 @@ export class AutonomousAgentController {
       // Determinar estratégia: usar agentType se fornecido, senão usar strategy, senão default 'orion'
       const agentType = body.agentType || body.strategy || 'orion';
       // Normalizar: 'arion' -> 'orion', 'sentinel' -> 'sentinel', etc
-      const normalizedStrategy = agentType.toLowerCase() === 'arion' ? 'orion' : agentType.toLowerCase();
+      const normalizedStrategy =
+        agentType.toLowerCase() === 'arion' ? 'orion' : agentType.toLowerCase();
 
       await this.agentService.activateAgent(userId, {
         initialStake: parseFloat(body.initialStake),
@@ -87,7 +96,10 @@ export class AutonomousAgentController {
       const userId = req.user?.userId || body.userId;
 
       if (!userId) {
-        throw new HttpException('User ID é obrigatório', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'User ID é obrigatório',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       await this.agentService.deactivateAgent(userId);
@@ -150,9 +162,14 @@ export class AutonomousAgentController {
 
       // Atualizar trades com valores faltantes em background (não bloqueante)
       // Limita a 10 trades por vez para não sobrecarregar
-      this.agentService.updateTradesWithMissingPrices(userId, 10).catch((error) => {
-        this.logger.warn(`[GetConfig] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
-      });
+      this.agentService
+        .updateTradesWithMissingPrices(userId, 10)
+        .catch((error) => {
+          this.logger.warn(
+            `[GetConfig] Erro ao atualizar trades com valores faltantes (não crítico):`,
+            error,
+          );
+        });
 
       return {
         success: true,
@@ -173,7 +190,10 @@ export class AutonomousAgentController {
 
   @Get('trade-history/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getTradeHistory(@Param('userId') userId: string, @Query('limit') limit?: string) {
+  async getTradeHistory(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 50;
       const history = await this.agentService.getTradeHistory(userId, limitNum);
@@ -181,15 +201,22 @@ export class AutonomousAgentController {
       // Verificar se há trades com valores zerados no resultado
       const hasMissingPrices = history.some(
         (trade: any) =>
-          (trade.entryPrice === 0 || trade.entryPrice === null) ||
-          (trade.exitPrice === 0 || trade.exitPrice === null),
+          trade.entryPrice === 0 ||
+          trade.entryPrice === null ||
+          trade.exitPrice === 0 ||
+          trade.exitPrice === null,
       );
 
       // Se houver trades com valores faltantes, atualizar em background (não bloqueante)
       if (hasMissingPrices) {
-        this.agentService.updateTradesWithMissingPrices(userId, limitNum).catch((error) => {
-          this.logger.warn(`[GetTradeHistory] Erro ao atualizar trades com valores faltantes (não crítico):`, error);
-        });
+        this.agentService
+          .updateTradesWithMissingPrices(userId, limitNum)
+          .catch((error) => {
+            this.logger.warn(
+              `[GetTradeHistory] Erro ao atualizar trades com valores faltantes (não crítico):`,
+              error,
+            );
+          });
       }
 
       return {
@@ -234,10 +261,16 @@ export class AutonomousAgentController {
 
   @Get('price-history/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getPriceHistory(@Param('userId') userId: string, @Query('limit') limit?: string) {
+  async getPriceHistory(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 100;
-      const history = await this.agentService.getPriceHistoryForUser(userId, limitNum);
+      const history = await this.agentService.getPriceHistoryForUser(
+        userId,
+        limitNum,
+      );
 
       return {
         success: true,
@@ -258,7 +291,10 @@ export class AutonomousAgentController {
 
   @Get('logs/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
+  async getLogs(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
       const limitNum = limit ? parseInt(limit, 10) : undefined;
       const logs = await this.agentService.getLogs(userId, limitNum);
@@ -282,10 +318,16 @@ export class AutonomousAgentController {
 
   @Post('update-missing-prices/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async updateMissingPrices(@Param('userId') userId: string, @Query('limit') limit?: string) {
+  async updateMissingPrices(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 10;
-      const result = await this.agentService.updateTradesWithMissingPrices(userId, limitNum);
+      const result = await this.agentService.updateTradesWithMissingPrices(
+        userId,
+        limitNum,
+      );
 
       return {
         success: true,
@@ -374,7 +416,10 @@ export class AutonomousAgentController {
 
   @Get('console-logs/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getConsoleLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
+  async getConsoleLogs(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
     try {
       const limitNum = limit ? parseInt(limit, 10) : 500;
       const logs = this.logsStreamService.getLogs(userId, limitNum);
@@ -396,4 +441,3 @@ export class AutonomousAgentController {
     }
   }
 }
-

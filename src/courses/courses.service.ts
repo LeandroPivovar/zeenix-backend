@@ -22,7 +22,8 @@ import { v4 as uuidv4 } from 'uuid';
 @Injectable()
 export class CoursesService {
   constructor(
-    @Inject(COURSE_REPOSITORY_TOKEN) private readonly courseRepository: CourseRepository,
+    @Inject(COURSE_REPOSITORY_TOKEN)
+    private readonly courseRepository: CourseRepository,
     private readonly lessonRepository: TypeOrmLessonRepository,
     @InjectRepository(UserLessonProgressEntity)
     private readonly progressRepository: Repository<UserLessonProgressEntity>,
@@ -78,27 +79,38 @@ export class CoursesService {
         .createQueryBuilder('lesson')
         .select('lesson.course_id', 'courseId')
         .addSelect('COUNT(*)', 'count')
-        .where('lesson.course_id IN (:...ids)', { ids: courses.map(c => c.id) })
+        .where('lesson.course_id IN (:...ids)', {
+          ids: courses.map((c) => c.id),
+        })
         .groupBy('lesson.course_id')
         .getRawMany<{ courseId: string; count: string }>();
-      lessonCountMap = lessonCounts.reduce((acc, row) => {
-        acc[row.courseId] = Number(row.count);
-        return acc;
-      }, {} as Record<string, number>);
+      lessonCountMap = lessonCounts.reduce(
+        (acc, row) => {
+          acc[row.courseId] = Number(row.count);
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
 
       const lessons = await this.lessonEntityRepository
         .createQueryBuilder('lesson')
         .select('lesson.course_id', 'courseId')
         .addSelect('lesson.duration', 'duration')
-        .where('lesson.course_id IN (:...ids)', { ids: courses.map(c => c.id) })
+        .where('lesson.course_id IN (:...ids)', {
+          ids: courses.map((c) => c.id),
+        })
         .getRawMany<{ courseId: string; duration: string }>();
-      lessonDurationMap = lessons.reduce((acc, lesson) => {
-        const current = acc[lesson.courseId] || 0;
-        acc[lesson.courseId] = current + this.parseLessonDuration(lesson.duration);
-        return acc;
-      }, {} as Record<string, number>);
+      lessonDurationMap = lessons.reduce(
+        (acc, lesson) => {
+          const current = acc[lesson.courseId] || 0;
+          acc[lesson.courseId] =
+            current + this.parseLessonDuration(lesson.duration);
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
     }
-    return courses.map(c => ({
+    return courses.map((c) => ({
       id: c.id,
       name: c.title,
       title: c.title,
@@ -129,7 +141,7 @@ export class CoursesService {
   async findOne(id: string) {
     const course = await this.courseEntityRepository.findOne({ where: { id } });
     if (!course) throw new NotFoundException('Curso não encontrado');
-    
+
     const modules = await this.moduleRepository.find({
       where: { courseId: id },
       order: { orderIndex: 'ASC' },
@@ -140,16 +152,16 @@ export class CoursesService {
       order: { orderIndex: 'ASC' },
     });
 
-    const modulesWithLessons = modules.map(m => ({
-        id: m.id,
+    const modulesWithLessons = modules.map((m) => ({
+      id: m.id,
       courseId: m.courseId,
-        title: m.title,
+      title: m.title,
       shortDescription: m.shortDescription,
       status: m.status,
-        orderIndex: m.orderIndex,
+      orderIndex: m.orderIndex,
       lessons: lessons
-        .filter(l => l.moduleId === m.id)
-        .map(l => ({
+        .filter((l) => l.moduleId === m.id)
+        .map((l) => ({
           id: l.id,
           courseId: l.courseId,
           moduleId: l.moduleId,
@@ -173,14 +185,17 @@ export class CoursesService {
       return acc + (module.lessons?.length || 0);
     }, 0);
 
-    const totalDurationMinutes = modulesWithLessons.reduce((courseAcc, module) => {
-      return (
-        courseAcc +
-        (module.lessons || []).reduce((moduleAcc, lesson) => {
-          return moduleAcc + this.parseLessonDuration(lesson.duration);
-        }, 0)
-      );
-    }, 0);
+    const totalDurationMinutes = modulesWithLessons.reduce(
+      (courseAcc, module) => {
+        return (
+          courseAcc +
+          (module.lessons || []).reduce((moduleAcc, lesson) => {
+            return moduleAcc + this.parseLessonDuration(lesson.duration);
+          }, 0)
+        );
+      },
+      0,
+    );
 
     return {
       id: course.id,
@@ -217,8 +232,12 @@ export class CoursesService {
       id: uuidv4(),
       ...createCourseDto,
       title: createCourseDto.title,
-      availableFrom: createCourseDto.availableFrom ? new Date(createCourseDto.availableFrom) : null,
-      availableUntil: createCourseDto.availableUntil ? new Date(createCourseDto.availableUntil) : null,
+      availableFrom: createCourseDto.availableFrom
+        ? new Date(createCourseDto.availableFrom)
+        : null,
+      availableUntil: createCourseDto.availableUntil
+        ? new Date(createCourseDto.availableUntil)
+        : null,
       coverImage: this.normalizeMediaPath(createCourseDto.coverImage),
       socialImage: this.normalizeMediaPath(createCourseDto.socialImage),
       totalLessons: 0,
@@ -238,14 +257,30 @@ export class CoursesService {
     if (updateCourseDto.availableUntil) {
       updateData.availableUntil = new Date(updateCourseDto.availableUntil);
     }
-    if (updateCourseDto.coverImage !== undefined && updateCourseDto.coverImage !== null) {
-      updateData.coverImage = this.normalizeMediaPath(updateCourseDto.coverImage);
-    } else if (updateCourseDto.coverImage === null || updateCourseDto.coverImage === '') {
+    if (
+      updateCourseDto.coverImage !== undefined &&
+      updateCourseDto.coverImage !== null
+    ) {
+      updateData.coverImage = this.normalizeMediaPath(
+        updateCourseDto.coverImage,
+      );
+    } else if (
+      updateCourseDto.coverImage === null ||
+      updateCourseDto.coverImage === ''
+    ) {
       updateData.coverImage = null;
     }
-    if (updateCourseDto.socialImage !== undefined && updateCourseDto.socialImage !== null) {
-      updateData.socialImage = this.normalizeMediaPath(updateCourseDto.socialImage);
-    } else if (updateCourseDto.socialImage === null || updateCourseDto.socialImage === '') {
+    if (
+      updateCourseDto.socialImage !== undefined &&
+      updateCourseDto.socialImage !== null
+    ) {
+      updateData.socialImage = this.normalizeMediaPath(
+        updateCourseDto.socialImage,
+      );
+    } else if (
+      updateCourseDto.socialImage === null ||
+      updateCourseDto.socialImage === ''
+    ) {
       updateData.socialImage = null;
     }
 
@@ -295,7 +330,9 @@ export class CoursesService {
     const lesson = this.lessonEntityRepository.create({
       id: uuidv4(),
       ...createLessonDto,
-      releaseDate: createLessonDto.releaseDate ? new Date(createLessonDto.releaseDate) : null,
+      releaseDate: createLessonDto.releaseDate
+        ? new Date(createLessonDto.releaseDate)
+        : null,
       videoUrl: this.normalizeMediaPath(createLessonDto.videoUrl),
       contentLink: this.normalizeMediaPath(createLessonDto.contentLink),
     });
@@ -314,7 +351,9 @@ export class CoursesService {
       updateData.videoUrl = this.normalizeMediaPath(updateLessonDto.videoUrl);
     }
     if (updateLessonDto.contentLink !== undefined) {
-      updateData.contentLink = this.normalizeMediaPath(updateLessonDto.contentLink);
+      updateData.contentLink = this.normalizeMediaPath(
+        updateLessonDto.contentLink,
+      );
     }
 
     Object.assign(lesson, updateData);
@@ -386,7 +425,10 @@ export class CoursesService {
     }
   }
 
-  async markLessonAsIncomplete(userId: string, lessonId: string): Promise<void> {
+  async markLessonAsIncomplete(
+    userId: string,
+    lessonId: string,
+  ): Promise<void> {
     const existing = await this.progressRepository.findOne({
       where: { userId, lessonId },
     });
@@ -398,10 +440,13 @@ export class CoursesService {
     }
   }
 
-  async getProgressForCourse(userId: string, courseId: string): Promise<Record<string, boolean>> {
+  async getProgressForCourse(
+    userId: string,
+    courseId: string,
+  ): Promise<Record<string, boolean>> {
     // Buscar todas as aulas do curso
     const lessons = await this.lessonRepository.findByCourseId(courseId);
-    const lessonIds = lessons.map(l => l.id);
+    const lessonIds = lessons.map((l) => l.id);
 
     if (lessonIds.length === 0) return {};
 
@@ -415,11 +460,10 @@ export class CoursesService {
     });
 
     const progressMap: Record<string, boolean> = {};
-    lessonIds.forEach(id => {
-      progressMap[id] = progress.some(p => p.lessonId === id);
+    lessonIds.forEach((id) => {
+      progressMap[id] = progress.some((p) => p.lessonId === id);
     });
 
     return progressMap;
   }
 }
-

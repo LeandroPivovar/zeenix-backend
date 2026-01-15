@@ -1,4 +1,13 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+} from 'typeorm';
 import { CourseEntity } from './course.entity';
 import { LessonEntity } from './lesson.entity';
 
@@ -16,7 +25,11 @@ export class ModuleEntity {
   @Column({ type: 'text', nullable: true, name: 'short_description' })
   shortDescription?: string | null;
 
-  @Column({ type: 'enum', enum: ['draft', 'published', 'archived'], default: 'published' })
+  @Column({
+    type: 'enum',
+    enum: ['draft', 'published', 'archived'],
+    default: 'published',
+  })
   status?: string;
 
   @Column({ type: 'int', default: 0, name: 'order_index' })
@@ -32,7 +45,6 @@ export class ModuleEntity {
   @JoinColumn({ name: 'course_id' })
   course?: CourseEntity;
 
-  @OneToMany(() => LessonEntity, lesson => lesson.module)
+  @OneToMany(() => LessonEntity, (lesson) => lesson.module)
   lessons?: LessonEntity[];
 }
-

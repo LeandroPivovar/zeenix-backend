@@ -1,4 +1,12 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { CourseEntity } from './course.entity';
 import { ModuleEntity } from './module.entity';
 
@@ -19,13 +27,28 @@ export class LessonEntity {
   @Column({ type: 'text', nullable: true })
   description?: string | null;
 
-  @Column({ type: 'enum', enum: ['Video', 'Text', 'PDF', 'Link'], default: 'Video', name: 'content_type' })
+  @Column({
+    type: 'enum',
+    enum: ['Video', 'Text', 'PDF', 'Link'],
+    default: 'Video',
+    name: 'content_type',
+  })
   contentType?: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true, name: 'content_link' })
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'content_link',
+  })
   contentLink?: string | null;
 
-  @Column({ type: 'enum', enum: ['Imediata', 'Agendada'], default: 'Imediata', name: 'release_type' })
+  @Column({
+    type: 'enum',
+    enum: ['Imediata', 'Agendada'],
+    default: 'Imediata',
+    name: 'release_type',
+  })
   releaseType?: string;
 
   @Column({ type: 'datetime', nullable: true, name: 'release_date' })
@@ -49,12 +72,16 @@ export class LessonEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @ManyToOne(() => CourseEntity, course => course.lessons, { onDelete: 'CASCADE' })
+  @ManyToOne(() => CourseEntity, (course) => course.lessons, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'course_id' })
   course?: CourseEntity;
 
-  @ManyToOne(() => ModuleEntity, module => module.lessons, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne(() => ModuleEntity, (module) => module.lessons, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
   @JoinColumn({ name: 'module_id' })
   module?: ModuleEntity | null;
 }
-

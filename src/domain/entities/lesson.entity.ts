@@ -12,7 +12,3 @@ export class Lesson {
     public readonly updatedAt: Date,
   ) {}
 }
-
-
-
-

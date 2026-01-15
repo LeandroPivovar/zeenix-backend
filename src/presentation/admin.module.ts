@@ -10,7 +10,12 @@ import { ExpertEntity } from '../infrastructure/database/entities/expert.entity'
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity, PlanEntity, UserActivityLogEntity, ExpertEntity]),
+    TypeOrmModule.forFeature([
+      UserEntity,
+      PlanEntity,
+      UserActivityLogEntity,
+      ExpertEntity,
+    ]),
     PassportModule,
   ],
   controllers: [AdminController],
@@ -18,4 +23,3 @@ import { ExpertEntity } from '../infrastructure/database/entities/expert.entity'
   exports: [AdminService],
 })
 export class AdminModule {}
-

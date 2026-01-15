@@ -1,4 +1,11 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+} from 'typeorm';
 import { UserEntity } from './user.entity';
 
 @Entity('plans')
@@ -18,7 +25,12 @@ export class PlanEntity {
   @Column({ type: 'varchar', length: 10, default: 'BRL' })
   currency: string;
 
-  @Column({ type: 'varchar', length: 20, default: 'month', name: 'billing_period' })
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'month',
+    name: 'billing_period',
+  })
   billingPeriod: string;
 
   @Column({ type: 'json', nullable: true })
@@ -42,10 +54,6 @@ export class PlanEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @OneToMany(() => UserEntity, user => user.plan)
+  @OneToMany(() => UserEntity, (user) => user.plan)
   users?: UserEntity[];
 }
-
-
-
-

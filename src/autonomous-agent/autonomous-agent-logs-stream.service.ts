@@ -14,7 +14,10 @@ export class AutonomousAgentLogsStreamService {
   private readonly logger = new Logger(AutonomousAgentLogsStreamService.name);
   private readonly logBuffer: Map<string, ConsoleLogEntry[]> = new Map();
   private readonly maxBufferSize = 1000; // Máximo de logs por usuário
-  private readonly subscribers: Map<string, Set<(log: ConsoleLogEntry) => void>> = new Map();
+  private readonly subscribers: Map<
+    string,
+    Set<(log: ConsoleLogEntry) => void>
+  > = new Map();
 
   // Interceptar logs do Logger do NestJS
   private originalLogMethods: {
@@ -38,36 +41,53 @@ export class AutonomousAgentLogsStreamService {
 
     // Interceptar logs do AutonomousAgentService
     const self = this;
-    Logger.prototype.log = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.log = function (message: any, ...optionalParams: any[]) {
       originalLogger.call(this, message, ...optionalParams);
-      if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
+      if (
+        this.context === 'AutonomousAgentService' ||
+        this.context?.includes('AutonomousAgent')
+      ) {
         self.addLog('log', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.error = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.error = function (message: any, ...optionalParams: any[]) {
       originalError.call(this, message, ...optionalParams);
-      if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
+      if (
+        this.context === 'AutonomousAgentService' ||
+        this.context?.includes('AutonomousAgent')
+      ) {
         self.addLog('error', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.warn = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.warn = function (message: any, ...optionalParams: any[]) {
       originalWarn.call(this, message, ...optionalParams);
-      if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
+      if (
+        this.context === 'AutonomousAgentService' ||
+        this.context?.includes('AutonomousAgent')
+      ) {
         self.addLog('warn', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.debug = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.debug = function (message: any, ...optionalParams: any[]) {
       originalDebug.call(this, message, ...optionalParams);
-      if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
+      if (
+        this.context === 'AutonomousAgentService' ||
+        this.context?.includes('AutonomousAgent')
+      ) {
         self.addLog('debug', this.context, message, optionalParams);
       }
     };
   }
 
-  private addLog(level: 'log' | 'error' | 'warn' | 'debug', context: string, message: any, optionalParams?: any[]) {
+  private addLog(
+    level: 'log' | 'error' | 'warn' | 'debug',
+    context: string,
+    message: any,
+    optionalParams?: any[],
+  ) {
     try {
       // Extrair userId do contexto da mensagem se possível
       const userId = this.extractUserIdFromMessage(message, context);
@@ -81,8 +101,12 @@ export class AutonomousAgentLogsStreamService {
         timestamp: new Date().toISOString(),
         level,
         context: context || 'Unknown',
-        message: typeof message === 'string' ? message : JSON.stringify(message),
-        data: optionalParams && optionalParams.length > 0 ? optionalParams : undefined,
+        message:
+          typeof message === 'string' ? message : JSON.stringify(message),
+        data:
+          optionalParams && optionalParams.length > 0
+            ? optionalParams
+            : undefined,
       };
 
       // Adicionar ao buffer do usuário
@@ -106,16 +130,26 @@ export class AutonomousAgentLogsStreamService {
     }
   }
 
-  private extractUserIdFromMessage(message: any, context: string): string | null {
+  private extractUserIdFromMessage(
+    message: any,
+    context: string,
+  ): string | null {
     try {
-      const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
-      
+      const messageStr =
+        typeof message === 'string' ? message : JSON.stringify(message);
+
       // Tentar extrair userId de padrões como [ProcessAgent][userId] ou [userId]
-      const userIdMatch = messageStr.match(/\[.*?\]\[(.*?)\]/) || messageStr.match(/\[(.*?)\]/);
+      const userIdMatch =
+        messageStr.match(/\[.*?\]\[(.*?)\]/) || messageStr.match(/\[(.*?)\]/);
       if (userIdMatch && userIdMatch[1]) {
         const potentialUserId = userIdMatch[1];
         // Verificar se parece um UUID ou ID numérico
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(potentialUserId) || /^\d+$/.test(potentialUserId)) {
+        if (
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            potentialUserId,
+          ) ||
+          /^\d+$/.test(potentialUserId)
+        ) {
           return potentialUserId;
         }
       }
@@ -135,7 +169,13 @@ export class AutonomousAgentLogsStreamService {
   }
 
   // Método público para adicionar log manualmente (quando temos userId explícito)
-  addLogForUser(userId: string, level: 'log' | 'error' | 'warn' | 'debug', context: string, message: string, data?: any) {
+  addLogForUser(
+    userId: string,
+    level: 'log' | 'error' | 'warn' | 'debug',
+    context: string,
+    message: string,
+    data?: any,
+  ) {
     const logEntry: ConsoleLogEntry = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: new Date().toISOString(),
@@ -162,17 +202,23 @@ export class AutonomousAgentLogsStreamService {
   private notifySubscribers(userId: string, logEntry: ConsoleLogEntry) {
     const userSubscribers = this.subscribers.get(userId);
     if (userSubscribers) {
-      userSubscribers.forEach(callback => {
+      userSubscribers.forEach((callback) => {
         try {
           callback(logEntry);
         } catch (error) {
-          this.logger.warn(`[NotifySubscribers] Erro ao notificar subscriber:`, error);
+          this.logger.warn(
+            `[NotifySubscribers] Erro ao notificar subscriber:`,
+            error,
+          );
         }
       });
     }
   }
 
-  subscribe(userId: string, callback: (log: ConsoleLogEntry) => void): () => void {
+  subscribe(
+    userId: string,
+    callback: (log: ConsoleLogEntry) => void,
+  ): () => void {
     if (!this.subscribers.has(userId)) {
       this.subscribers.set(userId, new Set());
     }
@@ -200,10 +246,3 @@ export class AutonomousAgentLogsStreamService {
     this.logBuffer.delete(userId);
   }
 }
-
-
-
-
-
-
-

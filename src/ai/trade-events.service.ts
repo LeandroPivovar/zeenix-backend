@@ -4,7 +4,14 @@ import { filter, map } from 'rxjs/operators';
 
 interface TradeEventPayload {
   userId: string;
-  type: 'created' | 'updated' | 'corrected' | 'stopped_blindado' | 'stopped_loss' | 'blindado_activated' | 'stopped_profit';
+  type:
+    | 'created'
+    | 'updated'
+    | 'corrected'
+    | 'stopped_blindado'
+    | 'stopped_loss'
+    | 'blindado_activated'
+    | 'stopped_profit';
   tradeId?: number;
   status?: string;
   strategy?: string;
@@ -28,8 +35,6 @@ export interface LogEventPayload {
   type: string;
   message: string;
   timestamp: Date;
-
-
 }
 
 @Injectable()
@@ -45,7 +50,7 @@ export class TradeEventsService {
     this.stream$.next({
       userId: event.userId,
       type: 'log' as any, // 'log' não está no tipo original, mas o frontend pode filtrar
-      data: event
+      data: event,
     } as any);
   }
 
@@ -54,13 +59,13 @@ export class TradeEventsService {
       filter((event) => {
         if (event.userId !== userId) return false;
         if (strategy) {
-          return (event.strategy || '').toLowerCase() === strategy.toLowerCase();
+          return (
+            (event.strategy || '').toLowerCase() === strategy.toLowerCase()
+          );
         }
         return true;
       }),
-      map((event) => ({ data: event } as MessageEvent)),
+      map((event) => ({ data: event }) as MessageEvent),
     );
   }
 }
-
-

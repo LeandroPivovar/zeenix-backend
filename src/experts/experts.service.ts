@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -96,13 +100,19 @@ export class ExpertsService {
       await this.createUserAndSendActivationEmail(data.email, data.name);
     } catch (error) {
       // Log do erro mas não falha a criação do expert
-      console.error(`Erro ao criar usuário/enviar email para expert ${savedExpert.id}:`, error);
+      console.error(
+        `Erro ao criar usuário/enviar email para expert ${savedExpert.id}:`,
+        error,
+      );
     }
 
     return this.formatExpert(savedExpert);
   }
 
-  private async createUserAndSendActivationEmail(email: string, name: string): Promise<void> {
+  private async createUserAndSendActivationEmail(
+    email: string,
+    name: string,
+  ): Promise<void> {
     // Verificar se usuário já existe
     const existingUser = await this.authService.findUserByEmail(email);
     if (existingUser) {
@@ -122,7 +132,7 @@ export class ExpertsService {
     await this.dataSource.query(
       `INSERT INTO users (id, name, email, password, role, is_active, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'trader', 1, NOW(), NOW())`,
-      [userId, name, email, hashedPassword]
+      [userId, name, email, hashedPassword],
     );
 
     // Gerar token de reset de senha
@@ -135,7 +145,7 @@ export class ExpertsService {
       `UPDATE users 
        SET reset_token = ?, reset_token_expiry = ? 
        WHERE id = ?`,
-      [resetToken, resetTokenExpiry, userId]
+      [resetToken, resetTokenExpiry, userId],
     );
 
     // Construir URL de reset
@@ -143,7 +153,12 @@ export class ExpertsService {
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
     // Enviar email de ativação
-    await this.emailService.sendAccountActivationEmail(email, name, resetToken, resetUrl);
+    await this.emailService.sendAccountActivationEmail(
+      email,
+      name,
+      resetToken,
+      resetUrl,
+    );
   }
 
   async update(
@@ -189,12 +204,18 @@ export class ExpertsService {
     const updateData: any = { ...data };
     if (updateData.name) updateData.name = updateData.name.trim();
     if (updateData.email) updateData.email = updateData.email.trim();
-    if (updateData.specialty) updateData.specialty = updateData.specialty.trim();
-    if (updateData.bio !== undefined) updateData.bio = updateData.bio?.trim() || null;
-    if (updateData.avatarUrl !== undefined) updateData.avatarUrl = updateData.avatarUrl?.trim() || null;
-    if (updateData.loginOriginal !== undefined) updateData.loginOriginal = updateData.loginOriginal?.trim() || null;
-    if (updateData.loginAlvo !== undefined) updateData.loginAlvo = updateData.loginAlvo?.trim() || null;
-    if (updateData.traderType !== undefined) updateData.traderType = updateData.traderType?.trim() || null;
+    if (updateData.specialty)
+      updateData.specialty = updateData.specialty.trim();
+    if (updateData.bio !== undefined)
+      updateData.bio = updateData.bio?.trim() || null;
+    if (updateData.avatarUrl !== undefined)
+      updateData.avatarUrl = updateData.avatarUrl?.trim() || null;
+    if (updateData.loginOriginal !== undefined)
+      updateData.loginOriginal = updateData.loginOriginal?.trim() || null;
+    if (updateData.loginAlvo !== undefined)
+      updateData.loginAlvo = updateData.loginAlvo?.trim() || null;
+    if (updateData.traderType !== undefined)
+      updateData.traderType = updateData.traderType?.trim() || null;
 
     Object.assign(expert, updateData);
 
@@ -271,9 +292,7 @@ export class ExpertsService {
 
     // Última sincronização (updatedAt mais recente)
     const lastSync =
-      experts.length > 0 && experts[0].updatedAt
-        ? experts[0].updatedAt
-        : null;
+      experts.length > 0 && experts[0].updatedAt ? experts[0].updatedAt : null;
 
     // Total de experts verificados
     const verifiedExperts = experts.filter((e) => e.isVerified === true);
@@ -315,4 +334,3 @@ export class ExpertsService {
     };
   }
 }
-

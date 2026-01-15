@@ -1,4 +1,10 @@
-import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull, In, DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -31,8 +37,8 @@ export class AdminService {
     // Buscar total de usuários ativos (que têm plano)
     const totalUsers = await this.userRepository.count();
     const activeUsersCount = await this.userRepository.count({
-      where: { 
-        planId: Not(IsNull() as any) 
+      where: {
+        planId: Not(IsNull() as any),
       },
     });
 
@@ -58,9 +64,9 @@ export class AdminService {
 
     // Buscar usuários com planos ativos
     const usersWithActivePlans = await this.userRepository.count({
-      where: { 
-        planId: Not(IsNull() as any), 
-        planActivatedAt: Not(IsNull() as any) 
+      where: {
+        planId: Not(IsNull() as any),
+        planActivatedAt: Not(IsNull() as any),
       },
     });
 
@@ -109,10 +115,11 @@ export class AdminService {
       // Se derivRaw existir, verificar se é demo
       if (user.derivRaw) {
         try {
-          const rawData = typeof user.derivRaw === 'string' 
-            ? JSON.parse(user.derivRaw) 
-            : user.derivRaw;
-          
+          const rawData =
+            typeof user.derivRaw === 'string'
+              ? JSON.parse(user.derivRaw)
+              : user.derivRaw;
+
           // Verificar se é conta demo no derivRaw
           if (rawData.isDemo === true || rawData.demo_account === 1) {
             return false;
@@ -161,10 +168,11 @@ export class AdminService {
       let isDemo = false;
       if (user.derivRaw) {
         try {
-          const rawData = typeof user.derivRaw === 'string' 
-            ? JSON.parse(user.derivRaw) 
-            : user.derivRaw;
-          
+          const rawData =
+            typeof user.derivRaw === 'string'
+              ? JSON.parse(user.derivRaw)
+              : user.derivRaw;
+
           if (rawData.isDemo === true || rawData.demo_account === 1) {
             isDemo = true;
           }
@@ -182,7 +190,7 @@ export class AdminService {
         const balance = parseFloat(user.derivBalance);
         if (!isNaN(balance) && balance > 0) {
           const currency = user.derivCurrency.toUpperCase();
-          
+
           // Adicionar ao total por moeda
           if (!volumeByCurrency[currency]) {
             volumeByCurrency[currency] = 0;
@@ -205,7 +213,10 @@ export class AdminService {
       totalFormatted: this.formatCurrency(totalVolume, 'USD'),
       byCurrency: volumeByCurrency,
       estimatedCommission,
-      estimatedCommissionFormatted: this.formatCurrency(estimatedCommission, 'USD'),
+      estimatedCommissionFormatted: this.formatCurrency(
+        estimatedCommission,
+        'USD',
+      ),
     };
   }
 
@@ -434,9 +445,9 @@ export class AdminService {
   private mapPermissionToRole(permission: string): string {
     const roleMap: Record<string, string> = {
       'Super Admin': 'super_admin',
-      'Editor': 'editor',
-      'Suporte': 'suporte',
-      'Visualizador': 'visualizador',
+      Editor: 'editor',
+      Suporte: 'suporte',
+      Visualizador: 'visualizador',
     };
 
     return roleMap[permission] || 'editor';
@@ -542,22 +553,22 @@ export class AdminService {
     if (description && description.length > action.length) {
       return description;
     }
-    
+
     // Mapear ações comuns para descrições amigáveis
     const actionMap: Record<string, string> = {
-      'LOGIN': 'Login no sistema',
-      'LOGOUT': 'Logout do sistema',
-      'UPDATE_PROFILE': 'Atualizou perfil',
-      'CHANGE_PASSWORD': 'Alterou senha',
-      'CONNECT_DERIV': 'Conectou conta Deriv',
-      'DISCONNECT_DERIV': 'Desconectou conta Deriv',
-      'ACTIVATE_PLAN': 'Ativou plano',
-      'DEACTIVATE_PLAN': 'Desativou plano',
-      'CREATE_ADMIN': 'Criou novo administrador',
-      'UPDATE_ADMIN': 'Atualizou administrador',
-      'DELETE_ADMIN': 'Excluiu administrador',
-      'TOGGLE_ADMIN_STATUS': 'Alterou status de administrador',
-      'EXPORT_LOGS': 'Exportou logs do sistema',
+      LOGIN: 'Login no sistema',
+      LOGOUT: 'Logout do sistema',
+      UPDATE_PROFILE: 'Atualizou perfil',
+      CHANGE_PASSWORD: 'Alterou senha',
+      CONNECT_DERIV: 'Conectou conta Deriv',
+      DISCONNECT_DERIV: 'Desconectou conta Deriv',
+      ACTIVATE_PLAN: 'Ativou plano',
+      DEACTIVATE_PLAN: 'Desativou plano',
+      CREATE_ADMIN: 'Criou novo administrador',
+      UPDATE_ADMIN: 'Atualizou administrador',
+      DELETE_ADMIN: 'Excluiu administrador',
+      TOGGLE_ADMIN_STATUS: 'Alterou status de administrador',
+      EXPORT_LOGS: 'Exportou logs do sistema',
     };
 
     return actionMap[action] || description || action;
@@ -590,4 +601,3 @@ export class AdminService {
     return hasFailed ? 'Falha' : 'Sucesso';
   }
 }
-

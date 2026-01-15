@@ -15,4 +15,3 @@ export class ClientListResponseDto {
   clients: ClientDto[];
   total: number;
 }
-

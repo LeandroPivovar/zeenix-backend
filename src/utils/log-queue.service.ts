@@ -6,10 +6,25 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 export interface LogEntry {
   userId: string;
   // Para AI logs
-  type?: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+  type?:
+    | 'info'
+    | 'tick'
+    | 'analise'
+    | 'sinal'
+    | 'operacao'
+    | 'resultado'
+    | 'alerta'
+    | 'erro';
   // Para autonomous-agent logs
   level?: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
-  module?: 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER';
+  module?:
+    | 'CORE'
+    | 'API'
+    | 'ANALYZER'
+    | 'DECISION'
+    | 'TRADER'
+    | 'RISK'
+    | 'HUMANIZER';
   message: string;
   details?: any;
   metadata?: any;
@@ -41,12 +56,12 @@ export class LogQueueService implements OnModuleInit {
     erro: '🚫',
   };
 
-  constructor(
-    @InjectDataSource() private readonly dataSource: DataSource,
-  ) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   onModuleInit() {
-    this.logger.log('[LogQueueService] ✅ Serviço de fila de logs inicializado');
+    this.logger.log(
+      '[LogQueueService] ✅ Serviço de fila de logs inicializado',
+    );
   }
 
   /**
@@ -57,7 +72,7 @@ export class LogQueueService implements OnModuleInit {
     if (!entry.userId || !entry.message || entry.message.trim() === '') {
       return;
     }
-    
+
     // Validar que tem type (AI) ou level (Agent)
     if (!entry.type && !entry.level) {
       return;
@@ -65,7 +80,9 @@ export class LogQueueService implements OnModuleInit {
 
     // Limitar tamanho da fila para evitar consumo excessivo de memória
     if (this.logQueue.length >= this.MAX_QUEUE_SIZE) {
-      this.logger.warn(`[LogQueue] ⚠️ Fila cheia (${this.MAX_QUEUE_SIZE}), descartando log mais antigo`);
+      this.logger.warn(
+        `[LogQueue] ⚠️ Fila cheia (${this.MAX_QUEUE_SIZE}), descartando log mais antigo`,
+      );
       this.logQueue.shift(); // Remove o mais antigo
     }
 
@@ -108,7 +125,9 @@ export class LogQueueService implements OnModuleInit {
       // Processar logs de AI e Agent em paralelo
       await Promise.all([
         aiLogs.length > 0 ? this.saveAiLogsBatch(aiLogs) : Promise.resolve(),
-        agentLogs.length > 0 ? this.saveAgentLogsBatch(agentLogs) : Promise.resolve(),
+        agentLogs.length > 0
+          ? this.saveAgentLogsBatch(agentLogs)
+          : Promise.resolve(),
       ]);
 
       // Se ainda há logs na fila, processar novamente
@@ -141,8 +160,8 @@ export class LogQueueService implements OnModuleInit {
       // Processar cada usuário em paralelo
       await Promise.all(
         Array.from(logsByUser.entries()).map(([userId, userLogs]) =>
-          this.saveAiLogsForUser(userId, userLogs)
-        )
+          this.saveAiLogsForUser(userId, userLogs),
+        ),
       );
     } catch (error) {
       this.logger.error(`[LogQueue] Erro ao salvar logs de AI:`, error);
@@ -152,14 +171,17 @@ export class LogQueueService implements OnModuleInit {
   /**
    * Salva logs de AI para um usuário específico
    */
-  private async saveAiLogsForUser(userId: string, logs: LogEntry[]): Promise<void> {
+  private async saveAiLogsForUser(
+    userId: string,
+    logs: LogEntry[],
+  ): Promise<void> {
     if (logs.length === 0) return;
 
     try {
       const sessionId = logs[0].sessionId || userId;
 
       // Preparar valores para INSERT em batch
-      const values = logs.map(log => {
+      const values = logs.map((log) => {
         if (!log.type) {
           throw new Error(`Log de AI deve ter 'type' definido`);
         }
@@ -175,7 +197,9 @@ export class LogQueueService implements OnModuleInit {
       });
 
       // INSERT em batch (muito mais rápido que múltiplos INSERTs)
-      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, NOW(3))').join(', ');
+      const placeholders = values
+        .map(() => '(?, ?, ?, ?, ?, ?, NOW(3))')
+        .join(', ');
       const flatValues = values.flat();
 
       await this.dataSource.query(
@@ -184,9 +208,14 @@ export class LogQueueService implements OnModuleInit {
         flatValues,
       );
 
-      this.logger.debug(`[LogQueue] ✅ ${logs.length} logs de AI salvos para usuário ${userId}`);
+      this.logger.debug(
+        `[LogQueue] ✅ ${logs.length} logs de AI salvos para usuário ${userId}`,
+      );
     } catch (error) {
-      this.logger.error(`[LogQueue] Erro ao salvar logs de AI para ${userId}:`, error);
+      this.logger.error(
+        `[LogQueue] Erro ao salvar logs de AI para ${userId}:`,
+        error,
+      );
     }
   }
 
@@ -209,8 +238,8 @@ export class LogQueueService implements OnModuleInit {
       // Processar cada usuário em paralelo
       await Promise.all(
         Array.from(logsByUser.entries()).map(([userId, userLogs]) =>
-          this.saveAgentLogsForUser(userId, userLogs)
-        )
+          this.saveAgentLogsForUser(userId, userLogs),
+        ),
       );
     } catch (error) {
       this.logger.error(`[LogQueue] Erro ao salvar logs de Agent:`, error);
@@ -220,12 +249,15 @@ export class LogQueueService implements OnModuleInit {
   /**
    * Salva logs de Agent para um usuário específico
    */
-  private async saveAgentLogsForUser(userId: string, logs: LogEntry[]): Promise<void> {
+  private async saveAgentLogsForUser(
+    userId: string,
+    logs: LogEntry[],
+  ): Promise<void> {
     if (logs.length === 0) return;
 
     try {
       // Preparar valores para INSERT em batch
-      const values = logs.map(log => {
+      const values = logs.map((log) => {
         const now = new Date();
         const timestampMySQL = now
           .toISOString()
@@ -239,7 +271,9 @@ export class LogQueueService implements OnModuleInit {
           log.level || 'INFO',
           log.module || 'CORE',
           log.message.substring(0, 5000),
-          log.metadata ? JSON.stringify(log.metadata).substring(0, 10000) : null,
+          log.metadata
+            ? JSON.stringify(log.metadata).substring(0, 10000)
+            : null,
         ];
       });
 
@@ -253,9 +287,14 @@ export class LogQueueService implements OnModuleInit {
         flatValues,
       );
 
-      this.logger.debug(`[LogQueue] ✅ ${logs.length} logs de Agent salvos para usuário ${userId}`);
+      this.logger.debug(
+        `[LogQueue] ✅ ${logs.length} logs de Agent salvos para usuário ${userId}`,
+      );
     } catch (error) {
-      this.logger.error(`[LogQueue] Erro ao salvar logs de Agent para ${userId}:`, error);
+      this.logger.error(
+        `[LogQueue] Erro ao salvar logs de Agent para ${userId}:`,
+        error,
+      );
     }
   }
 
@@ -268,7 +307,9 @@ export class LogQueueService implements OnModuleInit {
   })
   async flushLogQueue(): Promise<void> {
     if (this.logQueue.length > 0 && !this.logProcessing) {
-      this.logger.debug(`[LogQueue] 🔄 Flush periódico: ${this.logQueue.length} logs pendentes`);
+      this.logger.debug(
+        `[LogQueue] 🔄 Flush periódico: ${this.logQueue.length} logs pendentes`,
+      );
       await this.processLogQueue();
     }
   }
@@ -280,7 +321,7 @@ export class LogQueueService implements OnModuleInit {
     while (this.logQueue.length > 0) {
       await this.processLogQueue();
       // Pequeno delay para evitar sobrecarga
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
@@ -291,4 +332,3 @@ export class LogQueueService implements OnModuleInit {
     return this.logQueue.length;
   }
 }
-

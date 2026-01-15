@@ -22,16 +22,16 @@ export class GeminiController {
       return {
         error: 'É necessário fornecer pelo menos um tick',
         action: 'CALL',
-        confidence: 50
+        confidence: 50,
       };
     }
 
     // Pegar os últimos 10 ticks
     const last10Ticks = body.ticks.slice(-10);
-    
-    const recommendation = await this.geminiService.getTradingRecommendation(last10Ticks);
-    
+
+    const recommendation =
+      await this.geminiService.getTradingRecommendation(last10Ticks);
+
     return recommendation;
   }
 }
-

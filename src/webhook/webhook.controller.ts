@@ -10,10 +10,17 @@ import * as bcrypt from 'bcrypt';
 @Controller('webhook')
 export class WebhookController {
   private readonly logger = new Logger(WebhookController.name);
-  private readonly maskedFields = ['password', 'token', 'authorization', 'secret', 'key'];
+  private readonly maskedFields = [
+    'password',
+    'token',
+    'authorization',
+    'secret',
+    'key',
+  ];
 
   constructor(
-    @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
+    @Inject(USER_REPOSITORY_TOKEN)
+    private readonly userRepository: UserRepository,
     private readonly emailService: EmailService,
   ) {}
 
@@ -22,17 +29,23 @@ export class WebhookController {
     this.logger.log('=== INÍCIO DO PROCESSAMENTO DO WEBHOOK ===');
     this.logger.log(`Tipo do payload: ${typeof payload}`);
     this.logger.log(`Payload é array: ${Array.isArray(payload)}`);
-    this.logger.log(`Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`);
-    
+    this.logger.log(
+      `Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`,
+    );
+
     const maskedPayload = this.maskSensitiveData(payload);
-    this.logger.log(`Webhook recebido (mascarado): ${JSON.stringify(maskedPayload)}`);
-    
+    this.logger.log(
+      `Webhook recebido (mascarado): ${JSON.stringify(maskedPayload)}`,
+    );
+
     // Log dos campos importantes para debug
-    this.logger.log(`webhook_event_type: ${payload?.webhook_event_type || 'UNDEFINED'}`);
+    this.logger.log(
+      `webhook_event_type: ${payload?.webhook_event_type || 'UNDEFINED'}`,
+    );
     this.logger.log(`order_status: ${payload?.order_status || 'UNDEFINED'}`);
     this.logger.log(`Customer existe: ${!!payload?.Customer}`);
     this.logger.log(`Customer.email: ${payload?.Customer?.email || 'N/A'}`);
-    
+
     // Verificar se o payload tem a estrutura esperada
     if (!payload || typeof payload !== 'object') {
       this.logger.error('❌ Payload inválido ou não é um objeto');
@@ -44,23 +57,33 @@ export class WebhookController {
     const isPaid = payload.order_status === 'paid';
     const hasCustomerEmail = !!payload.Customer?.email;
 
-    this.logger.log(`Verificações: isOrderApproved=${isOrderApproved}, isPaid=${isPaid}, hasCustomerEmail=${hasCustomerEmail}`);
+    this.logger.log(
+      `Verificações: isOrderApproved=${isOrderApproved}, isPaid=${isPaid}, hasCustomerEmail=${hasCustomerEmail}`,
+    );
 
     if (isOrderApproved && isPaid && hasCustomerEmail) {
       this.logger.log('✅ Condições atendidas! Processando pedido aprovado...');
       await this.handleOrderApproved(payload as KiwifyWebhookDto);
     } else {
-      this.logger.warn('⚠️ Condições não atendidas. Webhook não será processado para criação de usuário.');
+      this.logger.warn(
+        '⚠️ Condições não atendidas. Webhook não será processado para criação de usuário.',
+      );
       if (!isOrderApproved) {
-        this.logger.warn(`  - webhook_event_type não é 'order_approved': ${payload.webhook_event_type}`);
+        this.logger.warn(
+          `  - webhook_event_type não é 'order_approved': ${payload.webhook_event_type}`,
+        );
       }
       if (!isPaid) {
-        this.logger.warn(`  - order_status não é 'paid': ${payload.order_status}`);
+        this.logger.warn(
+          `  - order_status não é 'paid': ${payload.order_status}`,
+        );
       }
       if (!hasCustomerEmail) {
         this.logger.warn(`  - Customer.email não existe ou está vazio`);
         if (payload.Customer) {
-          this.logger.warn(`  - Customer object: ${JSON.stringify(payload.Customer)}`);
+          this.logger.warn(
+            `  - Customer object: ${JSON.stringify(payload.Customer)}`,
+          );
         }
       }
     }
@@ -83,7 +106,9 @@ export class WebhookController {
       const existingUser = await this.userRepository.findByEmail(email);
 
       if (existingUser) {
-        this.logger.warn(`⚠️ Usuário com email ${email} já existe (ID: ${existingUser.id}), pulando criação`);
+        this.logger.warn(
+          `⚠️ Usuário com email ${email} já existe (ID: ${existingUser.id}), pulando criação`,
+        );
         return;
       }
       this.logger.log(`✅ Usuário não existe, prosseguindo com criação...`);
@@ -91,7 +116,9 @@ export class WebhookController {
       // Gerar senha pré-configurada aleatória
       this.logger.log('Gerando senha temporária...');
       const temporaryPassword = this.generateTemporaryPassword();
-      this.logger.log(`Senha temporária gerada (não logar em produção): ${temporaryPassword.substring(0, 3)}***`);
+      this.logger.log(
+        `Senha temporária gerada (não logar em produção): ${temporaryPassword.substring(0, 3)}***`,
+      );
 
       // Hash da senha
       this.logger.log('Fazendo hash da senha...');
@@ -102,18 +129,17 @@ export class WebhookController {
       this.logger.log('Criando objeto User...');
       const userId = uuidv4();
       this.logger.log(`ID do usuário gerado: ${userId}`);
-      const user = User.create(
-        userId,
-        name,
-        email,
-        hashedPassword,
+      const user = User.create(userId, name, email, hashedPassword);
+      this.logger.log(
+        `Objeto User criado: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`,
       );
-      this.logger.log(`Objeto User criado: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`);
 
       // Salvar usuário no banco (com role 'user' por padrão)
       this.logger.log('Salvando usuário no banco de dados...');
       const createdUser = await this.userRepository.create(user);
-      this.logger.log(`✅ Usuário salvo no banco com sucesso! ID: ${createdUser.id}`);
+      this.logger.log(
+        `✅ Usuário salvo no banco com sucesso! ID: ${createdUser.id}`,
+      );
 
       // Obter URL da plataforma
       const platformUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
@@ -127,14 +153,20 @@ export class WebhookController {
         temporaryPassword,
         platformUrl,
       );
-      this.logger.log(`✅ Email de boas-vindas enviado com sucesso para ${email}`);
+      this.logger.log(
+        `✅ Email de boas-vindas enviado com sucesso para ${email}`,
+      );
 
-      this.logger.log(`🎉 Processo concluído com sucesso! Usuário criado: ${createdUser.id} (${email})`);
+      this.logger.log(
+        `🎉 Processo concluído com sucesso! Usuário criado: ${createdUser.id} (${email})`,
+      );
     } catch (error) {
       this.logger.error('❌ ERRO ao processar webhook de pedido aprovado');
       this.logger.error(`Mensagem de erro: ${error.message}`);
       this.logger.error(`Stack trace: ${error.stack}`);
-      this.logger.error(`Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
+      this.logger.error(
+        `Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`,
+      );
       // Não lançar erro para não quebrar o webhook
     } finally {
       this.logger.log('--- Fim do handleOrderApproved ---');
@@ -167,8 +199,10 @@ export class WebhookController {
       .split('')
       .sort(() => Math.random() - 0.5)
       .join('');
-    
-    this.logger.debug(`Senha temporária gerada com ${shuffledPassword.length} caracteres`);
+
+    this.logger.debug(
+      `Senha temporária gerada com ${shuffledPassword.length} caracteres`,
+    );
     return shuffledPassword;
   }
 
@@ -181,16 +215,18 @@ export class WebhookController {
       return data.map((item) => this.maskSensitiveData(item));
     }
 
-    return Object.entries(data).reduce((acc, [key, value]) => {
-      if (this.maskedFields.includes(key.toLowerCase())) {
-        acc[key] = '[MASKED]';
-      } else if (value && typeof value === 'object') {
-        acc[key] = this.maskSensitiveData(value);
-      } else {
-        acc[key] = value;
-      }
-      return acc;
-    }, {} as Record<string, any>);
+    return Object.entries(data).reduce(
+      (acc, [key, value]) => {
+        if (this.maskedFields.includes(key.toLowerCase())) {
+          acc[key] = '[MASKED]';
+        } else if (value && typeof value === 'object') {
+          acc[key] = this.maskSensitiveData(value);
+        } else {
+          acc[key] = value;
+        }
+        return acc;
+      },
+      {} as Record<string, any>,
+    );
   }
 }
-

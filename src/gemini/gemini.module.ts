@@ -8,5 +8,3 @@ import { GeminiService } from './gemini.service';
   exports: [GeminiService],
 })
 export class GeminiModule {}
-
-

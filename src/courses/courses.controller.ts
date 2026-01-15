@@ -50,9 +50,18 @@ const createMediaUploadOptions = (
       },
     }),
     limits: { fileSize: maxFileSizeMb * 1024 * 1024 },
-    fileFilter: (req: any, file: Express.Multer.File, cb: (error: any, acceptFile: boolean) => void) => {
-      if (!allowedMimePrefixes.some(prefix => file.mimetype.startsWith(prefix))) {
-        return cb(new BadRequestException('Tipo de arquivo não permitido.'), false);
+    fileFilter: (
+      req: any,
+      file: Express.Multer.File,
+      cb: (error: any, acceptFile: boolean) => void,
+    ) => {
+      if (
+        !allowedMimePrefixes.some((prefix) => file.mimetype.startsWith(prefix))
+      ) {
+        return cb(
+          new BadRequestException('Tipo de arquivo não permitido.'),
+          false,
+        );
       }
       cb(null, true);
     },
@@ -62,7 +71,8 @@ const createMediaUploadOptions = (
 const createImageUploadOptions = (subfolder: string) =>
   createMediaUploadOptions(['courses', subfolder], ['image/'], 10);
 
-const createVideoUploadOptions = () => createMediaUploadOptions(['lessons', 'videos'], ['video/'], 1024);
+const createVideoUploadOptions = () =>
+  createMediaUploadOptions(['lessons', 'videos'], ['video/'], 1024);
 
 @Controller('courses')
 export class CoursesController {
@@ -140,18 +150,21 @@ export class CoursesController {
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() req: any) {
     const course = await this.coursesService.findOne(id);
-    
+
     // Se houver token no header, tentar extrair userId e buscar progresso
     try {
       const authHeader = req.headers?.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
-        const payload = this.jwtService.decode(token) as { sub: string; email: string } | null;
+        const payload = this.jwtService.decode(token);
         if (payload?.sub) {
-          const progress = await this.coursesService.getProgressForCourse(payload.sub, id);
+          const progress = await this.coursesService.getProgressForCourse(
+            payload.sub,
+            id,
+          );
           // Adicionar informação de progresso às aulas
           if (course.modules) {
-            course.modules.forEach(module => {
+            course.modules.forEach((module) => {
               if (module.lessons) {
                 module.lessons.forEach((lesson: any) => {
                   lesson.completed = progress[lesson.id] || false;
@@ -165,7 +178,7 @@ export class CoursesController {
       // Se houver erro na autenticação, continua sem progresso
       console.warn('Erro ao buscar progresso:', err);
     }
-    
+
     return course;
   }
 
@@ -191,7 +204,10 @@ export class CoursesController {
   }
 
   @Put('modules/:id')
-  updateModule(@Param('id') id: string, @Body() updateModuleDto: UpdateModuleDto) {
+  updateModule(
+    @Param('id') id: string,
+    @Body() updateModuleDto: UpdateModuleDto,
+  ) {
     return this.coursesService.updateModule(id, updateModuleDto);
   }
 
@@ -207,7 +223,10 @@ export class CoursesController {
   }
 
   @Put('lessons/:id')
-  updateLesson(@Param('id') id: string, @Body() updateLessonDto: UpdateLessonDto) {
+  updateLesson(
+    @Param('id') id: string,
+    @Body() updateLessonDto: UpdateLessonDto,
+  ) {
     return this.coursesService.updateLesson(id, updateLessonDto);
   }
 
@@ -223,7 +242,10 @@ export class CoursesController {
   }
 
   @Put('materials/:id')
-  updateMaterial(@Param('id') id: string, @Body() updateMaterialDto: UpdateMaterialDto) {
+  updateMaterial(
+    @Param('id') id: string,
+    @Body() updateMaterialDto: UpdateMaterialDto,
+  ) {
     return this.coursesService.updateMaterial(id, updateMaterialDto);
   }
 
@@ -232,7 +254,10 @@ export class CoursesController {
     return this.coursesService.removeMaterial(id);
   }
 
-  private handleUploadedFile(file: Express.Multer.File, relativePath: string[]) {
+  private handleUploadedFile(
+    file: Express.Multer.File,
+    relativePath: string[],
+  ) {
     if (!file) {
       throw new BadRequestException('Nenhum arquivo foi enviado.');
     }
@@ -241,4 +266,3 @@ export class CoursesController {
     };
   }
 }
-

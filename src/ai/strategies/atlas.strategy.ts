@@ -4,7 +4,14 @@ import WebSocket from 'ws';
 import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
 import { CopyTradingService } from '../../copy-trading/copy-trading.service';
-import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
+import {
+  IStrategy,
+  ModeConfig,
+  ATLAS_VELOZ_CONFIG,
+  ATLAS_NORMAL_CONFIG,
+  ATLAS_LENTO_CONFIG,
+  ModoMartingale,
+} from './common.types';
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
 function calcularProximaApostaAtlas(
@@ -28,7 +35,7 @@ function calcularProximaApostaAtlas(
       break;
     case 'agressivo':
       // Recupera 100% da perda + 30% de lucro (Conforme Documentação Atlas v3)
-      aposta = (perdasTotais * 1.30) / payout;
+      aposta = (perdasTotais * 1.3) / payout;
       break;
   }
 
@@ -99,11 +106,11 @@ export class AtlasStrategy implements IStrategy {
     R_100: Tick[];
     '1HZ10V': Tick[];
   } = {
-      R_10: [],
-      R_25: [],
-      R_100: [],
-      '1HZ10V': [],
-    };
+    R_10: [],
+    R_25: [],
+    R_100: [],
+    '1HZ10V': [],
+  };
 
   private appId: string;
   private maxTicks = 50; // ✅ ATLAS: Buffer menor para análise ultrarrápida
@@ -112,7 +119,17 @@ export class AtlasStrategy implements IStrategy {
   private logQueue: Array<{
     userId: string;
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA';
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
+    type:
+      | 'info'
+      | 'tick'
+      | 'analise'
+      | 'sinal'
+      | 'operacao'
+      | 'resultado'
+      | 'vitoria'
+      | 'derrota'
+      | 'alerta'
+      | 'erro';
     message: string;
     details?: any;
   }> = [];
@@ -128,7 +145,14 @@ export class AtlasStrategy implements IStrategy {
       authorized: boolean;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
-      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      pendingRequests: Map<
+        string,
+        {
+          resolve: (value: any) => void;
+          reject: (error: any) => void;
+          timeout: NodeJS.Timeout;
+        }
+      >;
       subscriptions: Map<string, (msg: any) => void>;
       lastLatency: number; // ✅ ATLAS: Rastrear latência
     }
@@ -145,20 +169,26 @@ export class AtlasStrategy implements IStrategy {
 
   async initialize(): Promise<void> {
     this.logger.log('[ATLAS] 🔵 Estratégia ATLAS v2.0 (EHF) inicializada');
-    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100, 1HZ10V)...');
+    this.logger.log(
+      '[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100, 1HZ10V)...',
+    );
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     if (!symbol || !['R_10', 'R_25', 'R_100', '1HZ10V'].includes(symbol)) {
       // ✅ DIAGNÓSTICO: Log quando recebe símbolo inválido
       if (symbol) {
-        this.logger.debug(`[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25, R_100 ou 1HZ10V)`);
+        this.logger.debug(
+          `[ATLAS] ⚠️ Tick recebido com símbolo inválido: ${symbol} (esperado R_10, R_25, R_100 ou 1HZ10V)`,
+        );
       }
       return;
     }
 
     const assetSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
-    this.logger.debug(`[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`);
+    this.logger.debug(
+      `[ATLAS][${assetSymbol}] 📥 Tick recebido: ${tick.value} (dígito: ${tick.digit})`,
+    );
 
     // Atualizar ticks globais
     const assetTicks = this.atlasTicks[assetSymbol];
@@ -169,14 +199,20 @@ export class AtlasStrategy implements IStrategy {
 
     // Processar para cada usuário deste ativo
     const allAtlasUsers = Array.from(this.atlasUsers.values());
-    const activeUsers = allAtlasUsers.filter(u => u.symbol === assetSymbol && !u.isStopped);
+    const activeUsers = allAtlasUsers.filter(
+      (u) => u.symbol === assetSymbol && !u.isStopped,
+    );
 
     // ✅ DIAGNÓSTICO: Se há usuários mas nenhum fatiado por este ativo
     if (activeUsers.length === 0 && allAtlasUsers.length > 0) {
-      this.logger.warn(`[ATLAS][${assetSymbol}] ⚠️ ${allAtlasUsers.length} usuários Atlas totais, mas nenhum ativo para este símbolo.`);
+      this.logger.warn(
+        `[ATLAS][${assetSymbol}] ⚠️ ${allAtlasUsers.length} usuários Atlas totais, mas nenhum ativo para este símbolo.`,
+      );
       // Logar símbolos dos usuários para depuração
-      allAtlasUsers.forEach(u => {
-        this.logger.debug(`[ATLAS][DEBUG] Usuário ${u.userId}: symbol=${u.symbol}, isStopped=${u.isStopped}`);
+      allAtlasUsers.forEach((u) => {
+        this.logger.debug(
+          `[ATLAS][DEBUG] Usuário ${u.userId}: symbol=${u.symbol}, isStopped=${u.isStopped}`,
+        );
       });
       return;
     }
@@ -194,10 +230,14 @@ export class AtlasStrategy implements IStrategy {
       state.tickCounter = (state.tickCounter || 0) + 1;
       if (state.tickCounter >= 100) {
         state.tickCounter = 0;
-        this.saveAtlasLog(state.userId, assetSymbol, 'info',
+        this.saveAtlasLog(
+          state.userId,
+          assetSymbol,
+          'info',
           `💓 IA ATLAS OPERA\n` +
-          `• Mercado: ${assetSymbol}\n` +
-          `• Status: Analisando padrões...`);
+            `• Mercado: ${assetSymbol}\n` +
+            `• Status: Analisando padrões...`,
+        );
       }
 
       await this.processAtlasStrategies(tick, state);
@@ -230,13 +270,25 @@ export class AtlasStrategy implements IStrategy {
       const marketLower = selectedMarket.toLowerCase();
 
       // ✅ Mapear preferência "Vol 10" para "1HZ10V" (1s)
-      if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
+      if (
+        marketLower === 'r_10' ||
+        marketLower === 'vol10' ||
+        marketLower === 'volatility 10 index'
+      ) {
         atlasSymbol = '1HZ10V';
       } else if (marketLower.includes('1hz10v') || marketLower.includes('1s')) {
         atlasSymbol = '1HZ10V';
-      } else if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
+      } else if (
+        marketLower === 'r_100' ||
+        marketLower === 'vol100' ||
+        marketLower === 'volatility 100 index'
+      ) {
         atlasSymbol = 'R_100';
-      } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
+      } else if (
+        marketLower === 'r_25' ||
+        marketLower === 'vol25' ||
+        marketLower === 'volatility 25 index'
+      ) {
         atlasSymbol = 'R_25';
       } else {
         // Fallback robusto
@@ -249,7 +301,8 @@ export class AtlasStrategy implements IStrategy {
     const stakeAmountNum = Number(stakeAmount);
     const profitTargetNum = profitTarget != null ? Number(profitTarget) : null;
     const lossLimitNum = lossLimit != null ? Number(lossLimit) : null;
-    const stopLossNormalized = lossLimitNum != null ? -Math.abs(lossLimitNum) : null;
+    const stopLossNormalized =
+      lossLimitNum != null ? -Math.abs(lossLimitNum) : null;
     const apostaInicial = entryValue != null ? Number(entryValue) : 0.35;
 
     const { isNew, hasConfigChanges } = this.upsertAtlasUserState({
@@ -269,27 +322,37 @@ export class AtlasStrategy implements IStrategy {
     const now = Date.now();
     const lastLogTime = this.lastActivationLog.get(userId) || 0;
 
-    if (isNew || (hasConfigChanges && (now - lastLogTime > 5000))) {
-      const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
-      this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
+    if (isNew || (hasConfigChanges && now - lastLogTime > 5000)) {
+      const logPrefix = isNew
+        ? 'Usuário ATIVADO'
+        : 'Usuário JÁ ATIVO (config atualizada)';
+      this.logger.log(
+        `[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`,
+      );
 
       const blindadoStatus = stopLossBlindado
-        ? (profitTargetNum ? `ATIVADO (Gatilho: $${(profitTargetNum * 0.40).toFixed(2)})` : 'ATIVADO (Sem meta!)')
+        ? profitTargetNum
+          ? `ATIVADO (Gatilho: $${(profitTargetNum * 0.4).toFixed(2)})`
+          : 'ATIVADO (Sem meta!)'
         : 'DESATIVADO';
 
       const state = this.atlasUsers.get(userId);
       const saldoAtual = state ? state.capital : stakeAmountNum;
 
-      this.saveAtlasLog(userId, 'SISTEMA', 'info',
+      this.saveAtlasLog(
+        userId,
+        'SISTEMA',
+        'info',
         `⚙️ CONFIGURAÇÕES INICIAIS\n` +
-        `• Estratégia: ATLAS\n` +
-        `• Modo de Negociação: ${mode || 'veloz'}\n` +
-        `• Asset: ${atlasSymbol}\n` +
-        `• Saldo Atual: $${saldoAtual.toFixed(2)}\n` +
-        `• Gerenciamento: ${modoMartingale || 'conservador'}\n` +
-        `• Meta de Lucro: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'}\n` +
-        `• Stop Loss Normal: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'}\n` +
-        `• Stop Loss Blindado: ${blindadoStatus}`);
+          `• Estratégia: ATLAS\n` +
+          `• Modo de Negociação: ${mode || 'veloz'}\n` +
+          `• Asset: ${atlasSymbol}\n` +
+          `• Saldo Atual: $${saldoAtual.toFixed(2)}\n` +
+          `• Gerenciamento: ${modoMartingale || 'conservador'}\n` +
+          `• Meta de Lucro: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'}\n` +
+          `• Stop Loss Normal: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'}\n` +
+          `• Stop Loss Blindado: ${blindadoStatus}`,
+      );
 
       this.lastActivationLog.set(userId, now);
 
@@ -311,9 +374,14 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Processa estratégias para um usuário específico
    */
-  private async processAtlasStrategies(tick: Tick, state: AtlasUserState): Promise<void> {
+  private async processAtlasStrategies(
+    tick: Tick,
+    state: AtlasUserState,
+  ): Promise<void> {
     const symbol = state.symbol;
-    this.logger.debug(`[ATLAS][${symbol}][${state.userId}] 🔄 Analisando... Buffer: ${state.digitBuffer.length} dígitos`);
+    this.logger.debug(
+      `[ATLAS][${symbol}][${state.userId}] 🔄 Analisando... Buffer: ${state.digitBuffer.length} dígitos`,
+    );
 
     // Verificar se pode processar
     if (!this.canProcessAtlasAsset(state)) {
@@ -328,7 +396,9 @@ export class AtlasStrategy implements IStrategy {
 
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) {
-      this.logger.error(`[ATLAS][${symbol}][${state.userId}] ❌ Erro: Configuração do modo '${state.mode}' não encontrada.`);
+      this.logger.error(
+        `[ATLAS][${symbol}][${state.userId}] ❌ Erro: Configuração do modo '${state.mode}' não encontrada.`,
+      );
       return;
     }
 
@@ -340,11 +410,15 @@ export class AtlasStrategy implements IStrategy {
       const logKey = `${symbol}_coleta`;
       const shouldLog = !set.has(logKey) || state.digitBuffer.length % 5 === 0;
       if (shouldLog) {
-        this.saveAtlasLog(state.userId, symbol, 'info',
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'info',
           `📊 ANÁLISE INICIAL\n` +
-          `• Amostra: ${state.digitBuffer.length} / ${modeConfig.amostraInicial}\n` +
-          `• Modo: ${state.mode.toUpperCase()}\n` +
-          `• Status: Coletando dígitos...`);
+            `• Amostra: ${state.digitBuffer.length} / ${modeConfig.amostraInicial}\n` +
+            `• Modo: ${state.mode.toUpperCase()}\n` +
+            `• Status: Coletando dígitos...`,
+        );
         set.add(logKey);
         this.coletaLogsEnviados.set(keyUser, set);
         // Resetar após logar para permitir novo log quando necessário
@@ -364,11 +438,19 @@ export class AtlasStrategy implements IStrategy {
         // Se encontrou sinal de recuperação, entra com a stake de recuperação
         const signalOp = recoverySignal === 'CALL' ? 'CALL' : 'PUT';
         const typeLabel = recoverySignal === 'CALL' ? 'Rise' : 'Fall';
-        await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal} (${typeLabel})`);
+        await this.executeAtlasOperation(
+          state,
+          symbol,
+          signalOp,
+          `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal} (${typeLabel})`,
+        );
       } else {
         // Se não encontrou sinal, aguarda e loga (mas com moderação)
         const key = `${symbol}_${state.userId}_waiting_recovery`;
-        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
+        if (
+          !this.intervaloLogsEnviados.has(key) ||
+          (state.tickCounter || 0) % 10 === 0
+        ) {
           // this.saveAtlasLog(state.userId, symbol, 'info', `🛡️ Buscando oportunidade de recuperação (${state.mode})...`);
           this.intervaloLogsEnviados.set(key, true);
         }
@@ -380,7 +462,6 @@ export class AtlasStrategy implements IStrategy {
     // Mas se quiser usar a mesma lógica de recuperação para Soros, altere aqui.
     // Por padrão, Soros segue a lógica de entrada da estratégia (Digit Over).
 
-
     // ✅ ATLAS: Verificar gatilho e análise ultrarrápida
     const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
     if (canTrade) {
@@ -388,7 +469,10 @@ export class AtlasStrategy implements IStrategy {
     } else {
       // ✅ Log periódico quando análise bloqueia operação (a cada 20 ticks para não poluir)
       const key = `${symbol}_${state.userId}_bloqueio`;
-      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 20 === 0) {
+      if (
+        !this.intervaloLogsEnviados.has(key) ||
+        (state.tickCounter || 0) % 20 === 0
+      ) {
         this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
         this.intervaloLogsEnviados.set(key, true);
         // Resetar após 20 ticks
@@ -402,26 +486,38 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Verifica gatilhos ultrarrápidos (Conforme Documentação)
    */
-  private checkAtlasTriggers(state: AtlasUserState, modeConfig: ModeConfig): { canTrade: boolean; analysis: string } {
+  private checkAtlasTriggers(
+    state: AtlasUserState,
+    modeConfig: ModeConfig,
+  ): { canTrade: boolean; analysis: string } {
     const modeLower = (state.mode || 'veloz').toLowerCase();
-    const normalizedMode = modeLower === 'moderado' ? 'normal' :
-      (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
+    const normalizedMode =
+      modeLower === 'moderado'
+        ? 'normal'
+        : modeLower === 'lenta' || modeLower === 'preciso'
+          ? 'lento'
+          : modeLower;
 
     // Mapeamento de loss virtual por modo
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
-    const requiredLossCount = requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
+    const requiredLossCount =
+      requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
 
     let analysis = `🔍 [ANÁLISE ATLAS ${normalizedMode.toUpperCase()}]\n`;
     analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
 
     // Lógica de Bypass de Virtual Loss (Primeira operação ou Win recente)
     const isFirstOperation = state.lastOperationTimestamp === null;
-    const hasRecentWin = state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
+    const hasRecentWin =
+      state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
     const timeSinceLastOp = state.lastOperationTimestamp
       ? (Date.now() - state.lastOperationTimestamp.getTime()) / 1000
       : 0;
-    const intervalPassed = !modeConfig.intervaloSegundos || timeSinceLastOp >= modeConfig.intervaloSegundos;
-    const canBypassVirtualLoss = isFirstOperation || (hasRecentWin && intervalPassed);
+    const intervalPassed =
+      !modeConfig.intervaloSegundos ||
+      timeSinceLastOp >= modeConfig.intervaloSegundos;
+    const canBypassVirtualLoss =
+      isFirstOperation || (hasRecentWin && intervalPassed);
 
     if (!canBypassVirtualLoss && state.virtualLossCount < requiredLossCount) {
       if (hasRecentWin && !intervalPassed) {
@@ -452,7 +548,7 @@ export class AtlasStrategy implements IStrategy {
     // ✅ 2. MODO NORMAL: 3 dos últimos 5 > 2
     if (normalizedMode === 'normal') {
       const window = state.digitBuffer.slice(-5);
-      const countOver2 = window.filter(d => d > 2).length;
+      const countOver2 = window.filter((d) => d > 2).length;
       if (countOver2 >= 3) {
         const strength = (countOver2 / 5) * 100;
         analysis += `✅ FILTRO: Densidade Alta (${countOver2}/5 > 2)\n`;
@@ -468,7 +564,7 @@ export class AtlasStrategy implements IStrategy {
     // ✅ 3. MODO LENTO: 8 dos últimos 10 > 2
     if (normalizedMode === 'lento') {
       const window = state.digitBuffer.slice(-10);
-      const countOver2 = window.filter(d => d > 2).length;
+      const countOver2 = window.filter((d) => d > 2).length;
       // Requisito extra do Python: lastDigit > 2 também
       if (countOver2 >= 8 && lastDigit > 2) {
         const strength = (countOver2 / 10) * 100;
@@ -491,13 +587,20 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Sinal de Recuperação (Price Action) - Filtros Específicos por Modo
    */
-  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): 'CALL' | 'PUT' | null {
+  private getRecoverySignal(
+    state: AtlasUserState,
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V',
+  ): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
     if (ticks.length < 6) return null; // Precisa de pelo menos 6 ticks para Lento (5 últimos + atual)
 
     const modeLower = (state.mode || 'veloz').toLowerCase();
-    const normalizedMode = modeLower === 'moderado' ? 'normal' :
-      (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
+    const normalizedMode =
+      modeLower === 'moderado'
+        ? 'normal'
+        : modeLower === 'lenta' || modeLower === 'preciso'
+          ? 'lento'
+          : modeLower;
 
     const lastTick = ticks[ticks.length - 1];
 
@@ -562,12 +665,19 @@ export class AtlasStrategy implements IStrategy {
 
         // ✅ Log periódico explicativo (para o usuário saber que o robô está pensando)
         const key = `${symbol}_${state.userId}_doji_wait`;
-        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
-          this.saveAtlasLog(state.userId, symbol, 'analise',
+        if (
+          !this.intervaloLogsEnviados.has(key) ||
+          (state.tickCounter || 0) % 10 === 0
+        ) {
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'analise',
             `🐢 [RECUPERAÇÃO LENTA] Aguardando tendência forte.\n` +
-            `• Variação (5 ticks): ${deltaTotal.toFixed(2)}\n` +
-            `• Mínimo Exigido: > ${threshold}\n` +
-            `• Status: Mercado Lateral (Doji) ✋`);
+              `• Variação (5 ticks): ${deltaTotal.toFixed(2)}\n` +
+              `• Mínimo Exigido: > ${threshold}\n` +
+              `• Status: Mercado Lateral (Doji) ✋`,
+          );
           this.intervaloLogsEnviados.set(key, true);
         }
         return null;
@@ -587,21 +697,27 @@ export class AtlasStrategy implements IStrategy {
    */
   private canProcessAtlasAsset(state: AtlasUserState): boolean {
     if (state.isOperationActive) return false;
-    if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) return false;
+    if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil)
+      return false;
 
     const modeConfig = this.getModeConfig(state.mode);
     if (!modeConfig) return false;
 
     // Verificar intervalo de tempo
     if (state.lastOperationTimestamp && modeConfig.intervaloSegundos) {
-      const secondsSinceLastOp = (Date.now() - state.lastOperationTimestamp.getTime()) / 1000;
+      const secondsSinceLastOp =
+        (Date.now() - state.lastOperationTimestamp.getTime()) / 1000;
       if (secondsSinceLastOp < modeConfig.intervaloSegundos) {
         const key = `${state.symbol}_${state.userId}_intervalo`;
         if (!this.intervaloLogsEnviados.has(key)) {
-          this.saveAtlasLog(state.userId, state.symbol, 'info',
+          this.saveAtlasLog(
+            state.userId,
+            state.symbol,
+            'info',
             `⏱️ AGUARDANDO INTERVALO\n` +
-            `• Restante: ${secondsSinceLastOp.toFixed(1)}s\n` +
-            `• Configurado: ${modeConfig.intervaloSegundos}s`);
+              `• Restante: ${secondsSinceLastOp.toFixed(1)}s\n` +
+              `• Configurado: ${modeConfig.intervaloSegundos}s`,
+          );
           this.intervaloLogsEnviados.set(key, true);
         }
         return false;
@@ -617,11 +733,19 @@ export class AtlasStrategy implements IStrategy {
   private getModeConfig(mode: string): ModeConfig | null {
     const modeLower = (mode || 'veloz').toLowerCase();
     if (modeLower === 'veloz') return ATLAS_VELOZ_CONFIG;
-    if (modeLower === 'normal' || modeLower === 'moderado') return ATLAS_NORMAL_CONFIG;
-    if (modeLower === 'lento' || modeLower === 'preciso' || modeLower === 'lenta') return ATLAS_LENTO_CONFIG;
+    if (modeLower === 'normal' || modeLower === 'moderado')
+      return ATLAS_NORMAL_CONFIG;
+    if (
+      modeLower === 'lento' ||
+      modeLower === 'preciso' ||
+      modeLower === 'lenta'
+    )
+      return ATLAS_LENTO_CONFIG;
 
     // Fallback padrão se não reconhecido
-    this.logger.warn(`[ATLAS] Modo '${mode}' não mapeado, usando VELOZ por padrão.`);
+    this.logger.warn(
+      `[ATLAS] Modo '${mode}' não mapeado, usando VELOZ por padrão.`,
+    );
     return ATLAS_VELOZ_CONFIG;
   }
 
@@ -667,7 +791,8 @@ export class AtlasStrategy implements IStrategy {
       const profitTarget = parseFloat(config.profitTarget) || 0;
       const capitalInicial = parseFloat(config.capitalInicial) || 0;
       const profitPeak = parseFloat(config.profitPeak) || 0;
-      const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+      const stopBlindadoPercent =
+        parseFloat(config.stopBlindadoPercent) || 50.0;
 
       const lucroAtual = parseFloat(config.sessionBalance) || 0;
       const capitalSessao = capitalInicial + lucroAtual;
@@ -679,8 +804,11 @@ export class AtlasStrategy implements IStrategy {
 
       // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
-        this.saveAtlasLog(state.userId, symbol, 'info',
-          `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'info',
+          `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`,
         );
 
         await this.dataSource.query(
@@ -694,7 +822,7 @@ export class AtlasStrategy implements IStrategy {
           type: 'stopped_profit',
           strategy: 'atlas',
           symbol: symbol,
-          profitLoss: lucroAtual
+          profitLoss: lucroAtual,
         });
 
         this.atlasUsers.delete(state.userId);
@@ -703,36 +831,51 @@ export class AtlasStrategy implements IStrategy {
       }
 
       // Stop Blindado
-      if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+      if (
+        config.stopBlindadoPercent !== null &&
+        config.stopBlindadoPercent !== undefined
+      ) {
         let currentPeak = profitPeak;
-        const activationThreshold = profitTarget * 0.40;
+        const activationThreshold = profitTarget * 0.4;
 
         if (lucroAtual > currentPeak) {
           currentPeak = lucroAtual;
-          await this.dataSource.query(`UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`, [currentPeak, state.userId]);
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+            [currentPeak, state.userId],
+          );
 
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
-            this.saveAtlasLog(state.userId, symbol, 'info',
-              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${currentPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
+            this.saveAtlasLog(
+              state.userId,
+              symbol,
+              'info',
+              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${currentPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`,
             );
           }
         }
 
         if (profitTarget > 0 && currentPeak >= activationThreshold) {
           const factor = stopBlindadoPercent / 100;
-          const stopBlindado = capitalInicial + (currentPeak * factor);
+          const stopBlindado = capitalInicial + currentPeak * factor;
 
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
-            this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`
+            this.saveAtlasLog(
+              state.userId,
+              symbol,
+              'alerta',
+              `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`,
             );
 
             await this.dataSource.query(
               `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
                WHERE user_id = ? AND is_active = 1`,
-              [`Stop Blindado atingido com lucro de $${lucroFinal.toFixed(2)}`, state.userId],
+              [
+                `Stop Blindado atingido com lucro de $${lucroFinal.toFixed(2)}`,
+                state.userId,
+              ],
             );
 
             this.tradeEvents.emit({
@@ -741,7 +884,7 @@ export class AtlasStrategy implements IStrategy {
               strategy: 'atlas',
               symbol: symbol,
               profitProtected: lucroFinal,
-              profitLoss: lucroFinal
+              profitLoss: lucroFinal,
             });
 
             this.atlasUsers.delete(state.userId);
@@ -754,8 +897,11 @@ export class AtlasStrategy implements IStrategy {
       // Stop Loss Normal
       const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
       if (lossLimit > 0 && perdaAtual >= lossLimit) {
-        this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'alerta',
+          `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`,
         );
 
         await this.dataSource.query(
@@ -769,7 +915,7 @@ export class AtlasStrategy implements IStrategy {
           type: 'stopped_loss',
           strategy: 'atlas',
           symbol: symbol,
-          profitLoss: -perdaAtual
+          profitLoss: -perdaAtual,
         });
 
         this.atlasUsers.delete(state.userId);
@@ -789,11 +935,22 @@ export class AtlasStrategy implements IStrategy {
       if (state.isInRecovery && state.martingaleStep > 0) {
         const payout = modeConfig.payout;
         const perdas = state.perdaAcumulada;
-        stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
+        stakeAmount = calcularProximaApostaAtlas(
+          perdas,
+          state.modoMartingale,
+          payout,
+        );
 
-        if (state.modoMartingale === 'conservador' && state.martingaleStep > 5) {
-          this.saveAtlasLog(state.userId, symbol, 'info',
-            `🛡️ Limite de Martingale (5) atingido no modo conservador. Resetando ciclo.`);
+        if (
+          state.modoMartingale === 'conservador' &&
+          state.martingaleStep > 5
+        ) {
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'info',
+            `🛡️ Limite de Martingale (5) atingido no modo conservador. Resetando ciclo.`,
+          );
           state.martingaleStep = 0;
           state.perdaAcumulada = 0;
           state.isInRecovery = false;
@@ -803,19 +960,27 @@ export class AtlasStrategy implements IStrategy {
         const stopLossDisponivel = this.calculateAvailableStopLoss(state);
 
         if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'alerta',
             `🛡️ [MODO SOBREVIVÊNCIA]\n` +
-            `• Motivo: Stake do Martingale ($${stakeAmount.toFixed(2)}) excede Stop Loss.\n` +
-            `• Ação: Ajustando para stake disponível ($${stopLossDisponivel.toFixed(2)}).`);
+              `• Motivo: Stake do Martingale ($${stakeAmount.toFixed(2)}) excede Stop Loss.\n` +
+              `• Ação: Ajustando para stake disponível ($${stopLossDisponivel.toFixed(2)}).`,
+          );
 
           stakeAmount = stopLossDisponivel;
         }
       } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
         stakeAmount = state.apostaBase + state.ultimoLucro;
-        this.saveAtlasLog(state.userId, symbol, 'info',
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'info',
           `🚀 APLICANDO SOROS NÍVEL 1\n` +
-          `• Lucro Anterior: $${state.ultimoLucro.toFixed(2)}\n` +
-          `• Nova Stake: $${stakeAmount.toFixed(2)}`);
+            `• Lucro Anterior: $${state.ultimoLucro.toFixed(2)}\n` +
+            `• Nova Stake: $${stakeAmount.toFixed(2)}`,
+        );
       }
 
       stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
@@ -823,7 +988,7 @@ export class AtlasStrategy implements IStrategy {
       // GESTÃO DE RISCO - Clamping
       let minAllowedBalance = 0.0;
       let limitType = '';
-      const activationThreshold = profitTarget * 0.40;
+      const activationThreshold = profitTarget * 0.4;
 
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = stopBlindadoPercent / 100;
@@ -841,15 +1006,22 @@ export class AtlasStrategy implements IStrategy {
 
       const potentialBalanceAfterLoss = capitalSessao - stakeAmount;
 
-      if (minAllowedBalance !== -Infinity && potentialBalanceAfterLoss < minAllowedBalance) {
+      if (
+        minAllowedBalance !== -Infinity &&
+        potentialBalanceAfterLoss < minAllowedBalance
+      ) {
         let adjustedStake = state.capital - minAllowedBalance;
         adjustedStake = Math.round(adjustedStake * 100) / 100;
 
         if (adjustedStake < 0.35) {
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'alerta',
             `🛡️ [MODO SOBREVIVÊNCIA]\n` +
-            `• Motivo: Sem margem de risco para Martingale.\n` +
-            `• Ação: Resetando para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`);
+              `• Motivo: Sem margem de risco para Martingale.\n` +
+              `• Ação: Resetando para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`,
+          );
 
           state.martingaleStep = 0;
           state.perdaAcumulada = 0;
@@ -857,8 +1029,12 @@ export class AtlasStrategy implements IStrategy {
           stakeAmount = state.apostaBase;
         } else {
           if (adjustedStake !== stakeAmount) {
-            this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`);
+            this.saveAtlasLog(
+              state.userId,
+              symbol,
+              'alerta',
+              `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`,
+            );
             stakeAmount = adjustedStake;
           }
         }
@@ -880,15 +1056,16 @@ export class AtlasStrategy implements IStrategy {
 
       this.logger.log(
         `[ATLAS][${symbol}] 🎲 EXECUTANDO | User: ${state.userId} | ` +
-        `Operação: ${operation} | Stake: $${stakeAmount.toFixed(2)} | ` +
-        `Recovery: ${state.isInRecovery ? `M${state.martingaleStep}` : 'Não'} | ` +
-        `Soros: ${state.isInSoros ? `Nível ${state.vitoriasConsecutivas}` : 'Não'}`,
+          `Operação: ${operation} | Stake: $${stakeAmount.toFixed(2)} | ` +
+          `Recovery: ${state.isInRecovery ? `M${state.martingaleStep}` : 'Não'} | ` +
+          `Soros: ${state.isInSoros ? `Nível ${state.vitoriasConsecutivas}` : 'Não'}`,
       );
 
       try {
-        const entryPrice = this.atlasTicks[symbol].length > 0
-          ? this.atlasTicks[symbol][this.atlasTicks[symbol].length - 1].value
-          : 0;
+        const entryPrice =
+          this.atlasTicks[symbol].length > 0
+            ? this.atlasTicks[symbol][this.atlasTicks[symbol].length - 1].value
+            : 0;
 
         const tradeId = await this.saveAtlasTrade({
           userId: state.userId,
@@ -918,7 +1095,12 @@ export class AtlasStrategy implements IStrategy {
         if (!result) {
           state.isOperationActive = false;
           state.creationCooldownUntil = Date.now() + 2000;
-          this.saveAtlasLog(state.userId, symbol, 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'erro',
+            `Erro ao executar operação | Não foi possível criar contrato`,
+          );
           return;
         }
 
@@ -933,17 +1115,33 @@ export class AtlasStrategy implements IStrategy {
           exitPrice,
         });
 
-        this.logger.log(`[ATLAS][${symbol}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+        this.logger.log(
+          `[ATLAS][${symbol}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`,
+        );
 
-        await this.processAtlasResult(state, symbol, confirmedStatus === 'WON', stakeAmount, operation, profit, exitPrice, tradeId);
-
+        await this.processAtlasResult(
+          state,
+          symbol,
+          confirmedStatus === 'WON',
+          stakeAmount,
+          operation,
+          profit,
+          exitPrice,
+          tradeId,
+        );
       } catch (error) {
-        this.logger.error(`[ATLAS][${symbol}] Erro ao executar operação (Interno):`, error);
+        this.logger.error(
+          `[ATLAS][${symbol}] Erro ao executar operação (Interno):`,
+          error,
+        );
         state.isOperationActive = false;
         state.creationCooldownUntil = Date.now() + 2000;
       }
     } catch (error) {
-      this.logger.error(`[ATLAS][${symbol}] Erro crítico em executeAtlasOperation:`, error);
+      this.logger.error(
+        `[ATLAS][${symbol}] Erro crítico em executeAtlasOperation:`,
+        error,
+      );
       state.isOperationActive = false;
     }
   }
@@ -958,7 +1156,11 @@ export class AtlasStrategy implements IStrategy {
     contractParams: any,
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
     try {
-      const connection = await this.getOrCreateWebSocketConnection(token, userId, symbol);
+      const connection = await this.getOrCreateWebSocketConnection(
+        token,
+        userId,
+        symbol,
+      );
 
       const proposalStartTime = Date.now();
       // ✅ ATLAS: Para DIGITOVER/DIGITUNDER, é necessário o parâmetro barrier (dígito de comparação)
@@ -975,24 +1177,36 @@ export class AtlasStrategy implements IStrategy {
       };
 
       // ✅ Adicionar barrier para contratos DIGITOVER/DIGITUNDER
-      if (contractParams.contract_type === 'DIGITOVER' || contractParams.contract_type === 'DIGITUNDER') {
+      if (
+        contractParams.contract_type === 'DIGITOVER' ||
+        contractParams.contract_type === 'DIGITUNDER'
+      ) {
         proposalPayload.barrier = 2; // Dígito de comparação: > 2 (OVER) ou ≤ 2 (UNDER)
       }
       // ✅ Contratos CALL/PUT (Rise/Fall) não usam barrier na Deriv padrão (apenas duration)
       // Se fosse barrier trading, precisaria. Mas Rise/Fall padrão não precisa.
 
+      const proposalResponse: any = await connection.sendRequest(
+        proposalPayload,
+        60000,
+      );
 
-      const proposalResponse: any = await connection.sendRequest(proposalPayload, 60000);
-
-      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
+      const errorObj =
+        proposalResponse.error || proposalResponse.proposal?.error;
       if (errorObj) {
         const errorCode = errorObj?.code || '';
         const errorMessage = errorObj?.message || JSON.stringify(errorObj);
-        this.logger.error(`[ATLAS][${symbol}] ❌ Erro na proposta: ${errorMessage} | Código: ${errorCode} | Tipo: ${contractParams.contract_type}`);
-        this.saveAtlasLog(userId, symbol, 'erro',
+        this.logger.error(
+          `[ATLAS][${symbol}] ❌ Erro na proposta: ${errorMessage} | Código: ${errorCode} | Tipo: ${contractParams.contract_type}`,
+        );
+        this.saveAtlasLog(
+          userId,
+          symbol,
+          'erro',
           `❌ ERRO NA PROPOSTA\n` +
-          `• Código: ${errorCode}\n` +
-          `• Mensagem: ${errorMessage}`);
+            `• Código: ${errorCode}\n` +
+            `• Mensagem: ${errorMessage}`,
+        );
         return null;
       }
 
@@ -1014,43 +1228,66 @@ export class AtlasStrategy implements IStrategy {
       const buyStartTime = Date.now();
       let buyResponse: any;
       try {
-        buyResponse = await connection.sendRequest({
-          buy: proposalId,
-          price: proposalPrice,
-        }, 60000);
+        buyResponse = await connection.sendRequest(
+          {
+            buy: proposalId,
+            price: proposalPrice,
+          },
+          60000,
+        );
       } catch (error: any) {
-        this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${error.message}`);
-        this.saveAtlasLog(userId, symbol, 'erro',
-          `❌ ERRO AO COMPRAR\n` +
-          `• Mensagem: ${error.message}`);
+        this.logger.error(
+          `[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${error.message}`,
+        );
+        this.saveAtlasLog(
+          userId,
+          symbol,
+          'erro',
+          `❌ ERRO AO COMPRAR\n` + `• Mensagem: ${error.message}`,
+        );
         return null;
       }
 
       const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
       if (buyErrorObj) {
         const errorCode = buyErrorObj?.code || '';
-        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
-        this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | Código: ${errorCode} | ProposalId: ${proposalId}`);
-        this.saveAtlasLog(userId, symbol, 'erro',
+        const errorMessage =
+          buyErrorObj?.message || JSON.stringify(buyErrorObj);
+        this.logger.error(
+          `[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | Código: ${errorCode} | ProposalId: ${proposalId}`,
+        );
+        this.saveAtlasLog(
+          userId,
+          symbol,
+          'erro',
           `❌ ERRO AO COMPRAR\n` +
-          `• Código: ${errorCode}\n` +
-          `• Mensagem: ${errorMessage}`);
+            `• Código: ${errorCode}\n` +
+            `• Mensagem: ${errorMessage}`,
+        );
         return null;
       }
 
       const contractId = buyResponse.buy?.contract_id;
       if (!contractId) {
-        this.logger.error(`[ATLAS][${symbol}] ❌ Contrato criado mas sem contract_id`);
+        this.logger.error(
+          `[ATLAS][${symbol}] ❌ Contrato criado mas sem contract_id`,
+        );
         return null;
       }
 
       const buyDuration = Date.now() - buyStartTime;
-      this.logger.log(`[ATLAS][${symbol}] ✅ Contrato criado | Proposal: ${proposalDuration}ms | Compra: ${buyDuration}ms | ContractId: ${contractId}`);
-      this.saveAtlasLog(userId, symbol, 'operacao',
+      this.logger.log(
+        `[ATLAS][${symbol}] ✅ Contrato criado | Proposal: ${proposalDuration}ms | Compra: ${buyDuration}ms | ContractId: ${contractId}`,
+      );
+      this.saveAtlasLog(
+        userId,
+        symbol,
+        'operacao',
         `✅ CONTRATO CRIADO\n` +
-        `• ID: ${contractId}\n` +
-        `• Latência Proposta: ${proposalDuration}ms\n` +
-        `• Latência Compra: ${buyDuration}ms`);
+          `• ID: ${contractId}\n` +
+          `• Latência Proposta: ${proposalDuration}ms\n` +
+          `• Latência Compra: ${buyDuration}ms`,
+      );
 
       // Monitorar contrato
       return await new Promise((resolve) => {
@@ -1060,68 +1297,75 @@ export class AtlasStrategy implements IStrategy {
         contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
-            this.logger.warn(`[ATLAS][${symbol}] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`);
+            this.logger.warn(
+              `[ATLAS][${symbol}] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`,
+            );
             connection.removeSubscription(contractId);
             resolve(null);
           }
         }, 90000);
 
-        connection.subscribe(
-          {
-            proposal_open_contract: 1,
-            contract_id: contractId,
-            subscribe: 1,
-          },
-          (msg: any) => {
-            try {
-              if (msg.error) {
+        connection
+          .subscribe(
+            {
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            },
+            (msg: any) => {
+              try {
+                if (msg.error) {
+                  if (!hasResolved) {
+                    hasResolved = true;
+                    if (contractMonitorTimeout)
+                      clearTimeout(contractMonitorTimeout);
+                    connection.removeSubscription(contractId);
+                    resolve(null);
+                  }
+                  return;
+                }
+
+                const contract = msg.proposal_open_contract;
+                if (!contract) return;
+
+                const isFinalized =
+                  contract.is_sold === 1 ||
+                  contract.is_sold === true ||
+                  contract.status === 'won' ||
+                  contract.status === 'lost' ||
+                  contract.status === 'sold';
+
+                if (isFinalized && !hasResolved) {
+                  hasResolved = true;
+                  if (contractMonitorTimeout)
+                    clearTimeout(contractMonitorTimeout);
+
+                  const profit = Number(contract.profit || 0);
+                  const exitSpot = contract.exit_spot || contract.current_spot;
+
+                  connection.removeSubscription(contractId);
+                  resolve({ contractId, profit, exitSpot });
+                }
+              } catch (error) {
                 if (!hasResolved) {
                   hasResolved = true;
-                  if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                  if (contractMonitorTimeout)
+                    clearTimeout(contractMonitorTimeout);
                   connection.removeSubscription(contractId);
                   resolve(null);
                 }
-                return;
               }
-
-              const contract = msg.proposal_open_contract;
-              if (!contract) return;
-
-              const isFinalized =
-                contract.is_sold === 1 ||
-                contract.is_sold === true ||
-                contract.status === 'won' ||
-                contract.status === 'lost' ||
-                contract.status === 'sold';
-
-              if (isFinalized && !hasResolved) {
-                hasResolved = true;
-                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-
-                const profit = Number(contract.profit || 0);
-                const exitSpot = contract.exit_spot || contract.current_spot;
-
-                connection.removeSubscription(contractId);
-                resolve({ contractId, profit, exitSpot });
-              }
-            } catch (error) {
-              if (!hasResolved) {
-                hasResolved = true;
-                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-                connection.removeSubscription(contractId);
-                resolve(null);
-              }
+            },
+            contractId,
+            90000,
+          )
+          .catch((error) => {
+            if (!hasResolved) {
+              hasResolved = true;
+              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+              resolve(null);
             }
-          },
-          contractId,
-          90000,
-        ).catch((error) => {
-          if (!hasResolved) {
-            hasResolved = true;
-            if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-            resolve(null);
-          }
-        });
+          });
       });
     } catch (error) {
       this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao executar trade:`, error);
@@ -1155,10 +1399,10 @@ export class AtlasStrategy implements IStrategy {
     const isPriceAction = operation === 'CALL' || operation === 'PUT';
     const currentPayout = isPriceAction ? 0.95 : modeConfig.payout;
 
-
     if (isWin) {
       // ✅ VITÓRIA
-      const lucro = profit > 0 ? profit : (stakeAmount * currentPayout - stakeAmount);
+      const lucro =
+        profit > 0 ? profit : stakeAmount * currentPayout - stakeAmount;
       state.capital += lucro;
       state.totalProfitLoss += lucro;
 
@@ -1169,12 +1413,16 @@ export class AtlasStrategy implements IStrategy {
 
         // ✅ Calcular ganho bruto para exibição
         const ganhoBrutoRecuperacao = lucro + stakeAmount;
-        this.saveAtlasLog(state.userId, symbol, 'info',
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'info',
           `✅ MARTINGALE RECUPERADO\n` +
-          `• Nível: ${nivelAntes} → 0\n` +
-          `• Perda Recuperada: $${perdaRecuperada.toFixed(2)}\n` +
-          `• Ganho Bruto: $${ganhoBrutoRecuperacao.toFixed(2)}\n` +
-          `• Lucro Líquido: $${lucro.toFixed(2)}`);
+            `• Nível: ${nivelAntes} → 0\n` +
+            `• Perda Recuperada: $${perdaRecuperada.toFixed(2)}\n` +
+            `• Ganho Bruto: $${ganhoBrutoRecuperacao.toFixed(2)}\n` +
+            `• Lucro Líquido: $${lucro.toFixed(2)}`,
+        );
 
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
@@ -1184,10 +1432,14 @@ export class AtlasStrategy implements IStrategy {
 
         // ✅ ATLAS: Auto-Revert -> Voltar ao modo original após recuperar
         if (state.mode !== state.originalMode) {
-          this.saveAtlasLog(state.userId, symbol, 'info',
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'info',
             `✅ RECUPERAÇÃO CONCLUÍDA\n` +
-            `• Ação: Retornando ao modo ${state.originalMode.toUpperCase()}\n` +
-            `• Status: Meta de recuperação atingida.`);
+              `• Ação: Retornando ao modo ${state.originalMode.toUpperCase()}\n` +
+              `• Status: Meta de recuperação atingida.`,
+          );
           state.mode = state.originalMode;
         }
       }
@@ -1213,14 +1465,22 @@ export class AtlasStrategy implements IStrategy {
       state.virtualLossCount = 0;
       state.virtualLossActive = false;
 
-      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+      const opLabel =
+        operation === 'CALL'
+          ? 'Rise'
+          : operation === 'PUT'
+            ? 'Fall'
+            : operation;
 
-      this.saveAtlasLog(state.userId, symbol, 'resultado',
+      this.saveAtlasLog(
+        state.userId,
+        symbol,
+        'resultado',
         `🏁 RESULTADO DA ENTRADA\n` +
-        `• Status: VITÓRIA ✅\n` +
-        `• Lucro: $${lucro.toFixed(2)}\n` +
-        `• Saldo Atual: $${state.capital.toFixed(2)}`);
-
+          `• Status: VITÓRIA ✅\n` +
+          `• Lucro: $${lucro.toFixed(2)}\n` +
+          `• Saldo Atual: $${state.capital.toFixed(2)}`,
+      );
     } else {
       // ✅ DERROTA
       const perda = stakeAmount;
@@ -1245,7 +1505,8 @@ export class AtlasStrategy implements IStrategy {
       }
 
       const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
-      const maxLosses = requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
+      const maxLosses =
+        requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
 
       if (state.virtualLossCount > maxLosses) {
         state.virtualLossCount = maxLosses;
@@ -1253,37 +1514,56 @@ export class AtlasStrategy implements IStrategy {
       }
 
       // ✅ ATLAS: Defesa Automática (Switch to Lento após 3 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
+      if (
+        state.isInRecovery &&
+        state.martingaleStep >= 3 &&
+        state.mode !== 'lento'
+      ) {
         state.mode = 'lento';
-        this.saveAtlasLog(state.userId, symbol, 'alerta',
+        this.saveAtlasLog(
+          state.userId,
+          symbol,
+          'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 3 Perdas Consecutivas.\n` +
-          `• Ação: Mudando para MODO LENTO para proteção de capital.`);
+            `• Motivo: 3 Perdas Consecutivas.\n` +
+            `• Ação: Mudando para MODO LENTO para proteção de capital.`,
+        );
       }
 
-      const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
-      const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
+      const digitoResultado =
+        exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
+      const opLabel =
+        operation === 'CALL'
+          ? 'Rise'
+          : operation === 'PUT'
+            ? 'Fall'
+            : operation;
 
-      this.saveAtlasLog(state.userId, symbol, 'resultado',
+      this.saveAtlasLog(
+        state.userId,
+        symbol,
+        'resultado',
         `🏁 RESULTADO DA ENTRADA\n` +
-        `• Status: DERROTA ❌\n` +
-        `• Operação: ${opLabel}\n` +
-        `• Dígito: ${digitoResultado}\n` +
-        `• Aposta: $${stakeAmount.toFixed(2)}\n` +
-        `• Perda: -$${perda.toFixed(2)}\n` +
-        `• Capital: $${state.capital.toFixed(2)}\n` +
-        `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}`);
-
+          `• Status: DERROTA ❌\n` +
+          `• Operação: ${opLabel}\n` +
+          `• Dígito: ${digitoResultado}\n` +
+          `• Aposta: $${stakeAmount.toFixed(2)}\n` +
+          `• Perda: -$${perda.toFixed(2)}\n` +
+          `• Capital: $${state.capital.toFixed(2)}\n` +
+          `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}`,
+      );
     }
 
     // ✅ [ZENIX v3.1] Lucro da SESSÃO (Recalculado após a trade)
     const lucroSessao = state.totalProfitLoss;
 
     // Atualizar saldo da sessão no banco de dados (Sincronismo para Dashboard)
-    this.dataSource.query(
-      `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
-      [lucroSessao, state.userId]
-    ).catch(e => { });
+    this.dataSource
+      .query(
+        `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
+        [lucroSessao, state.userId],
+      )
+      .catch((e) => {});
 
     // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
@@ -1332,8 +1612,11 @@ export class AtlasStrategy implements IStrategy {
 
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
-      this.saveAtlasLog(state.userId, symbol, 'info',
-        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
+      this.saveAtlasLog(
+        state.userId,
+        symbol,
+        'info',
+        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`,
       );
 
       await this.dataSource.query(
@@ -1347,7 +1630,7 @@ export class AtlasStrategy implements IStrategy {
         type: 'stopped_profit',
         strategy: 'atlas',
         symbol: symbol,
-        profitLoss: lucroAtual
+        profitLoss: lucroAtual,
       });
 
       this.atlasUsers.delete(state.userId);
@@ -1356,18 +1639,24 @@ export class AtlasStrategy implements IStrategy {
     }
 
     // 2. Stop-loss blindado
-    if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+    if (
+      config.stopBlindadoPercent !== null &&
+      config.stopBlindadoPercent !== undefined
+    ) {
       const profitPeak = parseFloat(config.profitPeak) || 0;
-      const activationThreshold = profitTarget * 0.40;
+      const activationThreshold = profitTarget * 0.4;
 
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
-        const stopBlindado = capitalInicial + (profitPeak * factor);
+        const stopBlindado = capitalInicial + profitPeak * factor;
 
         if (capitalSessao <= stopBlindado) {
           const lucroFinal = capitalSessao - capitalInicial;
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`
+          this.saveAtlasLog(
+            state.userId,
+            symbol,
+            'alerta',
+            `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`,
           );
 
           await this.dataSource.query(
@@ -1382,7 +1671,7 @@ export class AtlasStrategy implements IStrategy {
             strategy: 'atlas',
             symbol: symbol,
             profitProtected: lucroFinal,
-            profitLoss: lucroFinal
+            profitLoss: lucroFinal,
           });
 
           this.atlasUsers.delete(state.userId);
@@ -1395,8 +1684,11 @@ export class AtlasStrategy implements IStrategy {
     // 3. Stop Loss Normal
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
-      this.saveAtlasLog(state.userId, symbol, 'alerta',
-        `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`
+      this.saveAtlasLog(
+        state.userId,
+        symbol,
+        'alerta',
+        `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`,
       );
 
       await this.dataSource.query(
@@ -1410,7 +1702,7 @@ export class AtlasStrategy implements IStrategy {
         type: 'stopped_loss',
         strategy: 'atlas',
         symbol: symbol,
-        profitLoss: -perdaAtual
+        profitLoss: -perdaAtual,
       });
 
       this.atlasUsers.delete(state.userId);
@@ -1427,7 +1719,8 @@ export class AtlasStrategy implements IStrategy {
       return Infinity;
     }
     const capitalDisponivel = state.capital;
-    const stopLossDisponivel = capitalDisponivel - (state.capitalInicial + state.stopLoss);
+    const stopLossDisponivel =
+      capitalDisponivel - (state.capitalInicial + state.stopLoss);
     return Math.max(0, stopLossDisponivel);
   }
 
@@ -1448,7 +1741,8 @@ export class AtlasStrategy implements IStrategy {
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V';
   }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.atlasUsers.get(params.userId);
-    const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
+    const stopLossNormalized =
+      params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
     let hasConfigChanges = false;
 
     if (existing) {
@@ -1582,10 +1876,15 @@ export class AtlasStrategy implements IStrategy {
           [
             trade.userId,
             // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' ou 'PAR'/'IMPAR' para garantir seta correta no frontend
-            (trade.operation === 'CALL' ? 'Rise' :
-              trade.operation === 'PUT' ? 'Fall' :
-                trade.operation === 'EVEN' ? 'PAR' :
-                  trade.operation === 'ODD' ? 'IMPAR' : trade.operation),
+            trade.operation === 'CALL'
+              ? 'Rise'
+              : trade.operation === 'PUT'
+                ? 'Fall'
+                : trade.operation === 'EVEN'
+                  ? 'PAR'
+                  : trade.operation === 'ODD'
+                    ? 'IMPAR'
+                    : trade.operation,
             trade.entryPrice,
             trade.stakeAmount,
             'PENDING',
@@ -1594,10 +1893,13 @@ export class AtlasStrategy implements IStrategy {
             trade.contractId,
             JSON.stringify(analysisData),
             trade.symbol,
-          ]
+          ],
         );
       } catch (error: any) {
-        if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
+        if (
+          error.code === 'ER_BAD_FIELD_ERROR' &&
+          error.sqlMessage?.includes('symbol')
+        ) {
           insertResult = await this.dataSource.query(
             `INSERT INTO ai_trades 
              (user_id, gemini_signal, entry_price, stake_amount, status, 
@@ -1606,7 +1908,11 @@ export class AtlasStrategy implements IStrategy {
             [
               trade.userId,
               // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
-              (trade.operation === 'CALL' ? 'Rise' : (trade.operation === 'PUT' ? 'Fall' : trade.operation)),
+              trade.operation === 'CALL'
+                ? 'Rise'
+                : trade.operation === 'PUT'
+                  ? 'Fall'
+                  : trade.operation,
               trade.entryPrice,
               trade.stakeAmount,
               'PENDING',
@@ -1614,22 +1920,23 @@ export class AtlasStrategy implements IStrategy {
               trade.contractType,
               trade.contractId,
               JSON.stringify(analysisData),
-            ]
+            ],
           );
         } else {
           throw error;
         }
       }
 
-      const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+      const result = Array.isArray(insertResult)
+        ? insertResult[0]
+        : insertResult;
       const tradeId = result?.insertId || null;
 
       if (tradeId) {
         // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
         if (this.copyTradingService) {
-          this.copyTradingService.replicateAIOperation(
-            trade.userId,
-            {
+          this.copyTradingService
+            .replicateAIOperation(trade.userId, {
               tradeId: tradeId,
               contractId: trade.contractId || '',
               contractType: trade.contractType,
@@ -1638,10 +1945,12 @@ export class AtlasStrategy implements IStrategy {
               stakeAmount: trade.stakeAmount,
               entrySpot: trade.entryPrice,
               entryTime: Math.floor(Date.now() / 1000),
-            }
-          ).catch(error => {
-            this.logger.error(`[Atlas][CopyTrading] Erro ao replicar operação: ${error.message}`);
-          });
+            })
+            .catch((error) => {
+              this.logger.error(
+                `[Atlas][CopyTrading] Erro ao replicar operação: ${error.message}`,
+              );
+            });
         }
 
         this.tradeEvents.emit({
@@ -1657,7 +1966,10 @@ export class AtlasStrategy implements IStrategy {
 
       return tradeId;
     } catch (error) {
-      this.logger.error(`[ATLAS][${trade.symbol}] Erro ao salvar trade:`, error);
+      this.logger.error(
+        `[ATLAS][${trade.symbol}] Erro ao salvar trade:`,
+        error,
+      );
       return null;
     }
   }
@@ -1676,7 +1988,7 @@ export class AtlasStrategy implements IStrategy {
       status?: 'WON' | 'LOST' | 'PENDING';
       profitLoss?: number;
       exitPrice?: number;
-    }
+    },
   ): Promise<void> {
     if (!tradeId) return;
 
@@ -1710,14 +2022,17 @@ export class AtlasStrategy implements IStrategy {
       values.push(tradeId);
       await this.dataSource.query(
         `UPDATE ai_trades SET ${updates.join(', ')} WHERE id = ?`,
-        values
+        values,
       );
 
       // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
-      if ((update.status === 'WON' || update.status === 'LOST') && this.copyTradingService) {
+      if (
+        (update.status === 'WON' || update.status === 'LOST') &&
+        this.copyTradingService
+      ) {
         const tradeData = await this.dataSource.query(
           `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
-          [tradeId]
+          [tradeId],
         );
 
         if (tradeData && tradeData.length > 0) {
@@ -1725,15 +2040,19 @@ export class AtlasStrategy implements IStrategy {
           const contractId = trade.contract_id;
 
           if (contractId) {
-            this.copyTradingService.updateCopyTradingOperationsResult(
-              trade.user_id,
-              contractId,
-              update.status === 'WON' ? 'win' : 'loss',
-              update.profitLoss || 0,
-              parseFloat(trade.stake_amount) || 0,
-            ).catch((error: any) => {
-              this.logger.error(`[Atlas][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
-            });
+            this.copyTradingService
+              .updateCopyTradingOperationsResult(
+                trade.user_id,
+                contractId,
+                update.status === 'WON' ? 'win' : 'loss',
+                update.profitLoss || 0,
+                parseFloat(trade.stake_amount) || 0,
+              )
+              .catch((error: any) => {
+                this.logger.error(
+                  `[Atlas][CopyTrading] Erro ao atualizar copiadores: ${error.message}`,
+                );
+              });
           }
         }
       }
@@ -1750,7 +2069,10 @@ export class AtlasStrategy implements IStrategy {
         });
       }
     } catch (error) {
-      this.logger.error(`[ATLAS] Erro ao atualizar trade (ID=${tradeId}):`, error);
+      this.logger.error(
+        `[ATLAS] Erro ao atualizar trade (ID=${tradeId}):`,
+        error,
+      );
     }
   }
 
@@ -1760,7 +2082,17 @@ export class AtlasStrategy implements IStrategy {
   private saveAtlasLog(
     userId: string,
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA',
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro',
+    type:
+      | 'info'
+      | 'tick'
+      | 'analise'
+      | 'sinal'
+      | 'operacao'
+      | 'resultado'
+      | 'vitoria'
+      | 'derrota'
+      | 'alerta'
+      | 'erro',
     message: string,
     details?: any,
   ): void {
@@ -1769,7 +2101,7 @@ export class AtlasStrategy implements IStrategy {
     }
 
     this.logQueue.push({ userId, symbol, type, message, details });
-    this.processAtlasLogQueue().catch(error => {
+    this.processAtlasLogQueue().catch((error) => {
       this.logger.error(`[ATLAS][SaveLog] Erro ao processar fila:`, error);
     });
   }
@@ -1801,8 +2133,8 @@ export class AtlasStrategy implements IStrategy {
 
       await Promise.all(
         Array.from(logsByUser.entries()).map(([userId, logs]) =>
-          this.saveAtlasLogsBatch(userId, logs)
-        )
+          this.saveAtlasLogsBatch(userId, logs),
+        ),
       );
 
       if (this.logQueue.length > 0) {
@@ -1822,7 +2154,17 @@ export class AtlasStrategy implements IStrategy {
     userId: string,
     logs: Array<{
       symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA';
-      type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
+      type:
+        | 'info'
+        | 'tick'
+        | 'analise'
+        | 'sinal'
+        | 'operacao'
+        | 'resultado'
+        | 'vitoria'
+        | 'derrota'
+        | 'alerta'
+        | 'erro';
       message: string;
       details?: any;
     }>,
@@ -1843,26 +2185,31 @@ export class AtlasStrategy implements IStrategy {
         erro: '',
       };
 
-      const values = logs.map(log => {
+      const values = logs.map((log) => {
         const icon = icons[log.type] || '';
-        const messageWithSymbol = log.symbol === 'SISTEMA'
-          ? log.message
-          : `[${log.symbol}] ${log.message}`;
+        const messageWithSymbol =
+          log.symbol === 'SISTEMA'
+            ? log.message
+            : `[${log.symbol}] ${log.message}`;
 
         return [
           userId,
           log.type,
           icon,
           messageWithSymbol.substring(0, 5000),
-          log.details ? JSON.stringify({
-            symbol: log.symbol,
-            ...(log.details || {}),
-          }).substring(0, 10000) : JSON.stringify({ symbol: log.symbol }).substring(0, 10000),
+          log.details
+            ? JSON.stringify({
+                symbol: log.symbol,
+                ...(log.details || {}),
+              }).substring(0, 10000)
+            : JSON.stringify({ symbol: log.symbol }).substring(0, 10000),
           userId,
         ];
       });
 
-      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, NOW(3))').join(', ');
+      const placeholders = values
+        .map(() => '(?, ?, ?, ?, ?, ?, NOW(3))')
+        .join(', ');
       const flatValues = values.flat();
 
       await this.dataSource.query(
@@ -1885,25 +2232,53 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Obtém ou cria conexão WebSocket reutilizável
    */
-  private async getOrCreateWebSocketConnection(token: string, userId?: string, symbol?: string): Promise<{
+  private async getOrCreateWebSocketConnection(
+    token: string,
+    userId?: string,
+    symbol?: string,
+  ): Promise<{
     ws: WebSocket;
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
-    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    subscribe: (
+      payload: any,
+      callback: (msg: any) => void,
+      subId: string,
+      timeoutMs?: number,
+    ) => Promise<void>;
     removeSubscription: (subId: string) => void;
   }> {
     const existing = this.wsConnections.get(token);
-    if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+    if (
+      existing &&
+      existing.ws.readyState === WebSocket.OPEN &&
+      existing.authorized
+    ) {
       return {
         ws: existing.ws,
-        sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-          this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-        removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        sendRequest: (payload: any, timeoutMs = 60000) =>
+          this.sendRequestViaConnection(token, payload, timeoutMs),
+        subscribe: (
+          payload: any,
+          callback: (msg: any) => void,
+          subId: string,
+          timeoutMs = 90000,
+        ) =>
+          this.subscribeViaConnection(
+            token,
+            payload,
+            callback,
+            subId,
+            timeoutMs,
+          ),
+        removeSubscription: (subId: string) =>
+          this.removeSubscriptionFromConnection(token, subId),
       };
     }
 
     const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-    this.logger.log(`[ATLAS][${symbol || 'POOL'}] 🔌 Abrindo WebSocket reutilizável`);
+    this.logger.log(
+      `[ATLAS][${symbol || 'POOL'}] 🔌 Abrindo WebSocket reutilizável`,
+    );
 
     const socket = new WebSocket(endpoint, {
       headers: { Origin: 'https://app.deriv.com' },
@@ -1953,8 +2328,13 @@ export class AtlasStrategy implements IStrategy {
           if (connectionTimeout) clearTimeout(connectionTimeout);
 
           if (msg.error || (msg.authorize && msg.authorize.error)) {
-            const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido';
-            this.logger.error(`[ATLAS][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`);
+            const errorMsg =
+              msg.error?.message ||
+              msg.authorize?.error?.message ||
+              'Erro desconhecido';
+            this.logger.error(
+              `[ATLAS][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`,
+            );
             socket.close();
             this.wsConnections.delete(token);
             if (authPromiseReject) {
@@ -1992,7 +2372,11 @@ export class AtlasStrategy implements IStrategy {
           }
         }
 
-        if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+        if (
+          msg.proposal ||
+          msg.buy ||
+          (msg.error && !msg.proposal_open_contract)
+        ) {
           const firstKey = conn.pendingRequests.keys().next().value;
           if (firstKey) {
             const pending = conn.pendingRequests.get(firstKey);
@@ -2000,7 +2384,9 @@ export class AtlasStrategy implements IStrategy {
               clearTimeout(pending.timeout);
               conn.pendingRequests.delete(firstKey);
               if (msg.error) {
-                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                pending.reject(
+                  new Error(msg.error.message || JSON.stringify(msg.error)),
+                );
               } else {
                 pending.resolve(msg);
               }
@@ -2024,7 +2410,11 @@ export class AtlasStrategy implements IStrategy {
         authResolved = true;
         this.wsConnections.delete(token);
         if (authPromiseReject) {
-          authPromiseReject(new Error(`Erro no WebSocket: ${error.message || 'Erro desconhecido'}`));
+          authPromiseReject(
+            new Error(
+              `Erro no WebSocket: ${error.message || 'Erro desconhecido'}`,
+            ),
+          );
         }
       }
     });
@@ -2044,7 +2434,9 @@ export class AtlasStrategy implements IStrategy {
         if (connectionTimeout) clearTimeout(connectionTimeout);
         authResolved = true;
         if (authPromiseReject) {
-          authPromiseReject(new Error('WebSocket fechado antes da autorização'));
+          authPromiseReject(
+            new Error('WebSocket fechado antes da autorização'),
+          );
         }
       }
     });
@@ -2059,17 +2451,28 @@ export class AtlasStrategy implements IStrategy {
     const conn = this.wsConnections.get(token)!;
     return {
       ws: conn.ws,
-      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+      sendRequest: (payload: any, timeoutMs = 60000) =>
+        this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (
+        payload: any,
+        callback: (msg: any) => void,
+        subId: string,
+        timeoutMs = 90000,
+      ) =>
         this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+      removeSubscription: (subId: string) =>
+        this.removeSubscriptionFromConnection(token, subId),
     };
   }
 
   /**
    * ✅ ATLAS: Envia requisição via conexão
    */
-  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+  private async sendRequestViaConnection(
+    token: string,
+    payload: any,
+    timeoutMs: number,
+  ): Promise<any> {
     const conn = this.wsConnections.get(token);
     if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
       throw new Error('Conexão WebSocket não está disponível ou autorizada');

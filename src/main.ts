@@ -26,7 +26,9 @@ async function bootstrap() {
     }
   } catch (error) {
     console.error('❌ Erro ao executar migrations:', error);
-    console.warn('⚠️ Continuando inicialização mesmo com erro nas migrations...');
+    console.warn(
+      '⚠️ Continuando inicialização mesmo com erro nas migrations...',
+    );
   }
 
   // Para uploads de vídeo, aumentamos para 2GB (multer já tem limite de 1GB configurado)
@@ -44,17 +46,19 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // Configurar validação global
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: false, // Permitir campos extras para compatibilidade
-    transform: true,
-    transformOptions: {
-      enableImplicitConversion: true,
-    },
-    skipMissingProperties: false,
-    skipNullProperties: false,
-    skipUndefinedProperties: true,
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: false, // Permitir campos extras para compatibilidade
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+      skipMissingProperties: false,
+      skipNullProperties: false,
+      skipUndefinedProperties: true,
+    }),
+  );
 
   // CORS
   const corsOrigins = config.get<string>('CORS_ORIGIN');

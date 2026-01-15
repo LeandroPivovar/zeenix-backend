@@ -19,5 +19,3 @@ export class CreateModuleDto {
   @IsNumber()
   orderIndex?: number;
 }
-
-

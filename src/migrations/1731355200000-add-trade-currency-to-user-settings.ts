@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddTradeCurrencyToUserSettings1731355200000 implements MigrationInterface {
+export class AddTradeCurrencyToUserSettings1731355200000
+  implements MigrationInterface
+{
   name = 'AddTradeCurrencyToUserSettings1731355200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -30,5 +32,3 @@ export class AddTradeCurrencyToUserSettings1731355200000 implements MigrationInt
     }
   }
 }
-
-

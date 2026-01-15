@@ -1,4 +1,12 @@
-import { Controller, Get, Patch, Query, Body, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Query,
+  Body,
+  Param,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ClientsService } from './clients.service';
 import { ClientMetricsDto } from './dto/client-metrics.dto';
@@ -35,4 +43,3 @@ export class ClientsController {
     return this.clientsService.updateUserRole(userId, role);
   }
 }
-

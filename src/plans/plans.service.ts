@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Inject, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
@@ -23,19 +30,21 @@ export class PlansService {
 
   async getAllPlans() {
     this.logger.log('[GetAllPlans] Buscando planos ativos...');
-    
+
     const plans = await this.planRepository.find({
-      where: { isActive: 1 as any },  // Banco usa 0 ou 1, não boolean
+      where: { isActive: 1 as any }, // Banco usa 0 ou 1, não boolean
       order: { displayOrder: 'ASC' },
     });
 
     this.logger.log(`[GetAllPlans] Encontrados ${plans.length} planos`);
-    
+
     if (plans.length === 0) {
-      this.logger.warn('[GetAllPlans] Nenhum plano ativo encontrado! Verifique is_active no banco.');
+      this.logger.warn(
+        '[GetAllPlans] Nenhum plano ativo encontrado! Verifique is_active no banco.',
+      );
     }
 
-    return plans.map(plan => ({
+    return plans.map((plan) => ({
       id: plan.id,
       name: plan.name,
       slug: plan.slug,
@@ -94,8 +103,15 @@ export class PlansService {
     };
   }
 
-  async activatePlan(userId: string, planId: string, ipAddress?: string, userAgent?: string) {
-    const plan = await this.planRepository.findOne({ where: { id: planId, isActive: 1 as any } });  // Banco usa 0 ou 1
+  async activatePlan(
+    userId: string,
+    planId: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    const plan = await this.planRepository.findOne({
+      where: { id: planId, isActive: 1 as any },
+    }); // Banco usa 0 ou 1
     if (!plan) {
       throw new NotFoundException('Plano não encontrado ou inativo');
     }
@@ -124,7 +140,9 @@ export class PlansService {
 
     // Para planos pagos, aqui seria a integração com gateway de pagamento
     // Por enquanto, apenas retornamos que é necessário pagamento
-    throw new BadRequestException('Plano pago requer processamento de pagamento');
+    throw new BadRequestException(
+      'Plano pago requer processamento de pagamento',
+    );
   }
 
   async getAllPlansAdmin() {
@@ -132,7 +150,7 @@ export class PlansService {
       order: { displayOrder: 'ASC', createdAt: 'DESC' },
     });
 
-    return plans.map(plan => ({
+    return plans.map((plan) => ({
       id: plan.id,
       name: plan.name,
       slug: plan.slug,
@@ -203,18 +221,21 @@ export class PlansService {
     };
   }
 
-  async updatePlan(id: string, data: {
-    name?: string;
-    slug?: string;
-    price?: number;
-    currency?: string;
-    billingPeriod?: string;
-    features?: any;
-    isPopular?: boolean;
-    isRecommended?: boolean;
-    isActive?: boolean;
-    displayOrder?: number;
-  }) {
+  async updatePlan(
+    id: string,
+    data: {
+      name?: string;
+      slug?: string;
+      price?: number;
+      currency?: string;
+      billingPeriod?: string;
+      features?: any;
+      isPopular?: boolean;
+      isRecommended?: boolean;
+      isActive?: boolean;
+      displayOrder?: number;
+    },
+  ) {
     const plan = await this.planRepository.findOne({ where: { id } });
 
     if (!plan) {
@@ -237,10 +258,12 @@ export class PlansService {
     if (data.slug !== undefined) plan.slug = data.slug.trim().toLowerCase();
     if (data.price !== undefined) plan.price = data.price;
     if (data.currency !== undefined) plan.currency = data.currency;
-    if (data.billingPeriod !== undefined) plan.billingPeriod = data.billingPeriod;
+    if (data.billingPeriod !== undefined)
+      plan.billingPeriod = data.billingPeriod;
     if (data.features !== undefined) plan.features = data.features;
     if (data.isPopular !== undefined) plan.isPopular = data.isPopular;
-    if (data.isRecommended !== undefined) plan.isRecommended = data.isRecommended;
+    if (data.isRecommended !== undefined)
+      plan.isRecommended = data.isRecommended;
     if (data.isActive !== undefined) plan.isActive = data.isActive;
     if (data.displayOrder !== undefined) plan.displayOrder = data.displayOrder;
 
@@ -277,7 +300,7 @@ export class PlansService {
 
     if (usersWithPlan > 0) {
       throw new BadRequestException(
-        `Não é possível deletar o plano. Existem ${usersWithPlan} usuário(s) usando este plano. Desative o plano ao invés de deletá-lo.`
+        `Não é possível deletar o plano. Existem ${usersWithPlan} usuário(s) usando este plano. Desative o plano ao invés de deletá-lo.`,
       );
     }
 
@@ -289,7 +312,3 @@ export class PlansService {
     };
   }
 }
-
-
-
-

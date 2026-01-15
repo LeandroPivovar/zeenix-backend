@@ -1,7 +1,17 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, Between } from 'typeorm';
-import { TradeEntity, TradeType, TradeStatus } from '../infrastructure/database/entities/trade.entity';
+import {
+  TradeEntity,
+  TradeType,
+  TradeStatus,
+} from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
@@ -22,14 +32,20 @@ export class TradesService {
   constructor(
     @InjectRepository(TradeEntity)
     private readonly tradeRepository: Repository<TradeEntity>,
-    @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
+    @Inject(USER_REPOSITORY_TOKEN)
+    private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => CopyTradingService))
     private readonly copyTradingService?: CopyTradingService,
   ) {}
 
-  async createTrade(userId: string, dto: CreateTradeDto, ipAddress?: string, userAgent?: string) {
+  async createTrade(
+    userId: string,
+    dto: CreateTradeDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
     const user = await this.userRepository.findById(userId);
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
@@ -37,7 +53,9 @@ export class TradesService {
 
     // Validar valor mínimo
     if (dto.entryValue < 1) {
-      throw new BadRequestException('Valor da entrada deve ser no mínimo $1,00');
+      throw new BadRequestException(
+        'Valor da entrada deve ser no mínimo $1,00',
+      );
     }
 
     // Validar multiplicador
@@ -79,13 +97,15 @@ export class TradesService {
   }
 
   private async simulateTradeResult(tradeId: string) {
-    const trade = await this.tradeRepository.findOne({ where: { id: tradeId } });
+    const trade = await this.tradeRepository.findOne({
+      where: { id: tradeId },
+    });
     if (!trade || trade.status !== TradeStatus.PENDING) return;
 
     // Simulação: 60% de chance de ganho
     const won = Math.random() > 0.4;
     const profit = won
-      ? (trade.entryValue * trade.multiplier * (0.5 + Math.random() * 0.5)) // Ganho entre 50-100% do valor investido
+      ? trade.entryValue * trade.multiplier * (0.5 + Math.random() * 0.5) // Ganho entre 50-100% do valor investido
       : -(trade.entryValue * (0.5 + Math.random() * 0.5)); // Perda entre 50-100% do valor investido
 
     trade.status = won ? TradeStatus.WON : TradeStatus.LOST;
@@ -94,9 +114,8 @@ export class TradesService {
 
     // Replicar operação para copiadores (se for trader mestre)
     if (this.copyTradingService) {
-      this.copyTradingService.replicateTradeToFollowers(
-        trade.userId,
-        {
+      this.copyTradingService
+        .replicateTradeToFollowers(trade.userId, {
           operationType: trade.tradeType, // BUY ou SELL
           stakeAmount: trade.entryValue,
           result: won ? 'win' : 'loss',
@@ -106,10 +125,12 @@ export class TradesService {
           duration: parseInt(trade.duration) || undefined,
           symbol: trade.contractType,
           traderOperationId: trade.id,
-        },
-      ).catch((error: any) => {
-        console.error(`[TradesService] Erro ao replicar operação manual: ${error.message}`);
-      });
+        })
+        .catch((error: any) => {
+          console.error(
+            `[TradesService] Erro ao replicar operação manual: ${error.message}`,
+          );
+        });
     }
   }
 
@@ -120,7 +141,7 @@ export class TradesService {
       take: limit,
     });
 
-    return trades.map(trade => ({
+    return trades.map((trade) => ({
       id: trade.id,
       contractType: trade.contractType,
       timeType: trade.timeType,
@@ -142,12 +163,16 @@ export class TradesService {
     });
 
     return trades
-      .filter(trade => trade.status !== TradeStatus.PENDING)
-      .map(trade => ({
+      .filter((trade) => trade.status !== TradeStatus.PENDING)
+      .map((trade) => ({
         id: trade.id,
         time: trade.createdAt,
         type: trade.tradeType,
-        result: trade.profit ? (trade.profit > 0 ? `+$${trade.profit.toFixed(2)}` : `$${trade.profit.toFixed(2)}`) : '-',
+        result: trade.profit
+          ? trade.profit > 0
+            ? `+$${trade.profit.toFixed(2)}`
+            : `$${trade.profit.toFixed(2)}`
+          : '-',
         profit: trade.profit,
       }));
   }
@@ -157,8 +182,20 @@ export class TradesService {
    */
   async getTodayProfitLoss(userId: string) {
     const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    const startOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+    );
+    const endOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
 
     // Buscar trades manuais do dia
     const manualTrades = await this.tradeRepository.find({
@@ -178,8 +215,14 @@ export class TradesService {
     });
 
     // Calcular lucro/perda de trades manuais
-    const manualProfit = manualTrades.reduce((sum, t) => sum + (t.profit || 0), 0);
-    const manualLoss = manualTradesLost.reduce((sum, t) => sum + Math.abs(t.profit || 0), 0);
+    const manualProfit = manualTrades.reduce(
+      (sum, t) => sum + (t.profit || 0),
+      0,
+    );
+    const manualLoss = manualTradesLost.reduce(
+      (sum, t) => sum + Math.abs(t.profit || 0),
+      0,
+    );
 
     // Buscar trades da IA do dia
     const aiTradesResult = await this.dataSource.query(
@@ -219,7 +262,8 @@ export class TradesService {
     const agentLoss = parseFloat(agentResult[0]?.agent_loss) || 0;
     const agentWins = parseInt(agentResult[0]?.agent_wins) || 0;
     const agentLosses = parseInt(agentResult[0]?.agent_losses) || 0;
-    const agentIsActive = agentResult[0]?.is_active === 1 || agentResult[0]?.is_active === true;
+    const agentIsActive =
+      agentResult[0]?.is_active === 1 || agentResult[0]?.is_active === true;
     const agentSessionStatus = agentResult[0]?.session_status || null;
 
     // Calcular totais
@@ -263,12 +307,12 @@ export class TradesService {
   async getMarkupData(startDate?: string, endDate?: string) {
     // Taxa de markup da plataforma (3%)
     const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835
-    
+
     let manualDateCondition = '';
     let aiDateCondition = '';
     const manualParams: any[] = [];
     const aiParams: any[] = [];
-    
+
     if (startDate && endDate) {
       manualDateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
       aiDateCondition = 'AND DATE(at.created_at) BETWEEN ? AND ?';
@@ -357,7 +401,7 @@ export class TradesService {
     });
 
     // Calcular markup (engenharia reversa: lucro líquido * 0.030927835)
-    const results = Array.from(usersMap.values()).map(user => ({
+    const results = Array.from(usersMap.values()).map((user) => ({
       userId: user.userId,
       name: user.name,
       email: user.email,
@@ -373,11 +417,15 @@ export class TradesService {
     return {
       users: results,
       summary: {
-        totalCommission: parseFloat(results.reduce((sum, user) => sum + user.commission, 0).toFixed(2)),
-        totalTransactions: results.reduce((sum, user) => sum + user.transactionCount, 0),
+        totalCommission: parseFloat(
+          results.reduce((sum, user) => sum + user.commission, 0).toFixed(2),
+        ),
+        totalTransactions: results.reduce(
+          (sum, user) => sum + user.transactionCount,
+          0,
+        ),
         totalUsers: results.length,
       },
     };
   }
 }
-

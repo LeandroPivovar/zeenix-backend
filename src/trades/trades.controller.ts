@@ -1,6 +1,21 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  Req,
+  Query,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsNumber,
+  Min,
+  Max,
+  IsOptional,
+} from 'class-validator';
 import { TradesService, CreateTradeDto } from './trades.service';
 import { TradeType } from '../infrastructure/database/entities/trade.entity';
 
@@ -35,10 +50,19 @@ export class TradesController {
   @Post()
   async createTrade(@Req() req: any, @Body() body: CreateTradeRequestDto) {
     const userId = req.user.userId;
-    const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
+    const ipAddress =
+      req.ip ||
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.connection?.remoteAddress ||
+      'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
-    return await this.tradesService.createTrade(userId, body, ipAddress, userAgent);
+
+    return await this.tradesService.createTrade(
+      userId,
+      body,
+      ipAddress,
+      userAgent,
+    );
   }
 
   @Get()
@@ -67,6 +91,3 @@ export class TradesController {
     return await this.tradesService.getMarkupData(startDate, endDate);
   }
 }
-
-
-

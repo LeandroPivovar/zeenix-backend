@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminService } from '../services/admin.service';
 
@@ -57,4 +67,3 @@ export class AdminController {
     return this.adminService.getActivityLogs(pageNum, limitNum);
   }
 }
-

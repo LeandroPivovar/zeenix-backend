@@ -47,13 +47,18 @@ export interface IAutonomousAgentStrategy {
   name: string;
   displayName: string;
   description: string;
-  
+
   initialize(): Promise<void>;
   activateUser(userId: string, config: AutonomousAgentConfig): Promise<void>;
   deactivateUser(userId: string): Promise<void>;
-  processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision>;
-  onContractFinish(userId: string, result: { win: boolean; profit: number; contractId: string }): Promise<void>;
+  processAgent(
+    userId: string,
+    marketAnalysis: MarketAnalysis,
+  ): Promise<TradeDecision>;
+  onContractFinish(
+    userId: string,
+    result: { win: boolean; profit: number; contractId: string },
+  ): Promise<void>;
   getUserState(userId: string): Promise<AutonomousAgentState | null>;
   resetDailySession(userId: string): Promise<void>;
 }
-

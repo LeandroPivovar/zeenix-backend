@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsNumber, IsArray, IsEnum, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsArray,
+  IsEnum,
+  IsDateString,
+} from 'class-validator';
 
 export class CreateCourseDto {
   @IsString()
@@ -68,5 +75,3 @@ export class CreateCourseDto {
   @IsEnum(['public', 'private', 'restricted'])
   visibility?: string;
 }
-
-

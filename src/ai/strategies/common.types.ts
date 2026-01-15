@@ -41,9 +41,9 @@ export interface IStrategy {
 // - Modo NORMAL usa 60%/60% (definido em MODERADO_CONFIG)
 export const VELOZ_CONFIG: ModeConfig = {
   amostraInicial: 10, // ✅ Documentação: 10 ticks para modo VELOZ
-  intervaloTicks: 3,  // ✅ Documentação: 3 ticks entre operações
-  desequilibrioMin: 0.50, // ✅ Documentação: ≥50% para modo VELOZ
-  confianciaMin: 0.50,    // ✅ Documentação: ≥50% para modo VELOZ
+  intervaloTicks: 3, // ✅ Documentação: 3 ticks entre operações
+  desequilibrioMin: 0.5, // ✅ Documentação: ≥50% para modo VELOZ
+  confianciaMin: 0.5, // ✅ Documentação: ≥50% para modo VELOZ
   taxaAcertoEsperada: 0.67,
   payout: 0.95,
   minStake: 0.35,
@@ -53,8 +53,8 @@ export const VELOZ_CONFIG: ModeConfig = {
 export const MODERADO_CONFIG: ModeConfig = {
   amostraInicial: 20,
   intervaloSegundos: 17,
-  desequilibrioMin: 0.60,
-  confianciaMin: 0.60,
+  desequilibrioMin: 0.6,
+  confianciaMin: 0.6,
   taxaAcertoEsperada: 0.76,
   payout: 0.95,
   minStake: 0.35,
@@ -63,8 +63,8 @@ export const MODERADO_CONFIG: ModeConfig = {
 
 export const PRECISO_CONFIG: ModeConfig = {
   amostraInicial: 50,
-  desequilibrioMin: 0.70,
-  confianciaMin: 0.70,
+  desequilibrioMin: 0.7,
+  confianciaMin: 0.7,
   taxaAcertoEsperada: 0.82,
   payout: 0.95,
   minStake: 0.35,
@@ -74,8 +74,8 @@ export const PRECISO_CONFIG: ModeConfig = {
 export const LENTA_CONFIG: ModeConfig = {
   amostraInicial: 50,
   intervaloTicks: 5, // ✅ Adicionado intervalo de 5 ticks entre operações para modo Lenta
-  desequilibrioMin: 0.70,
-  confianciaMin: 0.80, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
+  desequilibrioMin: 0.7,
+  confianciaMin: 0.8, // ✅ Modo lenta requer 80% de confiança (conforme documentação)
   taxaAcertoEsperada: 0.85,
   payout: 0.95,
   minStake: 0.35,
@@ -89,8 +89,8 @@ export const ATLAS_VELOZ_CONFIG: ModeConfig = {
   intervaloSegundos: 4.8, // Uma operação a cada ~4.8 segundos
   desequilibrioMin: 0.0,
   confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.70, // ~70% Win rate para Over 2
-  payout: 0.40, // Payout para Digit Over 2
+  taxaAcertoEsperada: 0.7, // ~70% Win rate para Over 2
+  payout: 0.4, // Payout para Digit Over 2
   minStake: 0.35,
   betPercent: 0.005,
 };
@@ -102,8 +102,8 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
   intervaloSegundos: 2.9, // Uma operação a cada ~2.9 segundos
   desequilibrioMin: 0.6, // Gatilho: 3/5 > 2
   confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.70,
-  payout: 0.40,
+  taxaAcertoEsperada: 0.7,
+  payout: 0.4,
   minStake: 0.35,
   betPercent: 0.0075,
 };
@@ -115,9 +115,8 @@ export const ATLAS_LENTO_CONFIG: ModeConfig = {
   intervaloSegundos: 1.8, // Uma operação a cada ~1.8 segundos
   desequilibrioMin: 0.8, // Gatilho: 8/10 > 2
   confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.70,
-  payout: 0.40,
+  taxaAcertoEsperada: 0.7,
+  payout: 0.4,
   minStake: 0.35,
   betPercent: 0.01,
 };
-

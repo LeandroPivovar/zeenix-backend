@@ -1,6 +1,24 @@
-import { Controller, Get, Post, Put, Delete, Body, UseGuards, Req, Param, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  UseGuards,
+  Req,
+  Param,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, IsObject } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsNumber,
+  IsBoolean,
+  IsObject,
+} from 'class-validator';
 import { PlansService } from './plans.service';
 
 class ActivatePlanDto {
@@ -107,7 +125,9 @@ export class PlansController {
     // Verificar se é admin
     const user = req.user;
     if (user.role !== 'admin') {
-      throw new ForbiddenException('Acesso negado. Apenas administradores podem acessar.');
+      throw new ForbiddenException(
+        'Acesso negado. Apenas administradores podem acessar.',
+      );
     }
     return await this.plansService.getAllPlansAdmin();
   }
@@ -130,18 +150,26 @@ export class PlansController {
     // Verificar se é admin
     const user = req.user;
     if (user.role !== 'admin') {
-      throw new ForbiddenException('Acesso negado. Apenas administradores podem criar planos.');
+      throw new ForbiddenException(
+        'Acesso negado. Apenas administradores podem criar planos.',
+      );
     }
     return await this.plansService.createPlan(body);
   }
 
   @Put(':id')
   @UseGuards(AuthGuard('jwt'))
-  async updatePlan(@Req() req: any, @Param('id') id: string, @Body() body: UpdatePlanDto) {
+  async updatePlan(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: UpdatePlanDto,
+  ) {
     // Verificar se é admin
     const user = req.user;
     if (user.role !== 'admin') {
-      throw new ForbiddenException('Acesso negado. Apenas administradores podem atualizar planos.');
+      throw new ForbiddenException(
+        'Acesso negado. Apenas administradores podem atualizar planos.',
+      );
     }
     return await this.plansService.updatePlan(id, body);
   }
@@ -152,7 +180,9 @@ export class PlansController {
     // Verificar se é admin
     const user = req.user;
     if (user.role !== 'admin') {
-      throw new ForbiddenException('Acesso negado. Apenas administradores podem deletar planos.');
+      throw new ForbiddenException(
+        'Acesso negado. Apenas administradores podem deletar planos.',
+      );
     }
     return await this.plansService.deletePlan(id);
   }
@@ -161,13 +191,18 @@ export class PlansController {
   @UseGuards(AuthGuard('jwt'))
   async activatePlan(@Req() req: any, @Body() body: ActivatePlanDto) {
     const userId = req.user.userId;
-    const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
+    const ipAddress =
+      req.ip ||
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.connection?.remoteAddress ||
+      'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
-    return await this.plansService.activatePlan(userId, body.planId, ipAddress, userAgent);
+
+    return await this.plansService.activatePlan(
+      userId,
+      body.planId,
+      ipAddress,
+      userAgent,
+    );
   }
 }
-
-
-
-

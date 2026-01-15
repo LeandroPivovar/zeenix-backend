@@ -44,24 +44,23 @@ export interface LoginNotificationSummary {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
    * Busca resumo de notificações ao fazer login
    * Verifica status do agente autônomo e da IA
    */
   async getLoginSummary(userId: string): Promise<LoginNotificationSummary> {
-    this.logger.log(`[Notifications] Buscando resumo de login para usuário ${userId}`);
+    this.logger.log(
+      `[Notifications] Buscando resumo de login para usuário ${userId}`,
+    );
 
     const [agentSummary, aiSummary] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
     ]);
 
-    const notifications = this.buildNotifications(
-      agentSummary,
-      aiSummary
-    );
+    const notifications = this.buildNotifications(agentSummary, aiSummary);
 
     const summary: LoginNotificationSummary = {
       agent: agentSummary,
@@ -117,12 +116,18 @@ export class NotificationsService {
         totalTrades: parseInt(config.total_trades) || 0,
         totalWins: parseInt(config.total_wins) || 0,
         totalLosses: parseInt(config.total_losses) || 0,
-        profitTarget: config.daily_profit_target ? parseFloat(config.daily_profit_target) : null,
-        lossLimit: config.daily_loss_limit ? parseFloat(config.daily_loss_limit) : null,
+        profitTarget: config.daily_profit_target
+          ? parseFloat(config.daily_profit_target)
+          : null,
+        lossLimit: config.daily_loss_limit
+          ? parseFloat(config.daily_loss_limit)
+          : null,
         lastTradeAt: config.last_trade_at || null,
       };
     } catch (error) {
-      this.logger.error(`[Notifications] Erro ao buscar resumo do agente: ${error.message}`);
+      this.logger.error(
+        `[Notifications] Erro ao buscar resumo do agente: ${error.message}`,
+      );
       return null;
     }
   }
@@ -185,7 +190,7 @@ export class NotificationsService {
       // ✅ Calcular lucro/perda da sessão: sessionBalance atual - capital inicial
       // O session_balance no banco armazena o LUCRO/PERDA da sessão (não o saldo total)
       // Conforme atualizado em orion.strategy.ts linha 2887-2892
-      let sessionBalance = parseFloat(config.session_balance) || 0;
+      const sessionBalance = parseFloat(config.session_balance) || 0;
       let lucroDaSessao = sessionBalance; // ✅ session_balance já é o lucro/perda da sessão
 
       // ✅ Sempre buscar o lucro real dos trades da sessão atual (mais preciso)
@@ -203,7 +208,8 @@ export class NotificationsService {
         );
 
         if (tradesResult && tradesResult.length > 0) {
-          const lucroDosTrades = parseFloat(tradesResult[0].total_profit_loss) || 0;
+          const lucroDosTrades =
+            parseFloat(tradesResult[0].total_profit_loss) || 0;
           // ✅ Usar o lucro dos trades (é mais preciso e confiável)
           // session_balance pode estar desatualizado ou incorreto
           lucroDaSessao = lucroDosTrades;
@@ -214,14 +220,18 @@ export class NotificationsService {
         isActive: config.is_active === 1 || config.is_active === true,
         sessionStatus: config.session_status || null,
         sessionBalance: lucroDaSessao, // ✅ Retornar lucro/perda da sessão, não o saldo total
-        profitTarget: config.profit_target ? parseFloat(config.profit_target) : null,
+        profitTarget: config.profit_target
+          ? parseFloat(config.profit_target)
+          : null,
         lossLimit: config.loss_limit ? parseFloat(config.loss_limit) : null,
         mode: config.mode || null,
         strategy: config.strategy || null,
         lastTradeAt: config.last_trade_at || null,
       };
     } catch (error) {
-      this.logger.error(`[Notifications] Erro ao buscar resumo da IA: ${error.message}`);
+      this.logger.error(
+        `[Notifications] Erro ao buscar resumo da IA: ${error.message}`,
+      );
       return null;
     }
   }
@@ -252,7 +262,10 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_profit' && isNew(agent.lastTradeAt || now)) {
+      } else if (
+        agent.sessionStatus === 'stopped_profit' &&
+        isNew(agent.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'success',
           title: '🎉 Agente Autônomo - Meta Atingida!',
@@ -260,7 +273,10 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_loss' && isNew(agent.lastTradeAt || now)) {
+      } else if (
+        agent.sessionStatus === 'stopped_loss' &&
+        isNew(agent.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'warning',
           title: '⚠️ Agente Autônomo - Stop Loss',
@@ -268,7 +284,10 @@ export class NotificationsService {
           source: 'agent',
           timestamp: now,
         });
-      } else if (agent.sessionStatus === 'stopped_blindado' && isNew(agent.lastTradeAt || now)) {
+      } else if (
+        agent.sessionStatus === 'stopped_blindado' &&
+        isNew(agent.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'warning',
           title: '🛡️ Agente Autônomo - Stop Blindado',
@@ -299,7 +318,10 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_profit' && isNew(ai.lastTradeAt || now)) {
+      } else if (
+        ai.sessionStatus === 'stopped_profit' &&
+        isNew(ai.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'success',
           title: '🎉 IA de Trading - Meta Atingida!',
@@ -307,7 +329,10 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_loss' && isNew(ai.lastTradeAt || now)) {
+      } else if (
+        ai.sessionStatus === 'stopped_loss' &&
+        isNew(ai.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'warning',
           title: '⚠️ IA de Trading - Stop Loss',
@@ -315,7 +340,10 @@ export class NotificationsService {
           source: 'ai',
           timestamp: now,
         });
-      } else if (ai.sessionStatus === 'stopped_blindado' && isNew(ai.lastTradeAt || now)) {
+      } else if (
+        ai.sessionStatus === 'stopped_blindado' &&
+        isNew(ai.lastTradeAt || now)
+      ) {
         notifications.push({
           type: 'warning',
           title: '🛡️ IA de Trading - Stop Blindado',
@@ -342,73 +370,141 @@ export class NotificationsService {
   /**
    * Loga o resumo no terminal de forma formatada
    */
-  private logSummaryToTerminal(userId: string, summary: LoginNotificationSummary): void {
+  private logSummaryToTerminal(
+    userId: string,
+    summary: LoginNotificationSummary,
+  ): void {
     console.log('\n');
-    console.log('╔══════════════════════════════════════════════════════════════════╗');
-    console.log('║           📬 RESUMO DE NOTIFICAÇÕES AO LOGAR                     ║');
-    console.log('╠══════════════════════════════════════════════════════════════════╣');
-    console.log(`║  Usuário: ${userId.substring(0, 30).padEnd(30)}                    ║`);
-    console.log('╠══════════════════════════════════════════════════════════════════╣');
+    console.log(
+      '╔══════════════════════════════════════════════════════════════════╗',
+    );
+    console.log(
+      '║           📬 RESUMO DE NOTIFICAÇÕES AO LOGAR                     ║',
+    );
+    console.log(
+      '╠══════════════════════════════════════════════════════════════════╣',
+    );
+    console.log(
+      `║  Usuário: ${userId.substring(0, 30).padEnd(30)}                    ║`,
+    );
+    console.log(
+      '╠══════════════════════════════════════════════════════════════════╣',
+    );
 
     // Agente Autônomo
-    console.log('║  🤖 AGENTE AUTÔNOMO:                                              ║');
+    console.log(
+      '║  🤖 AGENTE AUTÔNOMO:                                              ║',
+    );
     if (summary.agent) {
       const statusIcon = summary.agent.isActive ? '🟢' : '🔴';
-      const statusText = summary.agent.isActive ? 'RODANDO' :
-        summary.agent.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
-          summary.agent.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
-            summary.agent.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADO';
+      const statusText = summary.agent.isActive
+        ? 'RODANDO'
+        : summary.agent.sessionStatus === 'stopped_profit'
+          ? 'PAROU (META)'
+          : summary.agent.sessionStatus === 'stopped_loss'
+            ? 'PAROU (STOP LOSS)'
+            : summary.agent.sessionStatus === 'stopped_blindado'
+              ? 'PAROU (BLINDADO)'
+              : 'PARADO';
       const resultIcon = summary.agent.netResult >= 0 ? '📈' : '📉';
-      const resultColor = summary.agent.netResult >= 0 ? '\x1b[32m' : '\x1b[31m';
+      const resultColor =
+        summary.agent.netResult >= 0 ? '\x1b[32m' : '\x1b[31m';
       const reset = '\x1b[0m';
 
-      console.log(`║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`);
-      console.log(`║     Resultado: ${resultIcon} ${resultColor}${summary.agent.netResult >= 0 ? '+' : ''}$${summary.agent.netResult.toFixed(2)}${reset}`.padEnd(72) + '║');
-      console.log(`║     Trades: ${summary.agent.totalWins}V / ${summary.agent.totalLosses}D (${summary.agent.totalTrades} total)`.padEnd(66) + '║');
+      console.log(
+        `║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`,
+      );
+      console.log(
+        `║     Resultado: ${resultIcon} ${resultColor}${summary.agent.netResult >= 0 ? '+' : ''}$${summary.agent.netResult.toFixed(2)}${reset}`.padEnd(
+          72,
+        ) + '║',
+      );
+      console.log(
+        `║     Trades: ${summary.agent.totalWins}V / ${summary.agent.totalLosses}D (${summary.agent.totalTrades} total)`.padEnd(
+          66,
+        ) + '║',
+      );
     } else {
-      console.log('║     Sem configuração encontrada                                    ║');
+      console.log(
+        '║     Sem configuração encontrada                                    ║',
+      );
     }
 
-    console.log('╠══════════════════════════════════════════════════════════════════╣');
+    console.log(
+      '╠══════════════════════════════════════════════════════════════════╣',
+    );
 
     // IA de Trading
-    console.log('║  🧠 IA DE TRADING:                                                 ║');
+    console.log(
+      '║  🧠 IA DE TRADING:                                                 ║',
+    );
     if (summary.ai) {
       const statusIcon = summary.ai.isActive ? '🟢' : '🔴';
-      const statusText = summary.ai.isActive ? 'RODANDO' :
-        summary.ai.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
-          summary.ai.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
-            summary.ai.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADA';
+      const statusText = summary.ai.isActive
+        ? 'RODANDO'
+        : summary.ai.sessionStatus === 'stopped_profit'
+          ? 'PAROU (META)'
+          : summary.ai.sessionStatus === 'stopped_loss'
+            ? 'PAROU (STOP LOSS)'
+            : summary.ai.sessionStatus === 'stopped_blindado'
+              ? 'PAROU (BLINDADO)'
+              : 'PARADA';
       const resultIcon = summary.ai.sessionBalance >= 0 ? '📈' : '📉';
-      const resultColor = summary.ai.sessionBalance >= 0 ? '\x1b[32m' : '\x1b[31m';
+      const resultColor =
+        summary.ai.sessionBalance >= 0 ? '\x1b[32m' : '\x1b[31m';
       const reset = '\x1b[0m';
-      const strategyName = summary.ai.strategy === 'trinity' ? 'Trinity' : 'Orion';
+      const strategyName =
+        summary.ai.strategy === 'trinity' ? 'Trinity' : 'Orion';
 
-      console.log(`║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`);
-      console.log(`║     Estratégia: ${strategyName} (${summary.ai.mode || 'N/A'})`.padEnd(66) + '║');
-      console.log(`║     Saldo Sessão: ${resultIcon} ${resultColor}${summary.ai.sessionBalance >= 0 ? '+' : ''}$${summary.ai.sessionBalance.toFixed(2)}${reset}`.padEnd(72) + '║');
+      console.log(
+        `║     Status: ${statusIcon} ${statusText.padEnd(20)}                          ║`,
+      );
+      console.log(
+        `║     Estratégia: ${strategyName} (${summary.ai.mode || 'N/A'})`.padEnd(
+          66,
+        ) + '║',
+      );
+      console.log(
+        `║     Saldo Sessão: ${resultIcon} ${resultColor}${summary.ai.sessionBalance >= 0 ? '+' : ''}$${summary.ai.sessionBalance.toFixed(2)}${reset}`.padEnd(
+          72,
+        ) + '║',
+      );
     } else {
-      console.log('║     Sem configuração encontrada                                    ║');
+      console.log(
+        '║     Sem configuração encontrada                                    ║',
+      );
     }
 
-    console.log('╠══════════════════════════════════════════════════════════════════╣');
-    console.log(`║  📊 Total de Notificações: ${summary.notifications.length}                                      ║`);
+    console.log(
+      '╠══════════════════════════════════════════════════════════════════╣',
+    );
+    console.log(
+      `║  📊 Total de Notificações: ${summary.notifications.length}                                      ║`,
+    );
 
     if (summary.notifications.length > 0) {
-      console.log('╠══════════════════════════════════════════════════════════════════╣');
+      console.log(
+        '╠══════════════════════════════════════════════════════════════════╣',
+      );
       summary.notifications.forEach((notif, idx) => {
-        const typeIcon = notif.type === 'success' ? '✅' :
-          notif.type === 'warning' ? '⚠️' :
-            notif.type === 'error' ? '❌' : 'ℹ️';
-        console.log(`║  ${idx + 1}. ${typeIcon} ${notif.title.substring(0, 50).padEnd(50)}       ║`);
+        const typeIcon =
+          notif.type === 'success'
+            ? '✅'
+            : notif.type === 'warning'
+              ? '⚠️'
+              : notif.type === 'error'
+                ? '❌'
+                : 'ℹ️';
+        console.log(
+          `║  ${idx + 1}. ${typeIcon} ${notif.title.substring(0, 50).padEnd(50)}       ║`,
+        );
         console.log(`║     ${notif.message.substring(0, 55).padEnd(55)}     ║`);
       });
     }
 
-    console.log('╚══════════════════════════════════════════════════════════════════╝');
+    console.log(
+      '╚══════════════════════════════════════════════════════════════════╝',
+    );
     console.log('\n');
   }
-
-
 }
-

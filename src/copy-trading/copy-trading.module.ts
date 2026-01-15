@@ -11,4 +11,3 @@ import { ExpertEntity } from '../infrastructure/database/entities/expert.entity'
   exports: [CopyTradingService],
 })
 export class CopyTradingModule {}
-

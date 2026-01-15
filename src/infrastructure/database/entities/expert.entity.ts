@@ -1,4 +1,10 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 
 @Entity('experts')
 export class ExpertEntity {
@@ -35,7 +41,13 @@ export class ExpertEntity {
   @Column({ type: 'int', default: 0, name: 'total_signals' })
   totalSignals: number;
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0, name: 'win_rate' })
+  @Column({
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    default: 0,
+    name: 'win_rate',
+  })
   winRate: number;
 
   @Column({ type: 'boolean', default: false, name: 'is_verified' })
@@ -47,16 +59,32 @@ export class ExpertEntity {
   @Column({ type: 'json', nullable: true, name: 'social_links' })
   socialLinks?: any | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'login_original' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'login_original',
+  })
   loginOriginal?: string | null;
 
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'login_alvo' })
   loginAlvo?: string | null;
 
-  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0, name: 'saldo_alvo' })
+  @Column({
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    name: 'saldo_alvo',
+  })
   saldoAlvo: number;
 
-  @Column({ type: 'varchar', length: 50, default: 'Desconectado', name: 'connection_status' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    default: 'Desconectado',
+    name: 'connection_status',
+  })
   connectionStatus: string;
 
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'trader_type' })
@@ -71,4 +99,3 @@ export class ExpertEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }
-

@@ -1,4 +1,11 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { UserEntity } from './user.entity';
 
 @Entity('user_activity_logs')
@@ -28,7 +35,3 @@ export class UserActivityLogEntity {
   @JoinColumn({ name: 'user_id' })
   user?: UserEntity;
 }
-
-
-
-

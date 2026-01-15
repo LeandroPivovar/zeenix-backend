@@ -28,4 +28,3 @@ export class SystemStatusEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }
-

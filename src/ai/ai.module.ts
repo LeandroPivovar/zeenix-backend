@@ -37,7 +37,11 @@ import { AutonomousAgentModule } from '../autonomous-agent/autonomous-agent.modu
     PerformanceService,
     TradeEventsService,
   ],
-  exports: [AiService, StrategyManagerService, TradeEventsService, OrionStrategy], // ✅ Exportar OrionStrategy para uso no agente autônomo
+  exports: [
+    AiService,
+    StrategyManagerService,
+    TradeEventsService,
+    OrionStrategy,
+  ], // ✅ Exportar OrionStrategy para uso no agente autônomo
 })
-export class AiModule { }
-
+export class AiModule {}

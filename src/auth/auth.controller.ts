@@ -1,4 +1,13 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Get, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Get,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { SettingsService } from '../settings/settings.service';
@@ -39,7 +48,10 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() body: RegisterDto, @Req() req: any) {
-    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    const frontendUrl =
+      process.env.FRONTEND_URL ||
+      req.headers.origin ||
+      'https://taxafacil.site';
     return this.authService.register(body, frontendUrl);
   }
 
@@ -48,7 +60,7 @@ export class AuthController {
   async login(@Body() body: LoginDto, @Req() req: any) {
     const result = await this.authService.login(body.email, body.password);
     const token = result.token;
-    
+
     // ✅ OTIMIZAÇÃO: Criar sessão e log de atividade de forma não-bloqueante
     // Isso evita que o login trave esperando operações de banco de dados
     setImmediate(async () => {
@@ -56,17 +68,29 @@ export class AuthController {
         // Buscar usuário pelo email para pegar o ID
         const user = await this.authService.findUserByEmail(body.email);
         if (user) {
-          const device = req.headers['user-agent']?.includes('Mobile') ? 'Mobile' : 'Desktop';
-          const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
+          const device = req.headers['user-agent']?.includes('Mobile')
+            ? 'Mobile'
+            : 'Desktop';
+          const ipAddress =
+            req.ip ||
+            req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+            req.connection?.remoteAddress ||
+            'unknown';
           const userAgent = req.headers['user-agent'] || 'unknown';
-          
-          await this.settingsService.createSession(user.id, token, device, userAgent, ipAddress);
+
+          await this.settingsService.createSession(
+            user.id,
+            token,
+            device,
+            userAgent,
+            ipAddress,
+          );
           await this.settingsService.logActivity(
             user.id,
             'LOGIN',
             'Realizou login no sistema',
             ipAddress,
-            userAgent
+            userAgent,
           );
         }
       } catch (err) {
@@ -74,14 +98,17 @@ export class AuthController {
         // Não falhar o login se a criação de sessão falhar
       }
     });
-    
+
     return { token };
   }
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   async forgotPassword(@Body() body: { email: string }, @Req() req: any) {
-    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    const frontendUrl =
+      process.env.FRONTEND_URL ||
+      req.headers.origin ||
+      'https://taxafacil.site';
     return await this.authService.forgotPassword(body.email, frontendUrl);
   }
 
@@ -112,9 +139,7 @@ export class AuthController {
     return {
       id: user.id,
       name: user.name,
-      email: user.email
+      email: user.email,
     };
   }
 }
-
-

@@ -32,7 +32,7 @@ export class StatsIAsService {
     try {
       // Verificar cache primeiro
       const now = Date.now();
-      if (this.cache && (now - this.cacheTimestamp) < this.CACHE_TTL) {
+      if (this.cache && now - this.cacheTimestamp < this.CACHE_TTL) {
         this.logger.debug('Retornando estatísticas do cache');
         return this.cache;
       }
@@ -43,7 +43,7 @@ export class StatsIAsService {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       });
 
@@ -55,14 +55,14 @@ export class StatsIAsService {
       }
 
       const data = await response.json();
-      
+
       // Processar e normalizar os dados
       const stats: StatsIAsData = this.normalizeStatsData(data);
-      
+
       // Atualizar cache
       this.cache = stats;
       this.cacheTimestamp = now;
-      
+
       this.logger.log('Estatísticas do StatsIAs atualizadas com sucesso');
       return stats;
     } catch (error) {
@@ -98,7 +98,7 @@ export class StatsIAsService {
     const wins = data.totalWins || data.total_wins || 0;
     const losses = data.totalLosses || data.total_losses || 0;
     const total = wins + losses;
-    
+
     if (total === 0) return 0;
     return Number(((wins / total) * 100).toFixed(2));
   }
@@ -112,7 +112,7 @@ export class StatsIAsService {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       });
 
@@ -150,9 +150,10 @@ export class StatsIAsService {
       const totalTrades = parseInt(result.totalTrades) || 0;
       const totalWins = parseInt(result.totalWins) || 0;
       const totalLosses = parseInt(result.totalLosses) || 0;
-      const winRate = totalTrades > 0 
-        ? Number(((totalWins / totalTrades) * 100).toFixed(2))
-        : 0;
+      const winRate =
+        totalTrades > 0
+          ? Number(((totalWins / totalTrades) * 100).toFixed(2))
+          : 0;
 
       // Buscar lucro total das trades
       const profitStats = await dataSource.query(`
@@ -204,4 +205,3 @@ export class StatsIAsService {
     this.logger.debug('Cache de estatísticas limpo');
   }
 }
-
