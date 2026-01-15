@@ -176,22 +176,18 @@ export class ApolloStrategy implements IStrategy {
       filters.push('Direção Imediata');
     }
     else if (state.mode === 'normal') {
-      // Filter 2: Min Force >= 1.0
-      // Note: On R_100, 1.0 is a large move. On R_10 it's huge. 
-      // The user code uses R_10 index implicitly or R_100? R_100 moves are ~XX.XX. 
-      // User logs show "Delta 1.0". R_100 ticks often move by < 1.0. 
-      // Let's assume the user knows the volatility or we might need to adjust.
-      // FOR NOW: I will implement strictly as requested: absDelta >= 1.0
-      if (absDelta >= 1.0) {
+      // Filter 2: Min Force
+      // Adjusted for 1HZ10V (Vol 10): 1.0 is too high. Using 0.05 to ensure entries.
+      if (absDelta >= 0.05) {
         validSignal = true;
         strength = 75;
-        filters.push(`Força Confirmada (Delta ${absDelta.toFixed(2)} >= 1.0)`);
+        filters.push(`Força Confirmada (Delta ${absDelta.toFixed(2)} >= 0.05)`);
       }
     }
     else if (state.mode === 'lento') {
-      // Filter 3: Force >= 2.0 AND Trend (SMA 5)
+      // Filter 3: Force >= 0.10 AND Trend (SMA 5)
       const sma5 = prices.slice(-5).reduce((a, b) => a + b, 0) / 5;
-      const isStrong = absDelta >= 2.0;
+      const isStrong = absDelta >= 0.10;
       const isTrendOk = (direction === 'CALL' && currentPrice > sma5) || (direction === 'PUT' && currentPrice < sma5);
 
       if (isStrong && isTrendOk) {
