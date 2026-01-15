@@ -574,10 +574,10 @@ export class NexusStrategy implements IStrategy {
                         }
                     }
                     this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `\x1b[32m🏁 RESULTADO DA ENTRADA\n` +
+                        `🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: VITÓRIA ✅\n` +
                         `• Lucro: $${result.profit.toFixed(2)}\n` +
-                        `• Saldo Atual: $${state.capital.toFixed(2)}\x1b[0m`
+                        `• Saldo Atual: $${state.capital.toFixed(2)}`
                     );
                 } else {
                     // ✅ Log de Soros Falhou (Igual Orion)
@@ -587,12 +587,12 @@ export class NexusStrategy implements IStrategy {
 
                     state.vitoriasConsecutivas = 0;
                     this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `\x1b[31m🏁 RESULTADO DA ENTRADA\n` +
+                        `🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: DERROTA ❌\n` +
                         `• Operação: ${barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall')}\n` +
                         `• Perda: -$${Math.abs(result.profit).toFixed(2)}\n` +
                         `• Capital: $${state.capital.toFixed(2)}\n` +
-                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)\x1b[0m`
+                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)`
                     );
 
                     // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
