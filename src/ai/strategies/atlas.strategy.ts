@@ -19,16 +19,16 @@ function calcularProximaApostaAtlas(
 
   switch (modo) {
     case 'conservador':
-      // Recupera 100% da perda (sem lucro)
-      aposta = perdasTotais / payout;
+      // Recupera 100% da perda + alguns centavos (5% de lucro)
+      aposta = (perdasTotais * 1.05) / payout;
       break;
     case 'moderado':
       // Recupera 100% da perda + 15% de lucro
       aposta = (perdasTotais * 1.15) / payout;
       break;
     case 'agressivo':
-      // Recupera 100% da perda + 30% de lucro
-      aposta = (perdasTotais * 1.30) / payout;
+      // Recupera 100% da perda + 15% de lucro
+      aposta = (perdasTotais * 1.15) / payout;
       break;
   }
 
@@ -754,14 +754,9 @@ export class AtlasStrategy implements IStrategy {
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
 
-        if (state.modoMartingale === 'conservador' && state.martingaleStep > 5) {
-          this.saveAtlasLog(state.userId, symbol, 'info',
-            `🛡️ Limite de Martingale (5) atingido no modo conservador. Resetando ciclo.`);
-          state.martingaleStep = 0;
-          state.perdaAcumulada = 0;
-          state.isInRecovery = false;
-          stakeAmount = state.apostaBase;
-        }
+        // ✅ Todos os modos agora recuperam infinitamente (sem limite de M5)
+        // Veloz: +5% | Moderado: +15% | Agressivo: +15%
+
 
         const stopLossDisponivel = this.calculateAvailableStopLoss(state);
 
