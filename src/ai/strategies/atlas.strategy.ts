@@ -386,13 +386,13 @@ export class AtlasStrategy implements IStrategy {
     if (canTrade) {
       await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
     } else {
-      // ✅ Log periódico quando análise bloqueia operação (a cada 20 ticks para não poluir)
+      // ✅ Log periódico quando análise bloqueia operação (a cada 10 ticks para mostrar atividade real)
       const key = `${symbol}_${state.userId}_bloqueio`;
-      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 20 === 0) {
+      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
         this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
         this.intervaloLogsEnviados.set(key, true);
-        // Resetar após 20 ticks
-        if ((state.tickCounter || 0) % 20 === 0) {
+        // Resetar após 10 ticks
+        if ((state.tickCounter || 0) % 10 === 0) {
           this.intervaloLogsEnviados.delete(key);
         }
       }
@@ -444,7 +444,8 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        // analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 2.\n`;
+        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
+        analysis += `⏳ AGUARDANDO: Tendência de Alta Frequência...`;
         return { canTrade: false, analysis };
       }
     }
@@ -461,6 +462,8 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
+        analysis += `❌ FILTRO: Densidade Baixa (${countOver2}/5 > 2)\n`;
+        analysis += `⏳ AGUARDANDO: Fluxo de Atividade Majoritária...`;
         return { canTrade: false, analysis };
       }
     }
@@ -478,6 +481,13 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
+        if (lastDigit <= 2) {
+          analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
+        }
+        if (countOver2 < 8) {
+          analysis += `❌ FILTRO: Dominância Insuficiente (${countOver2}/10 > 2)\n`;
+        }
+        analysis += `⏳ AGUARDANDO: Confirmação de Tendência Sólida...`;
         return { canTrade: false, analysis };
       }
     }
