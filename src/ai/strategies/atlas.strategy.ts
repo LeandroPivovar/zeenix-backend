@@ -1219,6 +1219,24 @@ export class AtlasStrategy implements IStrategy {
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
+      // ✅ ATLAS: Reset após M5 (6ª perda) - Limite máximo de recuperação
+      if (state.isInRecovery && state.martingaleStep > 5) {
+        this.saveAtlasLog(state.userId, symbol, 'alerta',
+          `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO\n` +
+          `• Motivo: 6 Perdas Consecutivas (M5).\n` +
+          `• Ação: Resetando ciclo de martingale.\n` +
+          `• Perda Total: $${state.perdaAcumulada.toFixed(2)}`);
+
+        state.martingaleStep = 0;
+        state.perdaAcumulada = 0;
+        state.isInRecovery = false;
+
+        // Voltar ao modo original após reset
+        if (state.mode !== state.originalMode) {
+          state.mode = state.originalMode;
+        }
+      }
+
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
