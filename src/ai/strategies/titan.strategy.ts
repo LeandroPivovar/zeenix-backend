@@ -1140,20 +1140,31 @@ export class TitanStrategy implements IStrategy {
             const log = this.logQueue.shift();
             if (log) {
                 try {
-                    // Salvar no banco
-                    await this.dataSource.query(
-                        `INSERT INTO ai_logs (user_id, strategy, symbol, type, message, details, created_at) VALUES (?, 'titan', ?, ?, ?, ?, NOW())`,
-                        [log.userId, log.symbol, log.type, log.message, log.details ? JSON.stringify(log.details) : null]
-                    );
+                    // Mapeamento de ícones
+                    const iconMap: any = {
+                        'info': 'ℹ️',
+                        'alerta': '⚠️',
+                        'sinal': '🎯',
+                        'operacao': '🚀',
+                        'resultado': '💰',
+                        'erro': '❌',
+                        'analise': '🔍',
+                        'tick': '📊'
+                    };
+                    const icon = iconMap[log.type] || '📝';
 
-                    // Emitir via WebSocket para frontend em tempo real
-                    /* this.tradeEvents.emitLog({
+                    // Prepare details
+                    const detailsObj = {
                         strategy: 'titan',
-                        userId: log.userId,
                         symbol: log.symbol,
-                        type: log.type,
-                        message: log.message
-                    }); */
+                        ...(log.details || {})
+                    };
+
+                    // Salvar no banco com schema correto
+                    await this.dataSource.query(
+                        `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
+                        [log.userId, log.type, icon, log.message, JSON.stringify(detailsObj)]
+                    );
 
                 } catch (error) {
                     console.error('Erro ao salvar log do Titan:', error);
