@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  Inject,
-  forwardRef,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import {
@@ -20,9 +14,9 @@ import { LogQueueService } from '../../utils/log-queue.service';
 
 /**
  * 🌟 ORION Strategy para Agente Autônomo
- *
+ * 
  * ✅ REFATORADO: Usa 100% a IA Orion
- *
+ * 
  * Esta estratégia é um wrapper que delega TODAS as operações para a OrionStrategy da IA.
  * A OrionStrategy já possui toda a lógica de:
  * - Processamento de ticks
@@ -30,36 +24,29 @@ import { LogQueueService } from '../../utils/log-queue.service';
  * - Execução de operações (executeOrionOperation)
  * - Gerenciamento de stop loss/win/blindado
  * - Martingale e Soros
- *
+ * 
  * O agente autônomo apenas:
  * - Gerencia configurações específicas (daily_profit_target, daily_loss_limit)
  * - Monitora sessões diárias (parar no dia após stop loss/win/blindado)
  * - Reseta sessões no próximo dia
  */
 @Injectable()
-export class OrionAutonomousStrategy
-  implements IAutonomousAgentStrategy, OnModuleInit
-{
+export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   name = 'orion';
   displayName = '🌟 ORION';
-  description =
-    'Agente autônomo usando IA Orion com análise estatística avançada';
+  description = 'Agente autônomo usando IA Orion com análise estatística avançada';
 
   private readonly logger = new Logger(OrionAutonomousStrategy.name);
   private readonly userConfigs = new Map<string, AutonomousAgentConfig>();
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => OrionStrategy))
-    private readonly orionStrategy: OrionStrategy,
-    @Inject(forwardRef(() => LogQueueService))
-    private readonly logQueueService?: LogQueueService,
+    @Inject(forwardRef(() => OrionStrategy)) private readonly orionStrategy: OrionStrategy,
+    @Inject(forwardRef(() => LogQueueService)) private readonly logQueueService?: LogQueueService,
   ) {}
 
   async onModuleInit() {
-    this.logger.log(
-      '🌟 ORION Strategy para Agente Autônomo inicializado (100% IA Orion)',
-    );
+    this.logger.log('🌟 ORION Strategy para Agente Autônomo inicializado (100% IA Orion)');
     await this.initialize();
   }
 
@@ -68,7 +55,7 @@ export class OrionAutonomousStrategy
     if (this.orionStrategy) {
       await this.orionStrategy.initialize();
     }
-
+    
     // Sincronizar usuários ativos do banco
     await this.syncActiveUsersFromDb();
   }
@@ -95,22 +82,17 @@ export class OrionAutonomousStrategy
           derivToken: user.deriv_token,
           currency: user.currency,
           symbol: user.symbol || 'R_100',
-          tradingMode: (user.trading_mode || 'normal') as
-            | 'veloz'
-            | 'moderado'
-            | 'preciso',
+          tradingMode: (user.trading_mode || 'normal') as 'veloz' | 'moderado' | 'preciso',
           initialBalance: parseFloat(user.initial_balance) || 0,
         };
 
         this.userConfigs.set(userId, config);
-
+        
         // Ativar usuário na Orion Strategy
         await this.activateUserInOrion(userId, config);
       }
 
-      this.logger.log(
-        `[Orion] Sincronizados ${activeUsers.length} usuários ativos`,
-      );
+      this.logger.log(`[Orion] Sincronizados ${activeUsers.length} usuários ativos`);
     } catch (error) {
       this.logger.error('[Orion] Erro ao sincronizar usuários:', error);
     }
@@ -119,10 +101,7 @@ export class OrionAutonomousStrategy
   /**
    * Ativa usuário na Orion Strategy da IA
    */
-  private async activateUserInOrion(
-    userId: string,
-    config: AutonomousAgentConfig,
-  ): Promise<void> {
+  private async activateUserInOrion(userId: string, config: AutonomousAgentConfig): Promise<void> {
     if (!this.orionStrategy) {
       this.logger.error('[Orion] OrionStrategy não disponível');
       return;
@@ -139,35 +118,23 @@ export class OrionAutonomousStrategy
     };
 
     await this.orionStrategy.activateUser(userId, orionConfig);
-    this.logger.log(
-      `[Orion] ✅ Usuário ${userId} ativado na Orion Strategy (modo: ${orionConfig.mode})`,
-    );
+    this.logger.log(`[Orion] ✅ Usuário ${userId} ativado na Orion Strategy (modo: ${orionConfig.mode})`);
   }
 
-  async activateUser(
-    userId: string,
-    config: AutonomousAgentConfig,
-  ): Promise<void> {
+  async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
     this.userConfigs.set(userId, config);
-
+    
     // Ativar usuário na Orion Strategy
     await this.activateUserInOrion(userId, config);
 
     // Salvar configuração no banco (já feito pelo AutonomousAgentService)
-    this.logger.log(
-      `[Orion] ✅ Usuário ${userId} ativado no modo ${config.tradingMode}`,
-    );
-    this.saveLog(
-      userId,
-      'INFO',
-      'CORE',
-      `Usuário ativado no modo ${config.tradingMode}`,
-    );
+    this.logger.log(`[Orion] ✅ Usuário ${userId} ativado no modo ${config.tradingMode}`);
+    this.saveLog(userId, 'INFO', 'CORE', `Usuário ativado no modo ${config.tradingMode}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
     this.userConfigs.delete(userId);
-
+    
     // Desativar usuário na Orion Strategy
     if (this.orionStrategy) {
       await this.orionStrategy.deactivateUser(userId);
@@ -191,10 +158,7 @@ export class OrionAutonomousStrategy
    * Processa o agente usando a Orion Strategy
    * ✅ Não é mais usado - a Orion Strategy processa diretamente via processTick
    */
-  async processAgent(
-    userId: string,
-    marketAnalysis: MarketAnalysis,
-  ): Promise<TradeDecision> {
+  async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {
     // A Orion Strategy já processa tudo via processTick
     // Este método é mantido apenas para compatibilidade
     return { action: 'WAIT', reason: 'PROCESSED_BY_ORION' };
@@ -206,7 +170,7 @@ export class OrionAutonomousStrategy
   ): Promise<void> {
     // A Orion Strategy já gerencia os resultados
     // Aqui apenas atualizamos o banco de dados do agente autônomo
-
+    
     const config = this.userConfigs.get(userId);
     if (!config) return;
 
@@ -228,54 +192,23 @@ export class OrionAutonomousStrategy
 
         if (result.win) {
           newProfit += result.profit;
-          this.logger.log(
-            `[Orion][${userId}] ✅ Vitória! Lucro: $${result.profit.toFixed(2)}`,
-          );
-          this.saveLog(
-            userId,
-            'INFO',
-            'TRADER',
-            `Operação ganha. Lucro: $${result.profit.toFixed(2)}`,
-          );
+          this.logger.log(`[Orion][${userId}] ✅ Vitória! Lucro: $${result.profit.toFixed(2)}`);
+          this.saveLog(userId, 'INFO', 'TRADER', `Operação ganha. Lucro: $${result.profit.toFixed(2)}`);
         } else {
           newLoss += Math.abs(result.profit);
-          this.logger.log(
-            `[Orion][${userId}] ❌ Perda. Prejuízo: $${Math.abs(result.profit).toFixed(2)}`,
-          );
-          this.saveLog(
-            userId,
-            'INFO',
-            'TRADER',
-            `Operação perdida. Prejuízo: $${Math.abs(result.profit).toFixed(2)}`,
-          );
+          this.logger.log(`[Orion][${userId}] ❌ Perda. Prejuízo: $${Math.abs(result.profit).toFixed(2)}`);
+          this.saveLog(userId, 'INFO', 'TRADER', `Operação perdida. Prejuízo: $${Math.abs(result.profit).toFixed(2)}`);
         }
 
         // Verificar stop loss/win/blindado e parar no dia se necessário
         if (newLoss >= config.dailyLossLimit && sessionStatus === 'active') {
           sessionStatus = 'stopped_loss';
-          this.logger.warn(
-            `[Orion][${userId}] 🛑 STOP LOSS ATINGIDO! Perda: $${newLoss.toFixed(2)} >= Limite: $${config.dailyLossLimit.toFixed(2)}`,
-          );
-          this.saveLog(
-            userId,
-            'WARN',
-            'RISK',
-            `Stop Loss atingido. Perda: $${newLoss.toFixed(2)} | Limite: $${config.dailyLossLimit.toFixed(2)} - Parando no dia`,
-          );
-        } else if (
-          newProfit >= config.dailyProfitTarget &&
-          sessionStatus === 'active'
-        ) {
+          this.logger.warn(`[Orion][${userId}] 🛑 STOP LOSS ATINGIDO! Perda: $${newLoss.toFixed(2)} >= Limite: $${config.dailyLossLimit.toFixed(2)}`);
+          this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido. Perda: $${newLoss.toFixed(2)} | Limite: $${config.dailyLossLimit.toFixed(2)} - Parando no dia`);
+        } else if (newProfit >= config.dailyProfitTarget && sessionStatus === 'active') {
           sessionStatus = 'stopped_profit';
-          this.logger.log(
-            `[Orion][${userId}] 🎯 STOP WIN ATINGIDO! Lucro: $${newProfit.toFixed(2)} >= Meta: $${config.dailyProfitTarget.toFixed(2)}`,
-          );
-          this.saveLog(
-            userId,
-            'INFO',
-            'RISK',
-            `Stop Win atingido. Lucro: $${newProfit.toFixed(2)} | Meta: $${config.dailyProfitTarget.toFixed(2)} - Parando no dia`,
-          );
+          this.logger.log(`[Orion][${userId}] 🎯 STOP WIN ATINGIDO! Lucro: $${newProfit.toFixed(2)} >= Meta: $${config.dailyProfitTarget.toFixed(2)}`);
+          this.saveLog(userId, 'INFO', 'RISK', `Stop Win atingido. Lucro: $${newProfit.toFixed(2)} | Meta: $${config.dailyProfitTarget.toFixed(2)} - Parando no dia`);
         }
 
         // Atualizar banco de dados
@@ -294,16 +227,11 @@ export class OrionAutonomousStrategy
           if (this.orionStrategy) {
             await this.orionStrategy.deactivateUser(userId);
           }
-          this.logger.log(
-            `[Orion][${userId}] ⏸️ Agente parado no dia (status: ${sessionStatus}). Continuará no próximo dia.`,
-          );
+          this.logger.log(`[Orion][${userId}] ⏸️ Agente parado no dia (status: ${sessionStatus}). Continuará no próximo dia.`);
         }
       }
     } catch (error) {
-      this.logger.error(
-        `[Orion][onContractFinish] Erro ao atualizar banco:`,
-        error,
-      );
+      this.logger.error(`[Orion][onContractFinish] Erro ao atualizar banco:`, error);
     }
   }
 
@@ -354,9 +282,7 @@ export class OrionAutonomousStrategy
         await this.activateUserInOrion(userId, config);
       }
 
-      this.logger.log(
-        `[Orion] ✅ Sessão diária resetada para usuário ${userId}`,
-      );
+      this.logger.log(`[Orion] ✅ Sessão diária resetada para usuário ${userId}`);
     } catch (error) {
       this.logger.error(`[Orion][resetDailySession] Erro:`, error);
     }
@@ -390,25 +316,12 @@ export class OrionAutonomousStrategy
   /**
    * Salva log usando LogQueueService
    */
-  private saveLog(
-    userId: string,
-    level: string,
-    module: string,
-    message: string,
-    metadata?: any,
-  ): void {
+  private saveLog(userId: string, level: string, module: string, message: string, metadata?: any): void {
     if (this.logQueueService) {
       this.logQueueService.saveLogAsync({
         userId,
         level: level as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
-        module: module as
-          | 'CORE'
-          | 'API'
-          | 'ANALYZER'
-          | 'DECISION'
-          | 'TRADER'
-          | 'RISK'
-          | 'HUMANIZER',
+        module: module as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER',
         message,
         metadata,
         tableName: 'autonomous_agent_logs',
@@ -439,3 +352,5 @@ interface OrionUserState {
   consecutiveWins: number;
   isOperationActive: boolean;
 }
+
+

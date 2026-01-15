@@ -28,7 +28,7 @@ export class AiController {
     private readonly aiService: AiService,
     private readonly tradeEventsService: TradeEventsService,
     private readonly performanceService: PerformanceService,
-  ) {}
+  ) { }
 
   @Post('start')
   async startMonitoring() {
@@ -52,7 +52,11 @@ export class AiController {
   }
 
   private normalizeOperation(value: string): DigitParity {
-    const sanitized = value.toString().trim().toUpperCase().replace('Í', 'I');
+    const sanitized = value
+      .toString()
+      .trim()
+      .toUpperCase()
+      .replace('Í', 'I');
 
     if (['PAR', 'DIGITEVEN', 'EVEN'].includes(sanitized)) {
       return 'PAR';
@@ -75,10 +79,7 @@ export class AiController {
   }
 
   @Get('ticks')
-  getTicks(
-    @Query('limit') limit?: string,
-    @Query('count') count?: string,
-  ): {
+  getTicks(@Query('limit') limit?: string, @Query('count') count?: string): {
     success: boolean;
     data: {
       ticks: Tick[];
@@ -167,16 +168,17 @@ export class AiController {
 
   @Post('execute-trade')
   async executeTrade(
-    @Body()
-    body: {
+    @Body() body: {
       userId: string;
       operation?: DigitParity | 'DIGITEVEN' | 'DIGITODD' | 'even' | 'odd';
       signal?: { signal?: string; operation?: string };
-    },
+    }
   ) {
     try {
       const requestedOperation =
-        body.operation || body.signal?.operation || body.signal?.signal;
+        body.operation ||
+        body.signal?.operation ||
+        body.signal?.signal;
 
       if (!requestedOperation) {
         throw new Error('operation (PAR/IMPAR) é obrigatório no modo veloz');
@@ -234,20 +236,14 @@ export class AiController {
   @Get('trade-history/:userId')
   async getTradeHistory(@Param('userId') userId: string) {
     try {
-      this.logger.log(
-        `[TradeHistory] 📊 Buscando histórico para userId: ${userId}`,
-      );
+      this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
       const history = await this.aiService.getTradeHistory(userId);
-      this.logger.log(
-        `[TradeHistory] ✅ Encontradas ${history.length} operações`,
-      );
+      this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
 
       // ✅ DEBUG: Logar primeiros 3 trades com preços
       if (history.length > 0) {
         history.slice(0, 3).forEach((trade: any, index: number) => {
-          this.logger.debug(
-            `[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`,
-          );
+          this.logger.debug(`[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`);
         });
       }
 
@@ -256,9 +252,7 @@ export class AiController {
         data: history,
       };
     } catch (error) {
-      this.logger.error(
-        `[TradeHistory] ❌ Erro ao buscar histórico: ${error.message}`,
-      );
+      this.logger.error(`[TradeHistory] ❌ Erro ao buscar histórico: ${error.message}`);
       throw new HttpException(
         {
           success: false,
@@ -302,8 +296,7 @@ export class AiController {
 
   @Post('activate')
   async activateAI(
-    @Body()
-    body: {
+    @Body() body: {
       userId: string;
       stakeAmount: number; // Capital total da conta
       entryValue?: number; // ✅ Valor de entrada por operação (opcional)
@@ -320,9 +313,7 @@ export class AiController {
     },
   ) {
     try {
-      this.logger.log(
-        `[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}, symbol=${body.symbol || body.selectedMarket}`,
-      );
+      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}, symbol=${body.symbol || body.selectedMarket}`);
 
       await this.aiService.activateUserAI(
         body.userId,
@@ -518,9 +509,17 @@ export class AiController {
   }
 
   @Post('update-config')
-  async updateAIConfig(@Body() body: { userId: string; stakeAmount?: number }) {
+  async updateAIConfig(
+    @Body() body: {
+      userId: string;
+      stakeAmount?: number;
+    },
+  ) {
     try {
-      await this.aiService.updateUserAIConfig(body.userId, body.stakeAmount);
+      await this.aiService.updateUserAIConfig(
+        body.userId,
+        body.stakeAmount,
+      );
       return {
         success: true,
         message: 'Configuração da IA atualizada com sucesso',
@@ -584,24 +583,15 @@ export class AiController {
   ) {
     try {
       const limitNumber = limit ? parseInt(limit, 10) : 10;
-      this.logger.log(
-        `[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}, limit: ${limitNumber}`,
-      );
-      const sessions = await this.aiService.getUserSessions(
-        userId,
-        limitNumber,
-      );
-      this.logger.log(
-        `[SessionsHistory] ✅ ${sessions.length} sessões encontradas`,
-      );
+      this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}, limit: ${limitNumber}`);
+      const sessions = await this.aiService.getUserSessions(userId, limitNumber);
+      this.logger.log(`[SessionsHistory] ✅ ${sessions.length} sessões encontradas`);
       return {
         success: true,
         data: sessions,
       };
     } catch (error) {
-      this.logger.error(
-        `[SessionsHistory] ❌ Erro ao buscar histórico: ${error.message}`,
-      );
+      this.logger.error(`[SessionsHistory] ❌ Erro ao buscar histórico: ${error.message}`);
       throw new HttpException(
         {
           success: false,
@@ -635,3 +625,4 @@ export class AiController {
     }
   }
 }
+

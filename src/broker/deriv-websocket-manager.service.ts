@@ -34,12 +34,20 @@ export class DerivWebSocketManagerService implements OnModuleDestroy {
       try {
         service.disconnect();
       } catch (error) {
-        this.logger.error(
-          `Erro ao desconectar serviço do usuário ${userId}:`,
-          error,
-        );
+        this.logger.error(`Erro ao desconectar serviço do usuário ${userId}:`, error);
       }
     }
     this.userServices.clear();
   }
 }
+
+
+
+
+
+
+
+
+
+
+

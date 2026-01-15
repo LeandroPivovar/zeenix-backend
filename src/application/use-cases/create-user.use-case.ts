@@ -9,16 +9,11 @@ import { validateBrazilianPhone } from '../../utils/phone.validator';
 
 @Injectable()
 export class CreateUserUseCase {
-  constructor(
-    @Inject(USER_REPOSITORY_TOKEN)
-    private readonly userRepository: UserRepository,
-  ) {}
+  constructor(@Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository) {}
 
   async execute(createUserDto: CreateUserDto): Promise<User> {
-    const existingUser = await this.userRepository.findByEmail(
-      createUserDto.email,
-    );
-
+    const existingUser = await this.userRepository.findByEmail(createUserDto.email);
+    
     if (existingUser) {
       throw new ConflictException('Email já está em uso');
     }
@@ -28,14 +23,12 @@ export class CreateUserUseCase {
     if (createUserDto.phone) {
       // Validar usando libphonenumber-js
       const validation = validateBrazilianPhone(createUserDto.phone);
-
+      
       if (!validation.isValid || !validation.phoneDigits) {
         throw new ConflictException(validation.error || 'Telefone inválido');
       }
 
-      const existingPhone = await this.userRepository.findByPhone(
-        validation.phoneDigits,
-      );
+      const existingPhone = await this.userRepository.findByPhone(validation.phoneDigits);
       if (existingPhone) {
         throw new ConflictException('Telefone já está em uso');
       }

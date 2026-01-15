@@ -26,29 +26,26 @@ export function validateBrazilianPhone(phoneNumber: string): {
     return {
       isValid: false,
       phoneDigits: null,
-      error:
-        'Telefone inválido. Use o formato: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX',
+      error: 'Telefone inválido. Use o formato: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX',
     };
   }
 
   try {
     // Tentar parsear como número brasileiro
     // Se começar com 0, remover (alguns formatos incluem 0 antes do DDD)
-    let cleanPhone = phoneDigits.startsWith('0')
-      ? phoneDigits.substring(1)
-      : phoneDigits;
-
+    let cleanPhone = phoneDigits.startsWith('0') ? phoneDigits.substring(1) : phoneDigits;
+    
     // Se já tiver código do país (55), remover
     if (cleanPhone.startsWith('55') && cleanPhone.length > 11) {
       cleanPhone = cleanPhone.substring(2);
     }
-
+    
     // Adicionar código do país para validação
     const phoneWithCountry = `+55${cleanPhone}`;
 
     // Validar usando libphonenumber-js
     const isValid = isValidPhoneNumber(phoneWithCountry, 'BR');
-
+    
     if (!isValid) {
       return {
         isValid: false,
@@ -59,7 +56,7 @@ export function validateBrazilianPhone(phoneNumber: string): {
 
     // Parsear para obter informações adicionais
     const parsed = parsePhoneNumber(phoneWithCountry, 'BR');
-
+    
     // Verificar se é um número válido do Brasil
     if (parsed.country !== 'BR') {
       return {
@@ -72,7 +69,7 @@ export function validateBrazilianPhone(phoneNumber: string): {
     // Retornar apenas os dígitos nacionais (sem código do país)
     // O formato será: DDD + número (10 ou 11 dígitos)
     const nationalNumber = parsed.nationalNumber;
-
+    
     return {
       isValid: true,
       phoneDigits: nationalNumber,
@@ -93,9 +90,9 @@ export function validateBrazilianPhone(phoneNumber: string): {
  */
 export function formatBrazilianPhone(phoneDigits: string): string {
   if (!phoneDigits) return '';
-
+  
   const digits = phoneDigits.replace(/\D/g, '');
-
+  
   if (digits.length === 10) {
     // Telefone fixo: (XX) XXXX-XXXX
     return digits.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
@@ -103,6 +100,7 @@ export function formatBrazilianPhone(phoneDigits: string): string {
     // Celular: (XX) XXXXX-XXXX
     return digits.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
   }
-
+  
   return digits;
 }
+

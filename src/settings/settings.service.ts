@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-  Inject,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -23,8 +17,7 @@ export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
 
   constructor(
-    @Inject(USER_REPOSITORY_TOKEN)
-    private readonly userRepository: UserRepository,
+    @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     @InjectRepository(UserSettingsEntity)
     private readonly settingsRepository: Repository<UserSettingsEntity>,
     @InjectRepository(UserActivityLogEntity)
@@ -68,12 +61,7 @@ export class SettingsService {
     };
   }
 
-  async updateName(
-    userId: string,
-    newName: string,
-    ipAddress?: string,
-    userAgent?: string,
-  ) {
+  async updateName(userId: string, newName: string, ipAddress?: string, userAgent?: string) {
     const user = await this.userRepository.findById(userId);
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
@@ -84,23 +72,12 @@ export class SettingsService {
     const oldName = user.name;
     const updatedUser = user.update(newName.trim(), user.email);
     await this.userRepository.update(updatedUser);
-    await this.logActivity(
-      userId,
-      'UPDATE_NAME',
-      `Alterou o nome de "${oldName}" para "${newName.trim()}"`,
-      ipAddress,
-      userAgent,
-    );
-
+    await this.logActivity(userId, 'UPDATE_NAME', `Alterou o nome de "${oldName}" para "${newName.trim()}"`, ipAddress, userAgent);
+    
     return { success: true, message: 'Nome atualizado com sucesso' };
   }
 
-  async updateEmail(
-    userId: string,
-    newEmail: string,
-    ipAddress?: string,
-    userAgent?: string,
-  ) {
+  async updateEmail(userId: string, newEmail: string, ipAddress?: string, userAgent?: string) {
     const user = await this.userRepository.findById(userId);
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
@@ -117,24 +94,12 @@ export class SettingsService {
     const oldEmail = user.email;
     const updatedUser = user.update(user.name, newEmail);
     await this.userRepository.update(updatedUser);
-    await this.logActivity(
-      userId,
-      'UPDATE_EMAIL',
-      `Alterou o email de "${oldEmail}" para "${newEmail}"`,
-      ipAddress,
-      userAgent,
-    );
-
+    await this.logActivity(userId, 'UPDATE_EMAIL', `Alterou o email de "${oldEmail}" para "${newEmail}"`, ipAddress, userAgent);
+    
     return { success: true, message: 'Email atualizado com sucesso' };
   }
 
-  async updatePassword(
-    userId: string,
-    currentPassword: string,
-    newPassword: string,
-    ipAddress?: string,
-    userAgent?: string,
-  ) {
+  async updatePassword(userId: string, currentPassword: string, newPassword: string, ipAddress?: string, userAgent?: string) {
     const user = await this.userRepository.findById(userId);
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
@@ -144,22 +109,14 @@ export class SettingsService {
     }
 
     if (newPassword.length < 6) {
-      throw new BadRequestException(
-        'Nova senha deve ter pelo menos 6 caracteres',
-      );
+      throw new BadRequestException('Nova senha deve ter pelo menos 6 caracteres');
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
     const updatedUser = user.changePassword(hashed);
     await this.userRepository.update(updatedUser);
-    await this.logActivity(
-      userId,
-      'UPDATE_PASSWORD',
-      'Alterou a senha',
-      ipAddress,
-      userAgent,
-    );
-
+    await this.logActivity(userId, 'UPDATE_PASSWORD', 'Alterou a senha', ipAddress, userAgent);
+    
     return { success: true, message: 'Senha atualizada com sucesso' };
   }
 
@@ -199,8 +156,7 @@ export class SettingsService {
     };
 
     if (normalizedUpdates.tradeCurrency) {
-      normalizedUpdates.tradeCurrency =
-        normalizedUpdates.tradeCurrency.toUpperCase() as TradeCurrency;
+      normalizedUpdates.tradeCurrency = normalizedUpdates.tradeCurrency.toUpperCase() as TradeCurrency;
       if (!TRADE_CURRENCY_OPTIONS.includes(normalizedUpdates.tradeCurrency)) {
         throw new BadRequestException('Moeda padrão inválida');
       }
@@ -231,36 +187,25 @@ export class SettingsService {
       normalizedUpdates.tradeCurrency &&
       normalizedUpdates.tradeCurrency !== previousState.tradeCurrency
     ) {
-      changes.push(
-        `Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`,
-      );
-
+      changes.push(`Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`);
+      
       // Atualizar também a coluna deriv_currency na tabela users
       // Se for DEMO, manter a moeda base (USD) na deriv_currency
-      const currencyForDeriv =
-        normalizedUpdates.tradeCurrency === 'DEMO'
-          ? 'USD'
-          : normalizedUpdates.tradeCurrency;
-
+      const currencyForDeriv = normalizedUpdates.tradeCurrency === 'DEMO' ? 'USD' : normalizedUpdates.tradeCurrency;
+      
       // Buscar o loginId atual para não sobrescrever
       const currentDerivInfo = await this.userRepository.getDerivInfo(userId);
       const currentLoginId = currentDerivInfo?.loginId || userId;
-
+      
       // Atualizar deriv_currency na tabela users
-      this.logger.log(
-        `[SettingsService] Atualizando deriv_currency para ${currencyForDeriv} na tabela users para userId: ${userId}`,
-      );
+      this.logger.log(`[SettingsService] Atualizando deriv_currency para ${currencyForDeriv} na tabela users para userId: ${userId}`);
       await this.userRepository.updateDerivInfo(userId, {
         loginId: currentLoginId,
         currency: currencyForDeriv,
-        balance: currentDerivInfo?.balance
-          ? parseFloat(currentDerivInfo.balance)
-          : undefined,
+        balance: currentDerivInfo?.balance ? parseFloat(currentDerivInfo.balance) : undefined,
         raw: currentDerivInfo?.raw,
       });
-      this.logger.log(
-        `[SettingsService] deriv_currency atualizado com sucesso`,
-      );
+      this.logger.log(`[SettingsService] deriv_currency atualizado com sucesso`);
     }
 
     if (
@@ -282,13 +227,7 @@ export class SettingsService {
     }
 
     if (changes.length > 0) {
-      await this.logActivity(
-        userId,
-        'UPDATE_SETTINGS',
-        changes.join(', '),
-        ipAddress,
-        userAgent,
-      );
+      await this.logActivity(userId, 'UPDATE_SETTINGS', changes.join(', '), ipAddress, userAgent);
     }
 
     return { success: true, message: 'Configurações atualizadas com sucesso' };
@@ -301,7 +240,7 @@ export class SettingsService {
       take: limit,
     });
 
-    return logs.map((log) => ({
+    return logs.map(log => ({
       id: log.id,
       action: log.action,
       description: log.description,
@@ -315,7 +254,7 @@ export class SettingsService {
       order: { lastActivity: 'DESC' },
     });
 
-    return sessions.map((session) => ({
+    return sessions.map(session => ({
       id: session.id,
       device: session.device,
       userAgent: session.userAgent,
@@ -335,20 +274,11 @@ export class SettingsService {
     return sessions[0] || null;
   }
 
-  async endAllSessions(
-    userId: string,
-    currentToken?: string,
-    ipAddress?: string,
-    userAgent?: string,
-  ) {
+  async endAllSessions(userId: string, currentToken?: string, ipAddress?: string, userAgent?: string) {
     // Deletar todas as sessões exceto a atual se o token for fornecido
     if (currentToken) {
-      const allSessions = await this.sessionRepository.find({
-        where: { userId },
-      });
-      const sessionsToDelete = allSessions.filter(
-        (s) => s.token !== currentToken,
-      );
+      const allSessions = await this.sessionRepository.find({ where: { userId } });
+      const sessionsToDelete = allSessions.filter(s => s.token !== currentToken);
       if (sessionsToDelete.length > 0) {
         await this.sessionRepository.remove(sessionsToDelete);
       }
@@ -356,13 +286,7 @@ export class SettingsService {
       await this.sessionRepository.delete({ userId });
     }
 
-    await this.logActivity(
-      userId,
-      'END_ALL_SESSIONS',
-      'Encerrou todas as sessões',
-      ipAddress,
-      userAgent,
-    );
+    await this.logActivity(userId, 'END_ALL_SESSIONS', 'Encerrou todas as sessões', ipAddress, userAgent);
     return { success: true, message: 'Todas as sessões foram encerradas' };
   }
 
@@ -410,3 +334,4 @@ export class SettingsService {
     );
   }
 }
+

@@ -11,3 +11,4 @@ export class ClientMetricsDto {
   balanceMore1000: number;
   balanceMore5000: number;
 }
+

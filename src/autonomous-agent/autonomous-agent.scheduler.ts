@@ -4,7 +4,7 @@ import { AutonomousAgentService } from './autonomous-agent.service';
 
 /**
  * ✅ Scheduler do Agente Autônomo
- *
+ * 
  * Responsável por:
  * - Verificar e resetar sessões diárias (quando muda o dia)
  * - Sincronizar agentes ativos do banco
@@ -13,7 +13,9 @@ import { AutonomousAgentService } from './autonomous-agent.service';
 export class AutonomousAgentScheduler {
   private readonly logger = new Logger(AutonomousAgentScheduler.name);
 
-  constructor(private readonly agentService: AutonomousAgentService) {}
+  constructor(
+    private readonly agentService: AutonomousAgentService,
+  ) {}
 
   /**
    * Verifica e reseta sessões diárias a cada hora
@@ -25,10 +27,7 @@ export class AutonomousAgentScheduler {
       this.logger.log('[Scheduler] Verificando e resetando sessões diárias...');
       await this.agentService.checkAndResetDailySessions();
     } catch (error) {
-      this.logger.error(
-        '[Scheduler] Erro ao verificar e resetar sessões:',
-        error,
-      );
+      this.logger.error('[Scheduler] Erro ao verificar e resetar sessões:', error);
     }
   }
 
@@ -45,3 +44,4 @@ export class AutonomousAgentScheduler {
     }
   }
 }
+

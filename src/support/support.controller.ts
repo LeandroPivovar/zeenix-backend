@@ -1,26 +1,6 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  Query,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-  UseInterceptors,
-  UploadedFile,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, HttpCode, HttpStatus, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { SupportService } from './support.service';
-import {
-  CreateFaqDto,
-  UpdateFaqDto,
-  CreateSupportItemDto,
-  UpdateSupportItemDto,
-} from '../presentation/dto/support.dto';
+import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto } from '../presentation/dto/support.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -45,18 +25,9 @@ const createImageUploadOptions = () => {
       },
     }),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-    fileFilter: (
-      req: any,
-      file: Express.Multer.File,
-      cb: (error: any, acceptFile: boolean) => void,
-    ) => {
+    fileFilter: (req: any, file: Express.Multer.File, cb: (error: any, acceptFile: boolean) => void) => {
       if (!file.mimetype.startsWith('image/')) {
-        return cb(
-          new BadRequestException(
-            'Tipo de arquivo não permitido. Apenas imagens são aceitas.',
-          ),
-          false,
-        );
+        return cb(new BadRequestException('Tipo de arquivo não permitido. Apenas imagens são aceitas.'), false);
       }
       cb(null, true);
     },
@@ -134,14 +105,8 @@ export class SupportController {
 
   @Put('items/:id')
   @UseGuards(AuthGuard('jwt'))
-  async updateSupportItem(
-    @Param('id') id: string,
-    @Body() updateSupportItemDto: UpdateSupportItemDto,
-  ) {
-    return await this.supportService.updateSupportItem(
-      id,
-      updateSupportItemDto,
-    );
+  async updateSupportItem(@Param('id') id: string, @Body() updateSupportItemDto: UpdateSupportItemDto) {
+    return await this.supportService.updateSupportItem(id, updateSupportItemDto);
   }
 
   @Delete('items/:id')
@@ -151,3 +116,7 @@ export class SupportController {
     await this.supportService.deleteSupportItem(id);
   }
 }
+
+
+
+

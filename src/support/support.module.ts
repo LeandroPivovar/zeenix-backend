@@ -7,15 +7,13 @@ import { SupportService } from './support.service';
 import { SupportController } from './support.controller';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([
-      FaqEntity,
-      SystemStatusEntity,
-      SupportItemEntity,
-    ]),
-  ],
+  imports: [TypeOrmModule.forFeature([FaqEntity, SystemStatusEntity, SupportItemEntity])],
   controllers: [SupportController],
   providers: [SupportService],
   exports: [SupportService],
 })
 export class SupportModule {}
+
+
+
+

@@ -65,3 +65,4 @@ export class UpdateSupportItemDto {
   @IsOptional()
   imagePath?: string | null;
 }
+

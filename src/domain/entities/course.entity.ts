@@ -10,3 +10,7 @@ export class Course {
     public readonly updatedAt: Date,
   ) {}
 }
+
+
+
+

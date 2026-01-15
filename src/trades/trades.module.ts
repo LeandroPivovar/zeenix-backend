@@ -19,3 +19,6 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
   exports: [TradesService],
 })
 export class TradesModule {}
+
+
+

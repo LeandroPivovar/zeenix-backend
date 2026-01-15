@@ -10,7 +10,7 @@ export class EmailService {
     // Configuração SMTP do Gmail
     const smtpSecure = process.env.SMTP_SECURE || 'tls';
     const smtpPort = parseInt(process.env.SMTP_PORT || '587');
-
+    
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: smtpPort,
@@ -22,13 +22,8 @@ export class EmailService {
     });
   }
 
-  async sendPasswordResetEmail(
-    email: string,
-    resetToken: string,
-    resetUrl: string,
-  ): Promise<void> {
-    const fromEmail =
-      process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
+  async sendPasswordResetEmail(email: string, resetToken: string, resetUrl: string): Promise<void> {
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
 
     const mailOptions = {
@@ -98,29 +93,19 @@ export class EmailService {
       await this.transporter.sendMail(mailOptions);
       this.logger.log(`Email de recuperação de senha enviado para ${email}`);
     } catch (error) {
-      this.logger.error(
-        `Erro ao enviar email de recuperação de senha: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Erro ao enviar email de recuperação de senha: ${error.message}`, error.stack);
       throw new Error('Falha ao enviar email de recuperação de senha');
     }
   }
 
-  async sendAccountActivationEmail(
-    email: string,
-    name: string,
-    resetToken: string,
-    resetUrl: string,
-  ): Promise<void> {
-    const fromEmail =
-      process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
+  async sendAccountActivationEmail(email: string, name: string, resetToken: string, resetUrl: string): Promise<void> {
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject:
-        '🎉 Bem-vindo! Complete seu cadastro como Expert - ULTRA Academy',
+      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ULTRA Academy',
       html: `
         <!DOCTYPE html>
         <html>
@@ -229,34 +214,19 @@ export class EmailService {
       await this.transporter.sendMail(mailOptions);
       this.logger.log(`Email de ativação de conta enviado para ${email}`);
     } catch (error) {
-      this.logger.error(
-        `Erro ao enviar email de ativação de conta: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`Erro ao enviar email de ativação de conta: ${error.message}`, error.stack);
       throw new Error('Falha ao enviar email de ativação de conta');
     }
   }
 
-  async sendWelcomeEmail(
-    email: string,
-    name: string,
-    password: string,
-    platformUrl: string,
-  ): Promise<void> {
-    this.logger.log(
-      `[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`,
-    );
-    this.logger.log(
-      `[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`,
-    );
-
-    const fromEmail =
-      process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
+  async sendWelcomeEmail(email: string, name: string, password: string, platformUrl: string): Promise<void> {
+    this.logger.log(`[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`);
+    this.logger.log(`[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`);
+    
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
-
-    this.logger.log(
-      `[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`,
-    );
+    
+    this.logger.log(`[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`);
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
@@ -363,37 +333,23 @@ export class EmailService {
     };
 
     try {
-      this.logger.log(
-        `[sendWelcomeEmail] Preparando para enviar email via SMTP...`,
-      );
+      this.logger.log(`[sendWelcomeEmail] Preparando para enviar email via SMTP...`);
       this.logger.log(`[sendWelcomeEmail] Destinatário: ${email}`);
       this.logger.log(`[sendWelcomeEmail] Assunto: ${mailOptions.subject}`);
-
+      
       await this.transporter.sendMail(mailOptions);
-      this.logger.log(
-        `✅ [sendWelcomeEmail] Email de boas-vindas enviado com sucesso para ${email}`,
-      );
+      this.logger.log(`✅ [sendWelcomeEmail] Email de boas-vindas enviado com sucesso para ${email}`);
     } catch (error) {
-      this.logger.error(
-        `❌ [sendWelcomeEmail] Erro ao enviar email de boas-vindas`,
-      );
+      this.logger.error(`❌ [sendWelcomeEmail] Erro ao enviar email de boas-vindas`);
       this.logger.error(`[sendWelcomeEmail] Mensagem: ${error.message}`);
       this.logger.error(`[sendWelcomeEmail] Stack: ${error.stack}`);
-      this.logger.error(
-        `[sendWelcomeEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`,
-      );
+      this.logger.error(`[sendWelcomeEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       throw new Error('Falha ao enviar email de boas-vindas');
     }
   }
 
-  async sendConfirmationEmail(
-    email: string,
-    name: string,
-    confirmationToken: string,
-    confirmationUrl: string,
-  ): Promise<void> {
-    const fromEmail =
-      process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
+  async sendConfirmationEmail(email: string, name: string, confirmationToken: string, confirmationUrl: string): Promise<void> {
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
 
     const mailOptions = {
@@ -460,30 +416,19 @@ export class EmailService {
     };
 
     try {
-      this.logger.log(
-        `[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`,
-      );
-      this.logger.log(
-        `[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`,
-      );
-      this.logger.log(
-        `[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`,
-      );
-
+      this.logger.log(`[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`);
+      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`);
+      this.logger.log(`[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`);
+      
       await this.transporter.sendMail(mailOptions);
-      this.logger.log(
-        `✅ [sendConfirmationEmail] Email de confirmação enviado com sucesso para ${email}`,
-      );
+      this.logger.log(`✅ [sendConfirmationEmail] Email de confirmação enviado com sucesso para ${email}`);
     } catch (error) {
-      this.logger.error(
-        `❌ [sendConfirmationEmail] Erro ao enviar email de confirmação para ${email}`,
-      );
+      this.logger.error(`❌ [sendConfirmationEmail] Erro ao enviar email de confirmação para ${email}`);
       this.logger.error(`[sendConfirmationEmail] Mensagem: ${error.message}`);
       this.logger.error(`[sendConfirmationEmail] Stack: ${error.stack}`);
-      this.logger.error(
-        `[sendConfirmationEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`,
-      );
+      this.logger.error(`[sendConfirmationEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       throw new Error('Falha ao enviar email de confirmação');
     }
   }
 }
+

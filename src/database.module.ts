@@ -18,15 +18,8 @@ import { TradeEntity } from './infrastructure/database/entities/trade.entity';
 import { ExpertEntity } from './infrastructure/database/entities/expert.entity';
 import { SupportItemEntity } from './infrastructure/database/entities/support-item.entity';
 
-class SnakeNamingStrategy
-  extends DefaultNamingStrategy
-  implements NamingStrategyInterface
-{
-  columnName(
-    propertyName: string,
-    customName: string,
-    embeddedPrefixes: string[],
-  ): string {
+class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
+  columnName(propertyName: string, customName: string, embeddedPrefixes: string[]): string {
     // Se um nome customizado foi fornecido, use-o exatamente como está (sem conversão)
     // O TypeORM passa o valor do parâmetro 'name' do decorator @Column como customName
     if (customName && customName.trim() !== '') {
@@ -49,43 +42,28 @@ class SnakeNamingStrategy
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService): TypeOrmModuleOptions => ({
-        type: configService.get<'mysql' | 'mariadb'>('DB_TYPE') || 'mysql',
+        type: (configService.get<'mysql' | 'mariadb'>('DB_TYPE') || 'mysql'),
         host: configService.get<string>('DB_HOST'),
         port: Number(configService.get<string>('DB_PORT')),
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [
-          UserEntity,
-          CourseEntity,
-          ModuleEntity,
-          LessonEntity,
-          UserLessonProgressEntity,
-          FaqEntity,
-          SystemStatusEntity,
-          UserSettingsEntity,
-          UserActivityLogEntity,
-          UserSessionEntity,
-          PlanEntity,
-          TradeEntity,
-          ExpertEntity,
-          SupportItemEntity,
-        ],
+        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity, ExpertEntity, SupportItemEntity],
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),
         // ✅ OTIMIZAÇÃO: Configurar pool de conexões para melhor performance e resiliência
         extra: {
-          connectionLimit: 30, // Máximo de conexões no pool (aumentado de 10 para 30)
-          queueLimit: 0, // Sem limite de fila (0 = ilimitado)
-          enableKeepAlive: true, // Manter conexões vivas
-          keepAliveInitialDelay: 0, // Iniciar keep-alive imediatamente
+          connectionLimit: 30,        // Máximo de conexões no pool (aumentado de 10 para 30)
+          queueLimit: 0,              // Sem limite de fila (0 = ilimitado)
+          enableKeepAlive: true,       // Manter conexões vivas
+          keepAliveInitialDelay: 0,     // Iniciar keep-alive imediatamente
         },
         // Alternativa: poolSize (se extra não funcionar)
-        poolSize: 30, // Tamanho do pool de conexões (aumentado de 10 para 30)
+        poolSize: 30,                  // Tamanho do pool de conexões (aumentado de 10 para 30)
       }),
       inject: [ConfigService],
     }),
   ],
 })
-export class DatabaseModule {}
+export class DatabaseModule { }

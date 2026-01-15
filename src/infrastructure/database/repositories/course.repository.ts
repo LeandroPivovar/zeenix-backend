@@ -22,7 +22,7 @@ export class TypeOrmCourseRepository implements CourseRepository {
     const entities = await this.courseRepository.find({
       order: { createdAt: 'ASC' },
     });
-    return entities.map((e) => this.toDomain(e));
+    return entities.map(e => this.toDomain(e));
   }
 
   async findById(id: string): Promise<Course | null> {
@@ -51,3 +51,7 @@ export class TypeOrmCourseRepository implements CourseRepository {
     );
   }
 }
+
+
+
+

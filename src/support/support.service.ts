@@ -2,17 +2,9 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FaqEntity } from '../infrastructure/database/entities/faq.entity';
-import {
-  SystemStatusEntity,
-  SystemStatusType,
-} from '../infrastructure/database/entities/system-status.entity';
+import { SystemStatusEntity, SystemStatusType } from '../infrastructure/database/entities/system-status.entity';
 import { SupportItemEntity } from '../infrastructure/database/entities/support-item.entity';
-import {
-  CreateFaqDto,
-  UpdateFaqDto,
-  CreateSupportItemDto,
-  UpdateSupportItemDto,
-} from '../presentation/dto/support.dto';
+import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto } from '../presentation/dto/support.dto';
 
 @Injectable()
 export class SupportService {
@@ -39,7 +31,7 @@ export class SupportService {
 
     const faqs = await queryBuilder.getMany();
 
-    return faqs.map((faq) => ({
+    return faqs.map(faq => ({
       id: faq.id,
       question: faq.question,
       answer: faq.answer,
@@ -54,16 +46,12 @@ export class SupportService {
     });
 
     // Determinar status geral: se todos estão operacionais, retorna operacional
-    const allOperational = statuses.every(
-      (s) => s.status === SystemStatusType.OPERATIONAL,
-    );
-
+    const allOperational = statuses.every(s => s.status === SystemStatusType.OPERATIONAL);
+    
     return {
       overall: allOperational ? 'operational' : 'degraded',
-      message: allOperational
-        ? 'Todos os sistemas operacionais.'
-        : 'Alguns serviços podem estar com problemas.',
-      services: statuses.map((s) => ({
+      message: allOperational ? 'Todos os sistemas operacionais.' : 'Alguns serviços podem estar com problemas.',
+      services: statuses.map(s => ({
         id: s.id,
         serviceName: s.serviceName,
         status: s.status,
@@ -129,7 +117,7 @@ export class SupportService {
     const items = await this.supportItemRepository.find({
       order: { createdAt: 'DESC' },
     });
-    return items.map((item) => ({
+    return items.map(item => ({
       id: item.id,
       title: item.title,
       subtitle: item.subtitle,
@@ -142,9 +130,7 @@ export class SupportService {
   async findSupportItemById(id: string) {
     const item = await this.supportItemRepository.findOne({ where: { id } });
     if (!item) {
-      throw new NotFoundException(
-        `Item de suporte com ID ${id} não encontrado`,
-      );
+      throw new NotFoundException(`Item de suporte com ID ${id} não encontrado`);
     }
     return {
       id: item.id,
@@ -169,15 +155,10 @@ export class SupportService {
     };
   }
 
-  async updateSupportItem(
-    id: string,
-    updateSupportItemDto: UpdateSupportItemDto,
-  ) {
+  async updateSupportItem(id: string, updateSupportItemDto: UpdateSupportItemDto) {
     const item = await this.supportItemRepository.findOne({ where: { id } });
     if (!item) {
-      throw new NotFoundException(
-        `Item de suporte com ID ${id} não encontrado`,
-      );
+      throw new NotFoundException(`Item de suporte com ID ${id} não encontrado`);
     }
     Object.assign(item, updateSupportItemDto);
     const saved = await this.supportItemRepository.save(item);
@@ -194,10 +175,12 @@ export class SupportService {
   async deleteSupportItem(id: string) {
     const item = await this.supportItemRepository.findOne({ where: { id } });
     if (!item) {
-      throw new NotFoundException(
-        `Item de suporte com ID ${id} não encontrado`,
-      );
+      throw new NotFoundException(`Item de suporte com ID ${id} não encontrado`);
     }
     await this.supportItemRepository.remove(item);
   }
 }
+
+
+
+

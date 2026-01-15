@@ -9,11 +9,7 @@ import { SettingsController } from './settings.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      UserSettingsEntity,
-      UserActivityLogEntity,
-      UserSessionEntity,
-    ]),
+    TypeOrmModule.forFeature([UserSettingsEntity, UserActivityLogEntity, UserSessionEntity]),
     UserModule,
   ],
   controllers: [SettingsController],
@@ -21,3 +17,7 @@ import { SettingsController } from './settings.controller';
   exports: [SettingsService],
 })
 export class SettingsModule {}
+
+
+
+

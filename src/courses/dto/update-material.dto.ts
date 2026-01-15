@@ -25,3 +25,4 @@ export class UpdateMaterialDto {
   @IsNumber()
   orderIndex?: number;
 }
+

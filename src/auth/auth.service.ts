@@ -1,13 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  Inject,
-  ConflictException,
-  NotFoundException,
-  BadRequestException,
-  forwardRef,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, Inject, ConflictException, NotFoundException, BadRequestException, forwardRef, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
@@ -28,18 +19,15 @@ export class AuthService {
 
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(USER_REPOSITORY_TOKEN)
-    private readonly userRepository: UserRepository,
+    @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService?: NotificationsService,
   ) {}
 
-  async register(
-    payload: CreateUserDto,
-    frontendUrl?: string,
-  ): Promise<{ message: string }> {
+  async register(payload: CreateUserDto, frontendUrl?: string): Promise<{ message: string }>
+  {
     const existing = await this.userRepository.findByEmail(payload.email);
     if (existing) {
       throw new ConflictException('Email já está em uso');
@@ -49,15 +37,13 @@ export class AuthService {
     if (payload.phone) {
       // Validar usando libphonenumber-js
       const validation = validateBrazilianPhone(payload.phone);
-
+      
       if (!validation.isValid || !validation.phoneDigits) {
         throw new BadRequestException(validation.error || 'Telefone inválido');
       }
 
       // Verificar se telefone já está em uso
-      const existingPhone = await this.userRepository.findByPhone(
-        validation.phoneDigits,
-      );
+      const existingPhone = await this.userRepository.findByPhone(validation.phoneDigits);
       if (existingPhone) {
         throw new ConflictException('Telefone já está em uso');
       }
@@ -68,19 +54,14 @@ export class AuthService {
 
     const hashed = await bcrypt.hash(payload.password, 10);
     const userId = uuidv4();
-    const user = User.create(
-      userId,
-      payload.name,
-      payload.email,
-      hashed,
-      payload.phone,
-    );
+    const user = User.create(userId, payload.name, payload.email, hashed, payload.phone);
     await this.userRepository.create(user);
 
     // Salvar usuário como inativo (status = 0)
-    await this.dataSource.query(`UPDATE users SET is_active = 0 WHERE id = ?`, [
-      userId,
-    ]);
+    await this.dataSource.query(
+      `UPDATE users SET is_active = 0 WHERE id = ?`,
+      [userId]
+    );
 
     // Gerar token de confirmação
     const confirmationToken = randomBytes(32).toString('hex');
@@ -92,44 +73,29 @@ export class AuthService {
       `UPDATE users 
        SET reset_token = ?, reset_token_expiry = ? 
        WHERE id = ?`,
-      [confirmationToken, confirmationTokenExpiry, userId],
+      [confirmationToken, confirmationTokenExpiry, userId]
     );
 
     // Construir URL de confirmação
-    const url =
-      frontendUrl || process.env.FRONTEND_URL || 'https://taxafacil.site';
+    const url = frontendUrl || process.env.FRONTEND_URL || 'https://taxafacil.site';
     const confirmationUrl = `${url}/confirm-account?token=${confirmationToken}`;
 
     // Enviar email de confirmação
     try {
-      console.log(
-        `[AuthService] Tentando enviar email de confirmação para ${payload.email}`,
-      );
-      await this.emailService.sendConfirmationEmail(
-        payload.email,
-        payload.name,
-        confirmationToken,
-        confirmationUrl,
-      );
-      console.log(
-        `[AuthService] Email de confirmação enviado com sucesso para ${payload.email}`,
-      );
+      console.log(`[AuthService] Tentando enviar email de confirmação para ${payload.email}`);
+      await this.emailService.sendConfirmationEmail(payload.email, payload.name, confirmationToken, confirmationUrl);
+      console.log(`[AuthService] Email de confirmação enviado com sucesso para ${payload.email}`);
     } catch (error) {
-      console.error(
-        `[AuthService] Erro ao enviar email de confirmação para ${payload.email}:`,
-        error,
-      );
+      console.error(`[AuthService] Erro ao enviar email de confirmação para ${payload.email}:`, error);
       // Não falhar o registro se o email falhar, mas logar o erro
       // O usuário pode solicitar reenvio do email depois
     }
 
-    return {
-      message:
-        'Cadastro realizado com sucesso! Verifique seu e-mail para confirmar a conta.',
-    };
+    return { message: 'Cadastro realizado com sucesso! Verifique seu e-mail para confirmar a conta.' };
   }
 
-  async login(email: string, password: string): Promise<{ token: string }> {
+  async login(email: string, password: string): Promise<{ token: string }>
+  {
     const user = await this.userRepository.findByEmail(email);
     if (!user) {
       throw new UnauthorizedException('Credenciais inválidas');
@@ -141,20 +107,13 @@ export class AuthService {
     // Verificar se o usuário está ativo
     const userStatus = await this.dataSource.query(
       'SELECT is_active, role FROM users WHERE id = ?',
-      [user.id],
+      [user.id]
     );
     if (!userStatus || userStatus.length === 0 || !userStatus[0].is_active) {
-      throw new UnauthorizedException(
-        'Sua conta ainda não foi confirmada. Verifique seu e-mail para confirmar a conta.',
-      );
+      throw new UnauthorizedException('Sua conta ainda não foi confirmada. Verifique seu e-mail para confirmar a conta.');
     }
     const userRole = userStatus[0].role || 'user';
-    const token = await this.signToken(
-      user.id,
-      user.email,
-      user.name,
-      userRole,
-    );
+    const token = await this.signToken(user.id, user.email, user.name, userRole);
 
     // ✅ OTIMIZAÇÃO: Buscar notificações de forma não-bloqueante (fire-and-forget)
     // Isso evita que o login trave esperando queries ao banco de dados
@@ -164,15 +123,11 @@ export class AuthService {
       setImmediate(async () => {
         try {
           if (notificationsService) {
-            this.logger.log(
-              `[Login] Buscando notificações para usuário ${user.id}...`,
-            );
+            this.logger.log(`[Login] Buscando notificações para usuário ${user.id}...`);
             await notificationsService.getLoginSummary(user.id);
           }
         } catch (error) {
-          this.logger.error(
-            `[Login] Erro ao buscar notificações: ${error.message}`,
-          );
+          this.logger.error(`[Login] Erro ao buscar notificações: ${error.message}`);
           // Não falhar o login se as notificações falharem
         }
       });
@@ -189,18 +144,12 @@ export class AuthService {
     return await this.userRepository.findById(userId);
   }
 
-  async forgotPassword(
-    email: string,
-    frontendUrl: string,
-  ): Promise<{ message: string }> {
+  async forgotPassword(email: string, frontendUrl: string): Promise<{ message: string }> {
     const user = await this.userRepository.findByEmail(email);
-
+    
     // Por segurança, sempre retornamos sucesso mesmo se o email não existir
     if (!user) {
-      return {
-        message:
-          'Se o email existir, você receberá instruções de recuperação de senha.',
-      };
+      return { message: 'Se o email existir, você receberá instruções de recuperação de senha.' };
     }
 
     // Gerar token único
@@ -213,35 +162,25 @@ export class AuthService {
       `UPDATE users 
        SET reset_token = ?, reset_token_expiry = ? 
        WHERE id = ?`,
-      [resetToken, resetTokenExpiry, user.id],
+      [resetToken, resetTokenExpiry, user.id]
     );
 
     // Construir URL de reset
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
     // Enviar email
-    await this.emailService.sendPasswordResetEmail(
-      user.email,
-      resetToken,
-      resetUrl,
-    );
+    await this.emailService.sendPasswordResetEmail(user.email, resetToken, resetUrl);
 
-    return {
-      message:
-        'Se o email existir, você receberá instruções de recuperação de senha.',
-    };
+    return { message: 'Se o email existir, você receberá instruções de recuperação de senha.' };
   }
 
-  async resetPassword(
-    token: string,
-    newPassword: string,
-  ): Promise<{ message: string }> {
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
     // Buscar usuário pelo token
     const users = await this.dataSource.query(
       `SELECT id, email, reset_token_expiry 
        FROM users 
        WHERE reset_token = ?`,
-      [token],
+      [token]
     );
 
     if (!users || users.length === 0) {
@@ -253,11 +192,9 @@ export class AuthService {
     // Verificar se o token expirou
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expiry);
-
+    
     if (now > expiryDate) {
-      throw new BadRequestException(
-        'Token expirado. Solicite uma nova recuperação de senha.',
-      );
+      throw new BadRequestException('Token expirado. Solicite uma nova recuperação de senha.');
     }
 
     // Validar nova senha
@@ -273,7 +210,7 @@ export class AuthService {
       `UPDATE users 
        SET password = ?, reset_token = NULL, reset_token_expiry = NULL 
        WHERE id = ?`,
-      [hashedPassword, user.id],
+      [hashedPassword, user.id]
     );
 
     return { message: 'Senha redefinida com sucesso!' };
@@ -285,7 +222,7 @@ export class AuthService {
       `SELECT id, email, reset_token_expiry 
        FROM users 
        WHERE reset_token = ?`,
-      [token],
+      [token]
     );
 
     if (!users || users.length === 0) {
@@ -297,11 +234,9 @@ export class AuthService {
     // Verificar se o token expirou
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expiry);
-
+    
     if (now > expiryDate) {
-      throw new BadRequestException(
-        'Token expirado. Solicite um novo link de confirmação.',
-      );
+      throw new BadRequestException('Token expirado. Solicite um novo link de confirmação.');
     }
 
     // Ativar conta e limpar token
@@ -309,20 +244,15 @@ export class AuthService {
       `UPDATE users 
        SET is_active = 1, reset_token = NULL, reset_token_expiry = NULL 
        WHERE id = ?`,
-      [user.id],
+      [user.id]
     );
 
-    return {
-      message: 'Conta confirmada com sucesso! Você já pode fazer login.',
-    };
+    return { message: 'Conta confirmada com sucesso! Você já pode fazer login.' };
   }
 
-  private async signToken(
-    sub: string,
-    email: string,
-    name: string,
-    role: string = 'user',
-  ): Promise<string> {
+  private async signToken(sub: string, email: string, name: string, role: string = 'user'): Promise<string> {
     return await this.jwtService.signAsync({ sub, email, name, role });
   }
 }
+
+

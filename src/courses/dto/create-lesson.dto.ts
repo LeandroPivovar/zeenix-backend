@@ -1,11 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  IsEnum,
-  IsNumber,
-  IsBoolean,
-  IsDateString,
-} from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsBoolean, IsDateString } from 'class-validator';
 
 export class CreateLessonDto {
   @IsString()
@@ -52,3 +45,5 @@ export class CreateLessonDto {
   @IsNumber()
   orderIndex?: number;
 }
+
+

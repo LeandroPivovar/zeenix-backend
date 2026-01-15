@@ -5,7 +5,7 @@ import { AiService } from './ai.service';
 @Injectable()
 export class AiScheduler {
   private readonly logger = new Logger(AiScheduler.name);
-
+  
   // ✅ OTIMIZAÇÃO: Flags para evitar execuções simultâneas
   private isProcessingBackground = false;
   private isProcessingFastMode = false;
@@ -22,9 +22,7 @@ export class AiScheduler {
   async handleBackgroundAIs() {
     // ✅ OTIMIZAÇÃO: Evitar execuções simultâneas
     if (this.isProcessingBackground) {
-      this.logger.debug(
-        '[Scheduler] Processamento de background já em andamento, pulando...',
-      );
+      this.logger.debug('[Scheduler] Processamento de background já em andamento, pulando...');
       return;
     }
 
@@ -52,15 +50,13 @@ export class AiScheduler {
   async handleFastModeAIs() {
     // ✅ OTIMIZAÇÃO: Evitar execuções simultâneas
     if (this.isProcessingFastMode) {
-      this.logger.debug(
-        '[Scheduler] Processamento de fast mode já em andamento, pulando...',
-      );
+      this.logger.debug('[Scheduler] Processamento de fast mode já em andamento, pulando...');
       return;
     }
 
     this.isProcessingFastMode = true;
     this.logger.debug('🔄 [Scheduler] Executando processamento de modo fast');
-
+    
     try {
       await this.aiService.processFastModeUsers();
     } catch (error) {
@@ -70,3 +66,10 @@ export class AiScheduler {
     }
   }
 }
+
+
+
+
+
+
+

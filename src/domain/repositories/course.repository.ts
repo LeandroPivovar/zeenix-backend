@@ -5,3 +5,7 @@ export interface CourseRepository {
   findById(id: string): Promise<Course | null>;
   findByIdWithLessons(id: string): Promise<Course | null>;
 }
+
+
+
+

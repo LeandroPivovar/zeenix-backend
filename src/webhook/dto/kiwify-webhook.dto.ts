@@ -49,3 +49,4 @@ export class KiwifyWebhookDto {
   subscription_id?: string;
   access_url?: string | null;
 }
+

@@ -25,7 +25,7 @@ import { EmailService } from './email.service';
         secret: config.get<string>('JWT_SECRET'),
         signOptions: {
           // Tipagem do JwtModule em v11 exige number | StringValue; usamos cast seguro
-          expiresIn: config.get('JWT_EXPIRES_IN') || '1d',
+          expiresIn: (config.get('JWT_EXPIRES_IN') || '1d') as any,
         },
       }),
       inject: [ConfigService],
@@ -36,3 +36,5 @@ import { EmailService } from './email.service';
   exports: [AuthService, EmailService],
 })
 export class AuthModule {}
+
+

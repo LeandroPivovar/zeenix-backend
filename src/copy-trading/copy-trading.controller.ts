@@ -40,7 +40,7 @@ export class CopyTradingController {
   ) {
     try {
       const userId = req.user?.userId || req.user?.sub || req.user?.id;
-
+      
       if (!userId) {
         throw new HttpException(
           {
@@ -55,19 +55,22 @@ export class CopyTradingController {
         `[ActivateCopyTrading] Ativando copy trading para usuário ${userId}, trader: ${body.traderName}`,
       );
 
-      const result = await this.copyTradingService.activateCopyTrading(userId, {
-        traderId: body.traderId,
-        traderName: body.traderName,
-        allocationType: body.allocationType,
-        allocationValue: body.allocationValue,
-        allocationPercentage: body.allocationPercentage,
-        leverage: body.leverage,
-        stopLoss: body.stopLoss,
-        takeProfit: body.takeProfit,
-        blindStopLoss: body.blindStopLoss,
-        derivToken: body.derivToken,
-        currency: body.currency || 'USD',
-      });
+      const result = await this.copyTradingService.activateCopyTrading(
+        userId,
+        {
+          traderId: body.traderId,
+          traderName: body.traderName,
+          allocationType: body.allocationType,
+          allocationValue: body.allocationValue,
+          allocationPercentage: body.allocationPercentage,
+          leverage: body.leverage,
+          stopLoss: body.stopLoss,
+          takeProfit: body.takeProfit,
+          blindStopLoss: body.blindStopLoss,
+          derivToken: body.derivToken,
+          currency: body.currency || 'USD',
+        },
+      );
 
       return {
         success: true,
@@ -360,9 +363,7 @@ export class CopyTradingController {
         );
       }
 
-      this.logger.log(
-        `[GetCopiers] Buscando copiadores para master trader: ${masterUserId}`,
-      );
+      this.logger.log(`[GetCopiers] Buscando copiadores para master trader: ${masterUserId}`);
       const copiers = await this.copyTradingService.getCopiers(masterUserId);
       this.logger.log(`[GetCopiers] Retornando ${copiers.length} copiadores`);
 
@@ -385,3 +386,4 @@ export class CopyTradingController {
     }
   }
 }
+

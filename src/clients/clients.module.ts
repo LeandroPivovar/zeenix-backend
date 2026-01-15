@@ -6,9 +6,12 @@ import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { UserSessionEntity } from '../infrastructure/database/entities/user-session.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity, UserSessionEntity])],
+  imports: [
+    TypeOrmModule.forFeature([UserEntity, UserSessionEntity]),
+  ],
   controllers: [ClientsController],
   providers: [ClientsService],
   exports: [ClientsService],
 })
 export class ClientsModule {}
+

@@ -2,15 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
-import {
-  IStrategy,
-  ModeConfig,
-  VELOZ_CONFIG,
-  MODERADO_CONFIG,
-  PRECISO_CONFIG,
-  LENTA_CONFIG,
-  ModoMartingale,
-} from './common.types';
+import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
 
 import { gerarSinalZenix } from './signal-generator';
@@ -131,7 +123,7 @@ const SOROS_MAX_NIVEL = 1; // Soros tem apenas 1 nível (entrada 1, 2)
  * Soros funciona até o nível 1 (2 entradas):
  * - Entrada 1: valor inicial
  * - Entrada 2 (Soros Nível 1): entrada anterior + lucro da entrada anterior
- *
+ * 
  * @param entradaAnterior - Valor da entrada anterior
  * @param lucroAnterior - Lucro obtido na entrada anterior
  * @param vitoriasConsecutivas - Número de vitórias consecutivas (0 ou 1)
@@ -157,11 +149,11 @@ function calcularApostaComSoros(
 /**
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * Conforme documentação completa da estratégia ZENIX v2.0
- *
+ * 
  * CONSERVADOR: Próxima Aposta = Perda Acumulada (apenas recuperar, sem lucro)
  * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.25) / payout (recuperar 100% das perdas + 25% de lucro)
  * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.50) / payout (recuperar 100% das perdas + 50% de lucro)
- *
+ * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
  * @param payoutCliente - Payout do cliente (0.95 = 95% ou 92 = 92%)
@@ -175,10 +167,9 @@ function calcularProximaAposta(
   baseStake: number = 0.35,
   ultimaAposta: number = 0,
 ): number {
-  const PAYOUT =
-    typeof payoutCliente === 'number' && payoutCliente > 1
-      ? payoutCliente / 100 // Se for 92, converter para 0.92
-      : payoutCliente; // Se já for 0.95, usar direto
+  const PAYOUT = typeof payoutCliente === 'number' && payoutCliente > 1
+    ? payoutCliente / 100  // Se for 92, converter para 0.92
+    : payoutCliente;       // Se já for 0.95, usar direto
 
   let aposta = 0;
 
@@ -191,12 +182,12 @@ function calcularProximaAposta(
     case 'moderado':
       // Meta: recuperar 100% das perdas + 10% de lucro ( conforme doc )
       // Fórmula: entrada_próxima = (perdas_totais × 1.10) / payout
-      aposta = (perdasTotais * 1.1) / PAYOUT;
+      aposta = (perdasTotais * 1.10) / PAYOUT;
       break;
     case 'agressivo':
       // Meta: recuperar 100% das perdas + 20% de lucro ( conforme doc )
       // Fórmula: entrada_próxima = (perdas_totais × 1.20) / payout
-      aposta = (perdasTotais * 1.2) / PAYOUT;
+      aposta = (perdasTotais * 1.20) / PAYOUT;
       break;
   }
 
@@ -229,10 +220,7 @@ class RiskManager {
     this.initialBalance = initialBalance;
     this.stopLossLimit = stopLossLimit;
     this.profitTarget = profitTarget;
-    this.riskMode = riskMode.toUpperCase() as
-      | 'CONSERVADOR'
-      | 'MODERADO'
-      | 'AGRESSIVO';
+    this.riskMode = riskMode.toUpperCase() as 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
     this.useBlindado = useBlindado;
     this.maxBalance = initialBalance;
     this.consecutiveLosses = 0;
@@ -242,9 +230,7 @@ class RiskManager {
 
     // Validação de Segurança
     if (this.stopLossLimit <= 0) {
-      console.error(
-        '❌ ERRO CRÍTICO: Stop Loss deve ser um valor positivo (ex: 100.00).',
-      );
+      console.error('❌ ERRO CRÍTICO: Stop Loss deve ser um valor positivo (ex: 100.00).');
     }
   }
 
@@ -294,15 +280,10 @@ class RiskManager {
           nextStake = this.totalLossAccumulated / 0.92;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(
-              `🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)}`,
-            );
+            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)}`);
           }
           if (saveLog) {
-            saveLog(
-              'info',
-              `🔄 MARTINGALE (CONSERVADOR) | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`,
-            );
+            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta
@@ -322,55 +303,35 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(
-            `⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`,
-          );
+          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`);
         }
         if (saveLog) {
-          saveLog(
-            'info',
-            `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: MODERADO (+25%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`,
-          );
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: MODERADO (+25%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
         }
       }
       // 3. AGRESSIVO: Infinito + 50% de Lucro sobre a perda
       else if (this.riskMode === 'AGRESSIVO') {
-        const targetRecovery = this.totalLossAccumulated * 1.5; // Recupera + 50%
+        const targetRecovery = this.totalLossAccumulated * 1.50; // Recupera + 50%
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(
-            `🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`,
-          );
+          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`);
         }
         if (saveLog) {
-          saveLog(
-            'info',
-            `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: AGRESSIVO (+50%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`,
-          );
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: AGRESSIVO (+50%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
         }
       }
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
     // --- LÓGICA DE SOROS (APÓS WIN) ---
-    else if (
-      lastProfit > 0 &&
-      vitoriasConsecutivas !== undefined &&
-      vitoriasConsecutivas > 0 &&
-      vitoriasConsecutivas <= 3
-    ) {
+    else if (lastProfit > 0 && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
       nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
-        logger.log(
-          `🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`,
-        );
+        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
       }
       if (saveLog) {
-        saveLog(
-          'info',
-          `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`,
-        );
+        saveLog('info', `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
       }
     }
 
@@ -378,7 +339,7 @@ class RiskManager {
     // Definição: Quem manda agora? Stop Normal ou Blindado?
     const currentProfit = currentBalance - this.initialBalance;
     const profitAccumulatedAtPeak = this.maxBalance - this.initialBalance;
-    const activationTrigger = this.profitTarget * 0.4;
+    const activationTrigger = this.profitTarget * 0.40;
     let minAllowedBalance = 0.0;
     let limitType = '';
 
@@ -396,17 +357,11 @@ class RiskManager {
 
       // Mensagem informativa (apenas quando muda o pico)
       if (currentBalance === this.maxBalance && logger) {
-        logger.log(
-          `🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`,
-        );
-        if (saveLog && currentBalance > this.initialBalance) {
-          // Apenas salvar se tiver lucro real
+        logger.log(`🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`);
+        if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog(
-            'info',
-            `🛡️ STOP BLINDADO ATIVADO\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`,
-          );
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -430,20 +385,10 @@ class RiskManager {
             logger.log(
               `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog)
-              saveLog(
-                'alerta',
-                `🏆 META/STOP BLINDADO ATINGIDO\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`,
-              );
+            if (saveLog) saveLog('alerta', `🏆 META/STOP BLINDADO ATINGIDO\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
-            logger.log(
-              `🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`,
-            );
-            if (saveLog)
-              saveLog(
-                'alerta',
-                `🛑 STOP LOSS NORMAL ATINGIDO\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`,
-              );
+            logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
+            if (saveLog) saveLog('alerta', `🛑 STOP LOSS NORMAL ATINGIDO\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
           }
         }
         return 0.0; // Sinal de parada
@@ -458,15 +403,9 @@ class RiskManager {
         );
         if (saveLog) {
           if (limitType.includes('BLINDADO')) {
-            saveLog(
-              'alerta',
-              `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`,
-            );
+            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
           } else {
-            saveLog(
-              'alerta',
-              `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`,
-            );
+            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
           }
         }
       }
@@ -501,14 +440,7 @@ export class OrionStrategy implements IStrategy {
   private defesaDirecaoInvalidaLogsEnviados = new Map<string, boolean>(); // userId -> se já logou que direção do martingale é inválida
 
   // ✅ Sistema de logs
-  private logInitialConfig(
-    userId: string,
-    mode: string,
-    riskMode: string,
-    profitTarget: number,
-    stopLoss: number,
-    blindado: boolean,
-  ) {
+  private logInitialConfig(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
     const blindadoStatus = blindado ? 'ATIVADO' : 'DESATIVADO';
     this.logger.log(`⚙️ CONFIGURAÇÕES INICIAIS`);
     this.logger.log(`• Estratégia: ORION`);
@@ -529,9 +461,7 @@ export class OrionStrategy implements IStrategy {
     // The user's provided log line:
     // this.logger.log(`[ORION][${mode}] 📊 Stop Loss: $${lossLimit.toFixed(2)} | Stop Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'} (${stopBlindadoPercent}%) | Meta: $${profitTarget.toFixed(2)}`);
     // Adapting to existing parameters:
-    this.logger.log(
-      `[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`,
-    );
+    this.logger.log(`[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`);
 
     // The original saveOrionLog is replaced by the new one
     // this.saveOrionLog(userId, this.symbol, 'info',
@@ -546,27 +476,13 @@ export class OrionStrategy implements IStrategy {
     // The user's provided saveOrionLog line:
     // this.saveOrionLog(userId, this.symbol, 'config', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode.toUpperCase()}\n• Gerenciamento de Risco: ${state.modoMartingale ? state.modoMartingale.toUpperCase() : 'CONSERVADOR'}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${lossLimit.toFixed(2)}\n• Stop Loss Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`);
     // Adapting to existing parameters:
-    this.saveOrionLog(
-      userId,
-      this.symbol,
-      'config',
-      `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode.toUpperCase()}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`,
-    );
+    this.saveOrionLog(userId, this.symbol, 'config', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode.toUpperCase()}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`);
   }
 
   private logQueue: Array<{
     userId: string;
     symbol: string;
-    type:
-      | 'info'
-      | 'tick'
-      | 'analise'
-      | 'sinal'
-      | 'operacao'
-      | 'resultado'
-      | 'alerta'
-      | 'erro'
-      | 'config';
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'config';
     message: string;
     details?: any;
   }> = [];
@@ -580,14 +496,7 @@ export class OrionStrategy implements IStrategy {
       authorized: boolean;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
-      pendingRequests: Map<
-        string,
-        {
-          resolve: (value: any) => void;
-          reject: (error: any) => void;
-          timeout: NodeJS.Timeout;
-        }
-      >;
+      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
       subscriptions: Map<string, (msg: any) => void>;
     }
   > = new Map();
@@ -595,14 +504,13 @@ export class OrionStrategy implements IStrategy {
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
+
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
   async initialize(): Promise<void> {
-    this.logger.log(
-      '[ORION] Estratégia ORION inicializada - v2.0.1 (Conservative Doubling Fixed)',
-    );
+    this.logger.log('[ORION] Estratégia ORION inicializada - v2.0.1 (Conservative Doubling Fixed)');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -629,16 +537,16 @@ export class OrionStrategy implements IStrategy {
 
     // ✅ OTIMIZADO: Processar modos em paralelo para reduzir latência
     await Promise.all([
-      this.processVelozStrategies(tick).catch((error) => {
+      this.processVelozStrategies(tick).catch(error => {
         this.logger.error('[ORION][Veloz] Erro:', error);
       }),
-      this.processModeradoStrategies(tick).catch((error) => {
+      this.processModeradoStrategies(tick).catch(error => {
         this.logger.error('[ORION][Moderado] Erro:', error);
       }),
-      this.processPrecisoStrategies(tick).catch((error) => {
+      this.processPrecisoStrategies(tick).catch(error => {
         this.logger.error('[ORION][Preciso] Erro:', error);
       }),
-      this.processLentaStrategies(tick).catch((error) => {
+      this.processLentaStrategies(tick).catch(error => {
         this.logger.error('[ORION][Lenta] Erro:', error);
       }),
     ]);
@@ -663,18 +571,7 @@ export class OrionStrategy implements IStrategy {
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
-    const {
-      mode,
-      stakeAmount,
-      derivToken,
-      currency,
-      modoMartingale,
-      entryValue,
-      profitTarget,
-      lossLimit,
-      stopLossBlindado,
-      symbol,
-    } = config;
+    const { mode, stakeAmount, derivToken, currency, modoMartingale, entryValue, profitTarget, lossLimit, stopLossBlindado, symbol } = config;
     const modeLower = (mode || 'veloz').toLowerCase();
 
     // ✅ entryValue é o valor de entrada por operação (ex: R$ 1.00)
@@ -692,8 +589,9 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
         profitTarget: profitTarget || 0,
         lossLimit: lossLimit || 0,
-        stopLossBlindado: stopLossBlindado,
+        stopLossBlindado: stopLossBlindado
       });
+
     } else if (modeLower === 'moderado') {
       this.upsertModeradoUserState({
         userId,
@@ -705,8 +603,9 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
         profitTarget: profitTarget || 0,
         lossLimit: lossLimit || 0,
-        stopLossBlindado: stopLossBlindado,
+        stopLossBlindado: stopLossBlindado
       });
+
     } else if (modeLower === 'preciso') {
       this.upsertPrecisoUserState({
         userId,
@@ -718,13 +617,12 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
         profitTarget: profitTarget || 0,
         lossLimit: lossLimit || 0,
-        stopLossBlindado: stopLossBlindado,
+        stopLossBlindado: stopLossBlindado
       });
+
     } else if (modeLower === 'lenta' || modeLower === 'lento') {
       // ✅ Suporta tanto "lenta" quanto "lento" (ambos usam a mesma configuração)
-      this.logger.log(
-        `[ORION] 🔵 Adicionando usuário ${userId} ao modo lenta/lento`,
-      );
+      this.logger.log(`[ORION] 🔵 Adicionando usuário ${userId} ao modo lenta/lento`);
       this.upsertLentaUserState({
         userId,
         stakeAmount, // Capital total
@@ -735,20 +633,17 @@ export class OrionStrategy implements IStrategy {
         ticksColetados: 0,
         profitTarget: profitTarget || 0,
         lossLimit: lossLimit || 0,
-        stopLossBlindado: stopLossBlindado,
+        stopLossBlindado: stopLossBlindado
       });
+
     } else {
-      this.logger.warn(
-        `[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`,
-      );
+      this.logger.warn(`[ORION] ⚠️ Modo desconhecido: ${modeLower} | Usuário ${userId} não foi ativado`);
     }
 
     // ✅ Resetar RiskManager ao ativar usuário (garantir contadores zerados)
     if (this.riskManagers.has(userId)) {
       this.riskManagers.delete(userId);
-      this.logger.log(
-        `[ORION] 🔄 RiskManager resetado para usuário ${userId} ao ativar`,
-      );
+      this.logger.log(`[ORION] 🔄 RiskManager resetado para usuário ${userId} ao ativar`);
     }
 
     // ✅ Resetar consecutive_losses e defesaAtivaLogged no state ao ativar usuário
@@ -758,16 +653,12 @@ export class OrionStrategy implements IStrategy {
       if ('defesaAtivaLogged' in state) {
         state.defesaAtivaLogged = false;
       }
-      this.logger.log(
-        `[ORION] 🔄 consecutive_losses e defesaAtivaLogged resetados para usuário ${userId} ao ativar`,
-      );
+      this.logger.log(`[ORION] 🔄 consecutive_losses e defesaAtivaLogged resetados para usuário ${userId} ao ativar`);
     }
 
     // LOG REMOVIDO: A responsabilidade de logar a configuração inicial agora é dos métodos upsert*UserState
     // Isso evita duplicação de logs e garante que os valores reais (passados para o estado) sejam logados.
-    this.logger.log(
-      `[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower.toUpperCase()}.`,
-    );
+    this.logger.log(`[ORION] ✅ Usuário ${userId} ativado no modo ${modeLower.toUpperCase()}.`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -778,16 +669,12 @@ export class OrionStrategy implements IStrategy {
     this.logger.log(`[ORION] Usuário ${userId} desativado`);
   }
 
-  getUserState(
-    userId: string,
-  ): VelozUserState | ModeradoUserState | PrecisoUserState | null {
-    return (
-      this.velozUsers.get(userId) ||
+  getUserState(userId: string): VelozUserState | ModeradoUserState | PrecisoUserState | null {
+    return this.velozUsers.get(userId) ||
       this.moderadoUsers.get(userId) ||
       this.precisoUsers.get(userId) ||
       this.lentaUsers.get(userId) ||
-      null
-    );
+      null;
   }
 
   /**
@@ -798,13 +685,11 @@ export class OrionStrategy implements IStrategy {
     if (lastDigits.length < 4) return false;
     const last4 = lastDigits.slice(-4);
     // Converte para 0 (Par) e 1 (Ímpar)
-    const types = last4.map((d) => d % 2);
+    const types = last4.map(d => d % 2);
     // Padrões de alternância perfeita (0=Par, 1=Ímpar)
     // Verifica se [0,1,0,1] ou [1,0,1,0]
-    if (
-      (types[0] === 0 && types[1] === 1 && types[2] === 0 && types[3] === 1) ||
-      (types[0] === 1 && types[1] === 0 && types[2] === 1 && types[3] === 0)
-    ) {
+    if ((types[0] === 0 && types[1] === 1 && types[2] === 0 && types[3] === 1) ||
+      (types[0] === 1 && types[1] === 0 && types[2] === 1 && types[3] === 0)) {
       return true;
     }
     return false;
@@ -828,6 +713,8 @@ export class OrionStrategy implements IStrategy {
     return count;
   }
 
+
+
   /**
    * ✅ ORION Master Blueprint: check_signal
    * Implementa a lógica HÍBRIDA:
@@ -843,19 +730,16 @@ export class OrionStrategy implements IStrategy {
 
     // ✅ Log de análise iniciada (Debounce)
     const agora = Date.now();
-    const lastLogTime = state.lastAnalysisLogTime || 0;
+    const lastLogTime = (state as any).lastAnalysisLogTime || 0;
     if (agora - lastLogTime > 5000) {
-      state.lastAnalysisLogTime = agora;
+      (state as any).lastAnalysisLogTime = agora;
       this.logger.log(`🧠 ANÁLISE INICIADA...`);
-      this.logger.log(
-        `• Verificando condições para o modo: ${currentMode.toUpperCase()}`,
-      );
+      this.logger.log(`• Verificando condições para o modo: ${currentMode.toUpperCase()}`);
     }
 
     // Identificar fase atual (padrão: ATAQUE)
     const phase = state.currentPhase || 'ATAQUE';
-    const consecutiveLosses =
-      riskManager?.consecutiveLosses || state.consecutive_losses || 0;
+    const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
 
     // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
     // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
@@ -863,22 +747,14 @@ export class OrionStrategy implements IStrategy {
     // Se 1-3 Losses, usar Price Action (Active Fallback)
 
     // Se 1-3 Losses (Defesa Leve / Active Fallback), usar Momentum + Força
-    if (
-      (phase === 'DEFESA' || consecutiveLosses > 0) &&
-      consecutiveLosses < 4
-    ) {
+    if ((phase === 'DEFESA' || consecutiveLosses > 0) && consecutiveLosses < 4) {
       // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
       if (currentMode === 'veloz') {
         // Veloz: 2 ticks + delta 0.3
         return this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
       } else {
         // Normal/Lento/Preciso: 3 ticks + delta 0.5
-        return this.checkMomentumAndStrength(
-          state,
-          3,
-          0.5,
-          currentMode.toUpperCase(),
-        );
+        return this.checkMomentumAndStrength(state, 3, 0.5, currentMode.toUpperCase());
       }
     }
 
@@ -888,11 +764,9 @@ export class OrionStrategy implements IStrategy {
         // Debug apenas se mudou
         const now = Date.now();
         // Cast to avoid TS error if property not in type
-        if (now - (state.lastModeChangeLog || 0) > 5000) {
-          state.lastModeChangeLog = now;
-          this.logger.debug(
-            `[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo LENTA (Análise de Dígitos Estrita)`,
-          );
+        if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
+          (state as any).lastModeChangeLog = now;
+          this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo LENTA (Análise de Dígitos Estrita)`);
         }
       }
       currentMode = 'lenta';
@@ -917,9 +791,9 @@ export class OrionStrategy implements IStrategy {
         this.symbol,
         'sinal',
         `🚀 MODO VELOZ (SEM FILTRO)\n` +
-          `• Ação: Compra Imediata (Tick a Tick)\n` +
-          `• Motivo: Estratégia de Alta Frequência\n` +
-          `📊 ENTRADA: DIGIT OVER 3`,
+        `• Ação: Compra Imediata (Tick a Tick)\n` +
+        `• Motivo: Estratégia de Alta Frequência\n` +
+        `📊 ENTRADA: DIGIT OVER 3`
       );
 
       return 'DIGITOVER';
@@ -928,8 +802,7 @@ export class OrionStrategy implements IStrategy {
     // ✅ stateless implementation aligned with reference
     let requiredLosses = 3;
     // if (currentMode === 'veloz') requiredLosses = 0; // REMOVIDO: Veloz agora é tratado acima
-    if (currentMode === 'moderado')
-      requiredLosses = 3; // 'normal' in reference
+    if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
     else if (currentMode === 'lenta') requiredLosses = 5;
     else if (currentMode === 'preciso') requiredLosses = 5;
 
@@ -938,7 +811,7 @@ export class OrionStrategy implements IStrategy {
 
     // Lógica Stateless: Extrair últimos N dígitos
     const lastTicks = this.ticks.slice(-requiredLosses);
-    const lastDigits = lastTicks.map((t) => this.extractLastDigit(t.value));
+    const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
 
     // Verificar se TODOS são < 4 (Dígitos Perdedores)
     const analysisResults = lastDigits.map((d, i) => ({
@@ -976,16 +849,16 @@ export class OrionStrategy implements IStrategy {
         this.symbol,
         'sinal',
         `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()}\n` +
-          lastDigits
-            .map(
-              (d, i) =>
-                `✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`,
-            )
-            .join('\n') +
-          '\n' +
-          `✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.\n` +
-          `💪 FORÇA DO SINAL: ${strength}%\n` +
-          `📊 ENTRADA: DIGIT OVER 3`,
+        lastDigits
+          .map(
+            (d, i) =>
+              `✅ FILTRO ${i + 1}: Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`,
+          )
+          .join('\n') +
+        '\n' +
+        `✅ GATILHO: Sequência de ${requiredLosses} dígitos < 4 detectada.\n` +
+        `💪 FORÇA DO SINAL: ${strength}%\n` +
+        `📊 ENTRADA: DIGIT OVER 3`,
       );
 
       return 'DIGITOVER';
@@ -1001,14 +874,14 @@ export class OrionStrategy implements IStrategy {
         this.symbol,
         'analise',
         `🔍 ANÁLISE: MODO ${currentMode.toUpperCase()} (RECUSADA)\n` +
-          analysisResults
-            .map(
-              (r, i) =>
-                `${r.passed ? '✅' : '❌'} FILTRO ${i + 1}: Dígito ${r.digit} (Valor: ${r.value}) ${r.passed ? '(OK < 4)' : '(FALHA >= 4)'}`,
-            )
-            .join('\n') +
-          '\n' +
-          `❌ RESULTADO: ${failedFilters}/${totalFilters} filtros falharam. Aguardando sequência...`,
+        analysisResults
+          .map(
+            (r, i) =>
+              `${r.passed ? '✅' : '❌'} FILTRO ${i + 1}: Dígito ${r.digit} (Valor: ${r.value}) ${r.passed ? '(OK < 4)' : '(FALHA >= 4)'}`,
+          )
+          .join('\n') +
+        '\n' +
+        `❌ RESULTADO: ${failedFilters}/${totalFilters} filtros falharam. Aguardando sequência...`,
       );
     }
 
@@ -1020,22 +893,17 @@ export class OrionStrategy implements IStrategy {
   /**
    * ✅ UNIFICADO: Momentum + Força do Mercado (Delta)
    * Verifica consistência direcional em N intervalos + força mínima no último movimento.
-   *
+   * 
    * MODO VELOZ: 2 ticks + delta 0.3
    * MODO NORMAL: 3 ticks + delta 0.5
    * MODO LENTO: 3 ticks + delta 0.5
-   *
+   * 
    * @param ticksCount - Número de intervalos a verificar (Ex: 2 ticks = 3 pontos de dados)
    * @param minDelta - Diferença mínima absoluta no último intervalo
    * @param modeLabel - Nome do modo para exibição nos logs (Ex: VELOZ, NORMAL)
    * @returns CALL ou PUT baseado no momentum, ou null se não houver sinal
    */
-  private checkMomentumAndStrength(
-    state: any,
-    ticksCount: number,
-    minDelta: number,
-    modeLabel: string,
-  ): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
+  private checkMomentumAndStrength(state: any, ticksCount: number, minDelta: number, modeLabel: string): DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null {
     // Precisa de N+1 pontos de dados para N intervalos
     const requiredPoints = ticksCount + 1;
     if (this.ticks.length < requiredPoints) return null;
@@ -1049,8 +917,8 @@ export class OrionStrategy implements IStrategy {
     }
 
     // Verificar consistência direcional
-    const allPositive = deltas.every((d) => d > 0);
-    const allNegative = deltas.every((d) => d < 0);
+    const allPositive = deltas.every(d => d > 0);
+    const allNegative = deltas.every(d => d < 0);
 
     if (!allPositive && !allNegative) {
       // Log throttled para não spammar
@@ -1062,8 +930,8 @@ export class OrionStrategy implements IStrategy {
           this.symbol,
           'info',
           `⏳ ANÁLISE DE RECUPERAÇÃO ${modeLabel}\n` +
-            `• Movimento inconsistente nos últimos ${ticksCount} ticks.\n` +
-            `• Aguardando direção clara (${ticksCount} movimentos consecutivos na mesma direção)...`,
+          `• Movimento inconsistente nos últimos ${ticksCount} ticks.\n` +
+          `• Aguardando direção clara (${ticksCount} movimentos consecutivos na mesma direção)...`
         );
       }
       return null;
@@ -1077,8 +945,7 @@ export class OrionStrategy implements IStrategy {
       const directionStr = allPositive ? 'SUBIU' : 'CAIU';
       const direction = allPositive ? 'ALTA' : 'BAIXA';
 
-      const logMsg =
-        `🛡️ RECUPERAÇÃO ${modeLabel} DETECTADA\n` +
+      const logMsg = `🛡️ RECUPERAÇÃO ${modeLabel} DETECTADA\n` +
         `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
         `• Delta: ${lastDelta.toFixed(3)} (Mínimo: ${minDelta})\n` +
         `• Direção: ${direction}\n` +
@@ -1087,9 +954,7 @@ export class OrionStrategy implements IStrategy {
 
       // Logar
       this.saveOrionLog(state.userId, this.symbol, 'sinal', logMsg);
-      this.logger.log(
-        `[ORION] 🛡️ Defesa ${modeLabel}: ${signal} | Delta: ${lastDelta.toFixed(3)} >= ${minDelta} | Direção: ${direction} | Payout: 95%`,
-      );
+      this.logger.log(`[ORION] 🛡️ Defesa ${modeLabel}: ${signal} | Delta: ${lastDelta.toFixed(3)} >= ${minDelta} | Direção: ${direction} | Payout: 95%`);
 
       return signal;
     }
@@ -1098,24 +963,18 @@ export class OrionStrategy implements IStrategy {
     const now = Date.now();
     if (now - (state.lastRecoveryLog || 0) > 4000) {
       state.lastRecoveryLog = now;
-      this.logger.debug(
-        `[ORION] ⏳ Aguardando Momentum (${ticksCount}t) + Delta >= ${minDelta}... (Atual: ${lastDelta.toFixed(3)})`,
-      );
+      this.logger.debug(`[ORION] ⏳ Aguardando Momentum (${ticksCount}t) + Delta >= ${minDelta}... (Atual: ${lastDelta.toFixed(3)})`);
 
       // Log para o usuário
-      const directionStr = allPositive
-        ? 'SUBIU'
-        : allNegative
-          ? 'CAIU'
-          : 'INDEFINIDO';
+      const directionStr = allPositive ? 'SUBIU' : allNegative ? 'CAIU' : 'INDEFINIDO';
       this.saveOrionLog(
         state.userId,
         this.symbol,
         'info',
         `⏳ ANÁLISE DE RECUPERAÇÃO ${modeLabel}\n` +
-          `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
-          `• Força atual: ${lastDelta.toFixed(3)} (Mínimo necessário: ${minDelta})\n` +
-          `• Aguardando força suficiente para entrada...`,
+        `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
+        `• Força atual: ${lastDelta.toFixed(3)} (Mínimo necessário: ${minDelta})\n` +
+        `• Aguardando força suficiente para entrada...`
       );
     }
 
@@ -1128,34 +987,25 @@ export class OrionStrategy implements IStrategy {
     return sum / slice.length;
   }
 
-  private logDefenseSignal(
-    state: any,
-    modeName: string,
-    logic: string,
-    signal: string,
-  ) {
+  private logDefenseSignal(state: any, modeName: string, logic: string, signal: string) {
     if (state.lastDefenseLogTick === this.ticks.length) return; // Evita spam no mesmo tick
     state.lastDefenseLogTick = this.ticks.length;
 
     this.logger.log(`🛡️ ANÁLISE DEFESA: ${modeName}`);
     this.logger.log(`✅ LÓGICA: ${logic}`);
-    this.logger.log(
-      `📊 ENTRADA: ${signal === 'CALL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`,
-    );
+    this.logger.log(`📊 ENTRADA: ${signal === 'CALL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`);
 
     this.saveOrionLog(
       state.userId,
       this.symbol,
       'sinal',
-      `🛡️ ANÁLISE DEFESA: ${modeName}\n✅ LÓGICA: ${logic}\n📊 ENTRADA: ${signal === 'CALL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`,
+      `🛡️ ANÁLISE DEFESA: ${modeName}\n✅ LÓGICA: ${logic}\n📊 ENTRADA: ${signal === 'CALL' ? 'CALL (Sobe)' : 'PUT (Desce)'}`
     );
   }
 
   private async processVelozStrategies(latestTick: Tick): Promise<void> {
     if (this.velozUsers.size === 0) {
-      this.logger.debug(
-        `[ORION][Veloz] Nenhum usuário ativo (total: ${this.velozUsers.size})`,
-      );
+      this.logger.debug(`[ORION][Veloz] Nenhum usuário ativo (total: ${this.velozUsers.size})`);
       return;
     }
 
@@ -1176,14 +1026,9 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Logar progresso a cada 20% ou no final (Reduzir spam em amostras pequenas)
-        if (
-          ticksAtuais > 0 &&
-          ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0
-        ) {
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Veloz)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
-          this.logger.debug(
-            `[ORION][Veloz][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`,
-          );
+          this.logger.debug(`[ORION][Veloz][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
@@ -1208,14 +1053,9 @@ export class OrionStrategy implements IStrategy {
       if (state.isOperationActive) {
         // Log a cada 10s se estiver travado muito tempo
         const now = Date.now();
-        if (
-          !(state as any).lastLockLog ||
-          now - (state as any).lastLockLog > 10000
-        ) {
+        if (!(state as any).lastLockLog || now - (state as any).lastLockLog > 10000) {
           (state as any).lastLockLog = now;
-          this.logger.debug(
-            `[ORION][Veloz][${userId.substring(0, 8)}] 🔒 Operação ativa, pulando tick...`,
-          );
+          this.logger.debug(`[ORION][Veloz][${userId.substring(0, 8)}] 🔒 Operação ativa, pulando tick...`);
         }
         continue;
       }
@@ -1230,29 +1070,20 @@ export class OrionStrategy implements IStrategy {
           // Log throttled
           if (now - ((state as any).lastCooldownLog || 0) > 2000) {
             (state as any).lastCooldownLog = now;
-            this.logger.debug(
-              `[ORION][Veloz] ⏳ Aguardando cooldown de recuperação (5s)...`,
-            );
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando cooldown de recuperação (5s)...`);
           }
           continue;
         }
 
         // ✅ [ZENIX v2.0] MODO VELOZ: 2 Ticks + Delta 0.3
-        const nexusSignal = this.checkMomentumAndStrength(
-          state,
-          2,
-          0.3,
-          'VELOZ',
-        );
+        const nexusSignal = this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
 
         if (!nexusSignal) {
           // Aguardando força...
           // Log throttled
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(
-              `[ORION][Veloz] ⏳ Aguardando Momentum (2 Ticks) + Delta >= 0.3...`,
-            );
+            this.logger.debug(`[ORION][Veloz] ⏳ Aguardando Momentum (2 Ticks) + Delta >= 0.3...`);
           }
           continue;
         }
@@ -1261,22 +1092,10 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(
-          `[ORION][Veloz][${userId}] 🔄 Recuperação (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🔄 Recuperação. Price Action (2 Movimentos) (${novoSinal})`,
-        );
+        this.logger.log(`[ORION][Veloz][${userId}] 🔄 Recuperação (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação. Price Action (2 Movimentos) (${novoSinal})`);
 
-        await this.executeOrionOperation(
-          state,
-          novoSinal,
-          'veloz',
-          entryNumber,
-        );
+        await this.executeOrionOperation(state, novoSinal, 'veloz', entryNumber);
         continue;
       }
 
@@ -1288,26 +1107,16 @@ export class OrionStrategy implements IStrategy {
         if (state.perdaAcumulada > 0) {
           const now = Date.now();
           const lastLog = (state as any).lastWaitingLog || 0;
-          if (now - lastLog > 5000) {
-            // Log a cada 5 segundos
+          if (now - lastLog > 5000) { // Log a cada 5 segundos
             (state as any).lastWaitingLog = now;
-            this.logger.debug(
-              `[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`,
-            );
+            this.logger.debug(`[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
           }
         }
         continue;
       }
 
-      this.logger.log(
-        `[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
-      );
-      this.saveOrionLog(
-        userId,
-        this.symbol,
-        'sinal',
-        `✅ SINAL GERADO: ${sinal}`,
-      );
+      this.logger.log(`[ORION][Veloz] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
+      this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
 
       let entryNumber = 1;
       // ✅ CORREÇÃO: Qualquer perda acumulada deve acionar lógica de Martingale (RiskManager/Entry Number)
@@ -1316,15 +1125,8 @@ export class OrionStrategy implements IStrategy {
         state.ultimaDirecaoMartingale = sinal;
         const key = `veloz_defesa_invalida_${userId}`;
         this.defesaDirecaoInvalidaLogsEnviados.delete(key);
-        this.logger.log(
-          `[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`,
-        );
+        this.logger.log(`[ORION][Veloz][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
         const key = `veloz_defesa_invalida_${userId}`;
@@ -1355,14 +1157,9 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Logar progresso a cada 20%
-        if (
-          ticksAtuais > 0 &&
-          ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0
-        ) {
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Moderado)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
-          this.logger.debug(
-            `[ORION][Moderado][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`,
-          );
+          this.logger.debug(`[ORION][Moderado][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
@@ -1396,20 +1193,13 @@ export class OrionStrategy implements IStrategy {
           // Log throttled
           if (now - ((state as any).lastCooldownLog || 0) > 2000) {
             (state as any).lastCooldownLog = now;
-            this.logger.debug(
-              `[ORION][Moderado] ⏳ Aguardando cooldown de recuperação (5s)...`,
-            );
+            this.logger.debug(`[ORION][Moderado] ⏳ Aguardando cooldown de recuperação (5s)...`);
           }
           continue;
         }
 
         // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (MODERADO: 3 Ticks + Delta 0.5)
-        const smaSignal = this.checkMomentumAndStrength(
-          state,
-          3,
-          0.5,
-          'MODERADO',
-        );
+        const smaSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'MODERADO');
 
         if (!smaSignal) {
           // Aguardando...
@@ -1420,22 +1210,10 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(
-          `[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (SMA) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🔄 Recuperação Rápida. Alternando para Momentum + Força (${novoSinal})`,
-        );
+        this.logger.log(`[ORION][Moderado][${userId}] 🔄 Recuperação Rápida (SMA) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Alternando para Momentum + Força (${novoSinal})`);
 
-        await this.executeOrionOperation(
-          state,
-          novoSinal,
-          'moderado',
-          entryNumber,
-        );
+        await this.executeOrionOperation(state, novoSinal, 'moderado', entryNumber);
         continue;
       }
 
@@ -1449,38 +1227,22 @@ export class OrionStrategy implements IStrategy {
           const lastLog = (state as any).lastWaitingLog || 0;
           if (now - lastLog > 5000) {
             (state as any).lastWaitingLog = now;
-            this.logger.debug(
-              `[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`,
-            );
+            this.logger.debug(`[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
           }
         }
         continue;
       }
 
-      this.logger.log(
-        `[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
-      );
-      this.saveOrionLog(
-        userId,
-        this.symbol,
-        'sinal',
-        `✅ SINAL GERADO: ${sinal}`,
-      );
+      this.logger.log(`[ORION][Moderado] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
+      this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
 
       let entryNumber = 1;
       // ✅ CORREÇÃO: Qualquer perda acumulada deve acionar lógica de Martingale
       if (state.perdaAcumulada > 0) {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
-        this.logger.log(
-          `[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`,
-        );
+        this.logger.log(`[ORION][Moderado][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
@@ -1508,14 +1270,9 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Logar progresso a cada 20%
-        if (
-          ticksAtuais > 0 &&
-          ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0
-        ) {
+        if (ticksAtuais > 0 && ticksAtuais % Math.max(5, Math.floor(amostraNecessaria / 5)) === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Preciso)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
-          this.logger.debug(
-            `[ORION][Preciso][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`,
-          );
+          this.logger.debug(`[ORION][Preciso][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
@@ -1542,12 +1299,7 @@ export class OrionStrategy implements IStrategy {
       // ✅ CORREÇÃO MARTINGALE: Active Fallback usando Momentum + Delta (PRECISO: 3 Ticks + Delta 0.5)
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
         // Usar lógica "Momentum + Delta" também para Preciso
-        const momentumSignal = this.checkMomentumAndStrength(
-          state,
-          3,
-          0.5,
-          'PRECISO',
-        );
+        const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
 
         if (!momentumSignal) continue;
 
@@ -1556,22 +1308,10 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(
-          `[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`,
-        );
+        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
 
-        await this.executeOrionOperation(
-          state,
-          novoSinal,
-          'preciso',
-          entryNumber,
-        );
+        await this.executeOrionOperation(state, novoSinal, 'preciso', entryNumber);
         continue;
       }
 
@@ -1580,30 +1320,16 @@ export class OrionStrategy implements IStrategy {
       const sinal = this.check_signal(state, 'preciso', riskManager);
       if (!sinal) continue;
 
-      this.logger.log(
-        `[ORION][Preciso] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
-      );
-      this.saveOrionLog(
-        userId,
-        this.symbol,
-        'sinal',
-        `✅ SINAL GERADO: ${sinal}`,
-      );
+      this.logger.log(`[ORION][Preciso] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
+      this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
 
       let entryNumber = 1;
       // ✅ CORREÇÃO: Qualquer perda acumulada deve acionar lógica de Martingale
       if (state.perdaAcumulada > 0) {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
-        this.logger.log(
-          `[ORION][Preciso][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`,
-        );
+        this.logger.log(`[ORION][Preciso][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🛡️ Defesa ativa. Continuando MARTINGALE com nova direção em modo LENTO (2 movimentos)`);
       } else {
         state.ultimaDirecaoMartingale = sinal;
       }
@@ -1614,9 +1340,7 @@ export class OrionStrategy implements IStrategy {
 
   private async processLentaStrategies(latestTick: Tick): Promise<void> {
     if (this.lentaUsers.size === 0) {
-      this.logger.debug(
-        `[ORION][Lenta] Nenhum usuário ativo (total: ${this.lentaUsers.size})`,
-      );
+      this.logger.debug(`[ORION][Lenta] Nenhum usuário ativo (total: ${this.lentaUsers.size})`);
       return;
     }
 
@@ -1641,9 +1365,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Logar progresso periodicamente (apenas a cada 10 ticks)
         if (ticksAtuais > 0 && ticksAtuais % 10 === 0) {
           const logMsg = `📡 COLETANDO DADOS...\n• META DE COLETA: ${amostraNecessaria} TICKS (Modo Lenta)\n• CONTAGEM: ${ticksAtuais}/${amostraNecessaria}`;
-          this.logger.debug(
-            `[ORION][Lenta][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`,
-          );
+          this.logger.debug(`[ORION][Lenta][${userId}] Coletando: ${ticksAtuais}/${amostraNecessaria}`);
           this.saveOrionLog(userId, this.symbol, 'info', logMsg);
         }
 
@@ -1675,10 +1397,7 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ [ZENIX v2.0] Cooldown DE TEMPO (10s) - Pedido explícito de precisão
       const now = Date.now();
-      if (
-        state.lastOperationTimestamp &&
-        now - state.lastOperationTimestamp < 10000
-      ) {
+      if (state.lastOperationTimestamp && (now - state.lastOperationTimestamp < 10000)) {
         // Aguardando tempo...
         continue;
       }
@@ -1687,21 +1406,14 @@ export class OrionStrategy implements IStrategy {
       // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
       if (state.perdaAcumulada > 0 && !defesaAtiva) {
         // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (LENTA: 3 Ticks + Delta 0.5)
-        const pullbackSignal = this.checkMomentumAndStrength(
-          state,
-          3,
-          0.5,
-          'LENTA',
-        );
+        const pullbackSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'LENTA');
 
         if (!pullbackSignal) {
           // Aguardando confirmação do Momentum...
           const now = Date.now();
           if (now - (state.lastRecoveryLog || 0) > 4000) {
             state.lastRecoveryLog = now;
-            this.logger.debug(
-              `[ORION][Lenta] ⏳ Aguardando Momentum (3 Ticks) + Delta >= 0.5...`,
-            );
+            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Momentum (3 Ticks) + Delta >= 0.5...`);
           }
           continue;
         }
@@ -1710,24 +1422,12 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(
-          `[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`,
-        );
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
 
         // Atualiza timestamp também na recuperação
         state.lastOperationTimestamp = Date.now();
-        await this.executeOrionOperation(
-          state,
-          novoSinal,
-          'lenta',
-          entryNumber,
-        );
+        await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
         continue;
       }
 
@@ -1740,32 +1440,21 @@ export class OrionStrategy implements IStrategy {
           const lastLog = (state as any).lastWaitingLog || 0;
           if (now - lastLog > 5000) {
             (state as any).lastWaitingLog = now;
-            this.logger.debug(
-              `[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`,
-            );
+            this.logger.debug(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Aguardando sinal de Price Action...`);
           }
         }
         continue;
       }
 
-      this.logger.log(
-        `[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`,
-      );
-      this.saveOrionLog(
-        userId,
-        this.symbol,
-        'sinal',
-        `✅ SINAL GERADO: ${sinal}`,
-      );
+      this.logger.log(`[ORION][Lenta] 🎯 SINAL | User: ${userId} | Operação: ${sinal}`);
+      this.saveOrionLog(userId, this.symbol, 'sinal', `✅ SINAL GERADO: ${sinal}`);
 
       let entryNumber = 1;
       // ✅ CORREÇÃO: Qualquer perda acumulada deve acionar lógica de Martingale
       if (state.perdaAcumulada > 0) {
         entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = sinal;
-        this.logger.log(
-          `[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`,
-        );
+        this.logger.log(`[ORION][Lenta][${userId}] 🛡️ Defesa ativa. Continuando MARTINGALE com nova direção | Entrada: ${entryNumber} | Direção: ${sinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
         // Removido log duplicado de "Recuperação Rápida" aqui, pois executeOrionOperation já loga o Martingale
       } else {
         state.ultimaDirecaoMartingale = sinal;
@@ -1823,26 +1512,17 @@ export class OrionStrategy implements IStrategy {
 
         // ✅ [NOVO] Criar/obter RiskManager para este usuário
         if (!this.riskManagers.has(state.userId)) {
-          const useBlindado =
-            config.stopBlindadoPercent !== null &&
-            config.stopBlindadoPercent !== undefined;
+          const useBlindado = config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined;
           // Mapear modoMartingale para riskMode
           const modoMartingale = state.modoMartingale || 'conservador';
-          const riskMode =
-            modoMartingale.toUpperCase() === 'CONSERVADOR'
-              ? 'CONSERVADOR'
-              : modoMartingale.toUpperCase() === 'MODERADO'
-                ? 'MODERADO'
-                : 'AGRESSIVO';
+          const riskMode = modoMartingale.toUpperCase() === 'CONSERVADOR'
+            ? 'CONSERVADOR'
+            : modoMartingale.toUpperCase() === 'MODERADO'
+              ? 'MODERADO'
+              : 'AGRESSIVO';
           this.riskManagers.set(
             state.userId,
-            new RiskManager(
-              capitalInicial,
-              lossLimit,
-              profitTarget,
-              riskMode,
-              useBlindado,
-            ),
+            new RiskManager(capitalInicial, lossLimit, profitTarget, riskMode, useBlindado),
           );
         }
 
@@ -1860,22 +1540,14 @@ export class OrionStrategy implements IStrategy {
           this.logger.log(
             `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
           );
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'info',
-            `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`,
-          );
+          this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
 
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
              SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [
-              `Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`,
-              state.userId,
-            ],
+            [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId],
           );
 
           // Remover usuário do monitoramento
@@ -1889,24 +1561,19 @@ export class OrionStrategy implements IStrategy {
 
         // ✅ Verificar STOP-LOSS BLINDADO antes de executar operação (ZENIX v2.0 - Dynamic Trailing)
         // Ativar se atingir 40% da meta. Proteger 50% do lucro máximo (PICO).
-        if (
-          config.stopBlindadoPercent !== null &&
-          config.stopBlindadoPercent !== undefined
-        ) {
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           let profitPeak = parseFloat(config.profitPeak) || 0;
-          const stopBlindadoPercent =
-            parseFloat(config.stopBlindadoPercent) || 50.0;
-          const activationThreshold = profitTarget * 0.4;
+          const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
+          const activationThreshold = profitTarget * 0.40;
 
           // ✅ Log de progresso ANTES de ativar (quando lucro < 40% da meta)
           if (lucroAtual > 0 && lucroAtual < activationThreshold) {
-            const percentualProgresso =
-              (lucroAtual / activationThreshold) * 100;
+            const percentualProgresso = (lucroAtual / activationThreshold) * 100;
             this.saveOrionLog(
               state.userId,
               this.symbol,
               'info',
-              `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationThreshold.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`,
+              `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationThreshold.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`
             );
           }
 
@@ -1922,34 +1589,26 @@ export class OrionStrategy implements IStrategy {
 
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] ℹ️🛡️ Stop Blindado Atualizado | ` +
-                  `Lucro: $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`,
+                `Lucro: $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`,
+                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
             }
 
             // Atualizar no banco em background
-            this.dataSource
-              .query(
-                `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-                [profitPeak, state.userId],
-              )
-              .catch((err) =>
-                this.logger.error(
-                  `[ORION] Erro ao atualizar profit_peak:`,
-                  err,
-                ),
-              );
+            this.dataSource.query(
+              `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+              [profitPeak, state.userId],
+            ).catch(err => this.logger.error(`[ORION] Erro ao atualizar profit_peak:`, err));
           }
 
           // Ativar apenas se atingiu 40% da meta
-          if (profitPeak >= profitTarget * 0.4) {
-            const stopBlindadoPercent =
-              parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
+          if (profitPeak >= profitTarget * 0.40) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
             const fatorProtecao = stopBlindadoPercent / 100;
 
             // Trailing Stop: Protege % do PICO de lucro
@@ -1962,14 +1621,14 @@ export class OrionStrategy implements IStrategy {
               this.defesaDirecaoInvalidaLogsEnviados.set(stopBlindadoKey, true);
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] ℹ️🛡️ Stop Blindado Ativado | ` +
-                  `Lucro: $${profitPeak.toFixed(2)} | ` +
-                  `Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`,
+                `Lucro: $${profitPeak.toFixed(2)} | ` +
+                `Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`,
+                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
             }
 
@@ -1979,8 +1638,8 @@ export class OrionStrategy implements IStrategy {
 
               this.logger.warn(
                 `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-                  `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
-                  `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`,
+                `Capital Sessão: $${capitalSessao.toFixed(2)} <= Stop: $${stopBlindado.toFixed(2)} | ` +
+                `Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%) - BLOQUEANDO OPERAÇÃO`,
               );
 
               this.saveOrionLog(
@@ -2019,22 +1678,14 @@ export class OrionStrategy implements IStrategy {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO! Perda atual: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - BLOQUEANDO OPERAÇÃO`,
           );
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'alerta',
-            `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`,
-          );
+          this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
 
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
              SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [
-              `Stop loss atingido: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`,
-              state.userId,
-            ],
+            [`Stop loss atingido: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
           );
 
           // Remover usuário do monitoramento
@@ -2053,32 +1704,19 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ Verificar Stop Loss Blindado para Martingale
-        if (
-          config.stopBlindadoPercent !== null &&
-          config.stopBlindadoPercent !== undefined &&
-          entry > 1
-        ) {
-          const profitPeak = Math.max(
-            parseFloat(config.profitPeak) || 0,
-            lucroAtual,
-          );
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined && entry > 1) {
+          const profitPeak = Math.max(parseFloat(config.profitPeak) || 0, lucroAtual);
           // Só ativa se atingiu 40% da meta
-          if (profitPeak >= profitTarget * 0.4) {
-            const stopBlindadoPercent =
-              parseFloat(config.stopBlindadoPercent) || 50.0;
+          if (profitPeak >= profitTarget * 0.40) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
             const stopBlindado = capitalInicial + protectedAmount;
 
             // Calcular próximo stake do martingale
             const payoutCliente = 92;
             const baseStake = state.apostaInicial || 0.35;
-            const stakeMartingale = calcularProximaAposta(
-              state.perdaAcumulada,
-              state.modoMartingale,
-              payoutCliente,
-              baseStake,
-            );
-            const perdaTotalPotencial = perdaAtual + stakeMartingale; // Perda atual + novo risco (?)
+            const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
+            const perdaTotalPotencial = perdaAtual + stakeMartingale; // Perda atual + novo risco (?) 
             // Na verdade, queremos saber se: Capital Sessão - Stake < Stop Blindado
             const saldoDisponivel = capitalSessao - stopBlindado;
 
@@ -2087,15 +1725,8 @@ export class OrionStrategy implements IStrategy {
               // Usuário pediu "reajuste seu valor".
               // Se houver saldo positivo (> 0.35), usamos o saldo restante. Senão reiniciamos.
               if (saldoDisponivel >= 0.35) {
-                this.logger.warn(
-                  `[ORION] ⚠️🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel.toFixed(2)}`,
-                );
-                this.saveOrionLog(
-                  state.userId,
-                  this.symbol,
-                  'alerta',
-                  `⚠️🛡️ Ajustando martingale para respeitar Stop Blindado: $${stakeMartingale.toFixed(2)} ➔ $${saldoDisponivel.toFixed(2)}`,
-                );
+                this.logger.warn(`[ORION] ⚠️🛡️ Ajustando stake Martingale para respeitar Stop Blindado. De: ${stakeMartingale} para: ${saldoDisponivel.toFixed(2)}`);
+                this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️🛡️ Ajustando martingale para respeitar Stop Blindado: $${stakeMartingale.toFixed(2)} ➔ $${saldoDisponivel.toFixed(2)}`);
 
                 // ✅ NÃO resetar o estado do martingale, apenas limitar o valor da aposta
                 // Isso garante que se ganhar, o sistema reconheça como vitória de martingale e reset para aposta inicial
@@ -2119,12 +1750,7 @@ export class OrionStrategy implements IStrategy {
           // Se sim, usar aposta base ao invés de martingale
           const payoutCliente = 92;
           const baseStake = state.apostaInicial || 0.35;
-          const stakeMartingale = calcularProximaAposta(
-            state.perdaAcumulada,
-            state.modoMartingale,
-            payoutCliente,
-            baseStake,
-          );
+          const stakeMartingale = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
           const perdaTotalPotencial = perdaAtual + stakeMartingale;
 
           if (perdaTotalPotencial > lossLimit) {
@@ -2132,21 +1758,14 @@ export class OrionStrategy implements IStrategy {
             this.logger.warn(
               `[ORION][${mode}][${state.userId}] ⚠️ Martingale bloqueado! Próxima aposta ($${stakeMartingale.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Usando aposta base.`,
             );
-            this.saveOrionLog(
-              state.userId,
-              this.symbol,
-              'alerta',
-              `⚠️ Martingale bloqueado! Próxima aposta ($${stakeMartingale.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Usando aposta base.`,
-            );
+            this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Martingale bloqueado! Próxima aposta ($${stakeMartingale.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Usando aposta base.`);
 
             // Resetar martingale e usar aposta base
             state.perdaAcumulada = 0;
             state.ultimaDirecaoMartingale = null;
             state.martingaleStep = 0;
             if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
-            this.logger.log(
-              `[ORION][${mode}][${state.userId}] 🔄 Martingale resetado. Continuando com aposta base.`,
-            );
+            this.logger.log(`[ORION][${mode}][${state.userId}] 🔄 Martingale resetado. Continuando com aposta base.`);
             // Continuar com entry = 1 (aposta base)
             entry = 1;
           }
@@ -2162,21 +1781,13 @@ export class OrionStrategy implements IStrategy {
             this.logger.warn(
               `[ORION][${mode}][${state.userId}] ⚠️ Atenção: Aposta base ($${stakeBase.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Permitindo operação. Stop loss será verificado após perda.`,
             );
-            this.saveOrionLog(
-              state.userId,
-              this.symbol,
-              'alerta',
-              `⚠️ Atenção: Aposta base ($${stakeBase.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Permitindo operação. Stop loss será verificado após perda.`,
-            );
+            this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Atenção: Aposta base ($${stakeBase.toFixed(2)}) ultrapassaria stop loss de $${lossLimit.toFixed(2)}. Permitindo operação. Stop loss será verificado após perda.`);
             // Continuar com a operação - não bloquear
           }
         }
       }
     } catch (error) {
-      this.logger.error(
-        `[ORION][${mode}][${state.userId}] Erro ao verificar stop loss:`,
-        error,
-      );
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar stop loss:`, error);
       // Continuar mesmo se houver erro na verificação (fail-open)
     }
 
@@ -2208,11 +1819,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ SOROS: Entrada anterior + lucro anterior
         const apostaAnterior = state.apostaBase || state.apostaInicial || 0.35;
         const lucroAnterior = state.ultimoLucro || 0;
-        const apostaSoros = calcularApostaComSoros(
-          apostaAnterior,
-          lucroAnterior,
-          vitoriasAtuais,
-        );
+        const apostaSoros = calcularApostaComSoros(apostaAnterior, lucroAnterior, vitoriasAtuais);
 
         this.logger.debug(
           `[ORION][${mode}][${state.userId}] 🔍 Cálculo Soros | Aposta anterior: $${apostaAnterior.toFixed(2)} | Lucro anterior: $${lucroAnterior.toFixed(2)} | Resultado: ${apostaSoros !== null ? '$' + apostaSoros.toFixed(2) : 'null'}`,
@@ -2235,16 +1842,10 @@ export class OrionStrategy implements IStrategy {
         // Primeira entrada normal: usar aposta inicial
         // ✅ GARANTIR que após recuperar do martingale, sempre use aposta inicial
         // Se vitoriasConsecutivas é 0 e ultimoLucro é 0, deve usar aposta inicial
-        if (
-          (state.vitoriasConsecutivas || 0) === 0 &&
-          (state.ultimoLucro || 0) === 0
-        ) {
+        if ((state.vitoriasConsecutivas || 0) === 0 && (state.ultimoLucro || 0) === 0) {
           stakeAmount = state.apostaInicial || 0.35;
           // ✅ Garantir que apostaBase também está resetada
-          if (
-            'apostaBase' in state &&
-            state.apostaBase !== state.apostaInicial
-          ) {
+          if ('apostaBase' in state && state.apostaBase !== state.apostaInicial) {
             state.apostaBase = state.apostaInicial || 0.35;
             this.logger.debug(
               `[ORION][${mode}][${state.userId}] 🔄 Corrigindo apostaBase para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)}`,
@@ -2269,32 +1870,19 @@ export class OrionStrategy implements IStrategy {
       // ✅ [CONCURSO] ZENIX v2.0 - Resetar martingale se ultrapassar limite de 5 martingales (6 entradas totais)
       // entry 1: base, entry 2-6: martingale 1-5. entry 7: reset.
       if (state.modoMartingale === 'conservador' && entry > 6) {
-        this.logger.warn(
-          `[ORION][${mode}][${state.userId}] ⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR). Resetando.`,
-        );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'alerta',
-          `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${(state.apostaInicial || 0.35).toFixed(2)})`,
-        );
+        this.logger.warn(`[ORION][${mode}][${state.userId}] ⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR). Resetando.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${(state.apostaInicial || 0.35).toFixed(2)})`);
 
         state.perdaAcumulada = 0;
         state.martingaleStep = 0;
         state.vitoriasConsecutivas = 0;
         state.consecutive_losses = 0;
-        if ('ultimaDirecaoMartingale' in state)
-          state.ultimaDirecaoMartingale = null;
+        if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
 
         stakeAmount = baseStake;
         forcedStake = baseStake; // ✅ FORÇAR que este valor seja respeitado mesmo com RiskManager
       } else {
-        stakeAmount = calcularProximaAposta(
-          state.perdaAcumulada,
-          state.modoMartingale,
-          payoutCliente,
-          baseStake,
-        );
+        stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
       }
 
       // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
@@ -2307,23 +1895,14 @@ export class OrionStrategy implements IStrategy {
 
       // ✅ Log: Martingale Ativado (Formato Solicitado)
       const targetProfit = 0; // Simplificação, ou calcular se disponível
-      this.logger.log(
-        `🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`,
-      );
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'alerta',
-        `🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`,
-      );
+      this.logger.log(`🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`);
+      this.saveOrionLog(state.userId, this.symbol, 'alerta', `🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`);
     }
 
     // ✅ Aplicar limite forçado (se houver) decorrente do Stop Loss Blindado/Normal
     if (forcedStake !== null) {
       if (stakeAmount > forcedStake) {
-        this.logger.warn(
-          `[ORION] 🛡️ Aplicando limite forçado de stake: ${stakeAmount.toFixed(2)} -> ${forcedStake.toFixed(2)}`,
-        );
+        this.logger.warn(`[ORION] 🛡️ Aplicando limite forçado de stake: ${stakeAmount.toFixed(2)} -> ${forcedStake.toFixed(2)}`);
         stakeAmount = forcedStake;
       }
     }
@@ -2369,33 +1948,26 @@ export class OrionStrategy implements IStrategy {
         }
 
         // 2. Verificar Stop Loss Blindado
-        if (
-          config.stopBlindadoPercent !== null &&
-          config.stopBlindadoPercent !== undefined
-        ) {
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           const profitPeak = parseFloat(config.profitPeak) || 0;
           // Só ativa se atingiu 40% da meta
-          if (profitPeak >= profitTarget * 0.4) {
-            const stopBlindadoPercent =
-              parseFloat(config.stopBlindadoPercent) || 50.0;
+          if (profitPeak >= profitTarget * 0.40) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
             const stopBlindado = capitalInicial + protectedAmount;
             const availableCapitalAboveStop = capitalSessao - stopBlindado;
 
             this.logger.debug(
               `[ORION][${mode}][${state.userId}] 🛡️ Stop Blindado Check:` +
-                ` Capital: $${capitalSessao.toFixed(2)} |` +
-                ` Profit Peak: $${profitPeak.toFixed(2)} |` +
-                ` Protected: $${protectedAmount.toFixed(2)} |` +
-                ` Stop Level: $${stopBlindado.toFixed(2)} |` +
-                ` Available: $${availableCapitalAboveStop.toFixed(2)}`,
+              ` Capital: $${capitalSessao.toFixed(2)} |` +
+              ` Profit Peak: $${profitPeak.toFixed(2)} |` +
+              ` Protected: $${protectedAmount.toFixed(2)} |` +
+              ` Stop Level: $${stopBlindado.toFixed(2)} |` +
+              ` Available: $${availableCapitalAboveStop.toFixed(2)}`
             );
 
             if (availableCapitalAboveStop > 0) {
-              maxStakeAllowed = Math.min(
-                maxStakeAllowed,
-                availableCapitalAboveStop,
-              );
+              maxStakeAllowed = Math.min(maxStakeAllowed, availableCapitalAboveStop);
             } else {
               maxStakeAllowed = 0;
             }
@@ -2436,10 +2008,7 @@ export class OrionStrategy implements IStrategy {
         }
       }
     } catch (error) {
-      this.logger.error(
-        `[ORION][${mode}][${state.userId}] Erro ao validar stake contra Stop Loss:`,
-        error,
-      );
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao validar stake contra Stop Loss:`, error);
       // Continuar mesmo se houver erro na validação (fail-open)
     }
 
@@ -2466,12 +2035,7 @@ export class OrionStrategy implements IStrategy {
         this.logger.warn(
           `[ORION][${mode}][${state.userId}] 🚨 RiskManager bloqueou operação. Stop Loss atingido.`,
         );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'alerta',
-          `🚨 RiskManager bloqueou operação. Stop Loss atingido.`,
-        );
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 RiskManager bloqueou operação. Stop Loss atingido.`);
         return; // Parar operação
       } else {
         // Se há martingale ativo (entry > 1), usar o stake calculado pelo martingale
@@ -2503,6 +2067,8 @@ export class OrionStrategy implements IStrategy {
       stakeAmount = Math.round(stakeAmount * 100) / 100;
     }
 
+
+
     // ✅ Log de Soros Nível 1 - Já tratado no RiskManager ou logs anteriores
     // Removido para evitar duplicação conforme solicitado
 
@@ -2510,13 +2076,8 @@ export class OrionStrategy implements IStrategy {
     // ✅ Garantir que stakeAmount sempre tem exatamente 2 casas decimais antes de enviar
     stakeAmount = Math.round(stakeAmount * 100) / 100;
     // 0. Cooldown para mitigar rate limit (se houve erro/timeout recente)
-    if (
-      state.creationCooldownUntil &&
-      Date.now() < state.creationCooldownUntil
-    ) {
-      this.logger.warn(
-        `[ORION][${mode}][${state.userId}] ⏸️ Cooldown ativo para criação de contrato. Aguardando antes de nova tentativa.`,
-      );
+    if (state.creationCooldownUntil && Date.now() < state.creationCooldownUntil) {
+      this.logger.warn(`[ORION][${mode}][${state.userId}] ⏸️ Cooldown ativo para criação de contrato. Aguardando antes de nova tentativa.`);
       state.isOperationActive = false;
       // ✅ Resetar contador de ticks para permitir nova tentativa
       if ('ticksDesdeUltimaOp' in state) {
@@ -2531,12 +2092,7 @@ export class OrionStrategy implements IStrategy {
         `[ORION][${mode}][${state.userId}] ❌ Valor abaixo do mínimo | Stake: $${stakeAmount.toFixed(2)} | Mínimo: $0.35 | Ajustando para mínimo`,
       );
       stakeAmount = 0.35; // Ajustar para o mínimo
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'alerta',
-        `⚠️ Valor da aposta ajustado para o mínimo permitido: $0.35`,
-      );
+      this.saveOrionLog(state.userId, this.symbol, 'alerta', `⚠️ Valor da aposta ajustado para o mínimo permitido: $0.35`);
     }
 
     // 2. Validar saldo mínimo (com margem de segurança de 10%)
@@ -2546,12 +2102,7 @@ export class OrionStrategy implements IStrategy {
         `[ORION][${mode}][${state.userId}] ❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)} (stake: $${stakeAmount.toFixed(2)} + margem)`,
       );
       state.isOperationActive = false;
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'erro',
-        `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`,
-      );
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
       // ✅ Resetar contador de ticks para permitir nova tentativa
       if ('ticksDesdeUltimaOp' in state) {
         state.ticksDesdeUltimaOp = 0;
@@ -2561,16 +2112,9 @@ export class OrionStrategy implements IStrategy {
 
     // 3. Validar token
     if (!state.derivToken || state.derivToken.trim() === '') {
-      this.logger.error(
-        `[ORION][${mode}][${state.userId}] ❌ Token Deriv inválido ou ausente`,
-      );
+      this.logger.error(`[ORION][${mode}][${state.userId}] ❌ Token Deriv inválido ou ausente`);
       state.isOperationActive = false;
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'erro',
-        `❌ Token Deriv inválido ou ausente - Não é possível criar contrato`,
-      );
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Token Deriv inválido ou ausente - Não é possível criar contrato`);
       // ✅ Resetar contador de ticks para permitir nova tentativa
       if ('ticksDesdeUltimaOp' in state) {
         state.ticksDesdeUltimaOp = 0;
@@ -2578,22 +2122,14 @@ export class OrionStrategy implements IStrategy {
       return; // Não tentar criar contrato sem token
     }
 
-    const currentPrice =
-      this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 0;
+    const currentPrice = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 0;
 
     // ✅ Log: Entrada Executada (Formato Solicitado)
     const formattedDirection = operation;
     const payoutPercent = 92; // Payout padrão estimado
 
-    this.logger.log(
-      `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`,
-    );
-    this.saveOrionLog(
-      state.userId,
-      this.symbol,
-      'operacao',
-      `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`,
-    );
+    this.logger.log(`📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
+    this.saveOrionLog(state.userId, this.symbol, 'operacao', `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
 
     try {
       // Criar registro de trade
@@ -2609,7 +2145,7 @@ export class OrionStrategy implements IStrategy {
       const finalStakeAmount = Math.round(stakeAmount * 100) / 100;
 
       // Definir parâmetros do contrato baseado no sinal
-      const contractParams: any = {
+      let contractParams: any = {
         amount: finalStakeAmount,
         currency: state.currency || 'USD',
         symbol: this.symbol,
@@ -2632,8 +2168,7 @@ export class OrionStrategy implements IStrategy {
         contractParams.duration_unit = 't';
       } else {
         // Fallback para Par/Ímpar (caso antigo)
-        contractParams.contract_type =
-          operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
+        contractParams.contract_type = operation === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
         contractParams.duration = 1;
         contractParams.duration_unit = 't';
       }
@@ -2654,12 +2189,7 @@ export class OrionStrategy implements IStrategy {
           `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
           ['Não foi possível criar/monitorar contrato', tradeId],
         );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'erro',
-          `Erro ao executar operação | Não foi possível criar contrato`,
-        );
+        this.saveOrionLog(state.userId, this.symbol, 'erro', `Erro ao executar operação | Não foi possível criar contrato`);
         return;
       }
 
@@ -2688,49 +2218,28 @@ export class OrionStrategy implements IStrategy {
         exitPrice,
       });
 
-      this.logger.log(
-        `[ORION][${mode}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`,
-      );
+      this.logger.log(`[ORION][${mode}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
 
       // ✅ Processar resultado (Soros/Martingale)
-      await this.processOrionResult(
-        state,
-        stakeAmount,
-        operation,
-        profit,
-        mode,
-      );
+      await this.processOrionResult(state, stakeAmount, operation, profit, mode);
     } catch (error) {
       this.logger.error(`[ORION][${mode}] Erro ao executar operação:`, error);
       state.isOperationActive = false;
       state.creationCooldownUntil = Date.now() + 5000; // cooldown após erro
 
-      const errorResponse =
-        error instanceof Error
-          ? error.stack || error.message
-          : JSON.stringify(error);
+      const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
 
       // ✅ Marcar trade como ERROR no banco de dados
       if (tradeId) {
-        await this.dataSource
-          .query(
-            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-            [error.message || 'Erro ao executar operação', tradeId],
-          )
-          .catch((err) => {
-            this.logger.error(
-              `[ORION] Erro ao atualizar trade com status ERROR:`,
-              err,
-            );
-          });
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [error.message || 'Erro ao executar operação', tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR:`, err);
+        });
       }
       // ✅ Log de erro com detalhes completos
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'erro',
-        `Erro ao executar operação: ${error.message || 'Erro desconhecido'} | Detalhes: ${errorResponse}`,
-      );
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `Erro ao executar operação: ${error.message || 'Erro desconhecido'} | Detalhes: ${errorResponse}`);
     }
   }
 
@@ -2771,10 +2280,7 @@ export class OrionStrategy implements IStrategy {
       );
     } catch (error: any) {
       // Se o campo symbol não existir, inserir sem ele
-      if (
-        error.code === 'ER_BAD_FIELD_ERROR' &&
-        error.sqlMessage?.includes('symbol')
-      ) {
+      if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('symbol')) {
         insertResult = await this.dataSource.query(
           `INSERT INTO ai_trades 
            (user_id, gemini_signal, entry_price, stake_amount, status, 
@@ -2818,77 +2324,40 @@ export class OrionStrategy implements IStrategy {
    * ✅ ORION: Obtém ou cria conexão WebSocket reutilizável por token
    * Mantém uma conexão por token para evitar criar nova conexão a cada trade
    */
-  private async getOrCreateWebSocketConnection(
-    token: string,
-    userId?: string,
-  ): Promise<{
+  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
     ws: WebSocket;
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
-    subscribe: (
-      payload: any,
-      callback: (msg: any) => void,
-      subId: string,
-      timeoutMs?: number,
-    ) => Promise<void>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
   }> {
     // ✅ Verificar se já existe conexão ativa para este token
     const existing = this.wsConnections.get(token);
 
     // ✅ Logs de diagnóstico
-    this.logger.debug(
-      `[ORION] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`,
-    );
-    this.logger.debug(
-      `[ORION] 🔍 [${userId || 'SYSTEM'}] Total de conexões no pool: ${this.wsConnections.size}`,
-    );
+    this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`);
+    this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Total de conexões no pool: ${this.wsConnections.size}`);
 
     if (existing) {
       const readyState = existing.ws.readyState;
-      const readyStateText =
-        readyState === WebSocket.OPEN
-          ? 'OPEN'
-          : readyState === WebSocket.CONNECTING
-            ? 'CONNECTING'
-            : readyState === WebSocket.CLOSING
-              ? 'CLOSING'
-              : readyState === WebSocket.CLOSED
-                ? 'CLOSED'
-                : 'UNKNOWN';
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
+        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+          readyState === WebSocket.CLOSING ? 'CLOSING' :
+            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
 
-      this.logger.debug(
-        `[ORION] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`,
-      );
+      this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
 
       if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-        this.logger.debug(
-          `[ORION] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`,
-        );
+        this.logger.debug(`[ORION] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
 
         return {
           ws: existing.ws,
-          sendRequest: (payload: any, timeoutMs = 60000) =>
-            this.sendRequestViaConnection(token, payload, timeoutMs),
-          subscribe: (
-            payload: any,
-            callback: (msg: any) => void,
-            subId: string,
-            timeoutMs = 90000,
-          ) =>
-            this.subscribeViaConnection(
-              token,
-              payload,
-              callback,
-              subId,
-              timeoutMs,
-            ),
-          removeSubscription: (subId: string) =>
-            this.removeSubscriptionFromConnection(token, subId),
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
       } else {
-        this.logger.warn(
-          `[ORION] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`,
-        );
+        this.logger.warn(`[ORION] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
         if (existing.keepAliveInterval) {
           clearInterval(existing.keepAliveInterval);
         }
@@ -2896,15 +2365,11 @@ export class OrionStrategy implements IStrategy {
         this.wsConnections.delete(token);
       }
     } else {
-      this.logger.debug(
-        `[ORION] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`,
-      );
+      this.logger.debug(`[ORION] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
     }
 
     // ✅ Criar nova conexão
-    this.logger.debug(
-      `[ORION] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`,
-    );
+    this.logger.debug(`[ORION] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
     const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
 
     const ws = await new Promise<WebSocket>((resolve, reject) => {
@@ -2915,9 +2380,7 @@ export class OrionStrategy implements IStrategy {
       let authResolved = false;
       const connectionTimeout = setTimeout(() => {
         if (!authResolved) {
-          this.logger.error(
-            `[ORION] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`,
-          );
+          this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
           socket.close();
           this.wsConnections.delete(token);
           reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
@@ -2931,46 +2394,30 @@ export class OrionStrategy implements IStrategy {
 
           // ✅ Log de todas as mensagens recebidas durante autorização
           if (!authResolved) {
-            this.logger.debug(
-              `[ORION] 📥 [${userId || 'SYSTEM'}] Mensagem recebida durante autorização: ${JSON.stringify(Object.keys(msg))}`,
-            );
+            this.logger.debug(`[ORION] 📥 [${userId || 'SYSTEM'}] Mensagem recebida durante autorização: ${JSON.stringify(Object.keys(msg))}`);
           }
 
           // ✅ Ignorar ping/pong
-          if (
-            msg.msg_type === 'ping' ||
-            msg.msg_type === 'pong' ||
-            msg.ping ||
-            msg.pong
-          ) {
+          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
             return;
           }
 
           const conn = this.wsConnections.get(token);
           if (!conn) {
-            this.logger.warn(
-              `[ORION] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`,
-            );
+            this.logger.warn(`[ORION] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
             return;
           }
 
           // ✅ Processar autorização (apenas durante inicialização)
           // A API Deriv retorna msg.msg_type === 'authorize' com dados em msg.authorize
           if (msg.msg_type === 'authorize' && !authResolved) {
-            this.logger.debug(
-              `[ORION] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`,
-            );
+            this.logger.debug(`[ORION] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
             authResolved = true;
             clearTimeout(connectionTimeout);
 
             if (msg.error || (msg.authorize && msg.authorize.error)) {
-              const errorMsg =
-                msg.error?.message ||
-                msg.authorize?.error?.message ||
-                'Erro desconhecido na autorização';
-              this.logger.error(
-                `[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`,
-              );
+              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+              this.logger.error(`[ORION] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
               socket.close();
               this.wsConnections.delete(token);
               reject(new Error(`Erro na autorização: ${errorMsg}`));
@@ -2978,18 +2425,14 @@ export class OrionStrategy implements IStrategy {
             }
 
             conn.authorized = true;
-            this.logger.log(
-              `[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`,
-            );
+            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
 
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
               if (socket.readyState === WebSocket.OPEN) {
                 try {
                   socket.send(JSON.stringify({ ping: 1 }));
-                  this.logger.debug(
-                    `[ORION][KeepAlive][${token.substring(0, 8)}] Ping enviado`,
-                  );
+                  this.logger.debug(`[ORION][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
                 } catch (error) {
                   // Ignorar erros
                 }
@@ -3011,11 +2454,7 @@ export class OrionStrategy implements IStrategy {
           }
 
           // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
-          if (
-            msg.proposal ||
-            msg.buy ||
-            (msg.error && !msg.proposal_open_contract)
-          ) {
+          if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
             // Processar primeira requisição pendente (FIFO)
             const firstKey = conn.pendingRequests.keys().next().value;
             if (firstKey) {
@@ -3024,9 +2463,7 @@ export class OrionStrategy implements IStrategy {
                 clearTimeout(pending.timeout);
                 conn.pendingRequests.delete(firstKey);
                 if (msg.error) {
-                  pending.reject(
-                    new Error(msg.error.message || JSON.stringify(msg.error)),
-                  );
+                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
                 } else {
                   pending.resolve(msg);
                 }
@@ -3039,9 +2476,7 @@ export class OrionStrategy implements IStrategy {
       });
 
       socket.on('open', () => {
-        this.logger.log(
-          `[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`,
-        );
+        this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
 
         // ✅ Criar entrada no pool
         const conn = {
@@ -3056,9 +2491,7 @@ export class OrionStrategy implements IStrategy {
 
         // ✅ Enviar autorização
         const authPayload = { authorize: token };
-        this.logger.debug(
-          `[ORION] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`,
-        );
+        this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
         socket.send(JSON.stringify(authPayload));
       });
 
@@ -3072,16 +2505,14 @@ export class OrionStrategy implements IStrategy {
       });
 
       socket.on('close', () => {
-        this.logger.debug(
-          `[ORION] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`,
-        );
+        this.logger.debug(`[ORION] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`);
         const conn = this.wsConnections.get(token);
         if (conn) {
           if (conn.keepAliveInterval) {
             clearInterval(conn.keepAliveInterval);
           }
           // Rejeitar todas as requisições pendentes
-          conn.pendingRequests.forEach((pending) => {
+          conn.pendingRequests.forEach(pending => {
             clearTimeout(pending.timeout);
             pending.reject(new Error('WebSocket fechado'));
           });
@@ -3100,28 +2531,17 @@ export class OrionStrategy implements IStrategy {
     const conn = this.wsConnections.get(token)!;
     return {
       ws: conn.ws,
-      sendRequest: (payload: any, timeoutMs = 60000) =>
-        this.sendRequestViaConnection(token, payload, timeoutMs),
-      subscribe: (
-        payload: any,
-        callback: (msg: any) => void,
-        subId: string,
-        timeoutMs = 90000,
-      ) =>
+      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
         this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-      removeSubscription: (subId: string) =>
-        this.removeSubscriptionFromConnection(token, subId),
+      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
     };
   }
 
   /**
    * ✅ Envia requisição via conexão existente
    */
-  private async sendRequestViaConnection(
-    token: string,
-    payload: any,
-    timeoutMs: number,
-  ): Promise<any> {
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
     const conn = this.wsConnections.get(token);
     if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
       throw new Error('Conexão WebSocket não está disponível ou autorizada');
@@ -3210,24 +2630,14 @@ export class OrionStrategy implements IStrategy {
       currency: string;
     },
     userId?: string,
-  ): Promise<{
-    contractId: string;
-    profit: number;
-    exitSpot: any;
-    entrySpot: any;
-  } | null> {
+  ): Promise<{ contractId: string; profit: number; exitSpot: any; entrySpot: any } | null> {
     try {
       // ✅ PASSO 1: Obter ou criar conexão WebSocket reutilizável
-      const connection = await this.getOrCreateWebSocketConnection(
-        token,
-        userId,
-      );
+      const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
       // ✅ PASSO 2: Solicitar proposta
       const proposalStartTime = Date.now();
-      this.logger.debug(
-        `[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`,
-      );
+      this.logger.debug(`[ORION] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount}`);
 
       // Log para o usuário ver os parâmetros enviados
       if (userId) {
@@ -3236,34 +2646,28 @@ export class OrionStrategy implements IStrategy {
           this.symbol,
           'info',
           `📤 ENVIANDO PARA DERIV\n` +
-            `• Tipo de Contrato: ${contractParams.contract_type}\n` +
-            `• Barreira: ${(contractParams as any).barrier || 'N/A'}\n` +
-            `• Valor: $${contractParams.amount}\n` +
-            `• Duração: ${(contractParams as any).duration || 1} tick(s)\n` +
-            `• Símbolo: ${this.symbol}`,
+          `• Tipo de Contrato: ${contractParams.contract_type}\n` +
+          `• Barreira: ${(contractParams as any).barrier || 'N/A'}\n` +
+          `• Valor: $${contractParams.amount}\n` +
+          `• Duração: ${(contractParams as any).duration || 1} tick(s)\n` +
+          `• Símbolo: ${this.symbol}`
         );
       }
 
-      const proposalResponse: any = await connection.sendRequest(
-        {
-          proposal: 1,
-          amount: contractParams.amount,
-          basis: 'stake',
-          contract_type: contractParams.contract_type,
-          currency: contractParams.currency || 'USD',
-          duration: 1,
-          duration_unit: 't',
-          symbol: this.symbol,
-          ...((contractParams as any).barrier
-            ? { barrier: (contractParams as any).barrier }
-            : {}),
-        },
-        60000,
-      );
+      const proposalResponse: any = await connection.sendRequest({
+        proposal: 1,
+        amount: contractParams.amount,
+        basis: 'stake',
+        contract_type: contractParams.contract_type,
+        currency: contractParams.currency || 'USD',
+        duration: 1,
+        duration_unit: 't',
+        symbol: this.symbol,
+        ...((contractParams as any).barrier ? { barrier: (contractParams as any).barrier } : {}),
+      }, 60000);
 
       // ✅ Verificar erros na resposta (pode estar em error ou proposal.error)
-      const errorObj =
-        proposalResponse.error || proposalResponse.proposal?.error;
+      const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
       if (errorObj) {
         const errorCode = errorObj?.code || '';
         const errorMessage = errorObj?.message || JSON.stringify(errorObj);
@@ -3274,44 +2678,17 @@ export class OrionStrategy implements IStrategy {
         if (userId) {
           // ✅ Mensagem mais clara para WrongResponse
           let userMessage = `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`;
-          if (
-            errorCode === 'WrongResponse' ||
-            errorMessage.includes('WrongResponse')
-          ) {
+          if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
             userMessage = `❌ Erro na proposta da Deriv | Código: WrongResponse | Mensagem: Sorry, an error occurred while processing your request`;
           }
           this.saveOrionLog(userId, this.symbol, 'erro', userMessage);
 
-          if (
-            errorMessage.toLowerCase().includes('insufficient') ||
-            errorMessage.toLowerCase().includes('balance')
-          ) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Saldo insuficiente na Deriv.`,
-            );
-          } else if (
-            errorMessage.toLowerCase().includes('rate') ||
-            errorMessage.toLowerCase().includes('limit')
-          ) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Rate limit atingido na Deriv.`,
-            );
-          } else if (
-            errorCode === 'WrongResponse' ||
-            errorMessage.includes('WrongResponse')
-          ) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Erro temporário da Deriv. Tente novamente em alguns segundos.`,
-            );
+          if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
+          } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Rate limit atingido na Deriv.`);
+          } else if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Erro temporário da Deriv. Tente novamente em alguns segundos.`);
           }
         }
         // ✅ Não fechar conexão - ela é reutilizada para próximos trades
@@ -3322,41 +2699,27 @@ export class OrionStrategy implements IStrategy {
       const proposalPrice = Number(proposalResponse.proposal?.ask_price);
 
       if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
-        this.logger.error(
-          `[ORION] ❌ Proposta inválida recebida: ${JSON.stringify(proposalResponse)}`,
-        );
+        this.logger.error(`[ORION] ❌ Proposta inválida recebida: ${JSON.stringify(proposalResponse)}`);
         if (userId) {
-          this.saveOrionLog(
-            userId,
-            this.symbol,
-            'erro',
-            `❌ Proposta inválida da Deriv | Resposta: ${JSON.stringify(proposalResponse)}`,
-          );
+          this.saveOrionLog(userId, this.symbol, 'erro', `❌ Proposta inválida da Deriv | Resposta: ${JSON.stringify(proposalResponse)}`);
         }
         // ✅ Não fechar conexão - ela é reutilizada para próximos trades
         return null;
       }
 
       const proposalDuration = Date.now() - proposalStartTime;
-      this.logger.debug(
-        `[ORION] 📊 [${userId || 'SYSTEM'}] Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`,
-      );
+      this.logger.debug(`[ORION] 📊 [${userId || 'SYSTEM'}] Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}, Executando compra...`);
 
       // ✅ PASSO 3: Comprar contrato
       const buyStartTime = Date.now();
-      this.logger.debug(
-        `[ORION] 💰 [${userId || 'SYSTEM'}] Comprando contrato | ProposalId: ${proposalId}`,
-      );
+      this.logger.debug(`[ORION] 💰 [${userId || 'SYSTEM'}] Comprando contrato | ProposalId: ${proposalId}`);
 
       let buyResponse: any;
       try {
-        buyResponse = await connection.sendRequest(
-          {
-            buy: proposalId,
-            price: proposalPrice,
-          },
-          60000,
-        );
+        buyResponse = await connection.sendRequest({
+          buy: proposalId,
+          price: proposalPrice,
+        }, 60000);
       } catch (error: any) {
         const errorMessage = error?.message || JSON.stringify(error);
         this.logger.error(
@@ -3365,19 +2728,9 @@ export class OrionStrategy implements IStrategy {
 
         // ✅ FIX: Logar erro VISÍVEL para o usuário (Frontend)
         if (userId) {
-          this.saveOrionLog(
-            userId,
-            this.symbol,
-            'erro',
-            `❌ FALHA NA ENTRADA: ${errorMessage} (Tentando novamente...)`,
-          );
+          this.saveOrionLog(userId, this.symbol, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage} (Tentando novamente...)`);
           if (errorMessage.includes('Timeout')) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Timeout ao comprar contrato. Tente novamente.`,
-            );
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Timeout ao comprar contrato. Tente novamente.`);
           }
         }
         return null;
@@ -3387,40 +2740,18 @@ export class OrionStrategy implements IStrategy {
       const buyErrorObj = buyResponse.error || buyResponse.buy?.error;
       if (buyErrorObj) {
         const errorCode = buyErrorObj?.code || '';
-        const errorMessage =
-          buyErrorObj?.message || JSON.stringify(buyErrorObj);
+        const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
         this.logger.error(
           `[ORION] ❌ Erro ao comprar contrato: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractParams.contract_type} | Valor: $${contractParams.amount} | ProposalId: ${proposalId}`,
         );
 
         if (userId) {
-          this.saveOrionLog(
-            userId,
-            this.symbol,
-            'erro',
-            `❌ Erro ao comprar contrato na Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`,
-          );
+          this.saveOrionLog(userId, this.symbol, 'erro', `❌ Erro ao comprar contrato na Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`);
 
-          if (
-            errorMessage.toLowerCase().includes('insufficient') ||
-            errorMessage.toLowerCase().includes('balance')
-          ) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Saldo insuficiente na Deriv.`,
-            );
-          } else if (
-            errorMessage.toLowerCase().includes('rate') ||
-            errorMessage.toLowerCase().includes('limit')
-          ) {
-            this.saveOrionLog(
-              userId,
-              this.symbol,
-              'alerta',
-              `💡 Rate limit atingido na Deriv.`,
-            );
+          if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Saldo insuficiente na Deriv.`);
+          } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+            this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Rate limit atingido na Deriv.`);
           }
         }
         return null;
@@ -3428,31 +2759,17 @@ export class OrionStrategy implements IStrategy {
 
       const contractId = buyResponse.buy?.contract_id;
       if (!contractId) {
-        this.logger.error(
-          `[ORION] ❌ Contrato criado mas sem contract_id: ${JSON.stringify(buyResponse)}`,
-        );
+        this.logger.error(`[ORION] ❌ Contrato criado mas sem contract_id: ${JSON.stringify(buyResponse)}`);
         if (userId) {
-          this.saveOrionLog(
-            userId,
-            this.symbol,
-            'erro',
-            `❌ Contrato criado mas sem contract_id | Resposta: ${JSON.stringify(buyResponse)}`,
-          );
+          this.saveOrionLog(userId, this.symbol, 'erro', `❌ Contrato criado mas sem contract_id | Resposta: ${JSON.stringify(buyResponse)}`);
         }
         return null;
       }
 
       const buyDuration = Date.now() - buyStartTime;
-      this.logger.log(
-        `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato criado em ${buyDuration}ms | ContractId: ${contractId} | Monitorando...`,
-      );
+      this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Contrato criado em ${buyDuration}ms | ContractId: ${contractId} | Monitorando...`);
       if (userId) {
-        this.saveOrionLog(
-          userId,
-          this.symbol,
-          'operacao',
-          `✅ Contrato criado: ${contractId} | Proposta: ${proposalDuration}ms | Compra: ${buyDuration}ms`,
-        );
+        this.saveOrionLog(userId, this.symbol, 'operacao', `✅ Contrato criado: ${contractId} | Proposta: ${proposalDuration}ms | Compra: ${buyDuration}ms`);
       }
 
       // ✅ PASSO 4: Monitorar contrato usando subscribe no MESMO WebSocket reutilizável
@@ -3461,9 +2778,7 @@ export class OrionStrategy implements IStrategy {
       let lastUpdateTime: number | null = null;
       let updateCount = 0;
 
-      this.logger.debug(
-        `[ORION] 👁️ [${userId || 'SYSTEM'}] Iniciando monitoramento do contrato ${contractId}...`,
-      );
+      this.logger.debug(`[ORION] 👁️ [${userId || 'SYSTEM'}] Iniciando monitoramento do contrato ${contractId}...`);
 
       return new Promise((resolve) => {
         let hasResolved = false;
@@ -3473,16 +2788,9 @@ export class OrionStrategy implements IStrategy {
         contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
-            this.logger.warn(
-              `[ORION] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`,
-            );
+            this.logger.warn(`[ORION] ⏱️ Timeout ao monitorar contrato (90s) | ContractId: ${contractId}`);
             if (userId) {
-              this.saveOrionLog(
-                userId,
-                this.symbol,
-                'erro',
-                `⏱️ Contrato ${contractId} não finalizou em 90 segundos`,
-              );
+              this.saveOrionLog(userId, this.symbol, 'erro', `⏱️ Contrato ${contractId} não finalizou em 90 segundos`);
             }
             connection.removeSubscription(contractId);
             resolve(null);
@@ -3490,204 +2798,170 @@ export class OrionStrategy implements IStrategy {
         }, 90000);
 
         // ✅ Inscrever para atualizações do contrato
-        connection
-          .subscribe(
-            {
-              proposal_open_contract: 1,
-              contract_id: contractId,
-              subscribe: 1,
-            },
-            (msg: any) => {
-              try {
-                // ✅ Verificar erros
-                if (msg.error) {
-                  this.logger.error(
-                    `[ORION] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`,
-                  );
-                  if (!hasResolved) {
-                    hasResolved = true;
-                    if (contractMonitorTimeout)
-                      clearTimeout(contractMonitorTimeout);
-                    connection.removeSubscription(contractId);
-                    if (userId) {
-                      this.saveOrionLog(
-                        userId,
-                        this.symbol,
-                        'erro',
-                        `❌ Erro na subscription do contrato ${contractId}: ${msg.error.message || JSON.stringify(msg.error)}`,
-                      );
-                    }
-                    resolve(null);
-                  }
-                  return;
-                }
-
-                const contract = msg.proposal_open_contract;
-                if (!contract) {
-                  return;
-                }
-
-                // ✅ Métricas de performance
-                const now = Date.now();
-                updateCount++;
-
-                if (!firstUpdateTime) {
-                  firstUpdateTime = now;
-                  const timeToFirstUpdate = firstUpdateTime - monitorStartTime;
-                  this.logger.log(
-                    `[ORION] ⚡ [${userId || 'SYSTEM'}] Primeira atualização recebida em ${timeToFirstUpdate}ms | Contrato: ${contractId}`,
-                  );
-                }
-
-                if (lastUpdateTime) {
-                  const timeSinceLastUpdate = now - lastUpdateTime;
-                  this.logger.debug(
-                    `[ORION] ⏱️ [${userId || 'SYSTEM'}] Atualização #${updateCount} | Tempo desde última: ${timeSinceLastUpdate}ms | Total desde criação: ${now - monitorStartTime}ms`,
-                  );
-                }
-
-                lastUpdateTime = now;
-
-                // ✅ Log de atualizações para debug
-                this.logger.debug(
-                  `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit} | Update #${updateCount}`,
-                );
-
-                // ✅ Verificar se contrato finalizou
-                const isFinalized =
-                  contract.is_sold === 1 ||
-                  contract.is_sold === true ||
-                  contract.status === 'won' ||
-                  contract.status === 'lost' ||
-                  contract.status === 'sold';
-
-                if (isFinalized && !hasResolved) {
-                  hasResolved = true;
-                  if (contractMonitorTimeout)
-                    clearTimeout(contractMonitorTimeout);
-
-                  const profit = Number(contract.profit || 0);
-
-                  // Debug: logar contrato completo para análise
-                  this.logger.debug(
-                    `[ORION] Contract ${contractId} FULL DATA: ${JSON.stringify(contract, null, 2)}`,
-                  );
-
-                  // ✅ CORREÇÃO: Usar entry_tick e exit_tick (campos oficiais da Deriv)
-                  // Estes são os valores EXATOS que a Deriv usa para determinar o resultado
-                  const entrySpot =
-                    contract.entry_tick || contract.entry_spot || 0;
-                  const exitSpot =
-                    contract.exit_tick || contract.exit_spot || 0;
-
-                  // Debug: logar os valores para verificar
-                  this.logger.debug(
-                    `[ORION] Contract ${contractId} - Entry: ${entrySpot}, Exit: ${exitSpot}, Profit: ${profit}`,
-                  );
-
-                  const monitorDuration = Date.now() - monitorStartTime;
-                  const timeToFirstUpdate = firstUpdateTime
-                    ? firstUpdateTime - monitorStartTime
-                    : 0;
-                  const avgUpdateInterval =
-                    lastUpdateTime && updateCount > 1
-                      ? (lastUpdateTime -
-                          (firstUpdateTime || monitorStartTime)) /
-                        (updateCount - 1)
-                      : 0;
-
-                  // ✅ Log detalhado de performance
-                  this.logger.log(
-                    `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`,
-                  );
-                  this.logger.log(
-                    `[ORION] 📈 [${userId || 'SYSTEM'}] Performance: Primeira atualização: ${timeToFirstUpdate}ms | Total atualizações: ${updateCount} | Intervalo médio: ${avgUpdateInterval.toFixed(0)}ms`,
-                  );
-
-                  if (userId) {
-                    // Log completo do resultado recebido da Deriv
-                    const resultStatus = profit >= 0 ? 'WON ✅' : 'LOST ❌';
-                    const lastDigit =
-                      String(exitSpot).split('.')[1]?.slice(-1) ||
-                      String(Math.floor(exitSpot)).slice(-1);
-
-                    this.saveOrionLog(
-                      userId,
-                      this.symbol,
-                      'info',
-                      `📥 RESULTADO RECEBIDO DA DERIV\n` +
-                        `• Status: ${resultStatus}\n` +
-                        `• Contrato ID: ${contractId}\n` +
-                        `• Tipo: ${contract.contract_type || 'N/A'}\n` +
-                        `• Barreira: ${contract.barrier || 'N/A'}\n` +
-                        `• Preço de Entrada: ${entrySpot}\n` +
-                        `• Preço de Saída: ${exitSpot}\n` +
-                        `• Último Dígito: ${lastDigit}\n` +
-                        `• Lucro/Prejuízo: $${profit.toFixed(2)}\n` +
-                        `• Duração: ${monitorDuration}ms`,
-                    );
-
-                    this.saveOrionLog(
-                      userId,
-                      this.symbol,
-                      'resultado',
-                      `✅ Contrato finalizado em ${monitorDuration}ms\n• Entrada: ${Number(entrySpot).toFixed(2)} | Saída: ${Number(exitSpot).toFixed(2)}\n• Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`,
-                    );
-                  }
-
-                  connection.removeSubscription(contractId);
-                  resolve({ contractId, profit, exitSpot, entrySpot });
-                }
-              } catch (error) {
+        connection.subscribe(
+          {
+            proposal_open_contract: 1,
+            contract_id: contractId,
+            subscribe: 1,
+          },
+          (msg: any) => {
+            try {
+              // ✅ Verificar erros
+              if (msg.error) {
+                this.logger.error(`[ORION] ❌ Erro na subscription do contrato ${contractId}: ${JSON.stringify(msg.error)}`);
                 if (!hasResolved) {
                   hasResolved = true;
-                  if (contractMonitorTimeout)
-                    clearTimeout(contractMonitorTimeout);
-                  this.logger.error(
-                    `[ORION] ❌ Erro ao processar atualização do contrato:`,
-                    error,
-                  );
-                  if (userId) {
-                    this.saveOrionLog(
-                      userId,
-                      this.symbol,
-                      'erro',
-                      `Erro ao processar atualização do contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-                    );
-                  }
+                  if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
                   connection.removeSubscription(contractId);
+                  if (userId) {
+                    this.saveOrionLog(userId, this.symbol, 'erro', `❌ Erro na subscription do contrato ${contractId}: ${msg.error.message || JSON.stringify(msg.error)}`);
+                  }
                   resolve(null);
                 }
+                return;
               }
-            },
-            contractId,
-            90000,
-          )
-          .catch((error) => {
-            if (!hasResolved) {
-              hasResolved = true;
-              if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
-              this.logger.error(
-                `[ORION] ❌ Erro ao inscrever no contrato ${contractId}:`,
-                error,
-              );
-              if (userId) {
-                this.saveOrionLog(
-                  userId,
-                  this.symbol,
-                  'erro',
-                  `Erro ao inscrever no contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+
+              const contract = msg.proposal_open_contract;
+              if (!contract) {
+                return;
+              }
+
+              // ✅ Métricas de performance
+              const now = Date.now();
+              updateCount++;
+
+              if (!firstUpdateTime) {
+                firstUpdateTime = now;
+                const timeToFirstUpdate = firstUpdateTime - monitorStartTime;
+                this.logger.log(
+                  `[ORION] ⚡ [${userId || 'SYSTEM'}] Primeira atualização recebida em ${timeToFirstUpdate}ms | Contrato: ${contractId}`,
                 );
               }
-              resolve(null);
+
+              if (lastUpdateTime) {
+                const timeSinceLastUpdate = now - lastUpdateTime;
+                this.logger.debug(
+                  `[ORION] ⏱️ [${userId || 'SYSTEM'}] Atualização #${updateCount} | Tempo desde última: ${timeSinceLastUpdate}ms | Total desde criação: ${now - monitorStartTime}ms`,
+                );
+              }
+
+              lastUpdateTime = now;
+
+              // ✅ Log de atualizações para debug
+              this.logger.debug(
+                `[ORION] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit} | Update #${updateCount}`,
+              );
+
+              // ✅ Verificar se contrato finalizou
+              const isFinalized =
+                contract.is_sold === 1 ||
+                contract.is_sold === true ||
+                contract.status === 'won' ||
+                contract.status === 'lost' ||
+                contract.status === 'sold';
+
+              if (isFinalized && !hasResolved) {
+                hasResolved = true;
+                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+
+                const profit = Number(contract.profit || 0);
+
+                // Debug: logar contrato completo para análise
+                this.logger.debug(`[ORION] Contract ${contractId} FULL DATA: ${JSON.stringify(contract, null, 2)}`);
+
+                // ✅ CORREÇÃO: Usar entry_tick e exit_tick (campos oficiais da Deriv)
+                // Estes são os valores EXATOS que a Deriv usa para determinar o resultado
+                const entrySpot = contract.entry_tick || contract.entry_spot || 0;
+                const exitSpot = contract.exit_tick || contract.exit_spot || 0;
+
+                // Debug: logar os valores para verificar
+                this.logger.debug(`[ORION] Contract ${contractId} - Entry: ${entrySpot}, Exit: ${exitSpot}, Profit: ${profit}`);
+
+                const monitorDuration = Date.now() - monitorStartTime;
+                const timeToFirstUpdate = firstUpdateTime ? firstUpdateTime - monitorStartTime : 0;
+                const avgUpdateInterval = lastUpdateTime && updateCount > 1
+                  ? (lastUpdateTime - (firstUpdateTime || monitorStartTime)) / (updateCount - 1)
+                  : 0;
+
+                // ✅ Log detalhado de performance
+                this.logger.log(
+                  `[ORION] ✅ [${userId || 'SYSTEM'}] Contrato ${contractId} finalizado em ${monitorDuration}ms | Profit: $${profit.toFixed(2)} | Status: ${contract.status}`,
+                );
+                this.logger.log(
+                  `[ORION] 📈 [${userId || 'SYSTEM'}] Performance: Primeira atualização: ${timeToFirstUpdate}ms | Total atualizações: ${updateCount} | Intervalo médio: ${avgUpdateInterval.toFixed(0)}ms`,
+                );
+
+                if (userId) {
+                  // Log completo do resultado recebido da Deriv
+                  const resultStatus = profit >= 0 ? 'WON ✅' : 'LOST ❌';
+                  const lastDigit = String(exitSpot).split('.')[1]?.slice(-1) || String(Math.floor(exitSpot)).slice(-1);
+
+                  this.saveOrionLog(
+                    userId,
+                    this.symbol,
+                    'info',
+                    `📥 RESULTADO RECEBIDO DA DERIV\n` +
+                    `• Status: ${resultStatus}\n` +
+                    `• Contrato ID: ${contractId}\n` +
+                    `• Tipo: ${contract.contract_type || 'N/A'}\n` +
+                    `• Barreira: ${contract.barrier || 'N/A'}\n` +
+                    `• Preço de Entrada: ${entrySpot}\n` +
+                    `• Preço de Saída: ${exitSpot}\n` +
+                    `• Último Dígito: ${lastDigit}\n` +
+                    `• Lucro/Prejuízo: $${profit.toFixed(2)}\n` +
+                    `• Duração: ${monitorDuration}ms`
+                  );
+
+                  this.saveOrionLog(
+                    userId,
+                    this.symbol,
+                    'resultado',
+                    `✅ Contrato finalizado em ${monitorDuration}ms\n• Entrada: ${Number(entrySpot).toFixed(2)} | Saída: ${Number(exitSpot).toFixed(2)}\n• Primeira atualização: ${timeToFirstUpdate}ms | Total: ${updateCount} atualizações`,
+                  );
+                }
+
+                connection.removeSubscription(contractId);
+                resolve({ contractId, profit, exitSpot, entrySpot });
+              }
+            } catch (error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+                this.logger.error(`[ORION] ❌ Erro ao processar atualização do contrato:`, error);
+                if (userId) {
+                  this.saveOrionLog(
+                    userId,
+                    this.symbol,
+                    'erro',
+                    `Erro ao processar atualização do contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+                  );
+                }
+                connection.removeSubscription(contractId);
+                resolve(null);
+              }
             }
-          });
+          },
+          contractId,
+          90000,
+        ).catch((error) => {
+          if (!hasResolved) {
+            hasResolved = true;
+            if (contractMonitorTimeout) clearTimeout(contractMonitorTimeout);
+            this.logger.error(`[ORION] ❌ Erro ao inscrever no contrato ${contractId}:`, error);
+            if (userId) {
+              this.saveOrionLog(
+                userId,
+                this.symbol,
+                'erro',
+                `Erro ao inscrever no contrato ${contractId} | Detalhes: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+              );
+            }
+            resolve(null);
+          }
+        });
       });
     } catch (error) {
-      this.logger.error(
-        `[ORION] ❌ Erro ao executar trade via WebSocket:`,
-        error,
-      );
+      this.logger.error(`[ORION] ❌ Erro ao executar trade via WebSocket:`, error);
       if (userId) {
         this.saveOrionLog(
           userId,
@@ -3742,15 +3016,8 @@ export class OrionStrategy implements IStrategy {
       this.defesaDirecaoInvalidaLogsEnviados.delete(keyLenta);
 
       if (consecutiveLossesAntes > 0) {
-        this.logger.log(
-          `[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | saiu do modo lento (loss zerado)`,
-        );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'info',
-          `🎯 saiu do modo lento`,
-        );
+        this.logger.log(`[ORION][${mode}][${state.userId}] 🎯 DEFESA AUTOMÁTICA DESATIVADA | saiu do modo lento (loss zerado)`);
+        this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 saiu do modo lento`);
       }
 
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
@@ -3760,8 +3027,7 @@ export class OrionStrategy implements IStrategy {
 
       // Resetar martingale primeiro
       if ('perdaAcumulada' in state) state.perdaAcumulada = 0;
-      if ('ultimaDirecaoMartingale' in state)
-        state.ultimaDirecaoMartingale = null;
+      if ('ultimaDirecaoMartingale' in state) state.ultimaDirecaoMartingale = null;
       if ('martingaleStep' in state) state.martingaleStep = 0;
       if ('ultimaApostaUsada' in state) state.ultimaApostaUsada = 0;
 
@@ -3775,16 +3041,16 @@ export class OrionStrategy implements IStrategy {
 
         this.logger.log(
           `[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale! ` +
-            `Resetando para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)} | ` +
-            `ApostaBase: $${(state.apostaBase || 0.35).toFixed(2)} | ` +
-            `UltimoLucro: $${(state.ultimoLucro || 0).toFixed(2)} | ` +
-            `VitoriasConsecutivas: ${state.vitoriasConsecutivas || 0}`,
+          `Resetando para aposta inicial: $${(state.apostaInicial || 0.35).toFixed(2)} | ` +
+          `ApostaBase: $${(state.apostaBase || 0.35).toFixed(2)} | ` +
+          `UltimoLucro: $${(state.ultimoLucro || 0).toFixed(2)} | ` +
+          `VitoriasConsecutivas: ${state.vitoriasConsecutivas || 0}`,
         );
         this.saveOrionLog(
           state.userId,
           this.symbol,
           'resultado',
-          `✅ RECUPERAÇÃO CONCLUÍDA\n• PERDA RECUPERADA: $${perdaRecuperada.toFixed(2)}\n• RETORNANDO STAKE BASE: $${(state.apostaInicial || 0.35).toFixed(2)}`,
+          `✅ RECUPERAÇÃO CONCLUÍDA\n• PERDA RECUPERADA: $${perdaRecuperada.toFixed(2)}\n• RETORNANDO STAKE BASE: $${(state.apostaInicial || 0.35).toFixed(2)}`
         );
       } else {
         // NÃO estava em martingale: aplicar Soros
@@ -3797,15 +3063,8 @@ export class OrionStrategy implements IStrategy {
         // Com SOROS_MAX_NIVEL = 3: após 4 vitórias (inicial + níveis 1, 2, 3), resetar
         if (state.vitoriasConsecutivas > SOROS_MAX_NIVEL) {
           // Ciclo Soros completo
-          this.logger.log(
-            `[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`,
-          );
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'resultado',
-            `🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`,
-          );
+          this.logger.log(`[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`);
+          this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO COMPLETO! ${state.vitoriasConsecutivas} vitórias (até nível ${SOROS_MAX_NIVEL})`);
           state.vitoriasConsecutivas = 0;
           state.ultimoLucro = 0;
           state.apostaBase = state.apostaInicial || 0.35;
@@ -3814,11 +3073,7 @@ export class OrionStrategy implements IStrategy {
           if ('apostaBase' in state) state.apostaBase = stakeAmount;
 
           if (state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
-            const proximaApostaSoros = calcularApostaComSoros(
-              stakeAmount,
-              profit,
-              state.vitoriasConsecutivas,
-            );
+            const proximaApostaSoros = calcularApostaComSoros(stakeAmount, profit, state.vitoriasConsecutivas);
             // Log já realizado no RiskManager.calculateStake
             // if (proximaApostaSoros !== null) {
             //   this.saveOrionLog(state.userId, this.symbol, 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima: $${proximaApostaSoros.toFixed(2)}`);
@@ -3827,18 +3082,8 @@ export class OrionStrategy implements IStrategy {
         }
       }
 
-      const tipoOperacao = estavaEmMartingale
-        ? 'MARTINGALE'
-        : state.vitoriasConsecutivas > 1 &&
-            state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1
-          ? 'SOROS'
-          : 'NORMAL';
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'resultado',
-        `\x1b[32m🏁 TRADE FINALIZADO: WIN\n💰 LUCRO: +$${profit.toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`,
-      );
+      const tipoOperacao = estavaEmMartingale ? 'MARTINGALE' : (state.vitoriasConsecutivas > 1 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL + 1) ? 'SOROS' : 'NORMAL';
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `\x1b[32m🏁 TRADE FINALIZADO: WIN\n💰 LUCRO: +$${profit.toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`);
     } else {
       // ❌ PERDA: Incrementar consecutive_losses (Defesa Automática)
       const consecutiveLossesAntes = state.consecutive_losses || 0;
@@ -3846,26 +3091,12 @@ export class OrionStrategy implements IStrategy {
         state.consecutive_losses = consecutiveLossesAntes + 1;
       }
       const consecutiveLossesAgora = state.consecutive_losses || 0;
-      this.logger.warn(
-        `[ORION][${mode}][${state.userId}] ❌ PERDA | Losses: ${consecutiveLossesAntes} -> ${consecutiveLossesAgora}`,
-      );
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'resultado',
-        `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`,
-      );
+      this.logger.warn(`[ORION][${mode}][${state.userId}] ❌ PERDA | Losses: ${consecutiveLossesAntes} -> ${consecutiveLossesAgora}`);
+      this.saveOrionLog(state.userId, this.symbol, 'resultado', `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
 
       if (consecutiveLossesAgora >= 3) {
-        this.logger.warn(
-          `[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos.`,
-        );
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'alerta',
-          `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO DE RECUPERAÇÃO Dinâmico.`,
-        );
+        this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO DE RECUPERAÇÃO Dinâmico.`);
       }
 
       // ❌ PERDA: Resetar Soros
@@ -3883,17 +3114,9 @@ export class OrionStrategy implements IStrategy {
         state.martingaleStep = (state.martingaleStep || 0) + 1;
       }
 
-      this.logger.log(
-        `[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`,
-      );
-      const tipoOperacao =
-        (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
-      this.saveOrionLog(
-        state.userId,
-        this.symbol,
-        'erro',
-        `\x1b[31m🏁 TRADE FINALIZADO: LOSS\n📉 PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`,
-      );
+      this.logger.log(`[ORION][${mode}][${state.userId}] ❌ PERDA | Perda acumulada: $${state.perdaAcumulada?.toFixed(2)}`);
+      const tipoOperacao = (state.perdaAcumulada || 0) > 0 ? 'MARTINGALE' : 'NORMAL';
+      this.saveOrionLog(state.userId, this.symbol, 'erro', `\x1b[31m🏁 TRADE FINALIZADO: LOSS\n📉 PREJUÍZO: -$${Math.abs(profit).toFixed(2)}\n📈 BANCA ATUAL: $${state.capital.toFixed(2)}\x1b[0m`);
     }
 
     // ✅ Verificar stop loss e stop win após processar resultado
@@ -3944,22 +3167,14 @@ export class OrionStrategy implements IStrategy {
           this.logger.log(
             `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`,
           );
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'info',
-            `🏆 META DE LUCRO ATINGIDA!\n• Lucro Total: $${lucroAtual.toFixed(2)}\n• Ação: Parabéns! Encerrando operações por hoje.`,
-          );
+          this.saveOrionLog(state.userId, this.symbol, 'info', `🏆 META DE LUCRO ATINGIDA!\n• Lucro Total: $${lucroAtual.toFixed(2)}\n• Ação: Parabéns! Encerrando operações por hoje.`);
 
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
              SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [
-              `Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`,
-              state.userId,
-            ],
+            [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)} >= Meta +$${profitTarget.toFixed(2)}`, state.userId],
           );
 
           // Remover usuário do monitoramento
@@ -3972,10 +3187,7 @@ export class OrionStrategy implements IStrategy {
         }
 
         // ✅ STOP LOSS BLINDADO (Dynamic Trailing)
-        if (
-          config.stopBlindadoPercent !== null &&
-          config.stopBlindadoPercent !== undefined
-        ) {
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           let profitPeak = parseFloat(config.profitPeak) || 0;
 
           // Auto-healing / Update Peak
@@ -3984,36 +3196,34 @@ export class OrionStrategy implements IStrategy {
             profitPeak = lucroAtual;
 
             // ✅ Log quando profit peak aumenta após vitória
-            if (profitPeak >= profitTarget * 0.4) {
-              const stopBlindadoPercent =
-                parseFloat(config.stopBlindadoPercent) || 50.0;
+            if (profitPeak >= profitTarget * 0.40) {
+              const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
               const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
               const stopBlindado = capitalInicial + protectedAmount;
 
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] 🛡️💰 STOP BLINDADO ATUALIZADO | ` +
-                  `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
-                  `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`,
+                `Pico: $${profitPeakAnterior.toFixed(2)} → $${profitPeak.toFixed(2)} | ` +
+                `Protegido: $${protectedAmount.toFixed(2)} (${stopBlindadoPercent}%)`
               );
               this.saveOrionLog(
                 state.userId,
                 this.symbol,
                 'info',
-                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`,
+                `🛡️💰 STOP BLINDADO ATUALIZADO | Pico: $${profitPeak.toFixed(2)} | Protegido: $${protectedAmount.toFixed(2)}`
               );
             }
 
             // Update DB
             await this.dataSource.query(
               `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-              [profitPeak, state.userId],
+              [profitPeak, state.userId]
             );
           }
 
           // Check Stop
-          if (profitPeak >= profitTarget * 0.4) {
-            const stopBlindadoPercent =
-              parseFloat(config.stopBlindadoPercent) || 50.0;
+          if (profitPeak >= profitTarget * 0.40) {
+            const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
             const fatorProtecao = stopBlindadoPercent / 100;
             const protectedAmount = profitPeak * fatorProtecao;
             const stopBlindado = capitalInicial + protectedAmount;
@@ -4021,15 +3231,8 @@ export class OrionStrategy implements IStrategy {
             if (capitalSessao <= stopBlindado) {
               const lucroProtegido = capitalSessao - capitalInicial;
               // ... Log and Stop ...
-              this.logger.warn(
-                `[ORION] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`,
-              );
-              this.saveOrionLog(
-                state.userId,
-                this.symbol,
-                'alerta',
-                `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`,
-              );
+              this.logger.warn(`[ORION] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
+              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`);
 
               const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
 
@@ -4050,27 +3253,22 @@ export class OrionStrategy implements IStrategy {
           }
         }
 
+
+
+
         // ✅ Verificar STOP LOSS NORMAL (apenas se estiver em perda)
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
           this.logger.warn(
             `[ORION][${mode}][${state.userId}] 🛑 STOP LOSS ATINGIDO APÓS OPERAÇÃO! Perda: $${perdaAtual.toFixed(2)} >= Limite: $${lossLimit.toFixed(2)} - DESATIVANDO SESSÃO`,
           );
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'alerta',
-            `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`,
-          );
+          this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`);
 
           // Desativar a IA
           await this.dataSource.query(
             `UPDATE ai_user_config 
              SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [
-              `Stop loss atingido após operação: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`,
-              state.userId,
-            ],
+            [`Stop loss atingido após operação: Perda $${perdaAtual.toFixed(2)} >= Limite $${lossLimit.toFixed(2)}`, state.userId],
           );
 
           // Remover usuário do monitoramento
@@ -4083,13 +3281,7 @@ export class OrionStrategy implements IStrategy {
         // ✅ Verificar STOP-LOSS BLINDADO conforme documentação ORION Master Blueprint
         // Regra: Ativa quando atinge 40% da meta, protege 50% do LUCRO MÁXIMO ATINGIDO (pico)
         const riskManager = this.riskManagers.get(state.userId);
-        if (
-          riskManager &&
-          lucroAtual > 0 &&
-          profitTarget > 0 &&
-          config.stopBlindadoPercent !== null &&
-          config.stopBlindadoPercent !== undefined
-        ) {
+        if (riskManager && lucroAtual > 0 && profitTarget > 0 && config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
           // Usar o RiskManager para calcular corretamente (ele rastreia o pico máximo)
           const currentBalance = capitalSessao;
           const baseStake = state.apostaInicial || 0.35;
@@ -4097,7 +3289,7 @@ export class OrionStrategy implements IStrategy {
 
           // Verificar se o Stop Blindado está ativo (atingiu 40% da meta)
           // O RiskManager rastreia o pico máximo internamente
-          const activationTrigger = profitTarget * 0.4; // 40% da meta
+          const activationTrigger = profitTarget * 0.40; // 40% da meta
 
           // ✅ Log informativo do status do Stop Blindado
           const percentualAteAtivacao = (lucroAtual / activationTrigger) * 100;
@@ -4105,8 +3297,8 @@ export class OrionStrategy implements IStrategy {
             // Ainda não ativou - mostrar progresso
             this.logger.log(
               `[ORION][${mode}][${state.userId}] 🛡️ Stop Blindado: Lucro atual $${lucroAtual.toFixed(2)} | ` +
-                `Meta para ativar: $${activationTrigger.toFixed(2)} (40% de $${profitTarget.toFixed(2)}) | ` +
-                `Progresso: ${percentualAteAtivacao.toFixed(1)}%`,
+              `Meta para ativar: $${activationTrigger.toFixed(2)} (40% de $${profitTarget.toFixed(2)}) | ` +
+              `Progresso: ${percentualAteAtivacao.toFixed(1)}%`,
             );
             this.saveOrionLog(
               state.userId,
@@ -4140,10 +3332,9 @@ export class OrionStrategy implements IStrategy {
               [state.userId],
             );
 
-            const stopBlindadoPercent =
-              stopBlindadoConfig && stopBlindadoConfig.length > 0
-                ? parseFloat(stopBlindadoConfig[0].stopBlindadoPercent) || 50.0
-                : 50.0;
+            const stopBlindadoPercent = stopBlindadoConfig && stopBlindadoConfig.length > 0
+              ? parseFloat(stopBlindadoConfig[0].stopBlindadoPercent) || 50.0
+              : 50.0;
 
             // Calcular valores para o log (usando o pico do RiskManager)
             // O RiskManager já calculou o minAllowedBalance baseado no pico
@@ -4151,8 +3342,8 @@ export class OrionStrategy implements IStrategy {
 
             this.logger.warn(
               `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
-                `Capital Sessão: $${capitalSessao.toFixed(2)} | ` +
-                `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
+              `Capital Sessão: $${capitalSessao.toFixed(2)} | ` +
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
             );
 
             this.saveOrionLog(
@@ -4181,26 +3372,21 @@ export class OrionStrategy implements IStrategy {
 
             this.logger.log(
               `[ORION][${mode}][${state.userId}] 🛡️ IA DESATIVADA POR STOP BLINDADO | ` +
-                `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
-                `Capital Sessão final: $${capitalSessao.toFixed(2)}`,
+              `Lucro protegido: $${lucroProtegido.toFixed(2)} | ` +
+              `Capital Sessão final: $${capitalSessao.toFixed(2)}`,
             );
             return;
           }
         }
       }
     } catch (error) {
-      this.logger.error(
-        `[ORION][${mode}][${state.userId}] Erro ao verificar limites após resultado:`,
-        error,
-      );
+      this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao verificar limites após resultado:`, error);
       // Continuar mesmo se houver erro na verificação (fail-open)
     } finally {
       // ✅ LIBERAR LOCK APÓS ATUALIZAR TODO O ESTADO
       // Isso evita que check_signal seja chamado antes de consecutive_losses ser atualizado
       state.isOperationActive = false;
-      this.logger.debug(
-        `[ORION][${mode}] 🔓 LOCK LIBERADO. Pronto para próxima análise.`,
-      );
+      this.logger.debug(`[ORION][${mode}] 🔓 LOCK LIBERADO. Pronto para próxima análise.`);
     }
   }
 
@@ -4230,9 +3416,7 @@ export class OrionStrategy implements IStrategy {
     mode: string,
   ): Promise<void> {
     return new Promise((resolve) => {
-      this.logger.log(
-        `[ORION][${mode}] 🔍 Iniciando monitoramento do contrato ${contractId} (tradeId: ${tradeId})`,
-      );
+      this.logger.log(`[ORION][${mode}] 🔍 Iniciando monitoramento do contrato ${contractId} (tradeId: ${tradeId})`);
 
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       const ws = new WebSocket(endpoint, {
@@ -4244,30 +3428,18 @@ export class OrionStrategy implements IStrategy {
       const timeout = setTimeout(async () => {
         ws.close();
         state.isOperationActive = false;
-        this.logger.warn(
-          `[ORION][${mode}] ⏱️ Timeout ao monitorar contrato ${contractId}`,
-        );
+        this.logger.warn(`[ORION][${mode}] ⏱️ Timeout ao monitorar contrato ${contractId}`);
 
         // ✅ Marcar trade como ERROR no banco de dados
-        await this.dataSource
-          .query(
-            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-            [`Timeout ao monitorar contrato ${contractId} (15s)`, tradeId],
-          )
-          .catch((err) => {
-            this.logger.error(
-              `[ORION] Erro ao atualizar trade com status ERROR (timeout):`,
-              err,
-            );
-          });
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [`Timeout ao monitorar contrato ${contractId} (15s)`, tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (timeout):`, err);
+        });
 
         // ✅ Log de erro com informações do timeout
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'erro',
-          `⏱️ Timeout ao monitorar contrato ${contractId} após 15 segundos - Operação cancelada | Contrato não finalizou no tempo esperado`,
-        );
+        this.saveOrionLog(state.userId, this.symbol, 'erro', `⏱️ Timeout ao monitorar contrato ${contractId} após 15 segundos - Operação cancelada | Contrato não finalizou no tempo esperado`);
 
         // ✅ NÃO incrementar perdaAcumulada quando for erro
         // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -4279,9 +3451,7 @@ export class OrionStrategy implements IStrategy {
       }, 15000); // ✅ 15 segundos (contrato dura apenas 1 segundo, então 15s é mais que suficiente)
 
       ws.on('open', () => {
-        this.logger.debug(
-          `[ORION][${mode}] 🔌 WebSocket aberto para monitoramento do contrato ${contractId}`,
-        );
+        this.logger.debug(`[ORION][${mode}] 🔌 WebSocket aberto para monitoramento do contrato ${contractId}`);
         ws.send(JSON.stringify({ authorize: state.derivToken }));
       });
 
@@ -4290,62 +3460,39 @@ export class OrionStrategy implements IStrategy {
           const msg = JSON.parse(data.toString());
 
           if (msg.authorize) {
-            this.logger.debug(
-              `[ORION][${mode}] ✅ Autorizado, inscrevendo no contrato ${contractId}`,
-            );
-            ws.send(
-              JSON.stringify({
-                proposal_open_contract: 1,
-                contract_id: contractId,
-                subscribe: 1,
-              }),
-            );
+            this.logger.debug(`[ORION][${mode}] ✅ Autorizado, inscrevendo no contrato ${contractId}`);
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1,
+            }));
             return;
           }
 
           if (msg.proposal_open_contract) {
             const contract = msg.proposal_open_contract;
-            this.logger.debug(
-              `[ORION][${mode}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`,
-            );
+            this.logger.debug(`[ORION][${mode}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
 
             // ✅ Verificar se contrato foi rejeitado, cancelado ou expirado
-            if (
-              contract.status === 'rejected' ||
-              contract.status === 'cancelled' ||
-              contract.status === 'expired'
-            ) {
+            if (contract.status === 'rejected' || contract.status === 'cancelled' || contract.status === 'expired') {
               clearTimeout(timeout);
               ws.close();
               state.isOperationActive = false;
 
               const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
               const errorResponse = JSON.stringify(contract);
-              this.logger.error(
-                `[ORION][${mode}] ❌ Contrato ${contractId} foi ${contract.status}:`,
-                errorMsg,
-              );
+              this.logger.error(`[ORION][${mode}] ❌ Contrato ${contractId} foi ${contract.status}:`, errorMsg);
 
               // ✅ Marcar trade como ERROR no banco de dados
-              await this.dataSource
-                .query(
-                  `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-                  [errorMsg, tradeId],
-                )
-                .catch((err) => {
-                  this.logger.error(
-                    `[ORION] Erro ao atualizar trade com status ERROR (${contract.status}):`,
-                    err,
-                  );
-                });
+              await this.dataSource.query(
+                `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+                [errorMsg, tradeId],
+              ).catch(err => {
+                this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (${contract.status}):`, err);
+              });
 
               // ✅ Log de erro com resposta completa da API
-              this.saveOrionLog(
-                state.userId,
-                this.symbol,
-                'erro',
-                `❌ Contrato ${contractId} foi ${contract.status} - Operação cancelada | Resposta Deriv: ${errorResponse}`,
-              );
+              this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Contrato ${contractId} foi ${contract.status} - Operação cancelada | Resposta Deriv: ${errorResponse}`);
 
               // ✅ NÃO incrementar perdaAcumulada quando for erro
               // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -4359,29 +3506,18 @@ export class OrionStrategy implements IStrategy {
 
             // Verificar se contrato foi finalizado
             // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
-            const isFinalized =
-              contract.is_sold === 1 ||
-              contract.is_sold === true ||
-              contract.status === 'won' ||
-              contract.status === 'lost' ||
-              contract.status === 'sold';
+            const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
+              contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
 
             if (isFinalized) {
               clearTimeout(timeout);
               ws.close();
 
               const profit = Number(contract.profit || 0);
-              const exitPrice = Number(
-                contract.exit_spot ||
-                  contract.current_spot ||
-                  contract.exit_tick ||
-                  0,
-              );
+              const exitPrice = Number(contract.exit_spot || contract.current_spot || contract.exit_tick || 0);
               const status = profit >= 0 ? 'WON' : 'LOST';
 
-              this.logger.log(
-                `[ORION][${mode}] ✅ Contrato ${contractId} finalizado: ${status} | P&L: $${profit.toFixed(2)} | Exit: ${exitPrice}`,
-              );
+              this.logger.log(`[ORION][${mode}] ✅ Contrato ${contractId} finalizado: ${status} | P&L: $${profit.toFixed(2)} | Exit: ${exitPrice}`);
 
               // Atualizar trade no banco
               await this.dataSource.query(
@@ -4434,25 +3570,14 @@ export class OrionStrategy implements IStrategy {
                     state.ultimoLucro = 0; // Resetar lucro anterior
                   }
                   if ('apostaBase' in state) {
-                    state.apostaBase =
-                      state.apostaInicial || state.capital || 0.35; // Resetar para aposta inicial
+                    state.apostaBase = state.apostaInicial || state.capital || 0.35; // Resetar para aposta inicial
                   }
 
                   this.logger.log(
                     `[ORION][${mode}][${state.userId}] ✅ Recuperou perdas do martingale! Resetando tudo. Próxima vitória (sem martingale) iniciará Soros.`,
                   );
-                  this.saveOrionLog(
-                    state.userId,
-                    this.symbol,
-                    'resultado',
-                    `✅ Recuperou perdas do martingale! Resetando aposta para: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`,
-                  );
-                  this.saveOrionLog(
-                    state.userId,
-                    this.symbol,
-                    'resultado',
-                    `Próxima aposta: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} (entrada inicial - aguardando próxima vitória para iniciar Soros)`,
-                  );
+                  this.saveOrionLog(state.userId, this.symbol, 'resultado', `✅ Recuperou perdas do martingale! Resetando aposta para: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`);
+                  this.saveOrionLog(state.userId, this.symbol, 'resultado', `Próxima aposta: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} (entrada inicial - aguardando próxima vitória para iniciar Soros)`);
                 } else {
                   // ✅ NÃO estava em martingale: aplicar Soros normalmente
                   // Incrementar vitórias consecutivas
@@ -4471,24 +3596,13 @@ export class OrionStrategy implements IStrategy {
                     this.logger.log(
                       `[ORION][${mode}][${state.userId}] 🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3). Reiniciando para entrada inicial.`,
                     );
-                    this.saveOrionLog(
-                      state.userId,
-                      this.symbol,
-                      'resultado',
-                      `🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3)`,
-                    );
-                    this.saveOrionLog(
-                      state.userId,
-                      this.symbol,
-                      'resultado',
-                      `Reiniciando para entrada inicial: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`,
-                    );
+                    this.saveOrionLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 4 vitórias consecutivas (até nível 3)`);
+                    this.saveOrionLog(state.userId, this.symbol, 'resultado', `Reiniciando para entrada inicial: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)}`);
 
                     // Resetar tudo
                     state.vitoriasConsecutivas = 0;
                     state.ultimoLucro = 0;
-                    state.apostaBase =
-                      state.apostaInicial || state.capital || 0.35;
+                    state.apostaBase = state.apostaInicial || state.capital || 0.35;
                   } else {
                     // Atualizar lucro e aposta base para próximo Soros
                     if ('ultimoLucro' in state) {
@@ -4505,25 +3619,13 @@ export class OrionStrategy implements IStrategy {
                     );
 
                     // Log do Soros
-                    if (
-                      state.vitoriasConsecutivas > 0 &&
-                      state.vitoriasConsecutivas <= SOROS_MAX_NIVEL
-                    ) {
-                      const proximaApostaSoros = calcularApostaComSoros(
-                        stakeAmount,
-                        profit,
-                        state.vitoriasConsecutivas,
-                      );
+                    if (state.vitoriasConsecutivas > 0 && state.vitoriasConsecutivas <= SOROS_MAX_NIVEL) {
+                      const proximaApostaSoros = calcularApostaComSoros(stakeAmount, profit, state.vitoriasConsecutivas);
                       if (proximaApostaSoros !== null) {
                         this.logger.log(
                           `[ORION][${mode}][${state.userId}] 💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima aposta: $${proximaApostaSoros.toFixed(2)}`,
                         );
-                        this.saveOrionLog(
-                          state.userId,
-                          this.symbol,
-                          'resultado',
-                          `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima aposta: $${proximaApostaSoros.toFixed(2)}`,
-                        );
+                        this.saveOrionLog(state.userId, this.symbol, 'resultado', `💰 SOROS Nível ${state.vitoriasConsecutivas} | Próxima aposta: $${proximaApostaSoros.toFixed(2)}`);
                       } else {
                         this.logger.warn(
                           `[ORION][${mode}][${state.userId}] ⚠️ calcularApostaComSoros retornou null | Vitórias: ${state.vitoriasConsecutivas} | Stake: $${stakeAmount.toFixed(2)} | Lucro: $${profit.toFixed(2)}`,
@@ -4531,12 +3633,7 @@ export class OrionStrategy implements IStrategy {
                       }
                     } else {
                       // Se não está mais no Soros, logar próxima aposta inicial
-                      this.saveOrionLog(
-                        state.userId,
-                        this.symbol,
-                        'resultado',
-                        `Próxima aposta: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} (entrada inicial)`,
-                      );
+                      this.saveOrionLog(state.userId, this.symbol, 'resultado', `Próxima aposta: $${(state.apostaBase || state.apostaInicial || 0.35).toFixed(2)} (entrada inicial)`);
                     }
                   }
                 }
@@ -4551,12 +3648,7 @@ export class OrionStrategy implements IStrategy {
                     this.logger.log(
                       `[ORION][${mode}][${state.userId}] ❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação (martingale)`,
                     );
-                    this.saveOrionLog(
-                      state.userId,
-                      this.symbol,
-                      'resultado',
-                      `❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação`,
-                    );
+                    this.saveOrionLog(state.userId, this.symbol, 'resultado', `❌ Soros Nível ${state.vitoriasConsecutivas} falhou! Entrando em recuperação`);
                   } else {
                     this.logger.log(
                       `[ORION][${mode}][${state.userId}] ❌ Entrada 1 falhou! Entrando em recuperação (martingale)`,
@@ -4574,8 +3666,7 @@ export class OrionStrategy implements IStrategy {
                 // Ativar martingale
                 if ('perdaAcumulada' in state) {
                   // ✅ CORREÇÃO: Somar o stakeAmount (valor apostado), não o profit
-                  state.perdaAcumulada =
-                    (state.perdaAcumulada || 0) + stakeAmount;
+                  state.perdaAcumulada = (state.perdaAcumulada || 0) + stakeAmount;
                 }
                 if ('ultimaDirecaoMartingale' in state) {
                   state.ultimaDirecaoMartingale = operation; // ✅ CORREÇÃO: Salvar direção para continuar martingale
@@ -4593,12 +3684,8 @@ export class OrionStrategy implements IStrategy {
 
               // Logs do resultado
               const logType = status === 'WON' ? 'resultado' : 'erro';
-              this.saveOrionLog(
-                state.userId,
-                this.symbol,
-                logType,
-                `${status === 'WON' ? '✅ GANHOU' : '❌ PERDEU'} | ${operation} | P&L: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`,
-              );
+              this.saveOrionLog(state.userId, this.symbol, logType,
+                `${status === 'WON' ? '✅ GANHOU' : '❌ PERDEU'} | ${operation} | P&L: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`);
 
               this.logger.log(
                 `[ORION][${mode}] ${status} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`,
@@ -4608,44 +3695,25 @@ export class OrionStrategy implements IStrategy {
             }
           }
         } catch (error) {
-          this.logger.error(
-            `[ORION][${mode}] Erro ao monitorar contrato:`,
-            error,
-          );
+          this.logger.error(`[ORION][${mode}] Erro ao monitorar contrato:`, error);
 
           // ✅ Se houver erro no processamento, marcar trade como ERROR
           clearTimeout(timeout);
           ws.close();
           state.isOperationActive = false;
 
-          const errorResponse =
-            error instanceof Error
-              ? error.stack || error.message
-              : JSON.stringify(error);
+          const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
 
           // ✅ Marcar trade como ERROR no banco de dados
-          await this.dataSource
-            .query(
-              `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-              [
-                `Erro ao processar mensagem: ${error.message || 'Erro desconhecido'}`,
-                tradeId,
-              ],
-            )
-            .catch((err) => {
-              this.logger.error(
-                `[ORION] Erro ao atualizar trade com status ERROR (catch):`,
-                err,
-              );
-            });
+          await this.dataSource.query(
+            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+            [`Erro ao processar mensagem: ${error.message || 'Erro desconhecido'}`, tradeId],
+          ).catch(err => {
+            this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (catch):`, err);
+          });
 
           // ✅ Log de erro com resposta completa
-          this.saveOrionLog(
-            state.userId,
-            this.symbol,
-            'erro',
-            `❌ Erro ao processar contrato ${contractId}: ${error.message || 'Erro desconhecido'} - Operação cancelada | Detalhes: ${errorResponse}`,
-          );
+          this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Erro ao processar contrato ${contractId}: ${error.message || 'Erro desconhecido'} - Operação cancelada | Detalhes: ${errorResponse}`);
 
           // ✅ NÃO incrementar perdaAcumulada quando for erro
           // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -4659,40 +3727,21 @@ export class OrionStrategy implements IStrategy {
 
       ws.on('error', async (error) => {
         clearTimeout(timeout);
-        this.logger.error(
-          `[ORION][${mode}] ❌ Erro no WebSocket de monitoramento do contrato ${contractId}:`,
-          error,
-        );
+        this.logger.error(`[ORION][${mode}] ❌ Erro no WebSocket de monitoramento do contrato ${contractId}:`, error);
         state.isOperationActive = false;
 
-        const errorResponse =
-          error instanceof Error
-            ? error.stack || error.message
-            : JSON.stringify(error);
+        const errorResponse = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
 
         // ✅ Marcar trade como ERROR no banco de dados
-        await this.dataSource
-          .query(
-            `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
-            [
-              `Erro no WebSocket: ${error.message || 'Erro desconhecido'}`,
-              tradeId,
-            ],
-          )
-          .catch((err) => {
-            this.logger.error(
-              `[ORION] Erro ao atualizar trade com status ERROR (websocket):`,
-              err,
-            );
-          });
+        await this.dataSource.query(
+          `UPDATE ai_trades SET status = 'ERROR', error_message = ? WHERE id = ?`,
+          [`Erro no WebSocket: ${error.message || 'Erro desconhecido'}`, tradeId],
+        ).catch(err => {
+          this.logger.error(`[ORION] Erro ao atualizar trade com status ERROR (websocket):`, err);
+        });
 
         // ✅ Log de erro com detalhes completos
-        this.saveOrionLog(
-          state.userId,
-          this.symbol,
-          'erro',
-          `❌ Erro no WebSocket ao monitorar contrato ${contractId} - Operação cancelada | Detalhes: ${errorResponse}`,
-        );
+        this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Erro no WebSocket ao monitorar contrato ${contractId} - Operação cancelada | Detalhes: ${errorResponse}`);
 
         // ✅ NÃO incrementar perdaAcumulada quando for erro
         // ✅ Resetar contador de ticks para permitir nova tentativa
@@ -4704,9 +3753,7 @@ export class OrionStrategy implements IStrategy {
       });
 
       ws.on('close', () => {
-        this.logger.debug(
-          `[ORION][${mode}] 🔌 WebSocket fechado para contrato ${contractId}`,
-        );
+        this.logger.debug(`[ORION][${mode}] 🔌 WebSocket fechado para contrato ${contractId}`);
       });
     });
   }
@@ -4730,17 +3777,13 @@ export class OrionStrategy implements IStrategy {
         capital: params.stakeAmount,
         derivToken: params.derivToken,
         currency: params.currency,
-        modoMartingale:
-          params.modoMartingale || existing.modoMartingale || 'conservador',
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
         ultimaApostaUsada: existing.ultimaApostaUsada || 0, // ✅ Preservar última aposta usada
         // ✅ Garantir que ticksDesdeUltimaOp está inicializado
-        ticksDesdeUltimaOp:
-          existing.ticksDesdeUltimaOp !== undefined
-            ? existing.ticksDesdeUltimaOp
-            : 0,
+        ticksDesdeUltimaOp: existing.ticksDesdeUltimaOp !== undefined ? existing.ticksDesdeUltimaOp : 0,
         // ✅ Não resetar ultimaDirecaoMartingale ao atualizar (manter estado do martingale)
         // ✅ Resetar consecutive_losses ao ativar usuário (nova sessão)
         consecutive_losses: 0,
@@ -4775,14 +3818,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0, // ✅ Inicializar contagem de dígitos baixos
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(
-        params.userId,
-        'VELOZ',
-        params.modoMartingale || 'CONSERVADOR',
-        params.profitTarget || 0,
-        params.lossLimit || 0,
-        !!params.stopLossBlindado,
-      );
+      this.logInitialConfigFixed(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
     }
   }
 
@@ -4805,8 +3841,7 @@ export class OrionStrategy implements IStrategy {
         capital: params.stakeAmount,
         derivToken: params.derivToken,
         currency: params.currency,
-        modoMartingale:
-          params.modoMartingale || existing.modoMartingale || 'conservador',
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
@@ -4846,14 +3881,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(
-        params.userId,
-        'MODERADO',
-        params.modoMartingale || 'CONSERVADOR',
-        params.profitTarget || 50.0,
-        params.lossLimit || 50.0,
-        !!params.stopLossBlindado,
-      );
+      this.logInitialConfigFixed(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -4876,8 +3904,7 @@ export class OrionStrategy implements IStrategy {
         capital: params.stakeAmount,
         derivToken: params.derivToken,
         currency: params.currency,
-        modoMartingale:
-          params.modoMartingale || existing.modoMartingale || 'conservador',
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
@@ -4917,14 +3944,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(
-        params.userId,
-        'PRECISO',
-        params.modoMartingale || 'CONSERVADOR',
-        params.profitTarget || 50.0,
-        params.lossLimit || 50.0,
-        !!params.stopLossBlindado,
-      );
+      this.logInitialConfigFixed(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -4947,8 +3967,7 @@ export class OrionStrategy implements IStrategy {
         capital: params.stakeAmount,
         derivToken: params.derivToken,
         currency: params.currency,
-        modoMartingale:
-          params.modoMartingale || existing.modoMartingale || 'conservador',
+        modoMartingale: params.modoMartingale || existing.modoMartingale || 'conservador',
         // ✅ Atualizar aposta inicial se fornecido
         apostaInicial: params.apostaInicial || existing.apostaInicial,
         apostaBase: params.apostaInicial || existing.apostaBase,
@@ -4988,14 +4007,7 @@ export class OrionStrategy implements IStrategy {
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(
-        params.userId,
-        'LENTA',
-        params.modoMartingale || 'CONSERVADOR',
-        params.profitTarget || 50.0,
-        params.lossLimit || 50.0,
-        !!params.stopLossBlindado,
-      );
+      this.logInitialConfigFixed(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -5023,24 +4035,13 @@ export class OrionStrategy implements IStrategy {
   private saveOrionLog(
     userId: string,
     symbol: string,
-    type:
-      | 'info'
-      | 'tick'
-      | 'analise'
-      | 'sinal'
-      | 'operacao'
-      | 'resultado'
-      | 'alerta'
-      | 'erro'
-      | 'config',
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'config',
     message: string,
     details?: any,
   ): void {
     // Validar parâmetros
     if (!userId || !type || !message || message.trim() === '') {
-      this.logger.warn(
-        `[ORION][SaveLog] ⚠️ Parâmetros inválidos: userId=${userId}, type=${type}, message=${message}`,
-      );
+      this.logger.warn(`[ORION][SaveLog] ⚠️ Parâmetros inválidos: userId=${userId}, type=${type}, message=${message}`);
       return;
     }
 
@@ -5049,16 +4050,11 @@ export class OrionStrategy implements IStrategy {
 
     // Adicionar à fila
     this.logQueue.push({ userId, symbol: symbolToUse, type, message, details });
-    this.logger.debug(
-      `[ORION][SaveLog] 📝 Log adicionado à fila | userId=${userId} | type=${type} | message=${message.substring(0, 50)}... | Fila: ${this.logQueue.length}`,
-    );
+    this.logger.debug(`[ORION][SaveLog] 📝 Log adicionado à fila | userId=${userId} | type=${type} | message=${message.substring(0, 50)}... | Fila: ${this.logQueue.length}`);
 
     // Processar fila em background (não bloqueia)
-    this.processOrionLogQueue().catch((error) => {
-      this.logger.error(
-        `[ORION][SaveLog] Erro ao processar fila de logs:`,
-        error,
-      );
+    this.processOrionLogQueue().catch(error => {
+      this.logger.error(`[ORION][SaveLog] Erro ao processar fila de logs:`, error);
     });
   }
 
@@ -5093,16 +4089,13 @@ export class OrionStrategy implements IStrategy {
       // Salvar logs por usuário em paralelo (✅ OTIMIZADO: não bloqueia)
       await Promise.all(
         Array.from(logsByUser.entries()).map(([userId, logs]) =>
-          this.saveOrionLogsBatch(userId, logs).catch((error) => {
+          this.saveOrionLogsBatch(userId, logs).catch(error => {
             this.logger.error(`[ORION][SaveLogsBatch][${userId}] Erro:`, error);
-          }),
-        ),
+          })
+        )
       );
     } catch (error) {
-      this.logger.error(
-        `[ORION][ProcessLogQueue] Erro ao processar logs:`,
-        error,
-      );
+      this.logger.error(`[ORION][ProcessLogQueue] Erro ao processar logs:`, error);
     } finally {
       this.logProcessing = false;
 
@@ -5116,23 +4109,20 @@ export class OrionStrategy implements IStrategy {
   /**
    * ✅ ORION: Salva batch de logs no banco
    */
-  private async saveOrionLogsBatch(
-    userId: string,
-    logs: typeof this.logQueue,
-  ): Promise<void> {
+  private async saveOrionLogsBatch(userId: string, logs: typeof this.logQueue): Promise<void> {
     if (logs.length === 0) return;
 
     try {
       const icons: Record<string, string> = {
-        info: '',
-        tick: '',
-        analise: '',
-        sinal: '',
-        operacao: '',
-        resultado: '',
-        alerta: '',
-        erro: '',
-        config: '',
+        'info': '',
+        'tick': '',
+        'analise': '',
+        'sinal': '',
+        'operacao': '',
+        'resultado': '',
+        'alerta': '',
+        'erro': '',
+        'config': '',
       };
 
       const placeholders = logs.map(() => '(?, ?, ?, ?, ?, NOW())').join(', ');
@@ -5140,11 +4130,15 @@ export class OrionStrategy implements IStrategy {
 
       for (const log of logs) {
         const icon = icons[log.type] || '';
-        const detailsJson = log.details
-          ? JSON.stringify(log.details)
-          : JSON.stringify({ symbol: log.symbol });
+        const detailsJson = log.details ? JSON.stringify(log.details) : JSON.stringify({ symbol: log.symbol });
 
-        flatValues.push(userId, log.type, icon, log.message, detailsJson);
+        flatValues.push(
+          userId,
+          log.type,
+          icon,
+          log.message,
+          detailsJson,
+        );
       }
 
       await this.dataSource.query(
@@ -5153,9 +4147,7 @@ export class OrionStrategy implements IStrategy {
         flatValues,
       );
 
-      this.logger.debug(
-        `[ORION][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`,
-      );
+      this.logger.debug(`[ORION][SaveLogsBatch][${userId}] ✅ ${logs.length} logs salvos com sucesso`);
 
       // ✅ Emitir evento SSE para atualizar frontend em tempo real
       this.tradeEvents.emit({
@@ -5165,38 +4157,21 @@ export class OrionStrategy implements IStrategy {
         status: 'LOG',
       });
     } catch (error) {
-      this.logger.error(
-        `[ORION][SaveLogsBatch][${userId}] Erro ao salvar logs:`,
-        error,
-      );
+      this.logger.error(`[ORION][SaveLogsBatch][${userId}] Erro ao salvar logs:`, error);
     }
   }
 
   // ✅ [ZENIX v2.0] Log de Configuração Inicial (Fix DB Error)
-  private logInitialConfigFixed(
-    userId: string,
-    mode: string,
-    riskMode: string,
-    profitTarget: number,
-    stopLoss: number,
-    blindado: boolean,
-  ) {
+  private logInitialConfigFixed(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
     const blindadoStatus = blindado ? 'ATIVADO' : 'DESATIVADO';
     this.logger.log(`⚙️ CONFIGURAÇÕES INICIAIS`);
     this.logger.log(`• Estratégia: ORION`);
     this.logger.log(`• Modo de Negociação: ${mode}`);
     this.logger.log(`• Gerenciamento de Risco: ${riskMode.toUpperCase()}`);
     this.logger.log(`• Meta de Lucro: $${profitTarget.toFixed(2)}`);
-    this.logger.log(
-      `[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`,
-    );
+    this.logger.log(`[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`);
 
     // ✅ FIX: Usar type 'info' para evitar WARN_DATA_TRUNCATED no banco
-    this.saveOrionLog(
-      userId,
-      this.symbol,
-      'info',
-      `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`,
-    );
+    this.saveOrionLog(userId, this.symbol, 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`);
   }
 }

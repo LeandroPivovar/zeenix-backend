@@ -20,7 +20,7 @@ export class TypeOrmLessonRepository {
       relations: ['module'],
       order: { orderIndex: 'ASC' },
     });
-    return entities.map((e) => this.toDomain(e));
+    return entities.map(e => this.toDomain(e));
   }
 
   async findById(id: string): Promise<Lesson | null> {
@@ -40,13 +40,11 @@ export class TypeOrmLessonRepository {
       where: { courseId },
       order: { orderIndex: 'ASC' },
     });
-    return modules.map((m) => ({
+    return modules.map(m => ({
       id: m.id,
       title: m.title,
       orderIndex: m.orderIndex,
-      lessons: lessons
-        .filter((l) => l.moduleId === m.id)
-        .map((l) => this.toDomain(l)),
+      lessons: lessons.filter(l => l.moduleId === m.id).map(l => this.toDomain(l)),
     }));
   }
 
@@ -65,3 +63,7 @@ export class TypeOrmLessonRepository {
     );
   }
 }
+
+
+
+

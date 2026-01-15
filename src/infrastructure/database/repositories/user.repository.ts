@@ -13,17 +13,11 @@ export class TypeOrmUserRepository implements UserRepository {
   ) {}
 
   async create(user: User): Promise<User> {
-    console.log(
-      `[TypeOrmUserRepository] Criando usuário: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`,
-    );
+    console.log(`[TypeOrmUserRepository] Criando usuário: ${JSON.stringify({ id: user.id, name: user.name, email: user.email })}`);
     const userEntity = this.toEntity(user);
-    console.log(
-      `[TypeOrmUserRepository] Entity criada, role: ${(userEntity as any).role}`,
-    );
+    console.log(`[TypeOrmUserRepository] Entity criada, role: ${(userEntity as any).role}`);
     const savedEntity = await this.userRepository.save(userEntity);
-    console.log(
-      `[TypeOrmUserRepository] Usuário salvo no banco: ${JSON.stringify({ id: savedEntity.id, name: savedEntity.name, email: savedEntity.email, role: savedEntity.role })}`,
-    );
+    console.log(`[TypeOrmUserRepository] Usuário salvo no banco: ${JSON.stringify({ id: savedEntity.id, name: savedEntity.name, email: savedEntity.email, role: savedEntity.role })}`);
     return this.toDomain(savedEntity);
   }
 
@@ -36,38 +30,28 @@ export class TypeOrmUserRepository implements UserRepository {
     console.log(`[TypeOrmUserRepository] Buscando usuário por email: ${email}`);
     const userEntity = await this.userRepository.findOne({ where: { email } });
     if (userEntity) {
-      console.log(
-        `[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, email: userEntity.email })}`,
-      );
+      console.log(`[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, email: userEntity.email })}`);
     } else {
-      console.log(
-        `[TypeOrmUserRepository] Usuário não encontrado para email: ${email}`,
-      );
+      console.log(`[TypeOrmUserRepository] Usuário não encontrado para email: ${email}`);
     }
     return userEntity ? this.toDomain(userEntity) : null;
   }
 
   async findByPhone(phone: string): Promise<User | null> {
     if (!phone) return null;
-    console.log(
-      `[TypeOrmUserRepository] Buscando usuário por telefone: ${phone}`,
-    );
+    console.log(`[TypeOrmUserRepository] Buscando usuário por telefone: ${phone}`);
     const userEntity = await this.userRepository.findOne({ where: { phone } });
     if (userEntity) {
-      console.log(
-        `[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, phone: userEntity.phone })}`,
-      );
+      console.log(`[TypeOrmUserRepository] Usuário encontrado: ${JSON.stringify({ id: userEntity.id, phone: userEntity.phone })}`);
     } else {
-      console.log(
-        `[TypeOrmUserRepository] Usuário não encontrado para telefone: ${phone}`,
-      );
+      console.log(`[TypeOrmUserRepository] Usuário não encontrado para telefone: ${phone}`);
     }
     return userEntity ? this.toDomain(userEntity) : null;
   }
 
   async findAll(): Promise<User[]> {
     const userEntities = await this.userRepository.find();
-    return userEntities.map((entity) => this.toDomain(entity));
+    return userEntities.map(entity => this.toDomain(entity));
   }
 
   async update(user: User): Promise<User> {
@@ -80,47 +64,33 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.delete(id);
   }
 
-  async updateDerivInfo(
-    userId: string,
-    info: { loginId: string; currency?: string; balance?: number; raw?: any },
-  ): Promise<void> {
+  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any }): Promise<void> {
     const updateData: any = {
       derivLoginId: info.loginId,
     };
-
+    
     // Só atualizar currency se foi fornecido explicitamente
     if (info.currency !== undefined) {
       updateData.derivCurrency = info.currency;
     }
-
+    
     // Só atualizar balance se foi fornecido explicitamente
     if (info.balance !== undefined) {
       updateData.derivBalance = String(info.balance);
     }
-
+    
     // Só atualizar raw se foi fornecido explicitamente
     if (info.raw !== undefined) {
       updateData.derivRaw = info.raw;
     }
-
+    
     await this.userRepository.update(userId, updateData);
   }
 
-  async getDerivInfo(userId: string): Promise<{
-    loginId: string | null;
-    currency: string | null;
-    balance: string | null;
-    raw: any;
-  } | null> {
-    const userEntity = await this.userRepository.findOne({
+  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any } | null> {
+    const userEntity = await this.userRepository.findOne({ 
       where: { id: userId },
-      select: [
-        'id',
-        'derivLoginId',
-        'derivCurrency',
-        'derivBalance',
-        'derivRaw',
-      ],
+      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw']
     });
     if (!userEntity) return null;
     return {

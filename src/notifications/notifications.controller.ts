@@ -1,13 +1,10 @@
 import { Controller, Get, Post, UseGuards, Req } from '@nestjs/common';
-import {
-  NotificationsService,
-  LoginNotificationSummary,
-} from './notifications.service';
+import { NotificationsService, LoginNotificationSummary } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notificationsService: NotificationsService) { }
 
   /**
    * GET /notifications/login-summary
@@ -52,4 +49,21 @@ export class NotificationsController {
 
     return this.notificationsService.getLoginSummary(userId);
   }
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

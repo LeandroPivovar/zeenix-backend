@@ -1,12 +1,4 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { UserEntity } from './user.entity';
 
 export enum TradeType {
@@ -37,7 +29,7 @@ export class TradeEntity {
   @Column({ type: 'varchar', length: 20 })
   duration: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 1.0 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 1.00 })
   multiplier: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, name: 'entry_value' })
@@ -52,42 +44,19 @@ export class TradeEntity {
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   profit?: number | null;
 
-  @Column({
-    type: 'varchar',
-    length: 255,
-    nullable: true,
-    name: 'deriv_transaction_id',
-  })
+  @Column({ type: 'varchar', length: 255, nullable: true, name: 'deriv_transaction_id' })
   derivTransactionId?: string | null;
 
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'symbol' })
   symbol?: string | null;
 
-  @Column({
-    type: 'decimal',
-    precision: 10,
-    scale: 2,
-    nullable: true,
-    name: 'exit_value',
-  })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'exit_value' })
   exitValue?: number | null;
 
-  @Column({
-    type: 'decimal',
-    precision: 10,
-    scale: 2,
-    nullable: true,
-    name: 'entry_spot',
-  })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'entry_spot' })
   entrySpot?: number | null;
 
-  @Column({
-    type: 'decimal',
-    precision: 10,
-    scale: 2,
-    nullable: true,
-    name: 'exit_spot',
-  })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'exit_spot' })
   exitSpot?: number | null;
 
   @CreateDateColumn({ name: 'created_at' })
@@ -100,3 +69,6 @@ export class TradeEntity {
   @JoinColumn({ name: 'user_id' })
   user?: UserEntity;
 }
+
+
+

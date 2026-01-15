@@ -1,20 +1,13 @@
 import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
 
-type CurrencyAccountEntry = {
-  value: number;
-  loginid: string;
-  isDemo?: boolean;
-};
+type CurrencyAccountEntry = { value: number; loginid: string; isDemo?: boolean };
 
 type AggregatedBalances = {
-  by_type: Record<
-    string,
-    {
-      real: Record<string, number>;
-      demo: Record<string, number>;
-    }
-  >;
+  by_type: Record<string, {
+    real: Record<string, number>;
+    demo: Record<string, number>;
+  }>;
   global: {
     real: Record<string, number>;
     demo: Record<string, number>;
@@ -45,13 +38,8 @@ export class DerivService {
    * Ignora loginid/ID das contas na lógica de agregação
    */
   private aggregateBalances(accounts: Record<string, any>): AggregatedBalances {
-    this.logger.log(
-      `[DerivService] aggregateBalances chamado com ${Object.keys(accounts).length} contas`,
-    );
-    const totais: Record<
-      string,
-      { real: Record<string, number>; demo: Record<string, number> }
-    > = {};
+    this.logger.log(`[DerivService] aggregateBalances chamado com ${Object.keys(accounts).length} contas`);
+    const totais: Record<string, { real: Record<string, number>; demo: Record<string, number> }> = {};
     const warnings: string[] = [];
 
     for (const accountId in accounts) {
@@ -73,10 +61,7 @@ export class DerivService {
 
       // Usar converted_amount se existir e for numérico, senão usar balance
       let value = 0;
-      if (
-        account.converted_amount !== null &&
-        account.converted_amount !== undefined
-      ) {
+      if (account.converted_amount !== null && account.converted_amount !== undefined) {
         const converted = parseFloat(account.converted_amount);
         if (!isNaN(converted)) {
           value = converted;
@@ -85,9 +70,7 @@ export class DerivService {
           if (!isNaN(balance)) {
             value = balance;
           } else {
-            warnings.push(
-              `Conta ${accountId} sem valor numérico válido (converted_amount e balance inválidos)`,
-            );
+            warnings.push(`Conta ${accountId} sem valor numérico válido (converted_amount e balance inválidos)`);
           }
         } else {
           warnings.push(`Conta ${accountId} sem valor numérico válido`);
@@ -116,10 +99,7 @@ export class DerivService {
     }
 
     // Calcular totais globais por mode/currency
-    const global: {
-      real: Record<string, number>;
-      demo: Record<string, number>;
-    } = {
+    const global: { real: Record<string, number>; demo: Record<string, number> } = {
       real: {},
       demo: {},
     };
@@ -141,18 +121,12 @@ export class DerivService {
       warnings,
     };
 
-    this.logger.log(
-      `[DerivService] aggregateBalances resultado - global.real: ${JSON.stringify(global.real)}, global.demo: ${JSON.stringify(global.demo)}`,
-    );
+    this.logger.log(`[DerivService] aggregateBalances resultado - global.real: ${JSON.stringify(global.real)}, global.demo: ${JSON.stringify(global.demo)}`);
 
     return result;
   }
 
-  async connectAndGetAccount(
-    token: string,
-    appId: number,
-    targetCurrency?: string,
-  ): Promise<DerivAccountResult> {
+  async connectAndGetAccount(token: string, appId: number, targetCurrency?: string): Promise<DerivAccountResult> {
     if (!token) throw new UnauthorizedException('Token ausente');
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
     const ws = new WebSocket(url, {
@@ -198,14 +172,8 @@ export class DerivService {
               sendBalanceRequest();
               return;
             }
-            this.logger.error(
-              `Erro na API Deriv: ${JSON.stringify(msg.error)}`,
-            );
-            reject(
-              new UnauthorizedException(
-                msg.error.message || 'Erro na API Deriv',
-              ),
-            );
+            this.logger.error(`Erro na API Deriv: ${JSON.stringify(msg.error)}`);
+            reject(new UnauthorizedException(msg.error.message || 'Erro na API Deriv'));
             ws.close();
             return;
           }
@@ -224,12 +192,8 @@ export class DerivService {
             const desiredCurrency = targetCurrency?.toUpperCase();
 
             // Agregar saldos usando a nova lógica
-            this.logger.log(
-              `[DerivService] DEBUG - balanceData.accounts existe? ${!!balanceData.accounts}`,
-            );
-            this.logger.log(
-              `[DerivService] DEBUG - balanceData.accounts keys: ${balanceData.accounts ? Object.keys(balanceData.accounts).join(', ') : 'N/A'}`,
-            );
+            this.logger.log(`[DerivService] DEBUG - balanceData.accounts existe? ${!!balanceData.accounts}`);
+            this.logger.log(`[DerivService] DEBUG - balanceData.accounts keys: ${balanceData.accounts ? Object.keys(balanceData.accounts).join(', ') : 'N/A'}`);
 
             const aggregatedBalances = balanceData.accounts
               ? this.aggregateBalances(balanceData.accounts)
@@ -237,9 +201,7 @@ export class DerivService {
 
             // Log dos warnings se houver
             if (aggregatedBalances.warnings.length > 0) {
-              this.logger.warn(
-                `[DerivService] Warnings ao processar contas: ${aggregatedBalances.warnings.join(', ')}`,
-              );
+              this.logger.warn(`[DerivService] Warnings ao processar contas: ${aggregatedBalances.warnings.join(', ')}`);
             }
 
             // Log da estrutura agregada
@@ -254,8 +216,7 @@ export class DerivService {
             );
 
             // Manter estrutura antiga para compatibilidade (accountsByCurrency)
-            const accountsByCurrency: Record<string, CurrencyAccountEntry[]> =
-              {};
+            const accountsByCurrency: Record<string, CurrencyAccountEntry[]> = {};
             const allDemoAccounts: CurrencyAccountEntry[] = [];
             const allRealAccounts: CurrencyAccountEntry[] = [];
 
@@ -266,15 +227,14 @@ export class DerivService {
                 if (!currencyCode) continue;
 
                 // Usar converted_amount se disponível, senão balance
-                const numericBalance =
-                  account.converted_amount !== null &&
-                  account.converted_amount !== undefined
-                    ? parseFloat(account.converted_amount)
-                    : parseFloat(account.balance ?? 0);
+                const numericBalance = account.converted_amount !== null && account.converted_amount !== undefined
+                  ? parseFloat(account.converted_amount)
+                  : parseFloat(account.balance ?? 0);
 
                 // Identificar se é conta demo: usar demo_account como fonte primária
                 const isDemoAccount =
-                  account.demo_account === 1 || account.demo_account === true;
+                  account.demo_account === 1 ||
+                  account.demo_account === true;
 
                 const accountEntry = {
                   value: numericBalance,
@@ -300,27 +260,14 @@ export class DerivService {
               }
             }
 
-            const mainCurrency = (
-              balanceData.currency ||
-              desiredCurrency ||
-              'USD'
-            ).toUpperCase();
+            const mainCurrency = (balanceData.currency || desiredCurrency || 'USD').toUpperCase();
             const mainBalanceValue = parseFloat(balanceData.balance ?? 0);
             // Usar demo_account como fonte primária para identificar se é demo
-            const mainIsDemo =
-              balanceData.demo_account === 1 ||
-              balanceData.demo_account === true;
+            const mainIsDemo = balanceData.demo_account === 1 || balanceData.demo_account === true;
 
-            if (
-              !accountsByCurrency[mainCurrency] ||
-              !accountsByCurrency[mainCurrency].length
-            ) {
+            if (!accountsByCurrency[mainCurrency] || !accountsByCurrency[mainCurrency].length) {
               accountsByCurrency[mainCurrency] = [
-                {
-                  value: mainBalanceValue,
-                  loginid: balanceData.loginid || '',
-                  isDemo: mainIsDemo,
-                },
+                { value: mainBalanceValue, loginid: balanceData.loginid || '', isDemo: mainIsDemo },
               ];
             }
 
@@ -332,10 +279,7 @@ export class DerivService {
             if (desiredCurrency === 'DEMO') {
               // Para DEMO, buscar contas demo (verificar propriedade isDemo)
               // Priorizar USD demo se disponível, senão usar qualquer conta demo
-              const usdDemoAccounts =
-                accountsByCurrency['USD']?.filter(
-                  (acc) => acc.isDemo === true,
-                ) || [];
+              const usdDemoAccounts = accountsByCurrency['USD']?.filter(acc => acc.isDemo === true) || [];
               if (usdDemoAccounts.length > 0) {
                 selectedEntry = usdDemoAccounts[0];
                 selectedCurrency = 'USD';
@@ -343,14 +287,8 @@ export class DerivService {
                 // Se não houver USD demo, usar a primeira conta demo disponível
                 selectedEntry = allDemoAccounts[0];
                 // Determinar a moeda da conta demo selecionada
-                for (const [currency, accounts] of Object.entries(
-                  accountsByCurrency,
-                )) {
-                  if (
-                    accounts.some(
-                      (acc) => acc.loginid === selectedEntry.loginid,
-                    )
-                  ) {
+                for (const [currency, accounts] of Object.entries(accountsByCurrency)) {
+                  if (accounts.some(acc => acc.loginid === selectedEntry.loginid)) {
                     selectedCurrency = currency;
                     break;
                   }
@@ -358,31 +296,21 @@ export class DerivService {
                 selectedCurrency = selectedCurrency || 'USD';
               } else {
                 // Fallback: usar conta principal se não houver contas demo
-                selectedEntry = {
-                  value: mainBalanceValue,
-                  loginid: balanceData.loginid,
-                  isDemo: false,
-                };
+                selectedEntry = { value: mainBalanceValue, loginid: balanceData.loginid, isDemo: false };
                 selectedCurrency = mainCurrency;
               }
             } else {
               // Para USD/BTC, priorizar contas reais (não demo), mas usar demo se não houver
-              const desiredEntries = desiredCurrency
-                ? accountsByCurrency[desiredCurrency]
-                : undefined;
+              const desiredEntries = desiredCurrency ? accountsByCurrency[desiredCurrency] : undefined;
               const currencyEntries =
                 desiredEntries && desiredEntries.length
                   ? desiredEntries
-                  : (accountsByCurrency[mainCurrency] ?? []);
+                  : accountsByCurrency[mainCurrency] ?? [];
 
-              selectedEntry = currencyEntries.find(
-                (entry) => entry.isDemo === false || entry.isDemo === undefined,
-              ) ||
-                currencyEntries[0] || {
-                  value: mainBalanceValue,
-                  loginid: balanceData.loginid,
-                  isDemo: false,
-                };
+              selectedEntry =
+                currencyEntries.find(entry => entry.isDemo === false || entry.isDemo === undefined) ||
+                currencyEntries[0] ||
+                { value: mainBalanceValue, loginid: balanceData.loginid, isDemo: false };
 
               selectedCurrency =
                 desiredCurrency && desiredEntries && desiredEntries.length
@@ -391,22 +319,16 @@ export class DerivService {
             }
 
             const flattenedBalances = Object.fromEntries(
-              Object.entries(accountsByCurrency).map(
-                ([currencyKey, entries]) => [
-                  currencyKey,
-                  entries.reduce((sum, entry) => sum + entry.value, 0),
-                ],
-              ),
+              Object.entries(accountsByCurrency).map(([currencyKey, entries]) => [
+                currencyKey,
+                entries.reduce((sum, entry) => sum + entry.value, 0),
+              ]),
             );
 
             // Usar dados agregados para balancesByCurrencyDemo e balancesByCurrencyReal
             // Isso garante que usamos converted_amount quando disponível e agrupamos corretamente
-            const balancesByCurrencyDemo: Record<string, number> = {
-              ...aggregatedBalances.global.demo,
-            };
-            const balancesByCurrencyReal: Record<string, number> = {
-              ...aggregatedBalances.global.real,
-            };
+            const balancesByCurrencyDemo: Record<string, number> = { ...aggregatedBalances.global.demo };
+            const balancesByCurrencyReal: Record<string, number> = { ...aggregatedBalances.global.real };
 
             // Log para debug - verificar se os dados estão sendo criados
             this.logger.log(
@@ -435,8 +357,8 @@ export class DerivService {
               accountsByCurrency,
               aggregatedBalances,
               tokensByLoginId: {
-                [selectedEntry.loginid || balanceData.loginid]: token,
-              },
+                [selectedEntry.loginid || balanceData.loginid]: token
+              }
             };
 
             this.logger.log(
@@ -452,32 +374,24 @@ export class DerivService {
                 balance: accountData.balance,
                 balancesByCurrency: accountData.balancesByCurrency,
                 balancesByCurrencyDemo: accountData.balancesByCurrencyDemo,
-                balancesByCurrencyReal: accountData.balancesByCurrencyReal,
+                balancesByCurrencyReal: accountData.balancesByCurrencyReal
               })}`,
             );
 
             // Log do objeto completo antes de resolver
-            this.logger.log(
-              `[DerivService] DEBUG - accountData completo antes de resolve: ${JSON.stringify(accountData)}`,
-            );
+            this.logger.log(`[DerivService] DEBUG - accountData completo antes de resolve: ${JSON.stringify(accountData)}`);
 
             resolve(accountData);
             ws.close();
           }
         } catch (error) {
-          this.logger.error(
-            `Erro ao processar mensagem da API Deriv: ${error.message}`,
-          );
-          reject(
-            new UnauthorizedException(
-              'Erro ao processar mensagem da API Deriv',
-            ),
-          );
+          this.logger.error(`Erro ao processar mensagem da API Deriv: ${error.message}`);
+          reject(new UnauthorizedException('Erro ao processar mensagem da API Deriv'));
           ws.close();
         }
       });
 
-      ws.on('error', (error) => {
+      ws.on('error', error => {
         this.logger.error(`Erro de conexão WebSocket: ${error.message}`);
         reject(new UnauthorizedException('Erro de conexão WebSocket'));
       });
@@ -490,11 +404,7 @@ export class DerivService {
     return result;
   }
 
-  async refreshBalance(
-    token: string,
-    appId: number = 1089,
-    targetCurrency?: string,
-  ) {
+  async refreshBalance(token: string, appId: number = 1089, targetCurrency?: string) {
     this.logger.log(`Buscando saldo atualizado da Deriv para token...`);
     try {
       return await this.connectAndGetAccount(token, appId, targetCurrency);
@@ -504,10 +414,7 @@ export class DerivService {
     }
   }
 
-  pickAccountForCurrency(
-    account: DerivAccountResult,
-    currency: string,
-  ): DerivAccountResult {
+  pickAccountForCurrency(account: DerivAccountResult, currency: string): DerivAccountResult {
     const desiredCurrency = currency.toUpperCase();
 
     // Se o usuário configurou DEMO, buscar contas demo (priorizando USD demo)
@@ -518,26 +425,22 @@ export class DerivService {
     if (desiredCurrency === 'DEMO') {
       // Para DEMO, buscar contas demo em todas as moedas (verificar propriedade isDemo)
       // Priorizar USD demo se disponível
-      const allAccounts = Object.values(
-        account.accountsByCurrency ?? {},
-      ).flat();
-      const usdDemoAccounts = (
-        account.accountsByCurrency?.['USD'] ?? []
-      ).filter((acc) => acc.isDemo === true);
+      const allAccounts = Object.values(account.accountsByCurrency ?? {}).flat();
+      const usdDemoAccounts = (account.accountsByCurrency?.['USD'] ?? []).filter(
+        acc => acc.isDemo === true
+      );
 
       if (usdDemoAccounts.length > 0) {
         selectedEntry = usdDemoAccounts[0];
         selectedCurrency = 'USD';
       } else {
         // Buscar qualquer conta demo
-        const demoAccounts = allAccounts.filter((acc) => acc.isDemo === true);
+        const demoAccounts = allAccounts.filter(acc => acc.isDemo === true);
         if (demoAccounts.length > 0) {
           selectedEntry = demoAccounts[0];
           // Determinar a moeda da conta demo selecionada
-          for (const [curr, accounts] of Object.entries(
-            account.accountsByCurrency ?? {},
-          )) {
-            if (accounts.some((acc) => acc.loginid === selectedEntry.loginid)) {
+          for (const [curr, accounts] of Object.entries(account.accountsByCurrency ?? {})) {
+            if (accounts.some(acc => acc.loginid === selectedEntry.loginid)) {
               selectedCurrency = curr;
               break;
             }
@@ -552,10 +455,10 @@ export class DerivService {
     } else {
       // Para USD/BTC, priorizar contas reais (não demo), mas usar demo se não houver
       const accounts = account.accountsByCurrency?.[desiredCurrency] ?? [];
-      selectedEntry = accounts.find(
-        (entry) => entry.isDemo === false || entry.isDemo === undefined,
-      ) ||
-        accounts[0] || { value: 0, loginid: account.loginid, isDemo: false };
+      selectedEntry =
+        accounts.find(entry => entry.isDemo === false || entry.isDemo === undefined) ||
+        accounts[0] ||
+        { value: 0, loginid: account.loginid, isDemo: false };
       selectedCurrency = desiredCurrency;
     }
 
@@ -591,9 +494,7 @@ export class DerivService {
    * Seguindo a documentação oficial da Deriv: https://deriv.com/
    * Passo 1: Verificar email antes de criar conta
    */
-  async verifyEmailForAccount(
-    email: string,
-  ): Promise<{ success: boolean; message: string }> {
+  async verifyEmailForAccount(email: string): Promise<{ success: boolean; message: string }> {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
@@ -611,9 +512,7 @@ export class DerivService {
       }, 30000);
 
       ws.on('open', () => {
-        this.logger.log(
-          `[VerifyEmail] Enviando verificação de email para: ${email}`,
-        );
+        this.logger.log(`[VerifyEmail] Enviando verificação de email para: ${email}`);
         send({
           verify_email: email,
           type: 'account_opening', // Tipo correto conforme documentação
@@ -627,24 +526,19 @@ export class DerivService {
           if (response.error) {
             clearTimeout(timeout);
             ws.close();
-            reject(
-              new Error(response.error.message || 'Erro ao verificar email'),
-            );
+            reject(new Error(response.error.message || 'Erro ao verificar email'));
             return;
           }
 
           if (response.verify_email) {
             clearTimeout(timeout);
             ws.close();
-            this.logger.log(
-              '[VerifyEmail] Código de verificação enviado por email',
-            );
+            this.logger.log('[VerifyEmail] Código de verificação enviado por email');
             // A Deriv envia o código por email, não retorna na resposta
             // Retornamos um indicador de sucesso
             resolve({
               success: true,
-              message:
-                'Código de verificação enviado por email. Verifique sua caixa de entrada.',
+              message: 'Código de verificação enviado por email. Verifique sua caixa de entrada.',
             });
           }
         } catch (error) {
@@ -666,11 +560,7 @@ export class DerivService {
    * Seguindo a documentação oficial: https://deriv.com/
    * Passo 2: Criar conta usando o código de verificação recebido por email
    */
-  async createDerivAccount(
-    formData: any,
-    userId: string,
-    verificationCode: string,
-  ): Promise<any> {
+  async createDerivAccount(formData: any, userId: string, verificationCode: string): Promise<any> {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
@@ -697,7 +587,7 @@ export class DerivService {
     if (!verificationCode) {
       throw new Error(
         'Código de verificação é obrigatório. ' +
-          'Primeiro é necessário verificar o email usando o endpoint verify-email.',
+        'Primeiro é necessário verificar o email usando o endpoint verify-email.',
       );
     }
 
@@ -718,35 +608,23 @@ export class DerivService {
 
       // Timeout global de 90 segundos (aumentado para dar mais tempo)
       globalTimeout = setTimeout(() => {
-        this.logger.error(
-          '[CreateAccount] Timeout global atingido após 90 segundos',
-        );
+        this.logger.error('[CreateAccount] Timeout global atingido após 90 segundos');
         if (demoTimeout) clearTimeout(demoTimeout);
         if (realTimeout) clearTimeout(realTimeout);
         ws.close();
-        reject(
-          new Error(
-            'Timeout ao criar contas - a operação demorou mais de 90 segundos. Verifique sua conexão e tente novamente.',
-          ),
-        );
+        reject(new Error('Timeout ao criar contas - a operação demorou mais de 90 segundos. Verifique sua conexão e tente novamente.'));
       }, 90000);
 
       // Timeout específico para conta DEMO (30 segundos - aumentado)
       const setDemoTimeout = () => {
         if (demoTimeout) clearTimeout(demoTimeout);
         demoTimeout = setTimeout(() => {
-          this.logger.error(
-            '[CreateAccount] Timeout ao criar conta DEMO após 30 segundos',
-          );
+          this.logger.error('[CreateAccount] Timeout ao criar conta DEMO após 30 segundos');
           if (!demoAccountCreated) {
             if (globalTimeout) clearTimeout(globalTimeout);
             if (realTimeout) clearTimeout(realTimeout);
             ws.close();
-            reject(
-              new Error(
-                'Timeout ao criar conta DEMO - a operação demorou mais de 30 segundos. Verifique se o código de verificação está correto e se o email foi verificado.',
-              ),
-            );
+            reject(new Error('Timeout ao criar conta DEMO - a operação demorou mais de 30 segundos. Verifique se o código de verificação está correto e se o email foi verificado.'));
           }
         }, 30000);
       };
@@ -755,13 +633,9 @@ export class DerivService {
       const setRealTimeout = () => {
         if (realTimeout) clearTimeout(realTimeout);
         realTimeout = setTimeout(() => {
-          this.logger.error(
-            '[CreateAccount] Timeout ao criar conta REAL após 50 segundos',
-          );
+          this.logger.error('[CreateAccount] Timeout ao criar conta REAL após 50 segundos');
           if (!realAccountCreated) {
-            this.logger.warn(
-              '[CreateAccount] Conta REAL não foi criada a tempo, mas DEMO foi criada com sucesso',
-            );
+            this.logger.warn('[CreateAccount] Conta REAL não foi criada a tempo, mas DEMO foi criada com sucesso');
             // Se a DEMO foi criada, retornar apenas ela
             if (demoAccountCreated && results.demoAccount) {
               if (globalTimeout) clearTimeout(globalTimeout);
@@ -773,18 +647,13 @@ export class DerivService {
                 demoToken: results.demoAccount.oauth_token,
                 realToken: null,
                 email: results.demoAccount.email,
-                warning:
-                  'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+                warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
               });
             } else {
               if (globalTimeout) clearTimeout(globalTimeout);
               if (demoTimeout) clearTimeout(demoTimeout);
               ws.close();
-              reject(
-                new Error(
-                  'Timeout ao criar conta REAL - nenhuma conta foi criada com sucesso',
-                ),
-              );
+              reject(new Error('Timeout ao criar conta REAL - nenhuma conta foi criada com sucesso'));
             }
           }
         }, 50000);
@@ -833,26 +702,19 @@ export class DerivService {
         }
 
         this.logger.log('[CreateAccount] Enviando request para conta DEMO');
-        this.logger.log(
-          `[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({
-            ...demoRequest,
-            client_password: '<hidden>',
-            verification_code: '<hidden>',
-          })}`,
-        );
-        this.logger.debug(
-          `[CreateAccount] Código de verificação usado: ${verificationCode.substring(0, 3)}...`,
-        );
+        this.logger.log(`[CreateAccount] Request DEMO (sem senha/código): ${JSON.stringify({
+          ...demoRequest,
+          client_password: '<hidden>',
+          verification_code: '<hidden>'
+        })}`);
+        this.logger.debug(`[CreateAccount] Código de verificação usado: ${verificationCode.substring(0, 3)}...`);
         send(demoRequest);
       });
 
       ws.on('message', (data: WebSocket.RawData) => {
         try {
           const response = JSON.parse(data.toString());
-          this.logger.log(
-            '[CreateAccount] Resposta recebida da Deriv:',
-            JSON.stringify(response),
-          );
+          this.logger.log('[CreateAccount] Resposta recebida da Deriv:', JSON.stringify(response));
 
           if (response.error) {
             this.logger.error('[CreateAccount] Erro da Deriv:', response.error);
@@ -887,8 +749,7 @@ export class DerivService {
             } else if (response.error.code === 'InputValidationFailed') {
               errorMessage = `Dados inválidos: ${response.error.message}. Verifique os dados fornecidos.`;
             } else if (response.error.code === 'RateLimit') {
-              errorMessage =
-                'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.';
+              errorMessage = 'Limite de requisições excedido. Aguarde alguns instantes e tente novamente.';
             }
 
             reject(new Error(errorMessage));
@@ -906,10 +767,7 @@ export class DerivService {
               currency: response.new_account_virtual.currency,
               oauth_token: response.new_account_virtual.oauth_token,
             };
-            this.logger.log(
-              '[CreateAccount] Conta DEMO criada:',
-              results.demoAccount.client_id,
-            );
+            this.logger.log('[CreateAccount] Conta DEMO criada:', results.demoAccount.client_id);
 
             // Iniciar timeout para conta REAL
             setRealTimeout();
@@ -963,10 +821,7 @@ export class DerivService {
               currency: response.new_account_real.currency,
               oauth_token: response.new_account_real.oauth_token,
             };
-            this.logger.log(
-              '[CreateAccount] Conta REAL criada:',
-              results.realAccount.client_id,
-            );
+            this.logger.log('[CreateAccount] Conta REAL criada:', results.realAccount.client_id);
 
             // Limpar todos os timeouts
             if (demoTimeout) clearTimeout(demoTimeout);
@@ -983,10 +838,7 @@ export class DerivService {
             });
           }
         } catch (error) {
-          this.logger.error(
-            '[CreateAccount] Erro ao processar resposta:',
-            error,
-          );
+          this.logger.error('[CreateAccount] Erro ao processar resposta:', error);
           if (demoTimeout) clearTimeout(demoTimeout);
           if (realTimeout) clearTimeout(realTimeout);
           if (globalTimeout) clearTimeout(globalTimeout);
@@ -1011,18 +863,10 @@ export class DerivService {
 
         // Se a conexão foi fechada antes de completar, verificar o que foi criado
         if (!demoAccountCreated && !realAccountCreated) {
-          this.logger.error(
-            '[CreateAccount] Conexão fechada sem criar nenhuma conta',
-          );
-          reject(
-            new Error(
-              'Não foi possível criar as contas - conexão fechada prematuramente',
-            ),
-          );
+          this.logger.error('[CreateAccount] Conexão fechada sem criar nenhuma conta');
+          reject(new Error('Não foi possível criar as contas - conexão fechada prematuramente'));
         } else if (demoAccountCreated && !realAccountCreated) {
-          this.logger.warn(
-            '[CreateAccount] Conexão fechada após criar apenas conta DEMO',
-          );
+          this.logger.warn('[CreateAccount] Conexão fechada após criar apenas conta DEMO');
           // Retornar apenas a conta DEMO se ela foi criada
           resolve({
             demoAccountId: results.demoAccount.client_id,
@@ -1030,8 +874,7 @@ export class DerivService {
             demoToken: results.demoAccount.oauth_token,
             realToken: null,
             email: results.demoAccount.email,
-            warning:
-              'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
+            warning: 'Apenas a conta DEMO foi criada. A conta REAL pode ser criada posteriormente.',
           });
         }
         // Se ambas foram criadas, o resolve já foi chamado no handler de mensagem
@@ -1041,8 +884,7 @@ export class DerivService {
 
   private generatePassword(): string {
     const length = 12;
-    const charset =
-      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
     let password = '';
     for (let i = 0; i < length; i++) {
       password += charset.charAt(Math.floor(Math.random() * charset.length));

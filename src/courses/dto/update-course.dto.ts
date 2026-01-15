@@ -1,11 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  IsNumber,
-  IsArray,
-  IsEnum,
-  IsDateString,
-} from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsArray, IsEnum, IsDateString } from 'class-validator';
 
 export class UpdateCourseDto {
   @IsOptional()
@@ -77,3 +70,4 @@ export class UpdateCourseDto {
   @IsEnum(['public', 'private', 'restricted'])
   visibility?: string;
 }
+

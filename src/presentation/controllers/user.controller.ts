@@ -1,23 +1,23 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  HttpCode,
-  HttpStatus,
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Put, 
+  Delete, 
+  Body, 
+  Param, 
+  HttpCode, 
+  HttpStatus 
 } from '@nestjs/common';
 import { CreateUserUseCase } from '../../application/use-cases/create-user.use-case';
 import { GetUserByIdUseCase } from '../../application/use-cases/get-user-by-id.use-case';
 import { GetAllUsersUseCase } from '../../application/use-cases/get-all-users.use-case';
 import { UpdateUserUseCase } from '../../application/use-cases/update-user.use-case';
 import { DeleteUserUseCase } from '../../application/use-cases/delete-user.use-case';
-import {
-  CreateUserRequestDto,
-  UpdateUserRequestDto,
-  UserResponseDto,
+import { 
+  CreateUserRequestDto, 
+  UpdateUserRequestDto, 
+  UserResponseDto 
 } from '../dto/user.dto';
 
 @Controller('users')
@@ -32,9 +32,7 @@ export class UserController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(
-    @Body() createUserDto: CreateUserRequestDto,
-  ): Promise<UserResponseDto> {
+  async create(@Body() createUserDto: CreateUserRequestDto): Promise<UserResponseDto> {
     const user = await this.createUserUseCase.execute(createUserDto);
     return this.toResponseDto(user);
   }
@@ -48,7 +46,7 @@ export class UserController {
   @Get()
   async findAll(): Promise<UserResponseDto[]> {
     const users = await this.getAllUsersUseCase.execute();
-    return users.map((user) => this.toResponseDto(user));
+    return users.map(user => this.toResponseDto(user));
   }
 
   @Put(':id')

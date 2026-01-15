@@ -28,10 +28,7 @@ interface TradeData {
 }
 
 @Injectable()
-export class DerivWebSocketService
-  extends EventEmitter
-  implements OnModuleDestroy
-{
+export class DerivWebSocketService extends EventEmitter implements OnModuleDestroy {
   private readonly logger = new Logger(DerivWebSocketService.name);
   private ws: WebSocket | null = null;
   private isAuthorized = false;
@@ -48,11 +45,7 @@ export class DerivWebSocketService
   private symbol: string = 'R_100';
   private ticks: TickData[] = [];
   private readonly maxTicks = 300; // 5 minutos de ticks
-  private pendingBuyConfig: {
-    durationUnit?: string;
-    duration?: number;
-    contractType?: string;
-  } | null = null; // Armazenar config da compra pendente
+  private pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string } | null = null; // Armazenar config da compra pendente
 
   constructor() {
     super();
@@ -100,7 +93,7 @@ export class DerivWebSocketService
         try {
           const msg = JSON.parse(data.toString());
           this.handleMessage(msg);
-
+          
           if (msg.msg_type === 'authorize' && !msg.error) {
             clearTimeout(timeout);
             if (!this.isAuthorized) {
@@ -222,14 +215,7 @@ export class DerivWebSocketService
       }
 
       // Validação final: ambos devem ser válidos
-      if (
-        isFinite(value) &&
-        value > 0 &&
-        !isNaN(value) &&
-        isFinite(epoch) &&
-        epoch > 0 &&
-        !isNaN(epoch)
-      ) {
+      if (isFinite(value) && value > 0 && !isNaN(value) && isFinite(epoch) && epoch > 0 && !isNaN(epoch)) {
         newTicks.push({ value, epoch });
       }
     }
@@ -240,10 +226,7 @@ export class DerivWebSocketService
       this.tickSubscriptionId = msg.subscription.id;
     }
 
-    this.emit('history', {
-      ticks: this.ticks,
-      subscriptionId: this.tickSubscriptionId,
-    });
+    this.emit('history', { ticks: this.ticks, subscriptionId: this.tickSubscriptionId });
   }
 
   private processTick(msg: any): void {
@@ -314,52 +297,38 @@ export class DerivWebSocketService
     if (!buy || !buy.contract_id) return;
 
     // Usar durationUnit e contractType da configuração pendente se disponível, senão usar da resposta da API
-    const durationUnit =
-      this.pendingBuyConfig?.durationUnit || buy.duration_unit || 'm';
-    const duration =
-      this.pendingBuyConfig?.duration || Number(buy.duration) || 0;
+    const durationUnit = this.pendingBuyConfig?.durationUnit || buy.duration_unit || 'm';
+    const duration = this.pendingBuyConfig?.duration || Number(buy.duration) || 0;
     // IMPORTANTE: Usar contractType da configuração pendente (o que foi solicitado) em vez do retornado pela API
     // Isso garante que o tipo correto seja usado mesmo se a API retornar algo diferente
-    const contractType =
-      this.pendingBuyConfig?.contractType || buy.contract_type || 'CALL';
-
-    this.logger.log(
-      `[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`,
-    );
-    this.logger.log(
-      `[Buy] API retornou contract_type: ${buy.contract_type}, usando: ${contractType}`,
-    );
-
+    const contractType = this.pendingBuyConfig?.contractType || buy.contract_type || 'CALL';
+    
+    this.logger.log(`[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`);
+    this.logger.log(`[Buy] API retornou contract_type: ${buy.contract_type}, usando: ${contractType}`);
+    
     // Log completo da resposta da API para debug
     this.logger.log(`[Buy] Resposta completa da API: ${JSON.stringify(buy)}`);
-
+    
     // Limpar configuração pendente após usar
     this.pendingBuyConfig = null;
 
     // Tentar capturar entry_spot de diferentes campos possíveis
-    let entrySpot =
-      buy.entry_spot || buy.spot || buy.current_spot || buy.start_spot || null;
-
+    let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || buy.start_spot || null;
+    
     // Se não encontrou entry_spot na resposta, usar o último tick disponível
     if (entrySpot === null || entrySpot === undefined) {
       if (this.ticks && this.ticks.length > 0) {
         const lastTick = this.ticks[this.ticks.length - 1];
         entrySpot = lastTick.value;
-        this.logger.log(
-          `[Buy] EntrySpot não encontrado na resposta, usando último tick: ${entrySpot}`,
-        );
+        this.logger.log(`[Buy] EntrySpot não encontrado na resposta, usando último tick: ${entrySpot}`);
       } else {
-        this.logger.warn(
-          `[Buy] EntrySpot não encontrado e nenhum tick disponível`,
-        );
+        this.logger.warn(`[Buy] EntrySpot não encontrado e nenhum tick disponível`);
       }
     }
-
+    
     const entryTime = buy.purchase_time || buy.start_time || Date.now() / 1000;
-
-    this.logger.log(
-      `[Buy] EntrySpot final: ${entrySpot} (de entry_spot: ${buy.entry_spot}, spot: ${buy.spot}, current_spot: ${buy.current_spot}, start_spot: ${buy.start_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`,
-    );
+    
+    this.logger.log(`[Buy] EntrySpot final: ${entrySpot} (de entry_spot: ${buy.entry_spot}, spot: ${buy.spot}, current_spot: ${buy.current_spot}, start_spot: ${buy.start_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const tradeData: TradeData = {
       contractId: buy.contract_id,
@@ -369,10 +338,7 @@ export class DerivWebSocketService
       contractType: contractType, // Usar o tipo solicitado, não o retornado pela API
       duration: duration,
       durationUnit: durationUnit, // Preservar o valor original
-      entrySpot:
-        entrySpot !== null && entrySpot !== undefined
-          ? Number(entrySpot)
-          : null,
+      entrySpot: entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null,
       entryTime: Number(entryTime) || null,
     };
 
@@ -390,38 +356,26 @@ export class DerivWebSocketService
     this.logger.log(`[Sell] Resposta completa da API: ${JSON.stringify(sell)}`);
 
     // Tentar capturar exit_spot de diferentes campos possíveis
-    let exitSpot =
-      sell.exit_spot ||
-      sell.spot ||
-      sell.current_spot ||
-      sell.exit_spot_price ||
-      null;
-
+    let exitSpot = sell.exit_spot || sell.spot || sell.current_spot || sell.exit_spot_price || null;
+    
     // Se não encontrou exit_spot na resposta, usar o último tick disponível
     if (exitSpot === null || exitSpot === undefined) {
       if (this.ticks && this.ticks.length > 0) {
         const lastTick = this.ticks[this.ticks.length - 1];
         exitSpot = lastTick.value;
-        this.logger.log(
-          `[Sell] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`,
-        );
+        this.logger.log(`[Sell] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`);
       } else {
-        this.logger.warn(
-          `[Sell] ExitSpot não encontrado e nenhum tick disponível`,
-        );
+        this.logger.warn(`[Sell] ExitSpot não encontrado e nenhum tick disponível`);
       }
     }
-
-    this.logger.log(
-      `[Sell] ExitSpot final: ${exitSpot} (de exit_spot: ${sell.exit_spot}, spot: ${sell.spot}, current_spot: ${sell.current_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`,
-    );
+    
+    this.logger.log(`[Sell] ExitSpot final: ${exitSpot} (de exit_spot: ${sell.exit_spot}, spot: ${sell.spot}, current_spot: ${sell.current_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const sellData = {
       contractId: sell.contract_id,
       sellPrice: Number(sell.sell_price) || 0,
       profit: Number(sell.profit) || 0,
-      exitSpot:
-        exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null,
+      exitSpot: exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null,
       symbol: sell.symbol || this.symbol,
     };
 
@@ -466,9 +420,7 @@ export class DerivWebSocketService
     }
 
     // Log detalhado para debug
-    this.logger.log(
-      `[ContractUpdate] Recebido: contract_id=${contract.contract_id}, status=${contract.status}, is_expired=${contract.is_expired}, is_sold=${contract.is_sold}, exit_spot=${contract.exit_spot}, current_spot=${contract.current_spot}, profit=${contract.profit}`,
-    );
+    this.logger.log(`[ContractUpdate] Recebido: contract_id=${contract.contract_id}, status=${contract.status}, is_expired=${contract.is_expired}, is_sold=${contract.is_sold}, exit_spot=${contract.exit_spot}, current_spot=${contract.current_spot}, profit=${contract.profit}`);
 
     // Emitir atualização de contrato que será processada pelo controller
     this.emit('contract_update', contract);
@@ -476,25 +428,19 @@ export class DerivWebSocketService
 
   subscribeToSymbol(symbol: string): void {
     this.symbol = symbol;
-
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
-      this.logger.warn(
-        'WebSocket não está conectado/autorizado. Aguardando...',
-      );
+    
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
+      this.logger.warn('WebSocket não está conectado/autorizado. Aguardando...');
       return;
     }
 
     this.logger.log(`Inscrevendo-se no símbolo: ${symbol}`);
-
+    
     // Para 10 minutos de histórico, calcular o start time como 10 minutos atrás
     // Isso garante que recebemos apenas ticks dos últimos 10 minutos
     const now = Math.floor(Date.now() / 1000);
-    const tenMinutesAgo = now - 10 * 60; // 10 minutos em segundos
-
+    const tenMinutesAgo = now - (10 * 60); // 10 minutos em segundos
+    
     // Para 10 minutos de histórico, usar ~1000 ticks (assumindo ~1 tick por segundo)
     // Usar count: 1000 para garantir que temos ticks suficientes dos últimos 10 minutos
     this.send({
@@ -506,10 +452,8 @@ export class DerivWebSocketService
       subscribe: 1,
       style: 'ticks',
     });
-
-    this.logger.log(
-      `Solicitando histórico de ${symbol} a partir de ${tenMinutesAgo} (10 minutos atrás)`,
-    );
+    
+    this.logger.log(`Solicitando histórico de ${symbol} a partir de ${tenMinutesAgo} (10 minutos atrás)`);
   }
 
   subscribeToProposal(config: {
@@ -521,11 +465,7 @@ export class DerivWebSocketService
     barrier?: number; // Para contratos DIGIT*
     multiplier?: number; // Para contratos MULTUP/MULTDOWN
   }): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -538,9 +478,7 @@ export class DerivWebSocketService
 
     // Cancelar subscription anterior se existir para evitar erro "AlreadySubscribed"
     if (this.proposalSubscriptionId) {
-      this.logger.log(
-        `Cancelando subscription anterior de proposta: ${this.proposalSubscriptionId}`,
-      );
+      this.logger.log(`Cancelando subscription anterior de proposta: ${this.proposalSubscriptionId}`);
       this.cancelSubscription(this.proposalSubscriptionId);
       this.proposalSubscriptionId = null;
     }
@@ -558,12 +496,12 @@ export class DerivWebSocketService
       symbol: config.symbol,
       subscribe: 1,
     };
-
+    
     // Adicionar barrier para contratos de dígitos
     if (config.barrier !== undefined && config.barrier !== null) {
       proposalRequest.barrier = String(config.barrier);
     }
-
+    
     // Adicionar multiplier para contratos MULTUP/MULTDOWN
     if (config.multiplier !== undefined && config.multiplier !== null) {
       proposalRequest.multiplier = config.multiplier;
@@ -572,37 +510,23 @@ export class DerivWebSocketService
     this.send(proposalRequest);
   }
 
-  buyContract(
-    proposalId: string,
-    price: number,
-    durationUnit?: string,
-    duration?: number,
-    contractType?: string,
-  ): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+  buyContract(proposalId: string, price: number, durationUnit?: string, duration?: number, contractType?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
 
     // Armazenar configuração da compra para preservar durationUnit e contractType originais
     if (durationUnit !== undefined || contractType !== undefined) {
-      this.pendingBuyConfig = {
-        durationUnit,
+      this.pendingBuyConfig = { 
+        durationUnit, 
         duration,
-        contractType: contractType || undefined,
+        contractType: contractType || undefined
       };
-      this.logger.log(
-        `[Buy] Armazenando config: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}`,
-      );
+      this.logger.log(`[Buy] Armazenando config: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}`);
     }
 
-    this.logger.log(
-      `Comprando contrato: ${proposalId} por ${price} (contractType esperado: ${contractType || 'N/A'})`,
-    );
+    this.logger.log(`Comprando contrato: ${proposalId} por ${price} (contractType esperado: ${contractType || 'N/A'})`);
 
     this.send({
       buy: proposalId,
@@ -611,11 +535,7 @@ export class DerivWebSocketService
   }
 
   sellContract(contractId: string, price: number): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -629,11 +549,7 @@ export class DerivWebSocketService
   }
 
   getContractsFor(symbol: string, currency: string = 'USD'): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -646,11 +562,7 @@ export class DerivWebSocketService
   }
 
   getTradingDurations(landingCompany: string = 'svg'): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -662,11 +574,7 @@ export class DerivWebSocketService
   }
 
   getActiveSymbols(): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -677,11 +585,7 @@ export class DerivWebSocketService
   }
 
   cancelSubscription(subscriptionId: string): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -715,11 +619,7 @@ export class DerivWebSocketService
   }
 
   subscribeToOpenContract(contractId: string): void {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      !this.isAuthorized
-    ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado');
       return;
     }
@@ -760,10 +660,7 @@ export class DerivWebSocketService
   }
 
   private attemptReconnect(): void {
-    if (
-      this.isReconnecting ||
-      this.reconnectAttempts >= this.maxReconnectAttempts
-    ) {
+    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
       return;
     }
 
@@ -771,9 +668,7 @@ export class DerivWebSocketService
     this.reconnectAttempts++;
 
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    this.logger.log(
-      `Tentando reconectar em ${delay}ms (tentativa ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
-    );
+    this.logger.log(`Tentando reconectar em ${delay}ms (tentativa ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
 
     this.reconnectTimeout = setTimeout(() => {
       if (this.token) {
@@ -822,3 +717,4 @@ export class DerivWebSocketService
     this.disconnect();
   }
 }
+

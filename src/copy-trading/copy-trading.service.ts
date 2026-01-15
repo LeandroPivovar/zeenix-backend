@@ -27,18 +27,15 @@ export class CopyTradingService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(ExpertEntity)
     private readonly expertRepository: Repository<ExpertEntity>,
-  ) {}
+  ) { }
 
-  async activateCopyTrading(userId: string, configData: CopyTradingConfigData) {
-    this.logger.log(
-      `[ActivateCopyTrading] Ativando copy trading para usuário ${userId}`,
-    );
-    this.logger.log(
-      `[ActivateCopyTrading] Tipo de alocação: ${configData.allocationType}, Value: ${configData.allocationValue}, Percentage: ${configData.allocationPercentage}`,
-    );
-    this.logger.log(
-      `[ActivateCopyTrading] Stop Loss: ${configData.stopLoss}, Take Profit: ${configData.takeProfit}, Blind Stop Loss: ${configData.blindStopLoss}`,
-    );
+  async activateCopyTrading(
+    userId: string,
+    configData: CopyTradingConfigData,
+  ) {
+    this.logger.log(`[ActivateCopyTrading] Ativando copy trading para usuário ${userId}`);
+    this.logger.log(`[ActivateCopyTrading] Tipo de alocação: ${configData.allocationType}, Value: ${configData.allocationValue}, Percentage: ${configData.allocationPercentage}`);
+    this.logger.log(`[ActivateCopyTrading] Stop Loss: ${configData.stopLoss}, Take Profit: ${configData.takeProfit}, Blind Stop Loss: ${configData.blindStopLoss}`);
 
     try {
       // Verificar se já existe uma configuração para o usuário
@@ -48,16 +45,16 @@ export class CopyTradingService {
       );
 
       // Determinar allocation_value baseado no tipo de alocação
-      let allocationValue: number = 0.0;
+      let allocationValue: number = 0.00;
       let allocationPercentage: number | null = null;
 
       if (configData.allocationType === 'proportion') {
         // Se for proporção, usar o percentual e setar value como 0
         allocationPercentage = configData.allocationPercentage || 100;
-        allocationValue = 0.0;
+        allocationValue = 0.00;
       } else {
         // Se for fixed, usar o valor fixo
-        allocationValue = configData.allocationValue || 0.0;
+        allocationValue = configData.allocationValue || 0.00;
         allocationPercentage = null;
       }
 
@@ -76,7 +73,7 @@ export class CopyTradingService {
         currency: configData.currency,
         is_active: 1,
         session_status: 'active',
-        session_balance: 0.0,
+        session_balance: 0.00,
         total_operations: 0,
         total_wins: 0,
         total_losses: 0,
@@ -125,9 +122,7 @@ export class CopyTradingService {
             userId,
           ],
         );
-        this.logger.log(
-          `[ActivateCopyTrading] Configuração atualizada para usuário ${userId}`,
-        );
+        this.logger.log(`[ActivateCopyTrading] Configuração atualizada para usuário ${userId}`);
       } else {
         // Criar nova configuração
         await this.dataSource.query(
@@ -164,9 +159,7 @@ export class CopyTradingService {
           [userId],
         );
         configId = newConfig[0].id;
-        this.logger.log(
-          `[ActivateCopyTrading] Nova configuração criada para usuário ${userId}`,
-        );
+        this.logger.log(`[ActivateCopyTrading] Nova configuração criada para usuário ${userId}`);
       }
 
       // Encerrar sessão ativa anterior, se existir
@@ -180,7 +173,7 @@ export class CopyTradingService {
 
       // Buscar saldo inicial do usuário (assumindo que existe uma tabela de saldo)
       // Por enquanto, vamos usar 0.00 como saldo inicial
-      const initialBalance = 0.0;
+      const initialBalance = 0.00;
 
       // Criar nova sessão de copy
       await this.dataSource.query(
@@ -204,9 +197,7 @@ export class CopyTradingService {
       );
       const sessionId = newSession[0].id;
 
-      this.logger.log(
-        `[ActivateCopyTrading] Nova sessão criada (ID: ${sessionId}) para usuário ${userId}`,
-      );
+      this.logger.log(`[ActivateCopyTrading] Nova sessão criada (ID: ${sessionId}) para usuário ${userId}`);
 
       return {
         isActive: true,
@@ -224,9 +215,7 @@ export class CopyTradingService {
   }
 
   async deactivateCopyTrading(userId: string, reason?: string) {
-    this.logger.log(
-      `[DeactivateCopyTrading] Desativando copy trading para usuário ${userId}`,
-    );
+    this.logger.log(`[DeactivateCopyTrading] Desativando copy trading para usuário ${userId}`);
 
     try {
       await this.dataSource.query(
@@ -240,9 +229,7 @@ export class CopyTradingService {
         [reason || 'Desativação manual pelo usuário', userId],
       );
 
-      this.logger.log(
-        `[DeactivateCopyTrading] Copy trading desativado para usuário ${userId}`,
-      );
+      this.logger.log(`[DeactivateCopyTrading] Copy trading desativado para usuário ${userId}`);
     } catch (error) {
       this.logger.error(
         `[DeactivateCopyTrading] Erro ao desativar copy trading: ${error.message}`,
@@ -298,9 +285,7 @@ export class CopyTradingService {
   }
 
   async pauseCopyTrading(userId: string) {
-    this.logger.log(
-      `[PauseCopyTrading] Pausando copy trading para usuário ${userId}`,
-    );
+    this.logger.log(`[PauseCopyTrading] Pausando copy trading para usuário ${userId}`);
 
     try {
       // Atualizar configuração
@@ -321,9 +306,7 @@ export class CopyTradingService {
         [userId],
       );
 
-      this.logger.log(
-        `[PauseCopyTrading] Copy trading pausado para usuário ${userId}`,
-      );
+      this.logger.log(`[PauseCopyTrading] Copy trading pausado para usuário ${userId}`);
     } catch (error) {
       this.logger.error(
         `[PauseCopyTrading] Erro ao pausar copy trading: ${error.message}`,
@@ -334,9 +317,7 @@ export class CopyTradingService {
   }
 
   async resumeCopyTrading(userId: string) {
-    this.logger.log(
-      `[ResumeCopyTrading] Retomando copy trading para usuário ${userId}`,
-    );
+    this.logger.log(`[ResumeCopyTrading] Retomando copy trading para usuário ${userId}`);
 
     try {
       // Atualizar configuração
@@ -366,14 +347,12 @@ export class CopyTradingService {
            WHERE id = ?`,
           [pausedSession[0].id],
         );
-        this.logger.log(
-          `[ResumeCopyTrading] Sessão ${pausedSession[0].id} reativada para usuário ${userId}`,
-        );
+        this.logger.log(`[ResumeCopyTrading] Sessão ${pausedSession[0].id} reativada para usuário ${userId}`);
       } else {
         // Criar nova sessão se não houver sessão pausada
         const config = await this.getCopyTradingConfig(userId);
         if (config) {
-          const initialBalance = 0.0;
+          const initialBalance = 0.00;
           await this.dataSource.query(
             `INSERT INTO copy_trading_sessions 
              (user_id, config_id, trader_id, trader_name, status, initial_balance, current_balance, started_at)
@@ -387,15 +366,11 @@ export class CopyTradingService {
               initialBalance,
             ],
           );
-          this.logger.log(
-            `[ResumeCopyTrading] Nova sessão criada para usuário ${userId}`,
-          );
+          this.logger.log(`[ResumeCopyTrading] Nova sessão criada para usuário ${userId}`);
         }
       }
 
-      this.logger.log(
-        `[ResumeCopyTrading] Copy trading retomado para usuário ${userId}`,
-      );
+      this.logger.log(`[ResumeCopyTrading] Copy trading retomado para usuário ${userId}`);
     } catch (error) {
       this.logger.error(
         `[ResumeCopyTrading] Erro ao retomar copy trading: ${error.message}`,
@@ -423,10 +398,8 @@ export class CopyTradingService {
         // Calcular ROI baseado no winRate (aproximação)
         // ROI médio = winRate * multiplicador_lucro - (100 - winRate) * multiplicador_perda
         // Assumindo lucro médio de 80% e perda média de 100% do stake
-        const winRate = expert.winRate
-          ? parseFloat(expert.winRate.toString())
-          : 0;
-        const roi = winRate > 0 ? winRate * 0.8 - (100 - winRate) * 1.0 : 0;
+        const winRate = expert.winRate ? parseFloat(expert.winRate.toString()) : 0;
+        const roi = winRate > 0 ? (winRate * 0.8) - ((100 - winRate) * 1.0) : 0;
 
         // Calcular drawdown aproximado baseado no winRate
         // Drawdown menor quando winRate maior
@@ -434,10 +407,9 @@ export class CopyTradingService {
 
         // Converter followers para formato "k" (milhares)
         const totalFollowers = expert.totalFollowers || 0;
-        const followersK =
-          totalFollowers >= 1000
-            ? (totalFollowers / 1000).toFixed(1)
-            : totalFollowers.toString();
+        const followersK = totalFollowers >= 1000
+          ? (totalFollowers / 1000).toFixed(1)
+          : totalFollowers.toString();
 
         return {
           id: expert.id,
@@ -447,9 +419,7 @@ export class CopyTradingService {
           followers: followersK,
           winRate: winRate.toFixed(1),
           totalTrades: expert.totalSignals || 0,
-          rating: expert.rating
-            ? parseFloat(expert.rating.toString()).toFixed(1)
-            : '0.0',
+          rating: expert.rating ? parseFloat(expert.rating.toString()).toFixed(1) : '0.0',
           specialty: expert.specialty || '',
           isVerified: expert.isVerified || false,
           connectionStatus: expert.connectionStatus || 'Desconectado',
@@ -501,9 +471,7 @@ export class CopyTradingService {
         lastOperationAt: session.last_operation_at,
         allocationType: session.allocation_type,
         allocationValue: parseFloat(session.allocation_value) || 0,
-        allocationPercentage: session.allocation_percentage
-          ? parseFloat(session.allocation_percentage)
-          : null,
+        allocationPercentage: session.allocation_percentage ? parseFloat(session.allocation_percentage) : null,
         leverage: session.leverage,
         stopLoss: parseFloat(session.stop_loss) || 0,
         takeProfit: parseFloat(session.take_profit) || 0,
@@ -543,9 +511,7 @@ export class CopyTradingService {
         payout: op.payout ? parseFloat(op.payout) : null,
         leverage: op.leverage,
         allocationType: op.allocation_type,
-        allocationValue: op.allocation_value
-          ? parseFloat(op.allocation_value)
-          : null,
+        allocationValue: op.allocation_value ? parseFloat(op.allocation_value) : null,
         executedAt: op.executed_at,
         closedAt: op.closed_at,
       }));
@@ -575,36 +541,24 @@ export class CopyTradingService {
     },
   ): Promise<void> {
     try {
-      this.logger.log(
-        `[ReplicateManualOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO MANUAL ==========`,
-      );
-      this.logger.log(
-        `[ReplicateManualOperation] Master trader: ${masterUserId}`,
-      );
-      this.logger.log(
-        `[ReplicateManualOperation] Operação: ${JSON.stringify(operationData)}`,
-      );
+      this.logger.log(`[ReplicateManualOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO MANUAL ==========`);
+      this.logger.log(`[ReplicateManualOperation] Master trader: ${masterUserId}`);
+      this.logger.log(`[ReplicateManualOperation] Operação: ${JSON.stringify(operationData)}`);
 
       // Buscar todos os copiadores ativos do master trader
       const copiers = await this.getCopiers(masterUserId);
 
       if (copiers.length === 0) {
-        this.logger.log(
-          `[ReplicateManualOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`,
-        );
+        this.logger.log(`[ReplicateManualOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`);
         return;
       }
 
-      this.logger.log(
-        `[ReplicateManualOperation] Encontrados ${copiers.length} copiadores ativos`,
-      );
+      this.logger.log(`[ReplicateManualOperation] Encontrados ${copiers.length} copiadores ativos`);
 
       // Para cada copiador, replicar a operação
       for (const copier of copiers) {
         if (!copier.isActive) {
-          this.logger.log(
-            `[ReplicateManualOperation] Pulando copiador ${copier.userId} - não está ativo`,
-          );
+          this.logger.log(`[ReplicateManualOperation] Pulando copiador ${copier.userId} - não está ativo`);
           continue;
         }
 
@@ -613,9 +567,7 @@ export class CopyTradingService {
           const activeSession = await this.getActiveSession(copier.userId);
 
           if (!activeSession) {
-            this.logger.warn(
-              `[ReplicateManualOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`,
-            );
+            this.logger.warn(`[ReplicateManualOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`);
             continue;
           }
 
@@ -628,17 +580,14 @@ export class CopyTradingService {
           } else if (copier.allocationType === 'proportion') {
             // Alocação proporcional: usar percentual do valor do expert
             const percentage = copier.allocationPercentage || 0;
-            followerStakeAmount =
-              (operationData.stakeAmount * percentage) / 100;
+            followerStakeAmount = (operationData.stakeAmount * percentage) / 100;
           } else {
             // Fallback: usar o mesmo valor do expert
             followerStakeAmount = operationData.stakeAmount;
           }
 
           // Aplicar leverage se necessário
-          const leverageMultiplier = this.parseLeverage(
-            copier.multiplier || '1x',
-          );
+          const leverageMultiplier = this.parseLeverage(copier.multiplier || '1x');
           followerStakeAmount = followerStakeAmount * leverageMultiplier;
 
           this.logger.log(
@@ -692,9 +641,7 @@ export class CopyTradingService {
         }
       }
 
-      this.logger.log(
-        `[ReplicateManualOperation] ========== FIM REPLICAÇÃO OPERAÇÃO MANUAL ==========`,
-      );
+      this.logger.log(`[ReplicateManualOperation] ========== FIM REPLICAÇÃO OPERAÇÃO MANUAL ==========`);
     } catch (error) {
       this.logger.error(
         `[ReplicateManualOperation] Erro ao replicar operação manual: ${error.message}`,
@@ -711,8 +658,8 @@ export class CopyTradingService {
   async replicateAIOperation(
     masterUserId: string,
     operationData: {
-      tradeId: number; // ID do ai_trades
-      contractId: string; // ID do contrato Deriv (pode estar vazio inicialmente)
+      tradeId: number;        // ID do ai_trades
+      contractId: string;     // ID do contrato Deriv (pode estar vazio inicialmente)
       contractType: string;
       symbol: string;
       duration: number;
@@ -722,20 +669,14 @@ export class CopyTradingService {
     },
   ): Promise<void> {
     try {
-      this.logger.log(
-        `[ReplicateAIOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO IA ==========`,
-      );
+      this.logger.log(`[ReplicateAIOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO IA ==========`);
       this.logger.log(`[ReplicateAIOperation] Master trader: ${masterUserId}`);
-      this.logger.log(
-        `[ReplicateAIOperation] TradeId: ${operationData.tradeId}, ContractId: ${operationData.contractId}`,
-      );
+      this.logger.log(`[ReplicateAIOperation] TradeId: ${operationData.tradeId}, ContractId: ${operationData.contractId}`);
 
       // Verificar se é trader mestre
       const isMaster = await this.isMasterTrader(masterUserId);
       if (!isMaster) {
-        this.logger.debug(
-          `[ReplicateAIOperation] Usuário ${masterUserId} não é trader mestre, ignorando replicação`,
-        );
+        this.logger.debug(`[ReplicateAIOperation] Usuário ${masterUserId} não é trader mestre, ignorando replicação`);
         return;
       }
 
@@ -743,22 +684,16 @@ export class CopyTradingService {
       const copiers = await this.getCopiers(masterUserId);
 
       if (copiers.length === 0) {
-        this.logger.log(
-          `[ReplicateAIOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`,
-        );
+        this.logger.log(`[ReplicateAIOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`);
         return;
       }
 
-      this.logger.log(
-        `[ReplicateAIOperation] Encontrados ${copiers.length} copiadores ativos`,
-      );
+      this.logger.log(`[ReplicateAIOperation] Encontrados ${copiers.length} copiadores ativos`);
 
       // Para cada copiador, replicar a operação
       for (const copier of copiers) {
         if (!copier.isActive) {
-          this.logger.log(
-            `[ReplicateAIOperation] Pulando copiador ${copier.userId} - não está ativo`,
-          );
+          this.logger.log(`[ReplicateAIOperation] Pulando copiador ${copier.userId} - não está ativo`);
           continue;
         }
 
@@ -767,14 +702,12 @@ export class CopyTradingService {
           const activeSession = await this.getActiveSession(copier.userId);
 
           if (!activeSession) {
-            this.logger.warn(
-              `[ReplicateAIOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`,
-            );
+            this.logger.warn(`[ReplicateAIOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`);
             continue;
           }
 
           // Calcular valor usando MESMO VALOR do mestre (conforme solicitado)
-          const followerStakeAmount = operationData.stakeAmount;
+          let followerStakeAmount = operationData.stakeAmount;
 
           this.logger.log(
             `[ReplicateAIOperation] Replicando para copiador ${copier.userId} - Stake: $${followerStakeAmount.toFixed(2)} (mesmo valor do mestre)`,
@@ -828,9 +761,7 @@ export class CopyTradingService {
         }
       }
 
-      this.logger.log(
-        `[ReplicateAIOperation] ========== FIM REPLICAÇÃO OPERAÇÃO IA ==========`,
-      );
+      this.logger.log(`[ReplicateAIOperation] ========== FIM REPLICAÇÃO OPERAÇÃO IA ==========`);
     } catch (error) {
       this.logger.error(
         `[ReplicateAIOperation] Erro ao replicar operação IA: ${error.message}`,
@@ -851,12 +782,8 @@ export class CopyTradingService {
     expertStakeAmount: number,
   ): Promise<void> {
     try {
-      this.logger.log(
-        `[UpdateCopyTradingOperationsResult] ========== ATUALIZANDO RESULTADO OPERAÇÕES ==========`,
-      );
-      this.logger.log(
-        `[UpdateCopyTradingOperationsResult] Master trader: ${masterUserId}, ContractId: ${contractId}, Result: ${result}, Expert Profit: ${expertProfit}, Expert Stake: ${expertStakeAmount}`,
-      );
+      this.logger.log(`[UpdateCopyTradingOperationsResult] ========== ATUALIZANDO RESULTADO OPERAÇÕES ==========`);
+      this.logger.log(`[UpdateCopyTradingOperationsResult] Master trader: ${masterUserId}, ContractId: ${contractId}, Result: ${result}, Expert Profit: ${expertProfit}, Expert Stake: ${expertStakeAmount}`);
 
       // Buscar todas as operações de copy trading com o mesmo trader_operation_id (contractId do expert)
       const operations = await this.dataSource.query(
@@ -869,15 +796,11 @@ export class CopyTradingService {
       );
 
       if (!operations || operations.length === 0) {
-        this.logger.log(
-          `[UpdateCopyTradingOperationsResult] Nenhuma operação de copy trading encontrada para contractId ${contractId}`,
-        );
+        this.logger.log(`[UpdateCopyTradingOperationsResult] Nenhuma operação de copy trading encontrada para contractId ${contractId}`);
         return;
       }
 
-      this.logger.log(
-        `[UpdateCopyTradingOperationsResult] Encontradas ${operations.length} operações para atualizar`,
-      );
+      this.logger.log(`[UpdateCopyTradingOperationsResult] Encontradas ${operations.length} operações para atualizar`);
 
       // Atualizar cada operação
       for (const operation of operations) {
@@ -916,17 +839,10 @@ export class CopyTradingService {
           const sessionId = operation.session_id;
           const currentBalance = parseFloat(operation.current_balance) || 0;
           const newBalance = currentBalance + copierProfit;
-          const totalOperations = operation.total_operations || 0;
-          const totalWins =
-            result === 'win'
-              ? (operation.total_wins || 0) + 1
-              : operation.total_wins || 0;
-          const totalLosses =
-            result === 'loss'
-              ? (operation.total_losses || 0) + 1
-              : operation.total_losses || 0;
-          const totalProfit =
-            (parseFloat(operation.total_profit) || 0) + copierProfit;
+          const totalOperations = (operation.total_operations || 0);
+          const totalWins = result === 'win' ? (operation.total_wins || 0) + 1 : (operation.total_wins || 0);
+          const totalLosses = result === 'loss' ? (operation.total_losses || 0) + 1 : (operation.total_losses || 0);
+          const totalProfit = (parseFloat(operation.total_profit) || 0) + copierProfit;
 
           await this.dataSource.query(
             `UPDATE copy_trading_sessions 
@@ -955,12 +871,7 @@ export class CopyTradingService {
               this.logger.warn(
                 `[UpdateCopyTradingOperationsResult] Stop loss atingido para sessão ${sessionId} - Loss: $${lossAmount.toFixed(2)}, Stop Loss: $${stopLoss.toFixed(2)}`,
               );
-              await this.endSession(
-                sessionId,
-                operation.copier_user_id,
-                'stop_loss',
-                `Stop loss atingido: $${lossAmount.toFixed(2)}`,
-              );
+              await this.endSession(sessionId, operation.copier_user_id, 'stop_loss', `Stop loss atingido: $${lossAmount.toFixed(2)}`);
             }
 
             // Verificar take profit (lucro acumulado)
@@ -968,12 +879,7 @@ export class CopyTradingService {
               this.logger.log(
                 `[UpdateCopyTradingOperationsResult] Take profit atingido para sessão ${sessionId} - Profit: $${totalProfit.toFixed(2)}, Take Profit: $${takeProfit.toFixed(2)}`,
               );
-              await this.endSession(
-                sessionId,
-                operation.copier_user_id,
-                'take_profit',
-                `Take profit atingido: $${totalProfit.toFixed(2)}`,
-              );
+              await this.endSession(sessionId, operation.copier_user_id, 'take_profit', `Take profit atingido: $${totalProfit.toFixed(2)}`);
             }
           }
 
@@ -989,9 +895,7 @@ export class CopyTradingService {
         }
       }
 
-      this.logger.log(
-        `[UpdateCopyTradingOperationsResult] ========== FIM ATUALIZAÇÃO RESULTADO OPERAÇÕES ==========`,
-      );
+      this.logger.log(`[UpdateCopyTradingOperationsResult] ========== FIM ATUALIZAÇÃO RESULTADO OPERAÇÕES ==========`);
     } catch (error) {
       this.logger.error(
         `[UpdateCopyTradingOperationsResult] Erro ao atualizar resultado das operações: ${error.message}`,
@@ -1080,9 +984,7 @@ export class CopyTradingService {
       // Verificar se é trader mestre
       const isMaster = await this.isMasterTrader(masterUserId);
       if (!isMaster) {
-        this.logger.debug(
-          `[ReplicateTrade] Usuário ${masterUserId} não é trader mestre, ignorando replicação`,
-        );
+        this.logger.debug(`[ReplicateTrade] Usuário ${masterUserId} não é trader mestre, ignorando replicação`);
         return;
       }
 
@@ -1102,15 +1004,11 @@ export class CopyTradingService {
       );
 
       if (!activeSessions || activeSessions.length === 0) {
-        this.logger.debug(
-          `[ReplicateTrade] Nenhum copiador ativo para trader ${masterUserId}`,
-        );
+        this.logger.debug(`[ReplicateTrade] Nenhum copiador ativo para trader ${masterUserId}`);
         return;
       }
 
-      this.logger.log(
-        `[ReplicateTrade] Encontradas ${activeSessions.length} sessões ativas para replicar`,
-      );
+      this.logger.log(`[ReplicateTrade] Encontradas ${activeSessions.length} sessões ativas para replicar`);
 
       // Replicar para cada sessão ativa
       for (const session of activeSessions) {
@@ -1175,10 +1073,7 @@ export class CopyTradingService {
       }
 
       // Calcular lucro/perda proporcional ao valor investido
-      const profitRatio =
-        tradeData.stakeAmount > 0
-          ? tradeData.profit / tradeData.stakeAmount
-          : 0;
+      const profitRatio = tradeData.stakeAmount > 0 ? tradeData.profit / tradeData.stakeAmount : 0;
       const followerProfit = followerStakeAmount * profitRatio;
 
       // Criar registro da operação replicada
@@ -1210,14 +1105,9 @@ export class CopyTradingService {
       const won = tradeData.result === 'win';
       const newBalance = parseFloat(session.current_balance) + followerProfit;
       const newTotalOperations = (session.total_operations || 0) + 1;
-      const newTotalWins = won
-        ? (session.total_wins || 0) + 1
-        : session.total_wins || 0;
-      const newTotalLosses = !won
-        ? (session.total_losses || 0) + 1
-        : session.total_losses || 0;
-      const newTotalProfit =
-        parseFloat(session.total_profit || 0) + followerProfit;
+      const newTotalWins = won ? (session.total_wins || 0) + 1 : session.total_wins || 0;
+      const newTotalLosses = !won ? (session.total_losses || 0) + 1 : session.total_losses || 0;
+      const newTotalProfit = parseFloat(session.total_profit || 0) + followerProfit;
 
       await this.dataSource.query(
         `UPDATE copy_trading_sessions 
@@ -1252,12 +1142,7 @@ export class CopyTradingService {
         this.logger.warn(
           `[ReplicateTrade] Stop loss atingido para sessão ${session.id} - Loss: $${lossAmount.toFixed(2)}, Stop Loss: $${stopLoss.toFixed(2)}`,
         );
-        await this.endSession(
-          session.id,
-          session.user_id,
-          'stop_loss',
-          `Stop loss atingido: $${lossAmount.toFixed(2)}`,
-        );
+        await this.endSession(session.id, session.user_id, 'stop_loss', `Stop loss atingido: $${lossAmount.toFixed(2)}`);
         return;
       }
 
@@ -1266,12 +1151,7 @@ export class CopyTradingService {
         this.logger.log(
           `[ReplicateTrade] Take profit atingido para sessão ${session.id} - Profit: $${newTotalProfit.toFixed(2)}, Take Profit: $${takeProfit.toFixed(2)}`,
         );
-        await this.endSession(
-          session.id,
-          session.user_id,
-          'take_profit',
-          `Take profit atingido: $${newTotalProfit.toFixed(2)}`,
-        );
+        await this.endSession(session.id, session.user_id, 'take_profit', `Take profit atingido: $${newTotalProfit.toFixed(2)}`);
         return;
       }
     } catch (error) {
@@ -1313,37 +1193,28 @@ export class CopyTradingService {
         [reason, reasonDescription, userId],
       );
 
-      this.logger.log(
-        `[EndSession] Sessão ${sessionId} encerrada - Motivo: ${reason}`,
-      );
+      this.logger.log(`[EndSession] Sessão ${sessionId} encerrada - Motivo: ${reason}`);
     } catch (error) {
-      this.logger.error(
-        `[EndSession] Erro ao encerrar sessão: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`[EndSession] Erro ao encerrar sessão: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
    * Busca todos os copiadores (usuários que configuraram copy trade para o trader mestre)
-   *
+   * 
    * Lógica:
    * 1. Buscar na copy_trading_config para encontrar o trader_id associado ao master trader
    * 2. Buscar na copy_trading_sessions usando esse trader_id para encontrar os copiadores ativos
    */
   async getCopiers(masterUserId: string) {
     try {
-      this.logger.log(
-        `[GetCopiers] ========== INÍCIO BUSCA COPIADORES ==========`,
-      );
+      this.logger.log(`[GetCopiers] ========== INÍCIO BUSCA COPIADORES ==========`);
       this.logger.log(`[GetCopiers] Master trader user_id: ${masterUserId}`);
 
       // PASSO 1: Buscar na copy_trading_config para encontrar trader_ids associados ao master trader
       // Primeiro, verificar se o user_id do master trader aparece como trader_id na config
-      this.logger.log(
-        `[GetCopiers] PASSO 1: Buscando na copy_trading_config onde trader_id = ${masterUserId}`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1: Buscando na copy_trading_config onde trader_id = ${masterUserId}`);
 
       const configsWithMasterAsTrader = await this.dataSource.query(
         `SELECT DISTINCT trader_id, user_id, trader_name, is_active, session_status
@@ -1352,14 +1223,10 @@ export class CopyTradingService {
         [masterUserId],
       );
 
-      this.logger.log(
-        `[GetCopiers] PASSO 1 - Resultado: ${configsWithMasterAsTrader.length} registros encontrados na config com trader_id = ${masterUserId}`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1 - Resultado: ${configsWithMasterAsTrader.length} registros encontrados na config com trader_id = ${masterUserId}`);
       if (configsWithMasterAsTrader.length > 0) {
         configsWithMasterAsTrader.forEach((config, idx) => {
-          this.logger.log(
-            `[GetCopiers] PASSO 1 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 1 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`);
         });
       }
 
@@ -1374,9 +1241,7 @@ export class CopyTradingService {
       if (expertResult && expertResult.length > 0) {
         const expertId = expertResult[0].id;
         traderIdsToSearch.push(expertId);
-        this.logger.log(
-          `[GetCopiers] Expert encontrado: ${expertId} para user_id ${masterUserId}`,
-        );
+        this.logger.log(`[GetCopiers] Expert encontrado: ${expertId} para user_id ${masterUserId}`);
 
         // Verificar se esse expert.id aparece como trader_id
         const configsWithExpertAsTrader = await this.dataSource.query(
@@ -1385,42 +1250,30 @@ export class CopyTradingService {
            WHERE trader_id = ?`,
           [expertId],
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 1 - Config com expert.id como trader_id: ${configsWithExpertAsTrader.length} registros`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 1 - Config com expert.id como trader_id: ${configsWithExpertAsTrader.length} registros`);
         if (configsWithExpertAsTrader.length > 0) {
           configsWithExpertAsTrader.forEach((config, idx) => {
-            this.logger.log(
-              `[GetCopiers] PASSO 1 - Config Expert ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 1 - Config Expert ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}`);
           });
         }
       } else {
-        this.logger.log(
-          `[GetCopiers] Nenhum expert associado ao user_id ${masterUserId}`,
-        );
+        this.logger.log(`[GetCopiers] Nenhum expert associado ao user_id ${masterUserId}`);
       }
 
       // NOVO: Buscar TODOS os trader_ids que existem na tabela e verificar se algum corresponde ao master trader
       // Isso ajuda a descobrir qual é o trader_id correto do master trader
-      this.logger.log(
-        `[GetCopiers] PASSO 1.5: Buscando todos os trader_ids na tabela para verificar relação com master trader`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1.5: Buscando todos os trader_ids na tabela para verificar relação com master trader`);
 
       // Buscar todos os trader_ids únicos na tabela
       const allTraderIdsInTable = await this.dataSource.query(
         `SELECT DISTINCT trader_id FROM copy_trading_config`,
       );
-      this.logger.log(
-        `[GetCopiers] PASSO 1.5 - Trader IDs encontrados na tabela: ${allTraderIdsInTable.length}`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1.5 - Trader IDs encontrados na tabela: ${allTraderIdsInTable.length}`);
 
       // Para cada trader_id, verificar se é um expert.id do master trader
       for (const row of allTraderIdsInTable) {
         const traderId = row.trader_id;
-        this.logger.log(
-          `[GetCopiers] PASSO 1.5 - Verificando trader_id: ${traderId}`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 1.5 - Verificando trader_id: ${traderId}`);
 
         // Verificar se esse trader_id é um expert.id do master trader
         const expertCheck = await this.dataSource.query(
@@ -1429,41 +1282,29 @@ export class CopyTradingService {
         );
 
         if (expertCheck && expertCheck.length > 0) {
-          this.logger.log(
-            `[GetCopiers] PASSO 1.5 - ✅ ENCONTRADO! trader_id ${traderId} é um expert.id do master trader!`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 1.5 - ✅ ENCONTRADO! trader_id ${traderId} é um expert.id do master trader!`);
           traderIdsToSearch.push(traderId);
         } else {
           // Verificar se esse trader_id é o próprio user_id do master (caso especial)
           if (traderId === masterUserId) {
-            this.logger.log(
-              `[GetCopiers] PASSO 1.5 - ✅ trader_id ${traderId} é o próprio user_id do master trader`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 1.5 - ✅ trader_id ${traderId} é o próprio user_id do master trader`);
             // Já está na lista
           } else {
-            this.logger.log(
-              `[GetCopiers] PASSO 1.5 - ❌ trader_id ${traderId} não está relacionado ao master trader`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 1.5 - ❌ trader_id ${traderId} não está relacionado ao master trader`);
           }
         }
       }
 
       // NOVO PASSO 1.6: Verificar nas sessões ativas quais trader_ids têm sessões e se algum corresponde ao master
-      this.logger.log(
-        `[GetCopiers] PASSO 1.6: Verificando trader_ids nas sessões ativas`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1.6: Verificando trader_ids nas sessões ativas`);
       const activeSessionsTraderIds = await this.dataSource.query(
         `SELECT DISTINCT trader_id FROM copy_trading_sessions WHERE status = 'active'`,
       );
-      this.logger.log(
-        `[GetCopiers] PASSO 1.6 - Trader IDs com sessões ativas: ${activeSessionsTraderIds.length}`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1.6 - Trader IDs com sessões ativas: ${activeSessionsTraderIds.length}`);
 
       for (const row of activeSessionsTraderIds) {
         const traderId = row.trader_id;
-        this.logger.log(
-          `[GetCopiers] PASSO 1.6 - Verificando trader_id com sessão ativa: ${traderId}`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 1.6 - Verificando trader_id com sessão ativa: ${traderId}`);
 
         // Verificar se é expert.id do master
         const expertCheck = await this.dataSource.query(
@@ -1472,14 +1313,10 @@ export class CopyTradingService {
         );
 
         if (expertCheck && expertCheck.length > 0) {
-          this.logger.log(
-            `[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é expert.id do master!`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é expert.id do master!`);
           traderIdsToSearch.push(traderId);
         } else if (traderId === masterUserId) {
-          this.logger.log(
-            `[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é o user_id do master!`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 1.6 - ✅ trader_id ${traderId} (com sessão ativa) é o user_id do master!`);
           // Já está na lista
         }
       }
@@ -1487,14 +1324,10 @@ export class CopyTradingService {
       // Remover duplicatas
       traderIdsToSearch = [...new Set(traderIdsToSearch)];
 
-      this.logger.log(
-        `[GetCopiers] PASSO 1 - Trader IDs FINAIS para buscar: ${traderIdsToSearch.join(', ')}`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 1 - Trader IDs FINAIS para buscar: ${traderIdsToSearch.join(', ')}`);
 
       // PASSO 2: Buscar na copy_trading_config todos os copiadores (onde trader_id corresponde ao master)
-      this.logger.log(
-        `[GetCopiers] PASSO 2: Buscando copiadores na copy_trading_config onde trader_id IN (${traderIdsToSearch.join(', ')})`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 2: Buscando copiadores na copy_trading_config onde trader_id IN (${traderIdsToSearch.join(', ')})`);
 
       const copiersFromConfig = await this.dataSource.query(
         `SELECT 
@@ -1532,21 +1365,15 @@ export class CopyTradingService {
         traderIdsToSearch,
       );
 
-      this.logger.log(
-        `[GetCopiers] PASSO 2 - Encontrados ${copiersFromConfig.length} copiadores na config`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 2 - Encontrados ${copiersFromConfig.length} copiadores na config`);
       if (copiersFromConfig.length > 0) {
         copiersFromConfig.forEach((copier, idx) => {
-          this.logger.log(
-            `[GetCopiers] PASSO 2 - Copiador Config ${idx + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}, is_active=${copier.is_active}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 2 - Copiador Config ${idx + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}, is_active=${copier.is_active}`);
         });
       }
 
       // PASSO 3: Buscar nas copy_trading_sessions usando o trader_id encontrado
-      this.logger.log(
-        `[GetCopiers] PASSO 3: Buscando copiadores nas copy_trading_sessions onde trader_id IN (${traderIdsToSearch.join(', ')}) E status = 'active'`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 3: Buscando copiadores nas copy_trading_sessions onde trader_id IN (${traderIdsToSearch.join(', ')}) E status = 'active'`);
 
       const copiersFromSessions = await this.dataSource.query(
         `SELECT DISTINCT
@@ -1587,14 +1414,10 @@ export class CopyTradingService {
         traderIdsToSearch,
       );
 
-      this.logger.log(
-        `[GetCopiers] PASSO 3 - Encontrados ${copiersFromSessions.length} copiadores nas sessões ativas`,
-      );
+      this.logger.log(`[GetCopiers] PASSO 3 - Encontrados ${copiersFromSessions.length} copiadores nas sessões ativas`);
       if (copiersFromSessions.length > 0) {
         copiersFromSessions.forEach((copier, idx) => {
-          this.logger.log(
-            `[GetCopiers] PASSO 3 - Copiador Sessão ${idx + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}, session_status=${copier.session_status_active}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 3 - Copiador Sessão ${idx + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}, session_status=${copier.session_status_active}`);
         });
       }
 
@@ -1602,40 +1425,32 @@ export class CopyTradingService {
       const copiersMap = new Map();
 
       // Primeiro adicionar da config
-      copiersFromConfig.forEach((copier) => {
+      copiersFromConfig.forEach(copier => {
         copiersMap.set(copier.user_id, copier);
       });
 
       // Depois atualizar/sobrescrever com dados das sessões ativas (mais atualizados)
-      copiersFromSessions.forEach((copier) => {
+      copiersFromSessions.forEach(copier => {
         copiersMap.set(copier.user_id, copier);
       });
 
       const copiers = Array.from(copiersMap.values());
 
-      this.logger.log(
-        `[GetCopiers] Encontrados ${copiers.length} copiadores para trader ${masterUserId}`,
-      );
+      this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores para trader ${masterUserId}`);
 
       // Log detalhado dos copiadores encontrados
       if (copiers.length > 0) {
         copiers.forEach((copier, index) => {
-          this.logger.log(
-            `[GetCopiers] Copiador ${index + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}`,
-          );
+          this.logger.log(`[GetCopiers] Copiador ${index + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}`);
         });
       }
 
       // PASSO 4: Debug detalhado se não encontrou copiadores
       if (copiers.length === 0) {
-        this.logger.log(
-          `[GetCopiers] PASSO 4: DEBUG - Nenhum copiador encontrado, investigando...`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4: DEBUG - Nenhum copiador encontrado, investigando...`);
 
         // NOVO: Verificar se algum trader_id que tem copiadores corresponde ao master trader
-        this.logger.log(
-          `[GetCopiers] PASSO 4.1: Verificando trader_ids que têm copiadores e sua relação com o master`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4.1: Verificando trader_ids que têm copiadores e sua relação com o master`);
         const tradersWithCopiers = await this.dataSource.query(
           `SELECT DISTINCT c.trader_id, COUNT(*) as total_copiadores
            FROM copy_trading_config c
@@ -1646,9 +1461,7 @@ export class CopyTradingService {
 
         for (const traderRow of tradersWithCopiers) {
           const traderId = traderRow.trader_id;
-          this.logger.log(
-            `[GetCopiers] PASSO 4.1 - Trader ${traderId} tem ${traderRow.total_copiadores} copiador(es)`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 4.1 - Trader ${traderId} tem ${traderRow.total_copiadores} copiador(es)`);
 
           // Verificar se esse trader_id é expert.id do master
           const expertRelation = await this.dataSource.query(
@@ -1657,9 +1470,7 @@ export class CopyTradingService {
           );
 
           if (expertRelation && expertRelation.length > 0) {
-            this.logger.log(
-              `[GetCopiers] PASSO 4.1 - ✅ DESCOBERTO! trader_id ${traderId} é expert.id do master trader! Adicionando à busca...`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 4.1 - ✅ DESCOBERTO! trader_id ${traderId} é expert.id do master trader! Adicionando à busca...`);
             traderIdsToSearch.push(traderId);
 
             // Buscar copiadores com esse trader_id
@@ -1670,13 +1481,9 @@ export class CopyTradingService {
                WHERE c.trader_id = ?`,
               [traderId],
             );
-            this.logger.log(
-              `[GetCopiers] PASSO 4.1 - Copiadores encontrados para trader_id ${traderId}: ${foundCopiers.length}`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 4.1 - Copiadores encontrados para trader_id ${traderId}: ${foundCopiers.length}`);
             foundCopiers.forEach((copier, idx) => {
-              this.logger.log(
-                `[GetCopiers] PASSO 4.1 - Copiador ${idx + 1}: user_id=${copier.user_id}, name=${copier.name}, email=${copier.email}`,
-              );
+              this.logger.log(`[GetCopiers] PASSO 4.1 - Copiador ${idx + 1}: user_id=${copier.user_id}, name=${copier.name}, email=${copier.email}`);
             });
           }
         }
@@ -1684,9 +1491,7 @@ export class CopyTradingService {
         // Se encontrou novos trader_ids, buscar novamente
         if (traderIdsToSearch.length > 0) {
           const uniqueTraderIds = [...new Set(traderIdsToSearch)];
-          this.logger.log(
-            `[GetCopiers] PASSO 4.2: Buscando novamente com trader_ids atualizados: ${uniqueTraderIds.join(', ')}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 4.2: Buscando novamente com trader_ids atualizados: ${uniqueTraderIds.join(', ')}`);
 
           // Buscar copiadores novamente com os trader_ids atualizados
           const retryCopiersFromConfig = await this.dataSource.query(
@@ -1766,25 +1571,21 @@ export class CopyTradingService {
 
           // Combinar resultados
           const retryCopiersMap = new Map();
-          retryCopiersFromConfig.forEach((copier) => {
+          retryCopiersFromConfig.forEach(copier => {
             retryCopiersMap.set(copier.user_id, copier);
           });
-          retryCopiersFromSessions.forEach((copier) => {
+          retryCopiersFromSessions.forEach(copier => {
             retryCopiersMap.set(copier.user_id, copier);
           });
 
           const retryCopiers = Array.from(retryCopiersMap.values());
-          this.logger.log(
-            `[GetCopiers] PASSO 4.2 - Após retry, encontrados ${retryCopiers.length} copiadores`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 4.2 - Após retry, encontrados ${retryCopiers.length} copiadores`);
 
           if (retryCopiers.length > 0) {
             // Substituir o array de copiadores
             copiers.length = 0;
             copiers.push(...retryCopiers);
-            this.logger.log(
-              `[GetCopiers] PASSO 4.2 - ✅ SUCESSO! Copiadores encontrados após verificação adicional`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 4.2 - ✅ SUCESSO! Copiadores encontrados após verificação adicional`);
           }
         }
 
@@ -1795,13 +1596,9 @@ export class CopyTradingService {
            ORDER BY created_at DESC 
            LIMIT 20`,
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Todos os registros na config (últimos 20):`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Todos os registros na config (últimos 20):`);
         allConfigs.forEach((config, idx) => {
-          this.logger.log(
-            `[GetCopiers] PASSO 4 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 4 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`);
         });
 
         // Verificar TODAS as sessões ativas
@@ -1812,13 +1609,9 @@ export class CopyTradingService {
            ORDER BY started_at DESC 
            LIMIT 20`,
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Todas as sessões ativas (últimas 20):`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Todas as sessões ativas (últimas 20):`);
         allActiveSessions.forEach((session, idx) => {
-          this.logger.log(
-            `[GetCopiers] PASSO 4 - Sessão ${idx + 1}: trader_id=${session.trader_id}, user_id=${session.user_id}, trader_name=${session.trader_name}, status=${session.status}`,
-          );
+          this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: trader_id=${session.trader_id}, user_id=${session.user_id}, trader_name=${session.trader_name}, status=${session.status}`);
         });
 
         // Verificar se o masterUserId aparece em algum lugar
@@ -1826,14 +1619,10 @@ export class CopyTradingService {
           `SELECT * FROM copy_trading_config WHERE user_id = ? OR trader_id = ?`,
           [masterUserId, masterUserId],
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Registros onde masterUserId (${masterUserId}) aparece: ${masterInConfig.length}`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Registros onde masterUserId (${masterUserId}) aparece: ${masterInConfig.length}`);
         if (masterInConfig.length > 0) {
           masterInConfig.forEach((record, idx) => {
-            this.logger.log(
-              `[GetCopiers] PASSO 4 - Registro ${idx + 1}: id=${record.id}, user_id=${record.user_id}, trader_id=${record.trader_id}, trader_name=${record.trader_name}`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 4 - Registro ${idx + 1}: id=${record.id}, user_id=${record.user_id}, trader_id=${record.trader_id}, trader_name=${record.trader_name}`);
           });
         }
 
@@ -1842,14 +1631,10 @@ export class CopyTradingService {
           `SELECT * FROM copy_trading_sessions WHERE user_id = ? OR trader_id = ?`,
           [masterUserId, masterUserId],
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Sessões onde masterUserId (${masterUserId}) aparece: ${masterInSessions.length}`,
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Sessões onde masterUserId (${masterUserId}) aparece: ${masterInSessions.length}`);
         if (masterInSessions.length > 0) {
           masterInSessions.forEach((session, idx) => {
-            this.logger.log(
-              `[GetCopiers] PASSO 4 - Sessão ${idx + 1}: id=${session.id}, user_id=${session.user_id}, trader_id=${session.trader_id}, status=${session.status}`,
-            );
+            this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: id=${session.id}, user_id=${session.user_id}, trader_id=${session.trader_id}, status=${session.status}`);
           });
         }
 
@@ -1861,10 +1646,7 @@ export class CopyTradingService {
            ORDER BY total_copiadores DESC 
            LIMIT 10`,
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Top 10 trader_ids na config:`,
-          JSON.stringify(allTraderIdsConfig),
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids na config:`, JSON.stringify(allTraderIdsConfig));
 
         // Mostrar todos os trader_ids únicos na tabela sessions
         const allTraderIdsSessions = await this.dataSource.query(
@@ -1875,15 +1657,10 @@ export class CopyTradingService {
            ORDER BY total_sessoes DESC 
            LIMIT 10`,
         );
-        this.logger.log(
-          `[GetCopiers] PASSO 4 - Top 10 trader_ids nas sessões ativas:`,
-          JSON.stringify(allTraderIdsSessions),
-        );
+        this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids nas sessões ativas:`, JSON.stringify(allTraderIdsSessions));
       }
 
-      this.logger.log(
-        `[GetCopiers] ========== FIM BUSCA COPIADORES ==========`,
-      );
+      this.logger.log(`[GetCopiers] ========== FIM BUSCA COPIADORES ==========`);
 
       // Formatar dados dos copiadores
       return copiers.map((copier) => {
@@ -1893,9 +1670,7 @@ export class CopyTradingService {
 
         // Calcular PnL (Profit and Loss) baseado no lucro total das operações
         // Se não houver operações, usar session_balance como fallback
-        const pnl = parseFloat(
-          copier.total_profit || copier.session_balance || '0',
-        );
+        const pnl = parseFloat(copier.total_profit || copier.session_balance || '0');
 
         // Determinar tag baseado no status
         const tag = copier.is_active ? 'ATIVO' : 'INATIVO';
@@ -1914,9 +1689,7 @@ export class CopyTradingService {
           isActive: copier.is_active === 1 || copier.is_active === true,
           allocationType: copier.allocation_type,
           allocationValue: parseFloat(copier.allocation_value || '0'),
-          allocationPercentage: copier.allocation_percentage
-            ? parseFloat(copier.allocation_percentage)
-            : null,
+          allocationPercentage: copier.allocation_percentage ? parseFloat(copier.allocation_percentage) : null,
           totalOperations: copier.total_operations || 0,
           totalWins: copier.total_wins || 0,
           totalLosses: copier.total_losses || 0,
@@ -1942,3 +1715,4 @@ export class CopyTradingService {
     return match ? parseInt(match[1], 10) : 1;
   }
 }
+

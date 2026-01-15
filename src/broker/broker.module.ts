@@ -12,7 +12,7 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 
 @Module({
   imports: [
-    UserModule,
+    UserModule, 
     SettingsModule,
     TypeOrmModule.forFeature([TradeEntity]),
     CopyTradingModule,
@@ -32,3 +32,5 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
   ],
 })
 export class BrokerModule {}
+
+
