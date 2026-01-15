@@ -499,6 +499,12 @@ export class TitanStrategy implements IStrategy {
 
     async processTick(tick: Tick, symbol?: string): Promise<void> {
         if (symbol && symbol !== this.symbol) return;
+
+        // 🔍 DEBUG: Log para verificar se está sendo chamado
+        if (this.users.size > 0) {
+            this.logger.debug(`[TITAN] 📥 Tick recebido: ${tick.value} | Symbol: ${symbol} | Usuários ativos: ${this.users.size}`);
+        }
+
         this.ticks.push(tick);
         if (this.ticks.length > 100) this.ticks.shift();
 
@@ -553,6 +559,20 @@ export class TitanStrategy implements IStrategy {
         const result = analyzeTitan(this.ticks, analysisMode);
 
         if (!result.hasSignal) {
+            // 🔍 LOG DEBUG: Mostrar o motivo da falha da análise para o usuário (se solicitado)
+            // Formatar detalhes para o log
+            const details = result.details;
+            const momentumStatus = details.momentum.status === 'ACELERANDO' ? 'ACELERANDO' : 'SEM_MOMENTUM';
+            const momentumDetail = `${details.momentum.firstHalf} vs ${details.momentum.secondHalf}`;
+
+            const logMessage =
+                `🔍 [ANÁLISE ${analysisMode}] (Sem Sinal - ${result.reason})\n` +
+                `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
+                `• Momentum: ${momentumStatus} (${momentumDetail})\n` +
+                `• Ruído: ${details.alternations} Alternâncias`;
+
+            // Usar tipo 'analise' para logs detalhados
+            this.saveTitanLog(state.userId, this.symbol, 'analise', logMessage);
             return null;
         }
 
