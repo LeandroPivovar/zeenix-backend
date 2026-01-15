@@ -27,8 +27,8 @@ function calcularProximaApostaAtlas(
       aposta = (perdasTotais * 1.15) / payout;
       break;
     case 'agressivo':
-      // Recupera 100% da perda + 30% de lucro (Conforme Documentação Atlas v3)
-      aposta = (perdasTotais * 1.30) / payout;
+      // Recupera 100% da perda + 15% de lucro (Igual ao Moderado conforme solicitado)
+      aposta = (perdasTotais * 1.15) / payout;
       break;
   }
 
@@ -386,13 +386,13 @@ export class AtlasStrategy implements IStrategy {
     if (canTrade) {
       await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
     } else {
-      // ✅ Log periódico quando análise bloqueia operação (a cada 20 ticks para não poluir)
+      // ✅ Log periódico quando análise bloqueia operação (a cada 10 ticks para mostrar atividade real)
       const key = `${symbol}_${state.userId}_bloqueio`;
-      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 20 === 0) {
+      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
         this.saveAtlasLog(state.userId, symbol, 'analise', analysis);
         this.intervaloLogsEnviados.set(key, true);
-        // Resetar após 20 ticks
-        if ((state.tickCounter || 0) % 20 === 0) {
+        // Resetar após 10 ticks
+        if ((state.tickCounter || 0) % 10 === 0) {
           this.intervaloLogsEnviados.delete(key);
         }
       }
@@ -444,7 +444,8 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        // analysis += `❌ Aguardando: Último dígito (${lastDigit}) <= 2.\n`;
+        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
+        analysis += `⏳ AGUARDANDO: Tendência de Alta Frequência...`;
         return { canTrade: false, analysis };
       }
     }
@@ -461,6 +462,8 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
+        analysis += `❌ FILTRO: Densidade Baixa (${countOver2}/5 > 2)\n`;
+        analysis += `⏳ AGUARDANDO: Fluxo de Atividade Majoritária...`;
         return { canTrade: false, analysis };
       }
     }
@@ -478,6 +481,13 @@ export class AtlasStrategy implements IStrategy {
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
+        if (lastDigit <= 2) {
+          analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
+        }
+        if (countOver2 < 8) {
+          analysis += `❌ FILTRO: Dominância Insuficiente (${countOver2}/10 > 2)\n`;
+        }
+        analysis += `⏳ AGUARDANDO: Confirmação de Tendência Sólida...`;
         return { canTrade: false, analysis };
       }
     }
@@ -493,93 +503,43 @@ export class AtlasStrategy implements IStrategy {
    */
   private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
-    if (ticks.length < 6) return null; // Precisa de pelo menos 6 ticks para Lento (5 últimos + atual)
+    if (ticks.length < 2) return null;
 
     const modeLower = (state.mode || 'veloz').toLowerCase();
     const normalizedMode = modeLower === 'moderado' ? 'normal' :
       (modeLower === 'lenta' || modeLower === 'preciso' ? 'lento' : modeLower);
 
-    const lastTick = ticks[ticks.length - 1];
+    const t0 = ticks[ticks.length - 1]; // Atual
+    const t1 = ticks[ticks.length - 2]; // Anterior
 
-    // ✅ 1. MODO VELOZ: Confirmação Dupla (2 últimos ticks da mesma cor)
-    // Documentação Imagem 3: "Confirmação Dupla (2 últimos ticks da mesma cor)"
-    if (normalizedMode === 'veloz') {
-      const t0 = ticks[ticks.length - 1]; // Atual
-      const t1 = ticks[ticks.length - 2];
-      const t2 = ticks[ticks.length - 3];
+    const diff = t0.value - t1.value;
+    const absDiff = Math.abs(diff);
+    const direction = diff > 0 ? 'CALL' : (diff < 0 ? 'PUT' : null);
 
-      const diff1 = t0.value - t1.value;
-      const diff2 = t1.value - t2.value;
+    if (!direction) return null;
 
-      // Se ambos subiram -> CALL
-      if (diff1 > 0 && diff2 > 0) return 'CALL';
-      // Se ambos desceram -> PUT
-      if (diff1 < 0 && diff2 < 0) return 'PUT';
+    // ✅ [ZENIX v3.3] Filtro Progressivo Simplificado
+    // VELOZ: Sem delta | NORMAL: 0.3 | LENTO: 0.5
+    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.3 : 1.0);
 
-      return null;
-    }
-
-    // ✅ 2. MODO NORMAL: Saldo Matemático (Soma dos últimos 3 ticks indica a direção real)
-    // Documentação Imagem 3: "Saldo Matemático (Soma dos últimos 3 ticks indica a direção real)"
-    if (normalizedMode === 'normal') {
-      const t0 = ticks[ticks.length - 1];
-      const t3 = ticks[ticks.length - 4]; // Para pegar variação de 3 intervalos (t-3 a t-0)
-
-      // Saldo = Preço Atual - Preço 3 ticks atrás
-      const saldo = t0.value - t3.value;
-
-      // Filtro de "Força" mínima para evitar ruído (opcional, mas recomendado)
-      if (Math.abs(saldo) > 0.01) {
-        if (saldo > 0) return 'CALL';
-        if (saldo < 0) return 'PUT';
-      }
-
-      return null;
-    }
-
-    // ✅ 3. MODO LENTO: Tendência (5 ticks) + Filtro de Doji
-    // Documentação Imagem 3: "Tendência (5 ticks) + Filtro de Doji (Evita entrar em movimentos fracos < 2 pontos)"
-    if (normalizedMode === 'lento') {
-      const t0 = ticks[ticks.length - 1];
-      const t5 = ticks[ticks.length - 6]; // Variação de 5 intervalos
-
-      const deltaTotal = t0.value - t5.value;
-
-      // ✅ Filtro de Doji: Movimento deve ser significativo (> 2 pontos/unidades ou ajuste proporcional)
-      // Considerando Volatility Indices (onde 1 ponto pode ser 1.0 ou 0.01 dependendo da escala),
-      // usaremos um threshold seguro ou o valor absoluto se for inteiro.
-      // Para R_10/1HZ10V, valores são algo como 6000.00. 2 pontos = 2.00?
-      // Vamos assumir > 1.0 para ser "seguro" em índices voláteis, ou 0.02 se for forex.
-      // Como 1HZ10V ~ 6500.00, movimento de 2.0 é razoável.
-      // Ajuste: Para garantir funcionamento, usaremos Math.abs(deltaTotal) > 0.5 (meio ponto) como base inicial.
-      // SE O USUARIO PEDIU "< 2 pontos", SIGNIFICA QUE SE FOR MENOR QUE 2 PONTOS ELE EVITA.
-      // Entao o gatilho exige >= 2 pontos.
-
-      const threshold = 1.0; // Ajuste conservador para "pontos"
-
-      if (Math.abs(deltaTotal) < threshold) {
-        // Movimento fraco (Doji/Lateralização) -> Não operar
-
-        // ✅ Log periódico explicativo (para o usuário saber que o robô está pensando)
-        const key = `${symbol}_${state.userId}_doji_wait`;
-        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
-          this.saveAtlasLog(state.userId, symbol, 'analise',
-            `🐢 [RECUPERAÇÃO LENTA] Aguardando tendência forte.\n` +
-            `• Variação (5 ticks): ${deltaTotal.toFixed(2)}\n` +
-            `• Mínimo Exigido: > ${threshold}\n` +
-            `• Status: Mercado Lateral (Doji) ✋`);
-          this.intervaloLogsEnviados.set(key, true);
+    if (absDiff >= threshold) {
+      return direction;
+    } else {
+      // ✅ Log de rejeição por delta insuficiente (apenas em recuperação)
+      const key = `${symbol}_${state.userId}_recovery_rejection`;
+      if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 5 === 0) {
+        this.saveAtlasLog(state.userId, symbol, 'analise',
+          `🛡️ [RECUPERAÇÃO ${normalizedMode.toUpperCase()}] Aguardando força.\n` +
+          `• Movimento: ${absDiff.toFixed(2)}\n` +
+          `• Mínimo Exigido: ${threshold.toFixed(2)}\n` +
+          `• Status: Delta Insuficiente ⏳`);
+        this.intervaloLogsEnviados.set(key, true);
+        if ((state.tickCounter || 0) % 5 === 0) {
+          this.intervaloLogsEnviados.delete(key);
         }
-        return null;
       }
-
-      if (deltaTotal > 0) return 'CALL';
-      if (deltaTotal < 0) return 'PUT';
-
       return null;
     }
-
-    return null;
   }
 
   /**
@@ -787,7 +747,10 @@ export class AtlasStrategy implements IStrategy {
 
       // Martingale ou Soros
       if (state.isInRecovery && state.martingaleStep > 0) {
-        const payout = modeConfig.payout;
+        // ✅ [ZENIX v3.2] Payout dinâmico para Martingale: 0.95 para Price Action (CALL/PUT), ou modeConfig.payout (~0.40)
+        const isPriceAction = operation === 'CALL' || operation === 'PUT';
+        const payout = isPriceAction ? 0.95 : modeConfig.payout;
+
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
 
@@ -1252,12 +1215,12 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
-      // ✅ ATLAS: Defesa Automática (Switch to Lento após 3 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 3 && state.mode !== 'lento') {
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 4 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 4 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 3 Perdas Consecutivas.\n` +
+          `• Motivo: 4 Perdas Consecutivas.\n` +
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
@@ -1581,11 +1544,9 @@ export class AtlasStrategy implements IStrategy {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
           [
             trade.userId,
-            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' ou 'PAR'/'IMPAR' para garantir seta correta no frontend
+            // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
             (trade.operation === 'CALL' ? 'Rise' :
-              trade.operation === 'PUT' ? 'Fall' :
-                trade.operation === 'EVEN' ? 'PAR' :
-                  trade.operation === 'ODD' ? 'IMPAR' : trade.operation),
+              trade.operation === 'PUT' ? 'Fall' : trade.operation),
             trade.entryPrice,
             trade.stakeAmount,
             'PENDING',
