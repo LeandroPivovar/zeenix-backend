@@ -519,10 +519,13 @@ export class TitanStrategy implements IStrategy {
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
+        // SEMPRE chamar check_signal para gerar logs, mesmo sem sinal
         const signal = this.check_signal(state, riskManager);
-        if (!signal) return;
 
-        await this.executeOperation(state, signal);
+        // Só executar operação se houver sinal
+        if (signal) {
+            await this.executeOperation(state, signal);
+        }
     }
 
     private check_signal(state: TitanUserState, riskManager: RiskManager): DigitParity | null {
