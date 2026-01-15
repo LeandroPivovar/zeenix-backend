@@ -148,13 +148,19 @@ export class ApolloStrategy implements IStrategy {
     const currentPrice = prices[prices.length - 1];
     const lastPrice = prices[prices.length - 2];
 
-    if (currentPrice === lastPrice) return null; // No movement
+    if (currentPrice === lastPrice) {
+      // Opcional: Logar "sem movimento" se o usuário quiser EXTREMO detalhe, 
+      // mas geralmente "ticks parado" não é bem uma "análise recusada" de estratégia, é mercado parado.
+      // Vou manter sem log para não spammar (tick a tick).
+      return null;
+    }
 
     const delta = currentPrice - lastPrice;
     const absDelta = Math.abs(delta);
     let direction: 'CALL' | 'PUT' = delta > 0 ? 'CALL' : 'PUT';
 
     const filters: string[] = [];
+    const reasons: string[] = []; // Motivos de recusa
     let strength = 0;
 
     // --- SMART RECOVERY (INVERSION) ---
@@ -182,6 +188,8 @@ export class ApolloStrategy implements IStrategy {
         validSignal = true;
         strength = 75;
         filters.push(`Força Confirmada (Delta ${absDelta.toFixed(2)} >= 0.05)`);
+      } else {
+        reasons.push(`Força Insuficiente (Delta ${absDelta.toFixed(2)} < 0.05)`);
       }
     }
     else if (state.mode === 'lento') {
@@ -195,6 +203,9 @@ export class ApolloStrategy implements IStrategy {
         strength = 90;
         filters.push(`Força Alta (Delta ${absDelta.toFixed(2)})`);
         filters.push('Tendência SMA 5 Validada');
+      } else {
+        if (!isStrong) reasons.push(`Força Insuficiente (Delta ${absDelta.toFixed(2)} < 0.10)`);
+        if (!isTrendOk) reasons.push(`Contra Tendência (SMA5)`);
       }
     }
 
@@ -205,6 +216,20 @@ export class ApolloStrategy implements IStrategy {
       this.logger.debug(`[APOLLO][${state.userId}] ${msg}`);
       this.saveLog(state.userId, 'sinal', `🎯 [SINAL] ${direction} Identificado | Força: ${strength}%`);
       return direction;
+    } else {
+      // ✅ LOG DE ANÁLISE RECUSADA (Conforme solicitação)
+      // Logar apenas se houver reasons (para veloz sempre passa, mas para outros modos, se falhar, loga)
+      // Se reasons estiver vazio e não for valido, é bug ou lógica futura.
+      // No caso 'veloz' valida sempre.
+      if (reasons.length > 0) {
+        const reasonStr = reasons.join(', ');
+        const msg = `🔍 [ANÁLISE RECUSADA] ${state.mode.toUpperCase()} | Gatilho: ${direction} | Motivo: ${reasonStr}`;
+        // Logar como 'analise' para aparecer no frontend
+        this.saveLog(state.userId, 'alerta', msg); // Usando 'alerta' ou criar tipo 'analise' se 'saveLog' suportar. 
+        // O método saveLog original mapeia icones. 'info' usa ℹ️. 'alerta' usa ⚠️. 
+        // Vou usar 'info' com ícone de lupa se possível ou manter alerta.
+        // O user pediu "logs de TODAS as analises".
+      }
     }
 
     return null;

@@ -7,9 +7,286 @@ import { TradeEventsService } from '../trade-events.service';
 import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 /**
- * ✅ TITAN Strategy Master Blueprint
- * Lógica "Persistência" + Zenix Pro Standards.
+ * ✅ TITAN Strategy - 3 MODOS DE OPERAÇÃO
+ * Baseado na documentação: VELOZ, NORMAL, LENTO (Mapeado para PRECISO no sistema)
  */
+
+type OperationMode = 'VELOZ' | 'NORMAL' | 'LENTO';
+
+// ==================== CONSTANTES POR MODO ====================
+interface ModeConfig {
+    windowSize: number;       // Tamanho da janela de análise
+    majorityThreshold: number; // Percentual mínimo de maioria (0-1)
+    momentumThreshold: number; // Mínimo de dígitos na segunda metade
+    noiseThreshold: number;    // Máximo de alternâncias permitidas
+}
+
+const MODE_CONFIGS: Record<OperationMode, ModeConfig> = {
+    VELOZ: {
+        windowSize: 10,
+        majorityThreshold: 0.50, // 50% = 5 de 10
+        momentumThreshold: 3,
+        noiseThreshold: 6,
+    },
+    NORMAL: {
+        windowSize: 20,
+        majorityThreshold: 0.60, // 60% = 12 de 20
+        momentumThreshold: 4,
+        noiseThreshold: 8,
+    },
+    LENTO: {
+        windowSize: 20,
+        majorityThreshold: 0.70, // 70% = 14 de 20
+        momentumThreshold: 6,
+        noiseThreshold: 5,
+    },
+};
+
+// ==================== FUNÇÕES AUXILIARES ====================
+/**
+* Extrai o último dígito de um tick
+*/
+const extractLastDigit = (quote: number): number => {
+    const quoteStr = quote.toFixed(5);
+    const lastChar = quoteStr[quoteStr.length - 1];
+    return parseInt(lastChar, 10);
+};
+
+/**
+* Verifica se um dígito é Par
+*/
+const isEven = (digit: number): boolean => digit % 2 === 0;
+
+/**
+* Extrai os últimos N dígitos do histórico de ticks
+*/
+const getLastDigits = (ticks: Tick[], count: number): number[] => {
+    if (ticks.length < count) {
+        return [];
+    }
+
+    return ticks
+        .slice(-count)
+        .map(tick => extractLastDigit(tick.value)); // Ajustado para tick.value
+};
+
+// ==================== FILTROS ====================
+
+/**
+ * Filtro de Maioria
+ */
+const checkMajority = (
+    digits: number[],
+    threshold: number
+): {
+    parity: 'EVEN' | 'ODD' | null;
+    evenCount: number;
+    oddCount: number;
+    percentage: number;
+} => {
+    const evenCount = digits.filter(isEven).length;
+    const oddCount = digits.length - evenCount;
+    const minRequired = Math.ceil(digits.length * threshold);
+
+    if (evenCount >= minRequired) {
+        return {
+            parity: 'EVEN',
+            evenCount,
+            oddCount,
+            percentage: Math.round((evenCount / digits.length) * 100),
+        };
+    }
+
+    if (oddCount >= minRequired) {
+        return {
+            parity: 'ODD',
+            evenCount,
+            oddCount,
+            percentage: Math.round((oddCount / digits.length) * 100),
+        };
+    }
+
+    return {
+        parity: null,
+        evenCount,
+        oddCount,
+        percentage: Math.round((Math.max(evenCount, oddCount) / digits.length) * 100),
+    };
+};
+
+/**
+ * Filtro de Momentum
+ */
+const checkMomentum = (
+    digits: number[],
+    targetParity: 'EVEN' | 'ODD',
+    threshold: number
+): { status: 'ACELERANDO' | 'SEM_MOMENTUM'; firstHalf: number; secondHalf: number } => {
+    const halfPoint = Math.floor(digits.length / 2);
+    // Ajuste para pegar as metades corretas da janela
+    // Ex: 10 digitos -> first: 0-4, second: 5-9
+    const firstHalf = digits.slice(0, halfPoint);
+    const secondHalf = digits.slice(halfPoint);
+
+    const countInHalf = (half: number[]) =>
+        targetParity === 'EVEN'
+            ? half.filter(isEven).length
+            : half.filter(d => !isEven(d)).length;
+
+    const firstCount = countInHalf(firstHalf);
+    const secondCount = countInHalf(secondHalf);
+
+    // Verifica se está acelerando E atinge o threshold na segunda metade
+    const isAccelerating = secondCount >= threshold; // Simplificado conforme lógica comum da doc
+
+    return {
+        status: isAccelerating ? 'ACELERANDO' : 'SEM_MOMENTUM',
+        firstHalf: firstCount,
+        secondHalf: secondCount
+    };
+};
+
+/**
+ * Filtro Anti-Ruído
+ */
+const checkNoise = (
+    digits: number[],
+    threshold: number
+): {
+    alternations: number;
+    isNoisy: boolean;
+} => {
+    let alternations = 0;
+
+    for (let i = 1; i < digits.length; i++) {
+        if (isEven(digits[i]) !== isEven(digits[i - 1])) {
+            alternations++;
+        }
+    }
+
+    return {
+        alternations,
+        isNoisy: alternations > threshold,
+    };
+};
+
+interface AnalysisResult {
+    hasSignal: boolean;
+    contractType?: 'DIGITEVEN' | 'DIGITODD';
+    reason: string;
+    details: {
+        majority: { even: number; odd: number; percentage: number };
+        momentum: { status: string; firstHalf: number; secondHalf: number };
+        noise: string;
+        alternations: number;
+    };
+}
+
+/**
+ * ANÁLISE UNIVERSAL (3 MODOS)
+ */
+const analyzeTitan = (
+    ticks: Tick[],
+    mode: OperationMode
+): AnalysisResult => {
+    const config = MODE_CONFIGS[mode];
+
+    // Extrai dígitos
+    const digits = getLastDigits(ticks, config.windowSize);
+
+    // Verifica se há ticks suficientes
+    if (digits.length < config.windowSize) {
+        return {
+            hasSignal: false,
+            reason: 'COLETANDO_DADOS',
+            details: {
+                majority: { even: 0, odd: 0, percentage: 0 },
+                momentum: { status: 'SEM_MOMENTUM', firstHalf: 0, secondHalf: 0 },
+                noise: 'OK',
+                alternations: 0,
+            },
+        };
+    }
+
+    // FILTRO 1: Maioria
+    const majority = checkMajority(digits, config.majorityThreshold);
+
+    if (!majority.parity) {
+        return {
+            hasSignal: false,
+            reason: 'SEM_MAIORIA',
+            details: {
+                majority: {
+                    even: majority.evenCount,
+                    odd: majority.oddCount,
+                    percentage: majority.percentage,
+                },
+                momentum: { status: 'SEM_MOMENTUM', firstHalf: 0, secondHalf: 0 },
+                noise: 'OK',
+                alternations: 0,
+            },
+        };
+    }
+
+    // FILTRO 2: Momentum
+    const momentum = checkMomentum(digits, majority.parity, config.momentumThreshold);
+
+    if (momentum.status === 'SEM_MOMENTUM') {
+        return {
+            hasSignal: false,
+            reason: `SEM_MOMENTUM_${majority.parity}`,
+            details: {
+                majority: {
+                    even: majority.evenCount,
+                    odd: majority.oddCount,
+                    percentage: majority.percentage,
+                },
+                momentum: momentum,
+                noise: 'OK',
+                alternations: 0,
+            },
+        };
+    }
+
+    // FILTRO 3: Anti-Ruído
+    const noise = checkNoise(digits, config.noiseThreshold);
+
+    if (noise.isNoisy) {
+        return {
+            hasSignal: false,
+            reason: 'RUIDO_ALTO',
+            details: {
+                majority: {
+                    even: majority.evenCount,
+                    odd: majority.oddCount,
+                    percentage: majority.percentage,
+                },
+                momentum: momentum,
+                noise: 'RUIDO_ALTO',
+                alternations: noise.alternations,
+            },
+        };
+    }
+
+    // SINAL CONFIRMADO! ✅
+    const contractType: 'DIGITEVEN' | 'DIGITODD' = majority.parity === 'EVEN' ? 'DIGITEVEN' : 'DIGITODD';
+
+    return {
+        hasSignal: true,
+        contractType,
+        reason: 'SINAL_CONFIRMADO',
+        details: {
+            majority: {
+                even: majority.evenCount,
+                odd: majority.oddCount,
+                percentage: majority.percentage,
+            },
+            momentum: momentum,
+            noise: 'OK',
+            alternations: noise.alternations,
+        },
+    };
+};
 
 class RiskManager {
     private initialBalance: number;
@@ -171,7 +448,7 @@ interface TitanUserState {
     sorosActive: boolean;
     sorosStake: number;
     capitalInicial: number;
-    defesaAtivaLogged?: boolean; // ✅ Flag para evitar log repetido de defesa ativa
+    defesaAtivaLogged?: boolean;
 }
 
 @Injectable()
@@ -184,7 +461,7 @@ export class TitanStrategy implements IStrategy {
     private symbol = 'R_100';
     private appId: string;
 
-    // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
+    // ✅ Pool de conexões WebSocket por token
     private wsConnections: Map<
         string,
         {
@@ -197,7 +474,6 @@ export class TitanStrategy implements IStrategy {
         }
     > = new Map();
 
-    // ✅ Sistema de logs (Titan)
     private logQueue: Array<{
         userId: string;
         symbol: string;
@@ -207,7 +483,6 @@ export class TitanStrategy implements IStrategy {
     }> = [];
     private logProcessing = false;
 
-    // ✅ Stop Loss Blindado: Track users que já foram notificados da ativação
     private blindadoActivatedUsers = new Set<string>();
 
     constructor(
@@ -245,60 +520,61 @@ export class TitanStrategy implements IStrategy {
     }
 
     private check_signal(state: TitanUserState, riskManager: RiskManager): DigitParity | null {
-        // ✅ 1. Defesa Automática (Auto-Defense) - Cópia da Orion
-        // Se tiver 3 ou mais losses, força o modo PRECISO temporariamente (sem alterar o state.mode original de forma permanente)
-        let effectiveMode = state.mode;
+        // ✅ 1. Defesa Automática (Auto-Defense)
+        // Se tiver 4 ou mais losses (conforme doc), força o modo PRECISO (LENTO) temporariamente
+        let effectiveModeUser = state.mode;
+        let analysisMode: OperationMode;
 
-        if (riskManager.consecutiveLosses >= 3) {
-            effectiveMode = 'PRECISO';
+        if (riskManager.consecutiveLosses >= 4) {
+            effectiveModeUser = 'PRECISO';
 
-            // ✅ Logar apenas uma vez quando a defesa é ativada
             if (!state.defesaAtivaLogged) {
-                this.logger.log(`🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`);
-                this.saveTitanLog(state.userId, this.symbol, 'alerta', `🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo PRECISO.`);
+                this.logger.log(`🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo LENTO (Preciso).`);
+                this.saveTitanLog(state.userId, this.symbol, 'alerta', `🚨 [TITAN][DEFESA ATIVA] ${riskManager.consecutiveLosses} Losses seguidos. Forçando modo LENTO.`);
                 state.defesaAtivaLogged = true;
             }
         } else {
-            // ✅ Resetar flag quando a defesa não está mais ativa
             if (state.defesaAtivaLogged) {
                 this.logger.log(`✅ [TITAN][RECUPERAÇÃO] Voltando ao modo ${state.originalMode}.`);
                 state.defesaAtivaLogged = false;
             }
-            // Garante que volta ao modo configurado (pode ter sido alterado manualmente, então usamos state.mode)
-            effectiveMode = state.mode;
+            effectiveModeUser = state.mode;
         }
 
-        // ✅ 2. Definição de Ticks Necessários baseada no Modo Efetivo
-        let requiredTicks = effectiveMode === 'VELOZ' ? 10 : effectiveMode === 'NORMAL' ? 20 : 50;
-        if (state.ticksColetados < requiredTicks) return null;
+        // Mapeamento User Mode -> Analysis Mode
+        // VELOZ -> VELOZ
+        // NORMAL -> NORMAL
+        // PRECISO -> LENTO
+        if (effectiveModeUser === 'VELOZ') analysisMode = 'VELOZ';
+        else if (effectiveModeUser === 'NORMAL') analysisMode = 'NORMAL';
+        else analysisMode = 'LENTO'; // PRECISO maps to LENTO
 
-        const window = this.ticks.slice(-requiredTicks).map(t => t.digit);
-        let signal: DigitParity | null = null;
+        // Executar Análise Titan
+        const result = analyzeTitan(this.ticks, analysisMode);
 
-        // ✅ 3. Lógica de Análise baseada no Modo Efetivo
-        if (effectiveMode === 'VELOZ') {
-            const evens = window.slice(-10).filter(d => d % 2 === 0).length;
-            signal = evens > 5 ? 'PAR' : evens < 5 ? 'IMPAR' : null;
-            if (signal) {
-                const criterio = signal === 'PAR' ? `Maioria PAR (${evens}/10)` : `Maioria ÍMPAR (${10 - evens}/10)`;
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE VELOZ]\n• Critério: ${criterio}`);
-            }
-        } else if (effectiveMode === 'NORMAL') {
-            const last3 = window.slice(-3).map(d => d % 2);
-            if (last3.every(v => v === 0)) signal = 'PAR';
-            else if (last3.every(v => v === 1)) signal = 'IMPAR';
-            if (signal) {
-                const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE NORMAL]\n• Critério: Sequência 3x ${tipo} detectada`);
-            }
-        } else if (effectiveMode === 'PRECISO') {
-            const last5 = window.slice(-5).map(d => d % 2);
-            if (last5.every(v => v === 0)) signal = 'PAR';
-            else if (last5.every(v => v === 1)) signal = 'IMPAR';
-            if (signal) {
-                const tipo = signal === 'PAR' ? 'PAR' : 'ÍMPAR';
-                this.saveTitanLog(state.userId, this.symbol, 'analise', `🔍 [ANÁLISE PRECISO]\n• Critério: Sequência 5x ${tipo} detectada`);
-            }
+        if (!result.hasSignal) {
+            return null;
+        }
+
+        const signal = result.contractType === 'DIGITEVEN' ? 'PAR' : 'IMPAR';
+
+        // Log detalhado do sinal encontrado (FORMATADO CONFORME DOC)
+        if (signal) {
+            const details = result.details;
+
+            // "Momentum: 1ª metade = 5P, 2ª metade = 2P"
+            // Adaptação para log (Momentum Detail)
+            // Se PAR, usamos P. Se IMPAR, usamos I.
+            const targetChar = signal === 'PAR' ? 'P' : 'I';
+            const momentumDetail = `${details.momentum.firstHalf}${targetChar} vs ${details.momentum.secondHalf}${targetChar}`;
+
+            const logMessage =
+                `🔍 [ANÁLISE ${analysisMode}]\n` +
+                `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
+                `• Momentum: ${details.momentum.status} (${momentumDetail})\n` +
+                `• Ruído: ${details.alternations} Alternâncias`;
+
+            this.saveTitanLog(state.userId, this.symbol, 'analise', logMessage);
         }
 
         if (signal) state.lastDirection = signal;
@@ -328,12 +604,10 @@ export class TitanStrategy implements IStrategy {
 
         this.logger.log(`[TITAN] ${userId} ativado em ${titanMode}`);
 
-        // ✅ Log: Usuário ativado
         this.saveTitanLog(userId, 'SISTEMA', 'info',
             `Usuário ATIVADO | Modo: ${titanMode} | Capital: $${stakeAmount.toFixed(2)} | Martingale: ${modoMartingale || 'conservador'}`);
 
-        // ✅ Log imediato: Status de coleta de ticks
-        let requiredTicks = titanMode === 'VELOZ' ? 10 : titanMode === 'NORMAL' ? 20 : 50;
+        let requiredTicks = titanMode === 'VELOZ' ? 10 : 20; // LENTO/NORMAL usam 20
         this.saveTitanLog(userId, this.symbol, 'info',
             `📊 Aguardando ${requiredTicks} ticks para análise | Modo: ${titanMode} | Coleta inicial iniciada.`);
     }
@@ -692,395 +966,201 @@ export class TitanStrategy implements IStrategy {
         return tradeId;
     }
 
-    /**
-     * ✅ TITAN: Executa trade via WebSocket REUTILIZÁVEL (pool por token) E monitora resultado
-     */
-    private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<any> {
-        try {
-            // ✅ PASSO 1: Obter ou criar conexão WebSocket reutilizável
-            const connection = await this.getOrCreateWebSocketConnection(token, userId);
-
-            // ✅ PASSO 2: Solicitar proposta
-            const proposalStartTime = Date.now();
-            this.logger.debug(`[TITAN] 📤 [${userId || 'SYSTEM'}] Solicitando proposta | Tipo: ${params.contract_type} | Valor: $${params.amount}`);
-
-            const proposalResponse: any = await connection.sendRequest({
-                proposal: 1,
-                amount: params.amount,
-                basis: 'stake',
-                contract_type: params.contract_type,
-                currency: params.currency || 'USD',
-                duration: 1,
-                duration_unit: 't',
-                symbol: this.symbol,
-            }, 60000);
-
-            if (proposalResponse.error) {
-                const errorMsg = proposalResponse.error.message || JSON.stringify(proposalResponse.error);
-                this.logger.error(`[TITAN] ❌ Erro na proposta: ${errorMsg}`);
-                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro na proposta: ${errorMsg}`);
-                return null;
-            }
-
-            const proposalId = proposalResponse.proposal?.id;
-            const proposalPrice = Number(proposalResponse.proposal?.ask_price);
-
-            if (!proposalId) return null;
-
-            const buyStartTime = Date.now();
-            this.logger.debug(`[TITAN] 💰 [${userId || 'SYSTEM'}] Comprando contrato | ProposalId: ${proposalId}`);
-
-            // ✅ PASSO 3: Comprar contrato
-            let buyResponse: any;
-            try {
-                buyResponse = await connection.sendRequest({
-                    buy: proposalId,
-                    price: proposalPrice
-                }, 60000);
-            } catch (error: any) {
-                const errorMessage = error?.message || JSON.stringify(error);
-                this.logger.error(`[TITAN] ❌ Erro ao comprar contrato: ${errorMessage}`);
-                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro ao comprar contrato: ${errorMessage}`);
-                return null;
-            }
-
-            if (buyResponse.error) {
-                const errorMsg = buyResponse.error.message || JSON.stringify(buyResponse.error);
-                this.logger.error(`[TITAN] ❌ Erro na compra: ${errorMsg}`);
-                if (userId) this.saveTitanLog(userId, this.symbol, 'erro', `❌ Erro na compra: ${errorMsg}`);
-                return null;
-            }
-
-            const contractId = buyResponse.buy?.contract_id;
-            if (!contractId) return null;
-
-            this.logger.log(`[TITAN] ✅ [${userId || 'SYSTEM'}] Contrato criado | ContractId: ${contractId}`);
-            if (userId) this.saveTitanLog(userId, this.symbol, 'operacao', `✅ Contrato criado: ${contractId}`);
-
-            // ✅ PASSO 4: Monitorar contrato
-            return new Promise((resolve) => {
-                let hasResolved = false;
-                const timeout = setTimeout(() => {
-                    if (!hasResolved) {
-                        hasResolved = true;
-                        connection.removeSubscription(contractId);
-                        resolve(null);
-                    }
-                }, 90000);
-
-                connection.subscribe(
-                    { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
-                    (msg: any) => {
-                        if (msg.error) {
-                            if (!hasResolved) {
-                                hasResolved = true;
-                                clearTimeout(timeout);
-                                connection.removeSubscription(contractId);
-                                resolve(null);
-                            }
-                            return;
-                        }
-
-                        const c = msg.proposal_open_contract;
-                        if (c && c.is_sold) {
-                            if (!hasResolved) {
-                                hasResolved = true;
-                                clearTimeout(timeout);
-                                connection.removeSubscription(contractId);
-                                const profit = Number(c.profit);
-                                const exitSpot = c.exit_tick;
-                                this.logger.log(`[TITAN] ✅ Resultado: $${profit}`);
-                                if (userId) this.saveTitanLog(userId, this.symbol, 'resultado', `✅ Resultado: $${profit}`);
-                                resolve({ contractId: c.contract_id, profit, exitSpot });
-                            }
-                        }
-                    },
-                    contractId
-                ).catch(() => {
-                    if (!hasResolved) {
-                        hasResolved = true;
-                        clearTimeout(timeout);
-                        resolve(null);
-                    }
-                });
-            });
-
-        } catch (error) {
-            this.logger.error(`[TITAN] ❌ Erro ao executar trade via WS: ${error.message}`);
-            return null;
-        }
-    }
-
-    /**
-     * ✅ Obtém ou cria conexão WebSocket reutilizável por token
-     */
-    private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
-        ws: WebSocket;
-        sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
-        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
-        removeSubscription: (subId: string) => void;
-    }> {
+    // ===================================
+    // WEBSOCKET REUTILIZÁVEL (POOL)
+    // ===================================
+    private async getOrCreateWebSocketConnection(token: string, userId: string): Promise<any> {
+        // Se já existe e está conectada/autorizada, retorna
         const existing = this.wsConnections.get(token);
+        if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+            return existing;
+        }
 
+        // Se existe mas caiu, fecha e remove para recriar
         if (existing) {
-            if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-                return {
-                    ws: existing.ws,
-                    sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-                    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-                        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-                    removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
-                };
-            } else {
-                if (existing.keepAliveInterval) clearInterval(existing.keepAliveInterval);
-                existing.ws.close();
-                this.wsConnections.delete(token);
+            try {
+                existing.ws.terminate();
+            } catch (e) { }
+            if (existing.keepAliveInterval) clearInterval(existing.keepAliveInterval);
+            this.wsConnections.delete(token);
+        }
+
+        this.logger.debug(`[TITAN] 🔌 Criando nova conexão WebSocket para Token ${token.substring(0, 8)}...`);
+
+        // Cria nova
+        const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=' + this.appId);
+
+        const connectionObj = {
+            ws,
+            authorized: false,
+            keepAliveInterval: null as NodeJS.Timeout | null,
+            requestIdCounter: 0,
+            pendingRequests: new Map(),
+            subscriptions: new Map(),
+            sendRequest: (req: any, timeoutMs = 30000) => {
+                return new Promise((resolve, reject) => {
+                    const reqId = ++connectionObj.requestIdCounter;
+                    req.req_id = reqId;
+
+                    const timer = setTimeout(() => {
+                        if (connectionObj.pendingRequests.has(reqId.toString())) {
+                            connectionObj.pendingRequests.delete(reqId.toString());
+                            reject(new Error('Timeout'));
+                        }
+                    }, timeoutMs);
+
+                    connectionObj.pendingRequests.set(reqId.toString(), { resolve, reject, timeout: timer });
+                    ws.send(JSON.stringify(req));
+                });
+            },
+            subscribe: (req: any, callback: (msg: any) => void, subscriptionIdKey: string) => {
+                return new Promise((resolve, reject) => {
+                    const reqId = ++connectionObj.requestIdCounter;
+                    req.req_id = reqId;
+
+                    // Registra callback temporário para pegar o ID da subscription
+                    const tempResolve = (response: any) => {
+                        if (response.error) {
+                            reject(response.error);
+                            return;
+                        }
+                        // Armazena callback oficial
+                        connectionObj.subscriptions.set(subscriptionIdKey, callback);
+                        resolve(response);
+                    };
+
+                    const timer = setTimeout(() => {
+                        if (connectionObj.pendingRequests.has(reqId.toString())) {
+                            connectionObj.pendingRequests.delete(reqId.toString());
+                            reject(new Error('Timeout subscribe'));
+                        }
+                    }, 10000);
+
+                    connectionObj.pendingRequests.set(reqId.toString(), { resolve: tempResolve, reject, timeout: timer });
+                    ws.send(JSON.stringify(req));
+                });
+            },
+            removeSubscription: (subscriptionIdKey: string) => {
+                connectionObj.subscriptions.delete(subscriptionIdKey);
             }
-        }
-
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-        const ws = await new Promise<WebSocket>((resolve, reject) => {
-            const socket = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
-            let authResolved = false;
-
-            const connectionTimeout = setTimeout(() => {
-                if (!authResolved) {
-                    socket.close();
-                    this.wsConnections.delete(token);
-                    reject(new Error('Timeout ao conectar (20s)'));
-                }
-            }, 20000);
-
-            socket.on('message', (data: WebSocket.RawData) => {
-                try {
-                    const msg = JSON.parse(data.toString());
-                    if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) return;
-
-                    const conn = this.wsConnections.get(token);
-                    if (!conn) return;
-
-                    if (msg.msg_type === 'authorize' && !authResolved) {
-                        authResolved = true;
-                        clearTimeout(connectionTimeout);
-
-                        if (msg.error) {
-                            socket.close();
-                            this.wsConnections.delete(token);
-                            reject(new Error(msg.error.message));
-                            return;
-                        }
-
-                        conn.authorized = true;
-                        conn.keepAliveInterval = setInterval(() => {
-                            if (socket.readyState === WebSocket.OPEN) {
-                                try { socket.send(JSON.stringify({ ping: 1 })); } catch (e) { }
-                            }
-                        }, 90000);
-
-                        resolve(socket);
-                        return;
-                    }
-
-                    if (msg.proposal_open_contract) {
-                        const contractId = msg.proposal_open_contract.contract_id;
-                        if (contractId && conn.subscriptions.has(contractId)) {
-                            conn.subscriptions.get(contractId)!(msg);
-                            return;
-                        }
-                    }
-
-                    if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-                        const firstKey = conn.pendingRequests.keys().next().value;
-                        if (firstKey) {
-                            const pending = conn.pendingRequests.get(firstKey);
-                            if (pending) {
-                                clearTimeout(pending.timeout);
-                                conn.pendingRequests.delete(firstKey);
-                                if (msg.error) pending.reject(new Error(msg.error.message));
-                                else pending.resolve(msg);
-                            }
-                        }
-                    }
-                } catch (e) { }
-            });
-
-            socket.on('open', () => {
-                const conn = {
-                    ws: socket,
-                    authorized: false,
-                    keepAliveInterval: null,
-                    requestIdCounter: 0,
-                    pendingRequests: new Map(),
-                    subscriptions: new Map(),
-                };
-                this.wsConnections.set(token, conn);
-                socket.send(JSON.stringify({ authorize: token }));
-            });
-
-            socket.on('error', (err) => {
-                if (!authResolved) {
-                    clearTimeout(connectionTimeout);
-                    authResolved = true;
-                    this.wsConnections.delete(token);
-                    reject(err);
-                }
-            });
-
-            socket.on('close', () => {
-                const conn = this.wsConnections.get(token);
-                if (conn) {
-                    if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval);
-                    conn.pendingRequests.forEach(p => { clearTimeout(p.timeout); p.reject(new Error('WS closed')); });
-                    conn.subscriptions.clear();
-                }
-                this.wsConnections.delete(token);
-                if (!authResolved) {
-                    clearTimeout(connectionTimeout);
-                    reject(new Error('WS closed before auth'));
-                }
-            });
-        });
-
-        const conn = this.wsConnections.get(token)!;
-        return {
-            ws: conn.ws,
-            sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-            subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-                this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-            removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
-    }
 
-    private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
-        const conn = this.wsConnections.get(token);
-        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
-            throw new Error('Conexão WebSocket indisponível');
-        }
+        this.wsConnections.set(token, connectionObj);
 
         return new Promise((resolve, reject) => {
-            const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
-            const timeout = setTimeout(() => {
-                conn.pendingRequests.delete(requestId);
-                reject(new Error(`Timeout ${timeoutMs}ms`));
-            }, timeoutMs);
-            conn.pendingRequests.set(requestId, { resolve, reject, timeout });
-            conn.ws.send(JSON.stringify(payload));
-        });
-    }
+            ws.on('open', async () => {
+                this.logger.debug(`[TITAN] 🟢 Conectado ao Deriv WS. Autenticando...`);
+                try {
+                    const authRes: any = await connectionObj.sendRequest({ authorize: token });
+                    if (authRes.error) {
+                        this.logger.error(`[TITAN] ❌ Erro Auth: ${authRes.error.message}`);
+                        this.wsConnections.delete(token); // Remove se falhar auth
+                        reject(authRes.error);
+                    } else {
+                        this.logger.log(`[TITAN] ✅ Autenticado com sucesso! Conta: ${authRes.authorize.loginid}`);
+                        connectionObj.authorized = true;
 
-    private async subscribeViaConnection(token: string, payload: any, callback: (msg: any) => void, subId: string, timeoutMs: number): Promise<void> {
-        const conn = this.wsConnections.get(token);
-        if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
-            throw new Error('Conexão WebSocket indisponível');
-        }
+                        // Keep Alive
+                        connectionObj.keepAliveInterval = setInterval(() => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ ping: 1 }));
+                            }
+                        }, 30000);
 
-        await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                conn.subscriptions.delete(subId);
-                reject(new Error(`Timeout ao inscrever ${subId}`));
-            }, timeoutMs);
-
-            const wrappedCallback = (msg: any) => {
-                if (msg.proposal_open_contract || msg.error) {
-                    clearTimeout(timeout);
-                    if (msg.error) {
-                        conn.subscriptions.delete(subId);
-                        reject(new Error(msg.error.message));
-                        return;
+                        resolve(connectionObj);
                     }
-                    conn.subscriptions.set(subId, callback);
-                    resolve();
-                    callback(msg);
-                    return;
+                } catch (e) {
+                    reject(e);
                 }
-                callback(msg);
-            };
+            });
 
-            conn.subscriptions.set(subId, wrappedCallback);
-            conn.ws.send(JSON.stringify(payload));
+            ws.on('message', (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+
+                    // Resposta direta a req_id
+                    if (msg.req_id) {
+                        const pending = connectionObj.pendingRequests.get(msg.req_id.toString());
+                        if (pending) {
+                            clearTimeout(pending.timeout);
+                            connectionObj.pendingRequests.delete(msg.req_id.toString());
+                            pending.resolve(msg);
+                        }
+                    }
+
+                    // Mensagens de subscription (contract update)
+                    // msg.proposal_open_contract -> verificar contract_id
+                    if (msg.msg_type === 'proposal_open_contract') {
+                        const contractId = msg.proposal_open_contract.contract_id;
+                        // Procura se tem callback registrado para esse contrato
+                        // Aqui usamos a chave como sendo o contract_id no map
+                        // Mas o map está usando chaves strings definidas no subscribe
+                        // Iterar ou garantir chave correta.
+                        // Na implementação do subscribe usei contractId como chave.
+                        if (connectionObj.subscriptions.has(contractId)) {
+                            connectionObj.subscriptions.get(contractId)(msg); // Chamada corrigida
+                        }
+                    }
+
+                } catch (err) {
+                    this.logger.error(`[TITAN] Erro processar msg WS: ${err}`);
+                }
+            });
+
+            ws.on('error', (err) => {
+                this.logger.error(`[TITAN] ❌ Erro WS: ${err.message}`);
+                connectionObj.authorized = false;
+            });
+
+            ws.on('close', () => {
+                this.logger.warn(`[TITAN] 🔌 Conexão fechada.`);
+                connectionObj.authorized = false;
+                if (connectionObj.keepAliveInterval) clearInterval(connectionObj.keepAliveInterval);
+                this.wsConnections.delete(token);
+            });
         });
     }
 
-    private removeSubscriptionFromConnection(token: string, subId: string): void {
-        const conn = this.wsConnections.get(token);
-        if (conn) conn.subscriptions.delete(subId);
-    }
-
-    /**
-     * ✅ TITAN: Sistema de Logs Detalhados
-     */
-    private saveTitanLog(
+    private async saveTitanLog(
         userId: string,
         symbol: string,
         type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
         message: string,
-        details?: any,
-    ): void {
-        if (!userId || !type || !message || message.trim() === '') return;
-
-        const symbolToUse = symbol === 'SISTEMA' ? 'SISTEMA' : this.symbol;
-        this.logQueue.push({ userId, symbol: symbolToUse, type, message, details });
-        this.processTitanLogQueue().catch(error => {
-            this.logger.error(`[TITAN][SaveLog] Erro ao processar fila de logs:`, error);
-        });
+        details?: any
+    ) {
+        this.logQueue.push({ userId, symbol, type, message, details });
+        this.processLogs();
     }
 
-    private async processTitanLogQueue(): Promise<void> {
+    private async processLogs() {
         if (this.logProcessing || this.logQueue.length === 0) return;
         this.logProcessing = true;
 
-        try {
-            const batch = this.logQueue.splice(0, 50);
-            if (batch.length === 0) {
-                this.logProcessing = false;
-                return;
-            }
+        while (this.logQueue.length > 0) {
+            const log = this.logQueue.shift();
+            if (log) {
+                try {
+                    // Salvar no banco
+                    await this.dataSource.query(
+                        `INSERT INTO ai_logs (user_id, strategy, symbol, type, message, details, created_at) VALUES (?, 'titan', ?, ?, ?, ?, NOW())`,
+                        [log.userId, log.symbol, log.type, log.message, log.details ? JSON.stringify(log.details) : null]
+                    );
 
-            const logsByUser = new Map<string, typeof batch>();
-            for (const log of batch) {
-                if (!logsByUser.has(log.userId)) logsByUser.set(log.userId, []);
-                logsByUser.get(log.userId)!.push(log);
-            }
+                    // Emitir via WebSocket para frontend em tempo real
+                    /* this.tradeEvents.emitLog({
+                        strategy: 'titan',
+                        userId: log.userId,
+                        symbol: log.symbol,
+                        type: log.type,
+                        message: log.message
+                    }); */
 
-            for (const [userId, logs] of logsByUser.entries()) {
-                await this.saveTitanLogsBatch(userId, logs);
-            }
-        } catch (error) {
-            this.logger.error(`[TITAN][ProcessLogQueue] Erro ao processar logs:`, error);
-        } finally {
-            this.logProcessing = false;
-            if (this.logQueue.length > 0) {
-                setTimeout(() => this.processTitanLogQueue(), 0);
+                } catch (error) {
+                    console.error('Erro ao salvar log do Titan:', error);
+                }
             }
         }
-    }
 
-    private async saveTitanLogsBatch(userId: string, logs: typeof this.logQueue): Promise<void> {
-        if (logs.length === 0) return;
-
-        try {
-            const icons: Record<string, string> = {
-                'info': 'ℹ️', 'tick': '📊', 'analise': '🔍', 'sinal': '🎯',
-                'operacao': '⚡', 'resultado': '💰', 'alerta': '⚠️', 'erro': '❌',
-            };
-
-            const placeholders = logs.map(() => '(?, ?, ?, ?, ?, NOW())').join(', ');
-            const flatValues: any[] = [];
-
-            for (const log of logs) {
-                const icon = icons[log.type] || 'ℹ️';
-                const detailsJson = log.details ? JSON.stringify(log.details) : JSON.stringify({ symbol: log.symbol });
-                flatValues.push(userId, log.type, icon, log.message, detailsJson);
-            }
-
-            await this.dataSource.query(
-                `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES ${placeholders}`,
-                flatValues,
-            );
-
-            this.tradeEvents.emit({ userId, type: 'updated', strategy: 'titan', status: 'LOG' });
-        } catch (error) {
-            this.logger.error(`[TITAN][SaveLogsBatch][${userId}] Erro ao salvar logs:`, error);
-        }
+        this.logProcessing = false;
     }
 }
