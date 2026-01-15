@@ -54,9 +54,6 @@ export class StrategyManagerService implements OnModuleInit {
         this.orionStrategy.processTick(tick, 'R_100').catch(error => {
           this.logger.error('[StrategyManager][Orion] Erro:', error);
         }),
-        this.apolloStrategy.processTick(tick, 'R_100').catch(error => {
-          this.logger.error('[StrategyManager][Apollo] Erro:', error);
-        }),
         this.titanStrategy.processTick(tick, 'R_100').catch(error => {
           this.logger.error('[StrategyManager][Titan] Erro:', error);
         }),
@@ -71,6 +68,15 @@ export class StrategyManagerService implements OnModuleInit {
       promises.push(
         this.atlasStrategy.processTick(tick, symbol).catch(error => {
           this.logger.error('[StrategyManager][Atlas] Erro:', error);
+        })
+      );
+    }
+
+    // APOLLO usa 1HZ10V (Volatility 10 1s Index)
+    if (symbol === '1HZ10V') {
+      promises.push(
+        this.apolloStrategy.processTick(tick, '1HZ10V').catch(error => {
+          this.logger.error('[StrategyManager][Apollo] Erro:', error);
         })
       );
     }
