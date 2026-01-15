@@ -669,15 +669,16 @@ export class NexusStrategy implements IStrategy {
             profitLoss: profit
         });
 
-        // 3. Atualizar Banco de Dados (autonomous_agent_config)
-        // Mantemos is_active = 1 (TRUE) para permitir o reset diário, mas mudamos o status para stopped_X
+        // 3. Atualizar Banco de Dados (ai_user_config)
+        // Desativar IA e atualizar session_status para mostrar modal no frontend
         await this.dataSource.query(
-            `UPDATE autonomous_agent_config 
-             SET is_active = TRUE, 
+            `UPDATE ai_user_config 
+             SET is_active = 0, 
                  session_status = ?, 
-                 updated_at = NOW() 
-             WHERE user_id = ? AND agent_type = 'nexus'`,
-            [reason, state.userId]
+                 deactivation_reason = ?,
+                 deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [reason, logMessage, state.userId]
         );
 
         // 4. Remover da Memória (Pausar execução imediata)
