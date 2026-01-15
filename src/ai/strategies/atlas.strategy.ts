@@ -1215,7 +1215,7 @@ export class AtlasStrategy implements IStrategy {
 
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
-      this.saveAtlasLog(state.userId, symbol, 'vitoria',
+      this.saveAtlasLog(state.userId, symbol, 'resultado',
         `🏁 RESULTADO DA ENTRADA\n` +
         `• Status: VITÓRIA ✅\n` +
         `• Lucro: $${lucro.toFixed(2)}\n` +
@@ -1264,7 +1264,7 @@ export class AtlasStrategy implements IStrategy {
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
-      this.saveAtlasLog(state.userId, symbol, 'derrota',
+      this.saveAtlasLog(state.userId, symbol, 'resultado',
         `🏁 RESULTADO DA ENTRADA\n` +
         `• Status: DERROTA ❌\n` +
         `• Operação: ${opLabel}\n` +

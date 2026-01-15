@@ -573,7 +573,7 @@ export class NexusStrategy implements IStrategy {
                             state.vitoriasConsecutivas = 0; // ✅ Resetar contador após ciclo completo
                         }
                     }
-                    this.saveNexusLog(state.userId, this.symbol, 'vitoria',
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
                         `🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: VITÓRIA ✅\n` +
                         `• Lucro: $${result.profit.toFixed(2)}\n` +
@@ -586,7 +586,7 @@ export class NexusStrategy implements IStrategy {
                     }
 
                     state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'derrota',
+                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
                         `🏁 RESULTADO DA ENTRADA\n` +
                         `• Status: DERROTA ❌\n` +
                         `• Operação: ${barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall')}\n` +
