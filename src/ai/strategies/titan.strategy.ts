@@ -578,24 +578,19 @@ export class TitanStrategy implements IStrategy {
 
         const signal = result.contractType === 'DIGITEVEN' ? 'PAR' : 'IMPAR';
 
-        // Log detalhado do sinal encontrado (FORMATADO CONFORME DOC)
-        if (signal) {
-            const details = result.details;
+        // Log detalhado do sinal encontrado (SEMPRE GERAR LOG)
+        const details = result.details;
+        const targetChar = signal === 'PAR' ? 'P' : 'I';
+        const momentumStatus = details.momentum.status === 'ACELERANDO' ? 'ACELERANDO' : 'SEM_MOMENTUM';
+        const momentumDetail = `${details.momentum.firstHalf}${targetChar} vs ${details.momentum.secondHalf}${targetChar}`;
 
-            // "Momentum: 1ª metade = 5P, 2ª metade = 2P"
-            // Adaptação para log (Momentum Detail)
-            // Se PAR, usamos P. Se IMPAR, usamos I.
-            const targetChar = signal === 'PAR' ? 'P' : 'I';
-            const momentumDetail = `${details.momentum.firstHalf}${targetChar} vs ${details.momentum.secondHalf}${targetChar}`;
+        const logMessage =
+            `✅ [ANÁLISE ${analysisMode}] SINAL: ${signal}\n` +
+            `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
+            `• Momentum: ${momentumStatus} (${momentumDetail})\n` +
+            `• Ruído: ${details.alternations} Alternâncias`;
 
-            const logMessage =
-                `🔍 [ANÁLISE ${analysisMode}]\n` +
-                `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
-                `• Momentum: ${details.momentum.status} (${momentumDetail})\n` +
-                `• Ruído: ${details.alternations} Alternâncias`;
-
-            this.saveTitanLog(state.userId, this.symbol, 'analise', logMessage);
-        }
+        this.saveTitanLog(state.userId, this.symbol, 'info', logMessage);
 
         if (signal) state.lastDirection = signal;
         return signal;
