@@ -520,7 +520,7 @@ export class AtlasStrategy implements IStrategy {
 
     // ✅ [ZENIX v3.3] Filtro Progressivo Simplificado
     // VELOZ: Sem delta | NORMAL: 0.3 | LENTO: 0.5
-    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.3 : 0.5);
+    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.3 : 1.0);
 
     if (absDiff >= threshold) {
       return direction;
