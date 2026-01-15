@@ -759,18 +759,19 @@ export class OrionStrategy implements IStrategy {
     }
 
     // Se >= 4 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
+    // Se >= 4 Losses (Defesa Pesada), Alternar para Modo PRECISO (Recuperação com Momentum + Delta)
     if (consecutiveLosses >= 4) {
-      if (currentMode !== 'lenta') {
-        // Debug apenas se mudou
-        const now = Date.now();
-        // Cast to avoid TS error if property not in type
-        if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
-          (state as any).lastModeChangeLog = now;
-          this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo LENTA (Análise de Dígitos Estrita)`);
-        }
+      // Debug apenas se mudou
+      const now = Date.now();
+      if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
+        (state as any).lastModeChangeLog = now;
+        this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo PRECISO (Momentum 3 ticks + Delta 0.5)`);
       }
-      currentMode = 'lenta';
-      // Não retorna! Deixa cair (fallthrough) para a FASE DE ATAQUE abaixo
+
+      // ✅ Executar lógica de Recuperação PRECISO (3 ticks + Delta 0.5)
+      // Não cai mais (fallthrough) para a fase de ataque
+      // Retorna CALL ou PUT se encontrar sinal, ou null se não.
+      return this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
     }
 
     // --- 2. FASE DE ATAQUE (Digit Over 3) ---
