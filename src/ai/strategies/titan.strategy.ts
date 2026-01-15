@@ -136,8 +136,10 @@ const checkMomentum = (
     const firstCount = countInHalf(firstHalf);
     const secondCount = countInHalf(secondHalf);
 
-    // Verifica se está acelerando E atinge o threshold na segunda metade
-    const isAccelerating = secondCount > firstCount && secondCount >= threshold;
+    // Verifica se está acelerando OU mantendo momentum forte na segunda metade
+    // Aceita se: (1) está acelerando (second > first) OU (2) segunda metade atinge threshold
+    const isAccelerating = (secondCount > firstCount && secondCount >= threshold) ||
+        (secondCount >= threshold && secondCount >= firstCount);
 
     return {
         status: isAccelerating ? 'ACELERANDO' : 'SEM_MOMENTUM',
