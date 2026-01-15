@@ -40,6 +40,7 @@ export interface ApolloUserState {
   stopLoss: number;
   profitTarget: number;
   useBlindado: boolean;
+  symbol: string; // Dynamic Market Support
 
   // State
   isOperationActive: boolean;
@@ -66,9 +67,9 @@ export class ApolloStrategy implements IStrategy {
   name = 'apollo';
   private readonly logger = new Logger(ApolloStrategy.name);
   private users = new Map<string, ApolloUserState>();
-  private ticks: number[] = []; // Store only prices (quote)
+  private marketTicks = new Map<string, number[]>(); // Store prices per market
   private lastLogTime = 0;
-  private symbol = '1HZ10V'; // Volatility 10 (1s) Index
+  private defaultSymbol = '1HZ10V';
   private appId: string;
 
   // WebSocket Pool
@@ -87,31 +88,37 @@ export class ApolloStrategy implements IStrategy {
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
-    if (symbol && symbol !== this.symbol) return;
+    if (!symbol) return;
 
-    // Store simple price
-    this.ticks.push(tick.value);
-    if (this.ticks.length > 20) this.ticks.shift();
+    // Initialize ticks for symbol if not exists
+    if (!this.marketTicks.has(symbol)) {
+      this.marketTicks.set(symbol, []);
+    }
 
-    // Global Heartbeat
+    const ticks = this.marketTicks.get(symbol)!;
+    ticks.push(tick.value);
+    if (ticks.length > 20) ticks.shift();
+
+    // Global Heartbeat (per symbol)
     const now = Date.now();
     if (now - this.lastLogTime > 10000) {
-      this.logger.debug(`[APOLLO] 📊 Ticks: ${this.ticks.length}/20 | Users: ${this.users.size}`);
+      this.logger.debug(`[APOLLO][${symbol}] 📊 Ticks: ${ticks.length}/20 | Users: ${this.users.size}`);
       this.lastLogTime = now;
     }
 
-    // Need enough ticks for SMA 5 (at least 5 ticks)
-    if (this.ticks.length < 5) return;
+    // Need enough ticks for SMA 5
+    if (ticks.length < 5) return;
 
     for (const state of this.users.values()) {
       if (state.isOperationActive) continue;
+      if (state.symbol !== symbol) continue; // Only process users for this market
 
       state.ticksColetados++;
-      this.checkAndExecute(state);
+      this.checkAndExecute(state, ticks);
     }
   }
 
-  private async checkAndExecute(state: ApolloUserState) {
+  private async checkAndExecute(state: ApolloUserState, ticks: number[]) {
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
@@ -130,15 +137,14 @@ export class ApolloStrategy implements IStrategy {
     }
 
     // 3. ANALYZE SIGNAL
-    const signal = this.analyzeSignal(state);
+    const signal = this.analyzeSignal(state, ticks);
 
     if (signal) {
       await this.executeTrade(state, signal);
     }
   }
 
-  private analyzeSignal(state: ApolloUserState): 'CALL' | 'PUT' | null {
-    const prices = this.ticks;
+  private analyzeSignal(state: ApolloUserState, prices: number[]): 'CALL' | 'PUT' | null {
     const currentPrice = prices[prices.length - 1];
     const lastPrice = prices[prices.length - 2];
 
@@ -428,6 +434,21 @@ export class ApolloStrategy implements IStrategy {
     let modeRaw = (config.mode || 'normal').toLowerCase();
     if (modeMap[modeRaw]) modeRaw = modeMap[modeRaw];
 
+    // Market Selection Logic (Matching Atlas)
+    let selectedSymbol = '1HZ10V'; // Default
+    const marketInput = (config.symbol || config.selectedMarket || '').toLowerCase();
+
+    if (marketInput === 'r_100' || marketInput.includes('100')) selectedSymbol = 'R_100';
+    else if (marketInput === 'r_10' || marketInput.includes('volatility 10 index')) selectedSymbol = 'R_10'; // Careful: 'volatility 10 (1s)' is 1HZ10V
+    else if (marketInput === 'r_25' || marketInput.includes('25')) selectedSymbol = 'R_25';
+    // Explicit 1s check
+    if (marketInput.includes('1s') || marketInput.includes('1hz10v')) selectedSymbol = '1HZ10V';
+
+    // Fallback if user explicitly chose Volatility 10 but not 1s, they might mean R_10. 
+    // But Atlas creates ambiguity. Let's stick to known symbols.
+    // If exact match
+    if (['R_10', 'R_25', 'R_100', '1HZ10V'].includes(config.symbol)) selectedSymbol = config.symbol;
+
     const initialState: ApolloUserState = {
       userId,
       derivToken: config.derivToken,
@@ -440,7 +461,8 @@ export class ApolloStrategy implements IStrategy {
       apostaInicial: config.entryValue || 0.35,
       stopLoss: config.lossLimit || 50,
       profitTarget: config.profitTarget || 10,
-      useBlindado: config.useBlindado !== false, // Default true if not specified? Or check FE.
+      useBlindado: config.useBlindado !== false,
+      symbol: selectedSymbol,
 
       isOperationActive: false,
       consecutiveLosses: 0,
@@ -459,7 +481,7 @@ export class ApolloStrategy implements IStrategy {
     this.users.set(userId, initialState);
     this.getOrCreateWebSocketConnection(config.derivToken); // Init WS
 
-    this.saveLog(userId, 'info', `⚙️ CONFIGURAÇÕES INICIAIS | Modo: ${initialState.mode.toUpperCase()} | Risco: ${initialState.riskProfile.toUpperCase()}`);
+    this.saveLog(userId, 'info', `⚙️ CONFIGURAÇÕES INICIAIS | Modo: ${initialState.mode.toUpperCase()} | Mercado: ${initialState.symbol} | Risco: ${initialState.riskProfile.toUpperCase()}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -488,7 +510,7 @@ export class ApolloStrategy implements IStrategy {
     try {
       const result: any = await this.dataSource.query(
         `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo V1 - ${direction}`, direction === 'CALL' ? 'CALL' : 'PUT', JSON.stringify(analysisData), this.symbol]
+        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo V1 - ${direction}`, direction === 'CALL' ? 'CALL' : 'PUT', JSON.stringify(analysisData), state.symbol]
       );
       const tradeId = result.insertId;
       return tradeId;
@@ -524,7 +546,7 @@ export class ApolloStrategy implements IStrategy {
       currency: params.currency,
       duration: 1,
       duration_unit: 't',
-      symbol: this.symbol
+      symbol: this.users.get(userId)?.symbol || this.defaultSymbol
     };
 
     try {

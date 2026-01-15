@@ -72,13 +72,15 @@ export class StrategyManagerService implements OnModuleInit {
       );
     }
 
-    // APOLLO usa 1HZ10V (Volatility 10 1s Index)
-    if (symbol === '1HZ10V') {
-      promises.push(
-        this.apolloStrategy.processTick(tick, '1HZ10V').catch(error => {
-          this.logger.error('[StrategyManager][Apollo] Erro:', error);
-        })
-      );
+    // APOLLO: Agora suporta múltiplos mercados (Dinâmico)
+    if (true /* Sempre checar, pois Apollo agora filtra internamente */) {
+      if (['1HZ10V', 'R_100', 'R_10', 'R_25'].includes(symbol!)) {
+        promises.push(
+          this.apolloStrategy.processTick(tick, symbol).catch(error => {
+            this.logger.error('[StrategyManager][Apollo] Erro:', error);
+          })
+        );
+      }
     }
 
     // Processar todas as estratégias em paralelo
