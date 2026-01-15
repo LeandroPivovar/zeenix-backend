@@ -112,7 +112,7 @@ export class AtlasStrategy implements IStrategy {
   private logQueue: Array<{
     userId: string;
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V' | 'SISTEMA';
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
     message: string;
     details?: any;
   }> = [];
