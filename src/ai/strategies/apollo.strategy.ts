@@ -634,24 +634,52 @@ export class ApolloStrategy implements IStrategy {
     };
 
     try {
+      // 1. Solicitar Proposta
       const propPromise = await conn.sendRequest(req);
-      if (propPromise.error) throw new Error(propPromise.error.message);
 
-      const buyReq = { buy: propPromise.proposal.id, price: propPromise.proposal.ask_price };
+      // Validação de Erro na Proposta (Padrão Orion)
+      const errorObj = propPromise.error || propPromise.proposal?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+
+        let userMessage = `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`;
+        if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
+          userMessage = `❌ Erro temporário (WrongResponse). Tentando novamente...`;
+        } else if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          userMessage = `💡 Saldo insuficiente na Deriv.`;
+        } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+          userMessage = `💡 Rate limit atingido. Aguarde.`;
+        }
+
+        this.saveLog(userId, 'erro', userMessage);
+        return null;
+      }
+
+      const proposalId = propPromise.proposal?.id;
+      if (!proposalId) throw new Error('Proposta inválida (sem ID)');
+
+      // 2. Executar Compra
+      const buyReq = { buy: proposalId, price: propPromise.proposal.ask_price };
       const buyPromise = await conn.sendRequest(buyReq);
-      if (buyPromise.error) throw new Error(buyPromise.error.message);
+
+      if (buyPromise.error) {
+        this.saveLog(userId, 'erro', `Erro na Compra: ${buyPromise.error.message}`);
+        return null;
+      }
 
       const contractId = buyPromise.buy.contract_id;
+      this.saveLog(userId, 'info', `🚀 Ordem enviada! ID: ${contractId} | Aguardando resultado...`);
 
+      // 3. Monitorar Resultado (Timeout 60s)
       return new Promise((resolve) => {
         let resolved = false;
 
-        // Timeout Safeguard (60s)
         const timeout = setTimeout(() => {
           if (!resolved) {
             resolved = true;
             conn.removeSubscription(contractId);
-            this.saveLog(userId, 'erro', `⚠️ Timeout na execução do trade (60s). Verifique conexão.`);
+            this.saveLog(userId, 'erro', `⚠️ Timeout na execução (60s). Verifique conexão.`);
             resolve(null);
           }
         }, 60000);
@@ -668,7 +696,7 @@ export class ApolloStrategy implements IStrategy {
       });
 
     } catch (e: any) {
-      this.saveLog(userId, 'erro', `Erro Deriv: ${e.message}`);
+      this.saveLog(userId, 'erro', `Erro Crítico Deriv: ${e.message}`);
       return null;
     }
   }
