@@ -705,102 +705,309 @@ export class ApolloStrategy implements IStrategy {
     }
   }
 
-  private async getOrCreateWebSocketConnection(token: string): Promise<any> {
-    // Reuse existing connection logic
-    let conn = this.wsConnections.get(token);
-    if (conn && conn.ws.readyState === WebSocket.OPEN && conn.authorized) return conn;
+  /**
+   * ✅ APOLLO (Refatorado): Obtém ou cria conexão WebSocket reutilizável por token
+   * Mantém uma conexão por token para evitar criar nova conexão a cada trade
+   */
+  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+    ws: WebSocket;
+    sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription: (subId: string) => void;
+  } | null> {
+    // ✅ Verificar se já existe conexão ativa para este token
+    const existing = this.wsConnections.get(token);
 
-    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-    this.logger.debug(`[APOLLO] 🔌 Connecting to Deriv WS...`);
-    const ws = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
+    // ✅ Logs de diagnóstico
+    this.logger.debug(`[APOLLO] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`);
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.logger.error(`[APOLLO] ❌ Connection Timeout (10s)`);
-        resolve(null);
-      }, 10000);
+    if (existing) {
+      const readyState = existing.ws.readyState;
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
+        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+          readyState === WebSocket.CLOSING ? 'CLOSING' :
+            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
 
-      ws.on('open', () => {
-        this.logger.debug(`[APOLLO] 🔌 WS Connected. Authorizing...`);
-        const connection: any = {
-          ws,
-          authorized: false,
-          pendingRequests: new Map(),
-          subscriptions: new Map(),
-          sendRequest: (p: any, timeoutMs: number = 30000) => {
-            return new Promise((res, rej) => {
-              const reqId = Date.now() + Math.random();
-              p.req_id = reqId;
+      this.logger.debug(`[APOLLO] � [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
 
-              const tm = setTimeout(() => {
-                connection.pendingRequests.delete(reqId);
-                rej(new Error(`Timeout waiting for response (${timeoutMs}ms)`));
-              }, timeoutMs);
+      if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+        this.logger.debug(`[APOLLO] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
 
-              connection.pendingRequests.set(reqId, { resolve: res, reject: rej, timeout: tm });
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(p));
-              } else {
-                clearTimeout(tm);
-                rej(new Error('WS Closed before sending'));
-              }
-            });
-          },
-          subscribe: (p: any, cb: any, id: string) => {
-            connection.subscriptions.set(id, cb);
-            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(p));
-          },
-          removeSubscription: (id: string) => connection.subscriptions.delete(id)
+        return {
+          ws: existing.ws,
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
+      } else {
+        this.logger.warn(`[APOLLO] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta. Fechando e recriando.`);
+        if (existing.keepAliveInterval) {
+          clearInterval(existing.keepAliveInterval);
+        }
+        try { existing.ws.close(); } catch (e) { }
+        this.wsConnections.delete(token);
+      }
+    }
 
-        ws.on('message', (data: any) => {
+    // ✅ Criar nova conexão
+    this.logger.debug(`[APOLLO] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+
+    try {
+      const ws = await new Promise<WebSocket>((resolve, reject) => {
+        const socket = new WebSocket(endpoint, {
+          headers: { Origin: 'https://app.deriv.com' },
+        });
+
+        let authResolved = false;
+        const connectionTimeout = setTimeout(() => {
+          if (!authResolved) {
+            this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
+            try { socket.close(); } catch (e) { }
+            this.wsConnections.delete(token);
+            reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
+          }
+        }, 20000);
+
+        // ✅ Listener de mensagens para capturar autorização e outras respostas
+        socket.on('message', (data: any) => {
           try {
             const msg = JSON.parse(data.toString());
-            if (msg.msg_type === 'ping') return;
 
-            if (msg.echo_req?.req_id) {
-              const r = connection.pendingRequests.get(msg.echo_req.req_id);
-              if (r) {
-                clearTimeout(r.timeout);
-                connection.pendingRequests.delete(msg.echo_req.req_id);
-                r.resolve(msg);
+            // ✅ Ignorar ping/pong
+            if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
+              return;
+            }
+
+            const conn = this.wsConnections.get(token);
+            if (!conn) {
+              // Se conexão não existe (ex: durante auth ainda não foi adicionada ou foi removida), não faz nada.
+              // Mas durante o setup (dentro desta Promise), nós tratamos o auth especificamente aqui.
+            }
+
+            // ✅ Processar autorização (apenas durante inicialização)
+            if (msg.msg_type === 'authorize' && !authResolved) {
+              this.logger.debug(`[APOLLO] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
+              authResolved = true;
+              clearTimeout(connectionTimeout);
+
+              if (msg.error || (msg.authorize && msg.authorize.error)) {
+                const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+                this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+                this.wsConnections.delete(token); // Limpar token inválido
+                reject(new Error(errorMsg));
+              } else {
+                this.logger.log(`[APOLLO] ✅ [${userId || 'SYSTEM'}] WebSocket Autorizado com Sucesso!`);
+                // Configurar Keep-Alive
+                const keepAlive = setInterval(() => {
+                  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
+                }, 30000);
+
+                // Salvar conexão no pool
+                this.wsConnections.set(token, {
+                  ws: socket,
+                  authorized: true,
+                  pendingRequests: new Map(),
+                  subscriptions: new Map(),
+                  keepAliveInterval: keepAlive,
+                  requestIdCounter: 0
+                });
+
+                resolve(socket);
+              }
+              return;
+            }
+
+            // ✅ Roteamento normal de mensagens para conexões ativas
+            if (conn) {
+              // Requests Pendentes
+              if (msg.echo_req?.req_id || msg.req_id) {
+                const reqId = msg.echo_req?.req_id || msg.req_id;
+                const r = conn.pendingRequests.get(reqId);
+                // Tenta achar com prefixo string se não achar direto (caso usemos IDs string)
+                if (!r && typeof reqId === 'string') {
+                  // Lógica customizada se necessário, mas Orion usa string reqIds.
+                }
+
+                if (r) {
+                  clearTimeout(r.timeout);
+                  conn.pendingRequests.delete(reqId);
+                  if (msg.error) r.reject(new Error(msg.error.message));
+                  else r.resolve(msg);
+                } else if (conn.pendingRequests.size > 0) {
+                  // check values iterates
+                  for (const [key, val] of conn.pendingRequests.entries()) {
+                    if (key.toString() === reqId.toString()) {
+                      clearTimeout(val.timeout);
+                      conn.pendingRequests.delete(key);
+                      if (msg.error) val.reject(new Error(msg.error.message));
+                      else val.resolve(msg);
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // Subscriptions (Proposal Open Contract, Ticks, etc)
+              if (msg.proposal_open_contract) {
+                const id = msg.proposal_open_contract.contract_id;
+                // Busca em subscriptions
+                // Orion usa 'contract_id' como chave? Não, usa subId customizado.
+                // Mas para POC, geralmente o subId é o contract_id. Mapeamos isso no subscribe.
+                for (const callback of conn.subscriptions.values()) {
+                  // Aqui é tricky: a subscription map do Orion usa 'subId'.
+                  // Se o callback conhecer o ID, ou se enviarmos para todos?
+                  // No Orion.subscribeViaConnection, usamos subId como chave.
+                  // E ao receber msg.proposal_open_contract, precisamos saber qual callback chamar.
+                  // Se tivermos múltiplas subscriptions de contratos diferentes...
+                  // Simplificação: Se tiver ID no payload, tentamos match direto.
+                  if (conn.subscriptions.has(id)) {
+                    conn.subscriptions.get(id)(msg);
+                    return;
+                  }
+                  // Fallback: iterar e enviar para todos (menos seguro mas funciona se 1:1)
+                  try { callback(msg); } catch (e) { }
+                }
+              }
+              // Ticks (se usarmos)
+              if (msg.tick) {
+                const id = msg.tick.id;
+                if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
               }
             }
-            if (msg.proposal_open_contract) {
-              const id = msg.proposal_open_contract.contract_id;
-              if (connection.subscriptions.has(id)) connection.subscriptions.get(id)(msg);
-            }
-          } catch (e) { }
-        });
 
-        connection.ws = ws;
-        this.wsConnections.set(token, connection);
-
-        connection.sendRequest({ authorize: token }).then((r: any) => {
-          clearTimeout(timeout);
-          if (!r.error) {
-            connection.authorized = true;
-            this.logger.log(`[APOLLO] ✅ WS Authorized`);
-            setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ ping: 1 })); }, 30000);
-            resolve(connection);
-          } else {
-            this.logger.error(`[APOLLO] ❌ Auth Failed: ${r.error.message}`);
-            resolve(null);
+          } catch (e) {
+            // JSON parse error or logic error
           }
-        }).catch((e: any) => {
-          clearTimeout(timeout);
-          this.logger.error(`[APOLLO] ❌ Auth Error: ${e.message}`);
-          resolve(null);
+        });
+
+        socket.on('error', (err) => {
+          if (!authResolved) {
+            clearTimeout(connectionTimeout);
+            reject(err);
+          }
+          this.logger.error(`[APOLLO] ❌ WS Error: ${err.message}`);
+        });
+
+        socket.on('close', () => {
+          this.logger.warn(`[APOLLO] 🔌 WS Closed`);
+          this.wsConnections.delete(token); // Limpar ao fechar
+        });
+
+        // Enviar Authorize logo após abrir
+        socket.on('open', () => {
+          this.logger.debug(`[APOLLO] 📤 [${userId || 'SYSTEM'}] Enviando solicitação de autorização...`);
+          socket.send(JSON.stringify({ authorize: token }));
         });
       });
-      ws.on('error', (e) => {
+
+      return {
+        ws,
+        sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+          this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+        removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+      };
+
+    } catch (e) {
+      this.logger.error(`[APOLLO] ❌ Falha fatal ao criar conexão: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    return new Promise((resolve, reject) => {
+      // Use simpler ID generation to avoid parsing issues if server echoes string vs number
+      const requestId = Date.now() + Math.random();
+      payload.req_id = requestId; // Inject req_id
+
+      const timeout = setTimeout(() => {
+        conn.pendingRequests.delete(requestId);
+        reject(new Error(`Timeout após ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      conn.pendingRequests.set(requestId, { resolve, reject, timeout });
+
+      try {
+        conn.ws.send(JSON.stringify(payload));
+      } catch (e) {
         clearTimeout(timeout);
-        this.logger.error(`[APOLLO] ❌ WS Error: ${e.message}`);
-        resolve(null);
-      });
-      ws.on('close', () => {
-        this.logger.warn(`[APOLLO] 🔌 WS Closed`);
-      });
+        conn.pendingRequests.delete(requestId);
+        reject(e);
+      }
     });
+  }
+
+  /**
+   * ✅ Inscreve-se para atualizações via conexão existente
+   */
+  private async subscribeViaConnection(
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
+
+    // ✅ Aguardar primeira resposta para confirmar subscription
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        conn.subscriptions.delete(subId);
+        reject(new Error(`Timeout ao inscrever ${subId}`));
+      }, timeoutMs);
+
+      // ✅ Callback wrapper que confirma subscription na primeira mensagem
+      const wrappedCallback = (msg: any) => {
+        // ✅ Primeira mensagem confirma subscription
+        if (msg.proposal_open_contract || msg.tick || msg.error) {
+          clearTimeout(timeout);
+          if (msg.error) {
+            conn.subscriptions.delete(subId);
+            reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            return;
+          }
+          // ✅ Subscription confirmada, substituir por callback original
+          conn.subscriptions.set(subId, callback);
+          resolve();
+          // ✅ Chamar callback original com primeira mensagem
+          callback(msg);
+          return;
+        }
+        // ✅ Se não for primeira mensagem, já deve estar usando callback original (mas por segurança chamamos)
+        callback(msg);
+      };
+
+      conn.subscriptions.set(subId, wrappedCallback);
+
+      // Inject req_id to help routing if generic response comes back (optional but good practice)
+      // payload.req_id = ... 
+      conn.ws.send(JSON.stringify(payload));
+    });
+  }
+
+  /**
+   * ✅ Remove subscription da conexão
+   */
+  private removeSubscriptionFromConnection(token: string, subId: string): void {
+    const conn = this.wsConnections.get(token);
+    if (conn) {
+      conn.subscriptions.delete(subId);
+      // Optional: Send forget request? 
+      // Deriv API 'forget' { forget: subId } if subId is stream ID. 
+      // Not strictly necessary for client-side cleanup but good for server resources.
+    }
   }
 }
