@@ -601,11 +601,11 @@ export class TitanStrategy implements IStrategy {
             let logMessage = '';
 
             if (result.reason.includes('COLETANDO_DADOS')) {
-                // Logs de coleta podem ser muito frequentes, mostrar apenas a cada 5 ticks ou algo assim se desejar, 
-                // mas o usuário pediu "TODAS as analises".
-                // Para não floodar TANTO, vamos apenas logar se ainda não tem o minimo.
-                // Mas o pedido foi "TODAS". Vamos confiar no throttle do frontend ou logar tudo.
-                logMessage = `ℹ️📊 ${result.reason} | Aguardando ticks...`;
+                // Extrair números da reason ou usar digits.length se disponível no escopo (não está aqui, então parseamos ou confiamos na string)
+                // A string vem como "COLETANDO_DADOS (X/Y)"
+                const progressMatch = result.reason.match(/\((\d+)\/(\d+)\)/);
+                const progress = progressMatch ? `${progressMatch[1]} de ${progressMatch[2]}` : '...';
+                logMessage = `ℹ️⏳ [TITAN] Coletando ticks: ${progress} | Aguardando dados para análise...`;
             } else {
                 logMessage =
                     `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\n` +
