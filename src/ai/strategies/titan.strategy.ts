@@ -454,6 +454,7 @@ interface TitanUserState {
     sorosStake: number;
     capitalInicial: number;
     defesaAtivaLogged?: boolean;
+    lastOperationStart?: number;
 }
 
 @Injectable()
@@ -522,6 +523,13 @@ export class TitanStrategy implements IStrategy {
     private async processUser(state: TitanUserState): Promise<void> {
         // 🔍 DEBUG: Log entrada do user
         this.logger.debug(`[TITAN] Processando user ${state.userId} | OpAtiva: ${state.isOperationActive}`);
+
+        // 🔒 SAFEGUARD: Se operação estiver ativa por muito tempo (> 60s), forçar reset
+        if (state.isOperationActive && state.lastOperationStart && (Date.now() - state.lastOperationStart > 60000)) {
+            this.logger.warn(`[TITAN] ⚠️ Operação travada detectada para ${state.userId}. Resetando estado.`);
+            state.isOperationActive = false;
+            state.lastOperationStart = undefined;
+        }
 
         if (state.isOperationActive) {
             // 🔍 DEBUG: Log motivo do skip
@@ -858,6 +866,7 @@ export class TitanStrategy implements IStrategy {
             `⚔️ [TITAN] Entrada Confirmada: ${directionDisplay} (Stake: $${stake.toFixed(2)}${stakeIndicator})`);
 
         state.isOperationActive = true;
+        state.lastOperationStart = Date.now();
         try {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
@@ -1006,6 +1015,90 @@ export class TitanStrategy implements IStrategy {
         }
 
         return tradeId;
+    }
+
+    private async executeTradeViaWebSocket(token: string, params: { contract_type: string; amount: number; currency: string }, userId: string): Promise<{ contractId: string; profit: number; exitSpot: number; entrySpot: number } | null> {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const conn = await this.getOrCreateWebSocketConnection(token, userId);
+                const { ws, sendRequest, subscribe, removeSubscription } = conn;
+
+                // 1. Enviar Ordem de Compra
+                const buyReq = {
+                    buy: 1,
+                    price: params.amount,
+                    parameters: {
+                        amount: params.amount,
+                        basis: 'stake',
+                        contract_type: params.contract_type,
+                        currency: params.currency,
+                        duration: 1,
+                        duration_unit: 't',
+                        symbol: this.symbol,
+                    }
+                };
+
+                this.logger.debug(`[TITAN] 📤 Enviando Buy: ${JSON.stringify(buyReq.parameters)}`);
+                const buyRes: any = await sendRequest(buyReq);
+
+                if (buyRes.error) {
+                    this.logger.error(`[TITAN] ❌ Erro no Buy: ${buyRes.error.message}`);
+                    throw new Error(buyRes.error.message);
+                }
+
+                const contractId = buyRes.buy.contract_id;
+                const longcode = buyRes.buy.longcode;
+                this.logger.log(`[TITAN] ✅ Contrato Criado: ${contractId} | ${longcode}`);
+
+                // 2. Monitorar Contrato
+                const subKey = `contract_${contractId}`;
+                const subReq = {
+                    proposal_open_contract: 1,
+                    contract_id: contractId,
+                    subscribe: 1
+                };
+
+                // Timeout de segurança
+                const timeout = setTimeout(() => {
+                    removeSubscription(subKey);
+                    reject(new Error('Timeout monitorando contrato'));
+                }, 15000);
+
+                await subscribe(subReq, (msg: any) => {
+                    if (msg.error) {
+                        clearTimeout(timeout);
+                        removeSubscription(subKey);
+                        reject(new Error(msg.error.message));
+                        return;
+                    }
+
+                    const contract = msg.proposal_open_contract;
+                    if (!contract) return;
+
+                    // Verifica se finalizou
+                    if (contract.is_sold || contract.status === 'won' || contract.status === 'lost') {
+                        clearTimeout(timeout);
+                        removeSubscription(subKey); // Remove assinatura
+
+                        const profit = Number(contract.profit);
+                        const exitSpot = Number(contract.exit_tick || contract.exit_spot || contract.current_spot || 0);
+                        const entrySpot = Number(contract.entry_tick || contract.entry_spot || 0);
+
+                        this.logger.debug(`[TITAN] 🏁 Contrato Finalizado: ${contract.status} | Profit: ${profit}`);
+                        resolve({
+                            contractId: String(contractId),
+                            profit,
+                            exitSpot,
+                            entrySpot
+                        });
+                    }
+                }, subKey);
+
+            } catch (e) {
+                this.logger.error(`[TITAN] ❌ Falha na execução WS: ${e.message}`);
+                resolve(null); // Retorna null para tratar como erro na strategy
+            }
+        });
     }
 
     // ===================================
