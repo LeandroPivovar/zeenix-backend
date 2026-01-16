@@ -522,7 +522,10 @@ export class TitanStrategy implements IStrategy {
     private async processUser(state: TitanUserState): Promise<void> {
         if (state.isOperationActive) return;
         const riskManager = this.riskManagers.get(state.userId);
-        if (!riskManager) return;
+        if (!riskManager) {
+            this.logger.warn(`[TITAN] RiskManager não encontrado para usuário ${state.userId}`);
+            return;
+        }
 
         // SEMPRE chamar check_signal para gerar logs, mesmo sem sinal
         const signal = this.check_signal(state, riskManager);
@@ -566,6 +569,9 @@ export class TitanStrategy implements IStrategy {
         // Executar Análise Titan
         const result = analyzeTitan(this.ticks, analysisMode);
 
+        // 🔍 DEBUG INTERNO
+        // this.logger.debug(`[TITAN][ANALYSIS] ${state.userId} | Mode: ${analysisMode} | Result: ${result.hasSignal ? 'SIGNAL' : 'NO_SIGNAL'} (${result.reason})`);
+
         if (!result.hasSignal) {
             // 🔍 LOG DEBUG: Mostrar o motivo da falha da análise para o usuário (se solicitado)
             // Formatar detalhes para o log
@@ -579,9 +585,9 @@ export class TitanStrategy implements IStrategy {
                 logMessage = `ℹ️📊 ${result.reason} | Aguardando ticks suficientes para análise...`;
             } else {
                 logMessage =
-                    `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\\n` +
-                    `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\\n` +
-                    `• Momentum: ${momentumStatus} (${momentumDetail})\\n` +
+                    `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\n` +
+                    `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
+                    `• Momentum: ${momentumStatus} (${momentumDetail})\n` +
                     `• Ruído: ${details.alternations} Alternâncias`;
             }
 
