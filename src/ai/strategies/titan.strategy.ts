@@ -202,6 +202,7 @@ const analyzeTitan = (
     if (digits.length < config.windowSize) {
         return {
             hasSignal: false,
+            // Inclui contagem explícita na reason para o regex do log pegar
             reason: `COLETANDO_DADOS (${digits.length}/${config.windowSize})`,
             details: {
                 majority: { even: 0, odd: 0, percentage: 0 },
