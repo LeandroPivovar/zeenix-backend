@@ -525,8 +525,12 @@ export class TitanStrategy implements IStrategy {
         this.logger.debug(`[TITAN] Processando user ${state.userId} | OpAtiva: ${state.isOperationActive}`);
 
         // 🔒 SAFEGUARD: Se operação estiver ativa por muito tempo (> 60s), forçar reset
-        if (state.isOperationActive && state.lastOperationStart && (Date.now() - state.lastOperationStart > 60000)) {
-            this.logger.warn(`[TITAN] ⚠️ Operação travada detectada para ${state.userId}. Resetando estado.`);
+        // Também reseta se lastOperationStart não estiver definido (caso de estado inconsistente)
+        const now = Date.now();
+        const operationDuration = state.lastOperationStart ? now - state.lastOperationStart : 999999;
+
+        if (state.isOperationActive && operationDuration > 60000) {
+            this.logger.warn(`[TITAN] ⚠️ Operação travada detectada para ${state.userId}. Resetando estado. (Duração: ${(operationDuration / 1000).toFixed(1)}s)`);
             state.isOperationActive = false;
             state.lastOperationStart = undefined;
         }
@@ -1051,7 +1055,8 @@ export class TitanStrategy implements IStrategy {
                 this.logger.log(`[TITAN] ✅ Contrato Criado: ${contractId} | ${longcode}`);
 
                 // 2. Monitorar Contrato
-                const subKey = `contract_${contractId}`;
+                // Usar o PRÓPRIO ID do contrato como chave, convertido para string para garantir compatibilidade
+                const subKey = String(contractId);
                 const subReq = {
                     proposal_open_contract: 1,
                     contract_id: contractId,
@@ -1228,12 +1233,12 @@ export class TitanStrategy implements IStrategy {
                     if (msg.msg_type === 'proposal_open_contract') {
                         const contractId = msg.proposal_open_contract.contract_id;
                         // Procura se tem callback registrado para esse contrato
-                        // Aqui usamos a chave como sendo o contract_id no map
-                        // Mas o map está usando chaves strings definidas no subscribe
-                        // Iterar ou garantir chave correta.
-                        // Na implementação do subscribe usei contractId como chave.
-                        if (connectionObj.subscriptions.has(contractId)) {
-                            connectionObj.subscriptions.get(contractId)(msg); // Chamada corrigida
+                        // Converter para string pois as chaves do Map são strings
+                        const subKey = String(contractId);
+
+                        if (connectionObj.subscriptions.has(subKey)) {
+                            // this.logger.debug(`[TITAN] 📨 Update para contrato ${contractId}`);
+                            connectionObj.subscriptions.get(subKey)(msg);
                         }
                     }
 
