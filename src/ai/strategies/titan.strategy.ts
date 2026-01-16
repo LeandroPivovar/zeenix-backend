@@ -520,7 +520,14 @@ export class TitanStrategy implements IStrategy {
     }
 
     private async processUser(state: TitanUserState): Promise<void> {
-        if (state.isOperationActive) return;
+        // 🔍 DEBUG: Log entrada do user
+        this.logger.debug(`[TITAN] Processando user ${state.userId} | OpAtiva: ${state.isOperationActive}`);
+
+        if (state.isOperationActive) {
+            // 🔍 DEBUG: Log motivo do skip
+            this.logger.debug(`[TITAN] Skipping user ${state.userId} because operation is active`);
+            return;
+        }
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) {
             this.logger.warn(`[TITAN] RiskManager não encontrado para usuário ${state.userId}`);
