@@ -621,10 +621,22 @@ export class ApolloStrategy implements IStrategy {
 
       return new Promise((resolve) => {
         let resolved = false;
+
+        // Timeout Safeguard (60s)
+        const timeout = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            conn.removeSubscription(contractId);
+            this.saveLog(userId, 'erro', `⚠️ Timeout na execução do trade (60s). Verifique conexão.`);
+            resolve(null);
+          }
+        }, 60000);
+
         conn.subscribe({ proposal_open_contract: 1, contract_id: contractId }, (msg: any) => {
           const c = msg.proposal_open_contract;
           if (c.is_sold && !resolved) {
             resolved = true;
+            clearTimeout(timeout);
             conn.removeSubscription(contractId);
             resolve({ profit: Number(c.profit), contractId: c.contract_id, exitSpot: c.exit_tick });
           }
@@ -654,11 +666,17 @@ export class ApolloStrategy implements IStrategy {
           authorized: false,
           pendingRequests: new Map(),
           subscriptions: new Map(),
-          sendRequest: (p: any) => {
+          sendRequest: (p: any, timeoutMs: number = 30000) => {
             return new Promise((res, rej) => {
               const reqId = Date.now() + Math.random();
               p.req_id = reqId;
-              connection.pendingRequests.set(reqId, { resolve: res, reject: rej });
+
+              const tm = setTimeout(() => {
+                connection.pendingRequests.delete(reqId);
+                rej(new Error(`Timeout waiting for response (${timeoutMs}ms)`));
+              }, timeoutMs);
+
+              connection.pendingRequests.set(reqId, { resolve: res, reject: rej, timeout: tm });
               ws.send(JSON.stringify(p));
             });
           },
@@ -676,7 +694,11 @@ export class ApolloStrategy implements IStrategy {
 
             if (msg.echo_req?.req_id) {
               const r = connection.pendingRequests.get(msg.echo_req.req_id);
-              if (r) { connection.pendingRequests.delete(msg.echo_req.req_id); r.resolve(msg); }
+              if (r) {
+                clearTimeout(r.timeout);
+                connection.pendingRequests.delete(msg.echo_req.req_id);
+                r.resolve(msg);
+              }
             }
             if (msg.proposal_open_contract) {
               const id = msg.proposal_open_contract.contract_id;
