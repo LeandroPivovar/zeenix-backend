@@ -69,7 +69,8 @@ export class ApolloStrategy implements IStrategy {
   private readonly logger = new Logger(ApolloStrategy.name);
   private users = new Map<string, ApolloUserState>();
   private marketTicks = new Map<string, number[]>(); // Store prices per market
-  private lastLogTime = 0;
+  private lastLogTimeNodes = new Map<string, number>(); // ✅ Heartbeat per symbol
+  private lastRejectionLog = new Map<string, number>(); // ✅ Throttling for rejection logs
   private defaultSymbol = 'R_25';
   private appId: string;
 
@@ -102,9 +103,10 @@ export class ApolloStrategy implements IStrategy {
 
     // Global Heartbeat (per symbol)
     const now = Date.now();
-    if (now - this.lastLogTime > 10000) {
+    const lastLog = this.lastLogTimeNodes.get(symbol) || 0;
+    if (now - lastLog > 10000) {
       this.logger.debug(`[APOLLO][${symbol}] 📊 Ticks: ${ticks.length}/20 | Users: ${this.users.size}`);
-      this.lastLogTime = now;
+      this.lastLogTimeNodes.set(symbol, now);
     }
 
     // Need enough ticks for SMA 5
@@ -120,6 +122,16 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[]) {
+    // 0. INITIAL COUNTDOWN
+    // Apollo needs 5 ticks (SMA 5 / Lento Analysis) to start.
+    // Since 'ticks' passed here already has length >= 5 (checked in processTick),
+    // this specific check might seem redundant for the logic, but useful for user feedback if we consider "ticksColetados" as the user's personal wait time.
+    // However, since we use shared marketTicks, the strategy is "ready" as soon as market has ticks.
+    // Let's log the first few ticks for the user to see activity.
+    if (state.ticksColetados <= 5) {
+      this.saveLog(state.userId, 'info', `📊 [SISTEMA] Coletando dados de mercado: ${state.ticksColetados}/5`);
+    }
+
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
@@ -250,16 +262,17 @@ export class ApolloStrategy implements IStrategy {
     if (validSignal) {
       // Log Analysis
       const filterStr = filters.join(', ');
-      this.saveLog(state.userId, 'sinal', `🎯 [SINAL] ${direction} Identificado | Força: ${strength}%`);
-      this.logger.debug(`[APOLLO][${state.userId}] SINAL: ${direction} | Filtros: ${filterStr}`);
+      this.saveLog(state.userId, 'sinal', `🎯 [SINAL] ${direction} Identificado | Força: ${strength}% | Filtros: ${filterStr}`);
       return direction;
     } else {
-      if (reasons.length > 0) {
-        // Log refused analysis rarely to avoid spam? 
-        // User asked for logs. We can save as 'debug' or verbose.
-        // Keeping it minimal in saveLog to avoid flooding DB, unless explicitly debugging.
-        // this.saveLog(state.userId, 'info', `🔍 [ANÁLISE] ${state.mode.toUpperCase()} Recusada: ${reasons.join(', ')}`);
-      }
+      // ✅ LOGAR TUDO (Exigência do usuário)
+      // Mesmo sem sinal, mostrar a análise feita e o motivo da recusa.
+      // Formato: [ANÁLISE] TICK: 1234.56 | DIR: CALL | DELTA: 0.12 (Min 0.3) | RESULT: RECUSADO
+      const arrow = direction === 'CALL' ? '🟢' : '🔴';
+      const logMsg = `${arrow} [ANÁLISE] ${state.mode.toUpperCase()} | Delta: ${absDelta.toFixed(3)} | Motivos: ${reasons.join(', ')}`;
+
+      // Salvar como 'info' para aparecer no front
+      this.saveLog(state.userId, 'info', logMsg);
     }
 
     return null;
