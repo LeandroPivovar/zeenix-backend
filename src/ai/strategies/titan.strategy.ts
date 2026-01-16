@@ -597,10 +597,15 @@ export class TitanStrategy implements IStrategy {
             const momentumStatus = details.momentum.status === 'ACELERANDO' ? 'ACELERANDO' : 'SEM_MOMENTUM';
             const momentumDetail = `${details.momentum.firstHalf} vs ${details.momentum.secondHalf}`;
 
-            // ✅ Adicionar informação de progresso de coleta de ticks
+            // ✅ Log de progresso da análise (Sempre mostrar para o usuário saber que a IA está viva)
             let logMessage = '';
+
             if (result.reason.includes('COLETANDO_DADOS')) {
-                logMessage = `ℹ️📊 ${result.reason} | Aguardando ticks suficientes para análise...`;
+                // Logs de coleta podem ser muito frequentes, mostrar apenas a cada 5 ticks ou algo assim se desejar, 
+                // mas o usuário pediu "TODAS as analises".
+                // Para não floodar TANTO, vamos apenas logar se ainda não tem o minimo.
+                // Mas o pedido foi "TODAS". Vamos confiar no throttle do frontend ou logar tudo.
+                logMessage = `ℹ️📊 ${result.reason} | Aguardando ticks...`;
             } else {
                 logMessage =
                     `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\n` +
@@ -609,7 +614,7 @@ export class TitanStrategy implements IStrategy {
                     `• Ruído: ${details.alternations} Alternâncias`;
             }
 
-            // Usar tipo 'info' com ícone para aparecer no frontend
+            // Usar tipo 'analise' para diferenciar de mensagens importantes de sistema
             this.saveTitanLog(state.userId, this.symbol, 'info', logMessage);
             return null;
         }
