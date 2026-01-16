@@ -139,9 +139,10 @@ const checkMomentum = (
     const firstCount = countInHalf(firstHalf);
     const secondCount = countInHalf(secondHalf);
 
-    // Verifica se está acelerando (exige crescimento real conforme documentação)
-    // Documentação: secondCount > firstCount E secondCount >= threshold
-    const isAccelerating = secondCount > firstCount && secondCount >= threshold;
+    // Verifica se está acelerando ou mantendo força (exige não-desaceleração)
+    // Documentação (ajustada): aceita se acceleration OU se mantém força alta (Ex: 5 vs 5)
+    // Lógica: segunda metade deve ser maior ou igual à primeira, E atingir o threshold
+    const isAccelerating = secondCount >= firstCount && secondCount >= threshold;
 
     return {
         status: isAccelerating ? 'ACELERANDO' : 'SEM_MOMENTUM',
