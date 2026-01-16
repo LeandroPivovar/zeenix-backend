@@ -61,13 +61,16 @@ const isEven = (digit: number): boolean => digit % 2 === 0;
 * Extrai os últimos N dígitos do histórico de ticks
 */
 const getLastDigits = (ticks: Tick[], count: number): number[] => {
-    if (ticks.length < count) {
+    // ✅ FIX: Retorna os dígitos disponíveis mesmo se não tiver count completo
+    // A verificação de quantidade suficiente é feita em analyzeTitan
+    const availableTicks = Math.min(ticks.length, count);
+    if (availableTicks === 0) {
         return [];
     }
 
     return ticks
-        .slice(-count)
-        .map(tick => extractLastDigit(tick.value)); // Ajustado para tick.value
+        .slice(-availableTicks)
+        .map(tick => extractLastDigit(tick.value));
 };
 
 // ==================== FILTROS ====================
@@ -200,7 +203,7 @@ const analyzeTitan = (
     if (digits.length < config.windowSize) {
         return {
             hasSignal: false,
-            reason: 'COLETANDO_DADOS',
+            reason: `COLETANDO_DADOS (${digits.length}/${config.windowSize})`,
             details: {
                 majority: { even: 0, odd: 0, percentage: 0 },
                 momentum: { status: 'SEM_MOMENTUM', firstHalf: 0, secondHalf: 0 },
@@ -570,11 +573,17 @@ export class TitanStrategy implements IStrategy {
             const momentumStatus = details.momentum.status === 'ACELERANDO' ? 'ACELERANDO' : 'SEM_MOMENTUM';
             const momentumDetail = `${details.momentum.firstHalf} vs ${details.momentum.secondHalf}`;
 
-            const logMessage =
-                `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\n` +
-                `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\n` +
-                `• Momentum: ${momentumStatus} (${momentumDetail})\n` +
-                `• Ruído: ${details.alternations} Alternâncias`;
+            // ✅ Adicionar informação de progresso de coleta de ticks
+            let logMessage = '';
+            if (result.reason.includes('COLETANDO_DADOS')) {
+                logMessage = `ℹ️📊 ${result.reason} | Aguardando ticks suficientes para análise...`;
+            } else {
+                logMessage =
+                    `[ANÁLISE ${analysisMode}] Sem Sinal - ${result.reason}\\n` +
+                    `• Maioria: ${details.majority.percentage}% (${details.majority.even}P/${details.majority.odd}I)\\n` +
+                    `• Momentum: ${momentumStatus} (${momentumDetail})\\n` +
+                    `• Ruído: ${details.alternations} Alternâncias`;
+            }
 
             // Usar tipo 'info' com ícone para aparecer no frontend
             this.saveTitanLog(state.userId, this.symbol, 'info', logMessage);
