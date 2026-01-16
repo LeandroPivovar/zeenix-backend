@@ -131,6 +131,7 @@ export class ApolloStrategy implements IStrategy {
     // Let's log the first few ticks for the user to see activity.
     if (state.ticksColetados <= 5) {
       this.saveLog(state.userId, 'info', `📊 [SISTEMA] Coletando dados de mercado: ${state.ticksColetados}/5`);
+      return; // ✅ Fix: Block execution until warm-up is complete
     }
 
     // 1. CHECK STOPS AND BLINDADO
@@ -620,7 +621,10 @@ export class ApolloStrategy implements IStrategy {
 
   private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<{ contractId: string, profit: number, exitSpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
-    if (!conn) return null;
+    if (!conn) {
+      this.saveLog(userId, 'erro', `❌ Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
+      return null;
+    }
 
     const req: any = {
       proposal: 1,
@@ -707,12 +711,17 @@ export class ApolloStrategy implements IStrategy {
     if (conn && conn.ws.readyState === WebSocket.OPEN && conn.authorized) return conn;
 
     const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+    this.logger.debug(`[APOLLO] 🔌 Connecting to Deriv WS...`);
     const ws = new WebSocket(endpoint, { headers: { Origin: 'https://app.deriv.com' } });
 
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 10000);
+      const timeout = setTimeout(() => {
+        this.logger.error(`[APOLLO] ❌ Connection Timeout (10s)`);
+        resolve(null);
+      }, 10000);
 
       ws.on('open', () => {
+        this.logger.debug(`[APOLLO] 🔌 WS Connected. Authorizing...`);
         const connection: any = {
           ws,
           authorized: false,
@@ -729,12 +738,17 @@ export class ApolloStrategy implements IStrategy {
               }, timeoutMs);
 
               connection.pendingRequests.set(reqId, { resolve: res, reject: rej, timeout: tm });
-              ws.send(JSON.stringify(p));
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(p));
+              } else {
+                clearTimeout(tm);
+                rej(new Error('WS Closed before sending'));
+              }
             });
           },
           subscribe: (p: any, cb: any, id: string) => {
             connection.subscriptions.set(id, cb);
-            ws.send(JSON.stringify(p));
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(p));
           },
           removeSubscription: (id: string) => connection.subscriptions.delete(id)
         };
@@ -766,12 +780,27 @@ export class ApolloStrategy implements IStrategy {
           clearTimeout(timeout);
           if (!r.error) {
             connection.authorized = true;
+            this.logger.log(`[APOLLO] ✅ WS Authorized`);
             setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ ping: 1 })); }, 30000);
             resolve(connection);
-          } else resolve(null);
+          } else {
+            this.logger.error(`[APOLLO] ❌ Auth Failed: ${r.error.message}`);
+            resolve(null);
+          }
+        }).catch((e: any) => {
+          clearTimeout(timeout);
+          this.logger.error(`[APOLLO] ❌ Auth Error: ${e.message}`);
+          resolve(null);
         });
       });
-      ws.on('error', () => { clearTimeout(timeout); resolve(null); });
+      ws.on('error', (e) => {
+        clearTimeout(timeout);
+        this.logger.error(`[APOLLO] ❌ WS Error: ${e.message}`);
+        resolve(null);
+      });
+      ws.on('close', () => {
+        this.logger.warn(`[APOLLO] 🔌 WS Closed`);
+      });
     });
   }
 }
