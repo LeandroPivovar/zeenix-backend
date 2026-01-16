@@ -193,8 +193,8 @@ export class ApolloStrategy implements IStrategy {
     let validSignal = false;
 
     if (state.mode === 'veloz') {
-      // VELOZ: 3 Ticks (~3s), Delta >= 0.3
-      const MIN_DELTA = 0.3;
+      // VELOZ: 3 Ticks (~3s), Delta >= 0.1
+      const MIN_DELTA = 0.1;
       if (absDelta >= MIN_DELTA) {
         validSignal = true;
         strength = 60;
