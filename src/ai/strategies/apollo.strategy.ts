@@ -105,7 +105,8 @@ export class ApolloStrategy implements IStrategy {
     const now = Date.now();
     const lastLog = this.lastLogTimeNodes.get(symbol) || 0;
     if (now - lastLog > 10000) {
-      this.logger.debug(`[APOLLO][${symbol}] 📊 Ticks: ${ticks.length}/20 | Users: ${this.users.size}`);
+      const usersOnSymbol = Array.from(this.users.values()).filter(u => u.symbol === symbol).length;
+      this.logger.debug(`[APOLLO][${symbol}] 📊 Ticks: ${ticks.length}/20 | Users: ${usersOnSymbol}`);
       this.lastLogTimeNodes.set(symbol, now);
     }
 
@@ -565,9 +566,19 @@ export class ApolloStrategy implements IStrategy {
 
   private saveLog(userId: string, type: string, message: string) {
     const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌' };
+
+    // 1. Save to DB
     this.dataSource.query(`INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
       [userId, type, iconMap[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
     ).catch(e => console.error('Error saving log', e));
+
+    // 2. Emit Real-time Event (for Frontend)
+    this.tradeEvents.emitLog({
+      userId,
+      type,
+      message,
+      timestamp: new Date()
+    });
   }
 
   // --- WEBSOCKET & TRADE ---
