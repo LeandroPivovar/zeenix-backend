@@ -875,7 +875,9 @@ export class TitanStrategy implements IStrategy {
             const currentPrice = this.ticks[this.ticks.length - 1].value;
             const tradeId = await this.createTradeRecord(state, direction, stake, currentPrice);
 
-            const result = await this.executeTradeViaWebSocket(state.derivToken, {
+            // Executar operação via WebSocket
+            // Usar método com underline para evitar conflito de duplicata
+            const result = await this._executeTradeViaWebSocket(state.derivToken, {
                 contract_type: direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
                 amount: stake,
                 currency: state.currency,
@@ -1021,7 +1023,7 @@ export class TitanStrategy implements IStrategy {
         return tradeId;
     }
 
-    private async executeTradeViaWebSocket(token: string, params: { contract_type: string; amount: number; currency: string }, userId: string): Promise<{ contractId: string; profit: number; exitSpot: number; entrySpot: number } | null> {
+    private async _executeTradeViaWebSocket(token: string, params: { contract_type: string; amount: number; currency: string }, userId: string): Promise<{ contractId: string; profit: number; exitSpot: number; entrySpot: number } | null> {
         return new Promise(async (resolve, reject) => {
             try {
                 const conn = await this.getOrCreateWebSocketConnection(token, userId);
