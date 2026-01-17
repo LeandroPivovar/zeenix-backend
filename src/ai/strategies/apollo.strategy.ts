@@ -828,59 +828,60 @@ export class ApolloStrategy implements IStrategy {
                 // Tenta achar com prefixo string se não achar direto (caso usemos IDs string)
                 if (!r && typeof reqId === 'string') {
                   // Lógica customizada se necessário, mas Orion usa string reqIds.
-                }
-
-                if (r) {
-                  clearTimeout(r.timeout);
-                  conn.pendingRequests.delete(reqId);
-                  if (msg.error) r.reject(new Error(msg.error.message));
-                  else r.resolve(msg);
-                } else if (conn.pendingRequests.size > 0) {
-                  // check values iterates
-                  for (const [key, val] of conn.pendingRequests.entries()) {
-                    if (key.toString() === reqId.toString()) {
-                      clearTimeout(val.timeout);
-                      conn.pendingRequests.delete(key);
-                      if (msg.error) val.reject(new Error(msg.error.message));
-                      else val.resolve(msg);
-                      break;
+                  // ✅ Match by req_id if present (More robust)
+                  if (msg.req_id) {
+                    const reqId = msg.req_id;
+                    for (const [key, val] of conn.pendingRequests.entries()) {
+                      if (key.toString() === reqId.toString()) {
+                        clearTimeout(val.timeout);
+                        conn.pendingRequests.delete(key);
+                        if (msg.error) val.reject(new Error(msg.error.message));
+                        else val.resolve(msg);
+                        return; // Handled
+                      }
                     }
                   }
-                }
-              }
 
-              // Subscriptions (Proposal Open Contract, Ticks, etc)
-              if (msg.proposal_open_contract) {
-                const id = msg.proposal_open_contract.contract_id;
-                // Busca em subscriptions
-                // Orion usa 'contract_id' como chave? Não, usa subId customizado.
-                // Mas para POC, geralmente o subId é o contract_id. Mapeamos isso no subscribe.
-                for (const callback of conn.subscriptions.values()) {
-                  // Aqui é tricky: a subscription map do Orion usa 'subId'.
-                  // Se o callback conhecer o ID, ou se enviarmos para todos?
-                  // No Orion.subscribeViaConnection, usamos subId como chave.
-                  // E ao receber msg.proposal_open_contract, precisamos saber qual callback chamar.
-                  // Se tivermos múltiplas subscriptions de contratos diferentes...
-                  // Simplificação: Se tiver ID no payload, tentamos match direto.
-                  if (conn.subscriptions.has(id)) {
-                    conn.subscriptions.get(id)(msg);
-                    return;
+                  // ✅ ORION Logic: Fallback mechanism for standard trading responses (FIFO)
+                  // If we have pending requests and receive a Proposal or Buy response (or generic error),
+                  // we assign it to the oldest pending request if strictly sequential.
+                  if ((msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract && !msg.req_id))) {
+                    const firstKey = conn.pendingRequests.keys().next().value;
+                    if (firstKey) {
+                      const pending = conn.pendingRequests.get(firstKey);
+                      if (pending) {
+                        clearTimeout(pending.timeout);
+                        conn.pendingRequests.delete(firstKey);
+                        if (msg.error) {
+                          pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                        } else {
+                          pending.resolve(msg);
+                        }
+                        return; // Handled
+                      }
+                    }
                   }
-                  // Fallback: iterar e enviar para todos (menos seguro mas funciona se 1:1)
-                  try { callback(msg); } catch (e) { }
-                }
-              }
-              // Ticks (se usarmos)
-              if (msg.tick) {
-                const id = msg.tick.id;
-                if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
-              }
-            }
 
-          } catch (e) {
-            // JSON parse error or logic error
-          }
-        });
+                  // Subscriptions (Proposal Open Contract, Ticks, etc)
+                  if (msg.proposal_open_contract) {
+                    const id = msg.proposal_open_contract.contract_id;
+                    if (conn.subscriptions.has(id)) {
+                      conn.subscriptions.get(id)(msg);
+                      return;
+                    }
+                    // Fallback for broadcasting if needed (Orion does strictly by ID usually)
+                    // But if we don't track by contract_id in subscription map, this might fail.
+                  }
+                  // Ticks
+                  if (msg.tick) {
+                    const id = msg.tick.id;
+                    if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
+                  }
+
+                } catch (e) {
+                  // JSON parse error or logic error
+                }
+              });
 
         socket.on('error', (err) => {
           if (!authResolved) {
