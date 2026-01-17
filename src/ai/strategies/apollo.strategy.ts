@@ -821,67 +821,58 @@ export class ApolloStrategy implements IStrategy {
 
             // ✅ Roteamento normal de mensagens para conexões ativas
             if (conn) {
-              // Requests Pendentes
-              if (msg.echo_req?.req_id || msg.req_id) {
-                const reqId = msg.echo_req?.req_id || msg.req_id;
-                const r = conn.pendingRequests.get(reqId);
-                // Tenta achar com prefixo string se não achar direto (caso usemos IDs string)
-                if (!r && typeof reqId === 'string') {
-                  // Lógica customizada se necessário, mas Orion usa string reqIds.
-                  // ✅ Match by req_id if present (More robust)
-                  if (msg.req_id) {
-                    const reqId = msg.req_id;
-                    for (const [key, val] of conn.pendingRequests.entries()) {
-                      if (key.toString() === reqId.toString()) {
-                        clearTimeout(val.timeout);
-                        conn.pendingRequests.delete(key);
-                        if (msg.error) val.reject(new Error(msg.error.message));
-                        else val.resolve(msg);
-                        return; // Handled
-                      }
-                    }
+              // 1. Tentar casar com req_id se existir (Prioridade Alta)
+              if (msg.req_id || (msg.echo_req && msg.echo_req.req_id)) {
+                const reqId = msg.req_id || msg.echo_req.req_id;
+                for (const [key, val] of conn.pendingRequests.entries()) {
+                  if (key.toString() === reqId.toString()) {
+                    clearTimeout(val.timeout);
+                    conn.pendingRequests.delete(key);
+                    if (msg.error) val.reject(new Error(msg.error.message));
+                    else val.resolve(msg);
+                    return; // Handled
                   }
-
-                  // ✅ ORION Logic: Fallback mechanism for standard trading responses (FIFO)
-                  // If we have pending requests and receive a Proposal or Buy response (or generic error),
-                  // we assign it to the oldest pending request if strictly sequential.
-                  if ((msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract && !msg.req_id))) {
-                    const firstKey = conn.pendingRequests.keys().next().value;
-                    if (firstKey) {
-                      const pending = conn.pendingRequests.get(firstKey);
-                      if (pending) {
-                        clearTimeout(pending.timeout);
-                        conn.pendingRequests.delete(firstKey);
-                        if (msg.error) {
-                          pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-                        } else {
-                          pending.resolve(msg);
-                        }
-                        return; // Handled
-                      }
-                    }
-                  }
-
-                  // Subscriptions (Proposal Open Contract, Ticks, etc)
-                  if (msg.proposal_open_contract) {
-                    const id = msg.proposal_open_contract.contract_id;
-                    if (conn.subscriptions.has(id)) {
-                      conn.subscriptions.get(id)(msg);
-                      return;
-                    }
-                    // Fallback for broadcasting if needed (Orion does strictly by ID usually)
-                    // But if we don't track by contract_id in subscription map, this might fail.
-                  }
-                  // Ticks
-                  if (msg.tick) {
-                    const id = msg.tick.id;
-                    if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
-                  }
-
-                } catch (e) {
-                  // JSON parse error or logic error
                 }
-              });
+              }
+
+              // 2. Lógica Falback (FIFO) igual Orion para Proposal/Buy
+              // Se não casou por ID (ou não tem ID), mas é uma resposta de trade esperada
+              if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+                // Pega a primeira requisição pendente (FIFO)
+                const firstKey = conn.pendingRequests.keys().next().value;
+                if (firstKey) {
+                  const pending = conn.pendingRequests.get(firstKey);
+                  if (pending) {
+                    clearTimeout(pending.timeout);
+                    conn.pendingRequests.delete(firstKey);
+                    if (msg.error) {
+                      pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                    } else {
+                      pending.resolve(msg);
+                    }
+                    return; // Handled
+                  }
+                }
+              }
+
+              // 3. Subscriptions (Proposal Open Contract, Ticks)
+              if (msg.proposal_open_contract) {
+                const id = msg.proposal_open_contract.contract_id;
+                if (conn.subscriptions.has(id)) {
+                  conn.subscriptions.get(id)(msg);
+                  return;
+                }
+              }
+              if (msg.tick) {
+                const id = msg.tick.id;
+                if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
+              }
+            }
+
+          } catch (e) {
+            // JSON parse error or logic error
+          }
+        });
 
         socket.on('error', (err) => {
           if (!authResolved) {
