@@ -619,29 +619,34 @@ export class ApolloStrategy implements IStrategy {
     });
   }
 
-  private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<{ contractId: string, profit: number, exitSpot: any } | null> {
+  private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<{ contractId: string, profit: number, exitSpot: any, entrySpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
     if (!conn) {
       this.saveLog(userId, 'erro', `❌ Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
       return null;
     }
 
-    const req: any = {
-      proposal: 1,
-      amount: params.amount,
-      basis: 'stake',
-      contract_type: params.contract_type, // CALL or PUT
-      currency: params.currency,
-      duration: 1,
-      duration_unit: 't',
-      symbol: this.users.get(userId)?.symbol || this.defaultSymbol
-    };
+    const symbol = this.users.get(userId)?.symbol || this.defaultSymbol;
 
     try {
-      // 1. Solicitar Proposta
+      // ✅ PASSO 1: Solicitar Proposta
+      const proposalStartTime = Date.now();
+      this.logger.debug(`[APOLLO] 📤Usuario [${userId}] Solicitando proposta | Tipo: ${params.contract_type} | Valor: $${params.amount}`);
+
+      const req: any = {
+        proposal: 1,
+        amount: params.amount,
+        basis: 'stake',
+        contract_type: params.contract_type,
+        currency: params.currency,
+        duration: 1,
+        duration_unit: 't',
+        symbol: symbol
+      };
+
       const propPromise = await conn.sendRequest(req);
 
-      // Validação de Erro na Proposta (Padrão Orion)
+      // ✅ Validação de Erro na Proposta (Padrão Orion)
       const errorObj = propPromise.error || propPromise.proposal?.error;
       if (errorObj) {
         const errorCode = errorObj?.code || '';
@@ -661,42 +666,103 @@ export class ApolloStrategy implements IStrategy {
       }
 
       const proposalId = propPromise.proposal?.id;
+      const proposalPrice = Number(propPromise.proposal?.ask_price);
+
       if (!proposalId) throw new Error('Proposta inválida (sem ID)');
 
-      // 2. Executar Compra
-      const buyReq = { buy: proposalId, price: propPromise.proposal.ask_price };
-      const buyPromise = await conn.sendRequest(buyReq);
+      const proposalDuration = Date.now() - proposalStartTime;
+      this.logger.debug(`[APOLLO] 📊 Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}`);
 
-      if (buyPromise.error) {
-        this.saveLog(userId, 'erro', `Erro na Compra: ${buyPromise.error.message}`);
+      // ✅ PASSO 2: Executar Compra
+      const buyStartTime = Date.now();
+      const buyReq = { buy: proposalId, price: proposalPrice };
+
+      let buyResponse: any;
+      try {
+        buyResponse = await conn.sendRequest(buyReq, 60000);
+      } catch (error: any) {
+        const errorMessage = error?.message || JSON.stringify(error);
+        this.saveLog(userId, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage}`);
         return null;
       }
 
-      const contractId = buyPromise.buy.contract_id;
-      this.saveLog(userId, 'info', `🚀 Ordem enviada! ID: ${contractId} | Aguardando resultado...`);
+      if (buyResponse.error || buyResponse.buy?.error) {
+        const buyError = buyResponse.error || buyResponse.buy?.error;
+        this.saveLog(userId, 'erro', `Erro na Compra: ${buyError.message || JSON.stringify(buyError)}`);
+        return null;
+      }
 
-      // 3. Monitorar Resultado (Timeout 60s)
+      const contractId = buyResponse.buy.contract_id;
+      const buyDuration = Date.now() - buyStartTime;
+
+      this.saveLog(userId, 'info', `🚀 Ordem enviada! ID: ${contractId} | Prop: ${proposalDuration}ms | Compra: ${buyDuration}ms | Aguardando resultado...`);
+
+      // ✅ PASSO 3: Monitorar Resultado (Timeout 90s) usando Subscription
+      const monitorStartTime = Date.now();
+
       return new Promise((resolve) => {
-        let resolved = false;
+        let hasResolved = false;
+        let contractMonitorTimeout: any | null = null;
 
-        const timeout = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
+        // Timeout de segurança
+        contractMonitorTimeout = setTimeout(() => {
+          if (!hasResolved) {
+            hasResolved = true;
             conn.removeSubscription(contractId);
-            this.saveLog(userId, 'erro', `⚠️ Timeout na execução (60s). Verifique conexão.`);
+            this.saveLog(userId, 'erro', `⚠️ Timeout monitoramento (90s). Verifique conexão.`);
             resolve(null);
           }
-        }, 60000);
+        }, 90000);
 
-        conn.subscribe({ proposal_open_contract: 1, contract_id: contractId }, (msg: any) => {
-          const c = msg.proposal_open_contract;
-          if (c.is_sold && !resolved) {
-            resolved = true;
-            clearTimeout(timeout);
-            conn.removeSubscription(contractId);
-            resolve({ profit: Number(c.profit), contractId: c.contract_id, exitSpot: c.exit_tick });
+        // Inscrever no contrato
+        conn.subscribe(
+          { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
+          (msg: any) => {
+            // Verificar erros
+            if (msg.error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout!);
+                conn.removeSubscription(contractId);
+                this.saveLog(userId, 'erro', `❌ Erro no monitoramento: ${msg.error.message}`);
+                resolve(null);
+              }
+              return;
+            }
+
+            const c = msg.proposal_open_contract;
+            if (!c) return;
+
+            if (c.is_sold) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout!);
+                conn.removeSubscription(contractId);
+
+                // Resultado Final
+                const profit = Number(c.profit);
+                const status = profit > 0 ? 'WIN' : 'LOSS';
+                // O log de resultado é feito pelo chamador通常, mas podemos logar debug aqui
+                this.logger.debug(`[APOLLO] Trade Finalizado: ${status} | Profit: ${profit}`);
+
+                resolve({
+                  profit: profit,
+                  contractId: c.contract_id,
+                  exitSpot: c.exit_tick,
+                  entrySpot: c.entry_tick
+                });
+              }
+            }
+          },
+          contractId
+        ).catch(e => {
+          if (!hasResolved) {
+            hasResolved = true;
+            clearTimeout(contractMonitorTimeout!);
+            this.saveLog(userId, 'erro', `❌ Falha ao inscrever no monitoramento: ${e.message}`);
+            resolve(null);
           }
-        }, contractId);
+        });
       });
 
     } catch (e: any) {
@@ -911,6 +977,9 @@ export class ApolloStrategy implements IStrategy {
   /**
    * ✅ Envia requisição via conexão existente
    */
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
   private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
     const conn = this.wsConnections.get(token);
     if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
@@ -918,9 +987,10 @@ export class ApolloStrategy implements IStrategy {
     }
 
     return new Promise((resolve, reject) => {
-      // Use simpler ID generation to avoid parsing issues if server echoes string vs number
-      const requestId = Date.now() + Math.random();
-      payload.req_id = requestId; // Inject req_id
+      // ✅ ORION Logic: Use string ID for internal tracking, but DO NOT inject into payload unless needed
+      // Deriv API does NOT require req_id in payload for most calls if we track via FIFO or other means.
+      // If we injected a float before, it caused "Input validation failed".
+      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
 
       const timeout = setTimeout(() => {
         conn.pendingRequests.delete(requestId);
@@ -979,13 +1049,10 @@ export class ApolloStrategy implements IStrategy {
           return;
         }
         // ✅ Se não for primeira mensagem, já deve estar usando callback original (mas por segurança chamamos)
-        callback(msg);
+        try { callback(msg); } catch (e) { }
       };
 
       conn.subscriptions.set(subId, wrappedCallback);
-
-      // Inject req_id to help routing if generic response comes back (optional but good practice)
-      // payload.req_id = ... 
       conn.ws.send(JSON.stringify(payload));
     });
   }
