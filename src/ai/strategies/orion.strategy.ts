@@ -151,8 +151,8 @@ function calcularApostaComSoros(
  * Conforme documentação completa da estratégia ZENIX v2.0
  * 
  * CONSERVADOR: Próxima Aposta = Perda Acumulada (apenas recuperar, sem lucro)
- * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.25) / payout (recuperar 100% das perdas + 25% de lucro)
- * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.50) / payout (recuperar 100% das perdas + 50% de lucro)
+ * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.15) / payout (recuperar 100% das perdas + 15% de lucro)
+ * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.30) / payout (recuperar 100% das perdas + 30% de lucro)
  * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
@@ -266,7 +266,7 @@ class RiskManager {
     }
 
     let nextStake = baseStake;
-    // Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (PA) ~ 95%
+    // Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (Rise/Fall) ~ 95%
     const PAYOUT_OVER3 = 0.63;
     const PAYOUT_PA = 0.95;
     const currentPayout = this.consecutiveLosses === 1 ? PAYOUT_OVER3 : PAYOUT_PA;
@@ -1054,7 +1054,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const consecutiveLosses = state.consecutive_losses || 0;
-      const defesaAtiva = consecutiveLosses >= 3;
+      const defesaAtiva = consecutiveLosses >= 4;
       if (state.isOperationActive) {
         // Log a cada 10s se estiver travado muito tempo
         const now = Date.now();
@@ -1230,7 +1230,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const consecutiveLosses = state.consecutive_losses || 0;
-      const defesaAtiva = consecutiveLosses >= 3;
+      const defesaAtiva = consecutiveLosses >= 4;
       if (state.isOperationActive) continue;
 
       // ✅ ORION v3.0: Recuperação Híbrida
@@ -1394,7 +1394,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const consecutiveLosses = state.consecutive_losses || 0;
-      const defesaAtiva = consecutiveLosses >= 3;
+      const defesaAtiva = consecutiveLosses >= 4;
       if (state.isOperationActive) continue;
 
       // ✅ CORREÇÃO MARTINGALE: Active Fallback apenas em M2+ (>= 2 Losses)
@@ -1488,7 +1488,7 @@ export class OrionStrategy implements IStrategy {
       }
 
       const consecutiveLosses = state.consecutive_losses || 0;
-      const defesaAtiva = consecutiveLosses >= 3;
+      const defesaAtiva = consecutiveLosses >= 4;
       if (state.isOperationActive) continue;
 
       // ✅ [ZENIX v2.0] Cooldown entre operações (Modo Lenta: 5 ticks)
@@ -3204,9 +3204,9 @@ export class OrionStrategy implements IStrategy {
       this.logger.warn(`[ORION][${mode}][${state.userId}] ❌ PERDA | Losses: ${consecutiveLossesAntes} -> ${consecutiveLossesAgora}`);
       this.saveOrionLog(state.userId, this.symbol, 'resultado', `📊 LOSSES CONSECUTIVAS: ${consecutiveLossesAntes} → ${consecutiveLossesAgora}`);
 
-      if (consecutiveLossesAgora >= 3) {
+      if (consecutiveLossesAgora >= 4) {
         this.logger.warn(`[ORION][${mode}][${state.userId}] 🚨 DEFESA AUTOMÁTICA ATIVADA | ${consecutiveLossesAgora} losses consecutivos.`);
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas.\n• Ação: Mudando análise para MODO DE RECUPERAÇÃO Dinâmico.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 DEFESA AUTOMÁTICA ATIVADA\n• Motivo: ${consecutiveLossesAgora} Perdas Consecutivas\n• Ação: Mudando para MODO LENTO`);
       }
 
       // ❌ PERDA: Resetar Soros
