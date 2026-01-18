@@ -281,6 +281,8 @@ export class ApolloStrategy implements IStrategy {
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
       }
+    } else {
+      reasons.push(`Modo desconhecido: ${state.mode}`);
     }
 
     if (validSignal) {
@@ -549,7 +551,7 @@ export class ApolloStrategy implements IStrategy {
   // --- INFRASTRUCTURE ---
 
   async activateUser(userId: string, config: any): Promise<void> {
-    const modeMap: any = { 'balanceado': 'normal', 'preciso': 'lento', 'veloz': 'veloz' };
+    const modeMap: any = { 'balanceado': 'normal', 'moderado': 'normal', 'preciso': 'lento', 'veloz': 'veloz' };
     let modeRaw = (config.mode || 'normal').toLowerCase();
     if (modeMap[modeRaw]) modeRaw = modeMap[modeRaw];
 
