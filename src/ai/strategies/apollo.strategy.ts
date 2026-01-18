@@ -130,8 +130,14 @@ export class ApolloStrategy implements IStrategy {
     const requiredTicks = state.mode === 'veloz' ? 3 : 5;
 
     if (state.ticksColetados < requiredTicks) {
-      // Only log if really early to avoid spam, but we need to wait.
-      // Since processTick pushes to global marketTicks, checking state.ticksColetados is strictly user session time.
+      // Log inicial detalhado (Estilo Atlas)
+      if (state.ticksColetados === 1) {
+        this.saveLog(state.userId, 'info',
+          `📊 [CONTAGEM APOLLO]\n` +
+          `• Modo: ${state.mode.toUpperCase()}\n` +
+          `• Status: Iniciando coleta...\n` +
+          `• Amostra Necessária: ${requiredTicks} ticks`);
+      }
       return;
     }
 
@@ -286,16 +292,21 @@ export class ApolloStrategy implements IStrategy {
     }
 
     if (validSignal) {
-      // Log Analysis
-      const filterStr = filters.join(', ');
-      this.saveLog(state.userId, 'sinal', `🎯 [SINAL] ${direction} Identificado | Força: ${strength}% | Filtros: ${filterStr}`);
+      // Log Analysis - Estilo Atlas
+      this.saveLog(state.userId, 'sinal',
+        `🎯 [SINAL APOLLO ${state.mode.toUpperCase()}]\n` +
+        `• Direção: ${direction}\n` +
+        `• Força: ${strength}%\n` +
+        `• Filtros: ${filters.join(', ')}`);
       return direction;
     } else {
-      // ✅ LOGAR TUDO (Exigência do usuário)
-      // Mesmo sem sinal, mostrar a análise feita e o motivo da recusa.
-      // Formato: [ANÁLISE] TICK: 1234.56 | DIR: CALL | DELTA: 0.12 (Min 0.3) | RESULT: RECUSADO
-      const arrow = direction === 'CALL' ? '🟢' : '🔴';
-      const logMsg = `${arrow} [ANÁLISE] ${state.mode.toUpperCase()} | Delta: ${absDelta.toFixed(3)} | Motivos: ${reasons.join(', ')}`;
+      // ✅ LOGAR TUDO (Estilo Atlas)
+      const logMsg =
+        `🔍 [ANÁLISE APOLLO ${state.mode.toUpperCase()}]\n` +
+        `• Variação (Window): ${absDelta.toFixed(3)}\n` +
+        `• Direção: ${direction}\n` +
+        `• Status: ⏳ AGUARDANDO\n` +
+        `• Motivos: ${reasons.join(', ')}`;
 
       // Salvar como 'info' para aparecer no front
       this.saveLog(state.userId, 'info', logMsg);
@@ -341,7 +352,11 @@ export class ApolloStrategy implements IStrategy {
     state.isOperationActive = true;
     state.lastEntryDirection = direction;
 
-    this.saveLog(state.userId, 'info', `🚀 [ENTRADA] ${direction} | Stake: $${stake.toFixed(2)}`);
+    this.saveLog(state.userId, 'operacao',
+      `🚀 [ENTRADA APOLLO]\n` +
+      `• Operação: ${direction}\n` +
+      `• Valor: $${stake.toFixed(2)}\n` +
+      `• Status: Ordem Enviada`);
 
     try {
       const tradeId = await this.createTradeRecord(state, direction, stake);
@@ -387,8 +402,11 @@ export class ApolloStrategy implements IStrategy {
     } catch (e) { console.error(e); }
 
     // --- LOG RESULT ---
-    const statusIcon = win ? '✅' : '📉';
-    this.saveLog(state.userId, 'resultado', `${statusIcon} [${win ? 'WIN' : 'LOSS'}] ${win ? '+' : ''}$${profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
+    this.saveLog(state.userId, win ? 'vitoria' : 'derrota',
+      `💰 [RESULTADO APOLLO]\n` +
+      `• Status: ${win ? 'VITORIA ✅' : 'DERROTA 📉'}\n` +
+      `• Lucro/Perda: ${win ? '+' : ''}$${profit.toFixed(2)}\n` +
+      `• Novo Saldo: $${state.capital.toFixed(2)}`);
 
     // --- UPDATE STATE ---
     // --- UPDATE STATE ---
@@ -406,11 +424,18 @@ export class ApolloStrategy implements IStrategy {
           // Ativar Nível 1
           state.sorosLevel = 1;
           const nextStake = state.apostaInicial + profit;
-          this.saveLog(state.userId, 'info', `🚀 [SOROS] Nível 1 Habilitado. Próxima Stake: $${nextStake.toFixed(2)}`);
+          this.saveLog(state.userId, 'info',
+            `🚀 [SOROS APOLLO]\n` +
+            `• Nível: 1 Habilitado\n` +
+            `• Lucro Anterior: $${profit.toFixed(2)}\n` +
+            `• Próxima Stake: $${nextStake.toFixed(2)}`);
         } else {
           // Completou Nível 1 -> Reset
           state.sorosLevel = 0;
-          this.saveLog(state.userId, 'info', `✅ [SOROS] Nível 1 Concluído! Retornando à stake base.`);
+          this.saveLog(state.userId, 'info',
+            `✅ [SOROS APOLLO]\n` +
+            `• Status: Nível 1 Concluído\n` +
+            `• Ação: Retornando à stake base`);
         }
       }
       state.totalLossAccumulated = 0;
@@ -491,7 +516,11 @@ export class ApolloStrategy implements IStrategy {
         state.stopBlindadoActive = true;
         state.peakProfit = profit;
         state.stopBlindadoFloor = profit * 0.50;
-        this.saveLog(state.userId, 'alerta', `🛡️ [BLINDADO] ATIVADO! Lucro: $${profit.toFixed(2)} | Piso Garantido: $${state.stopBlindadoFloor.toFixed(2)}`);
+        this.saveLog(state.userId, 'alerta',
+          `🛡️ [STOP BLINDADO]\n` +
+          `• Status: ATIVADO\n` +
+          `• Lucro Atual: $${profit.toFixed(2)}\n` +
+          `• Piso Garantido: $${state.stopBlindadoFloor.toFixed(2)}`);
         this.tradeEvents.emit({
           userId: state.userId,
           type: 'blindado_activated',
@@ -515,21 +544,33 @@ export class ApolloStrategy implements IStrategy {
 
     // 1. PROFIT TARGET
     if (profit >= state.profitTarget) {
-      this.saveLog(state.userId, 'resultado', `🏆 [META] Atingida! Lucro Total: $${profit.toFixed(2)}`);
+      this.saveLog(state.userId, 'resultado',
+        `🏆 [META APOLLO]\n` +
+        `• Status: ATINGIDA!\n` +
+        `• Lucro Total: $${profit.toFixed(2)}\n` +
+        `• Objetivo: $${state.profitTarget.toFixed(2)}`);
       this.handleStopInternal(state, 'profit', profit);
       return false;
     }
 
     // 2. STOP LOSS NORMAL
     if (profit <= -state.stopLoss) {
-      this.saveLog(state.userId, 'alerta', `🛑 [STOP LOSS] Limite de perda diária atingido.`);
+      this.saveLog(state.userId, 'alerta',
+        `🛑 [STOP LOSS]\n` +
+        `• Status: LIMITE ATINGIDO\n` +
+        `• Perda Atual: $${Math.abs(profit).toFixed(2)}\n` +
+        `• Limite Máximo: $${Math.abs(state.stopLoss).toFixed(2)}`);
       this.handleStopInternal(state, 'loss', profit);
       return false;
     }
 
     // 3. STOP BLINDADO
     if (state.stopBlindadoActive && profit <= state.stopBlindadoFloor) {
-      this.saveLog(state.userId, 'alerta', `🛑 [STOP BLINDADO] Lucro retornou ao piso de proteção.`);
+      this.saveLog(state.userId, 'alerta',
+        `🛡️ [STOP BLINDADO]\n` +
+        `• Status: ATINGIDO\n` +
+        `• Lucro Preservado: $${profit.toFixed(2)}\n` +
+        `• Ação: Proteção de capital`);
       this.handleStopInternal(state, 'blindado', state.stopBlindadoFloor);
       return false;
     }
