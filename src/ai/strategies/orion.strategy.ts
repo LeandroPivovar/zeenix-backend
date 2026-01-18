@@ -180,14 +180,12 @@ function calcularProximaAposta(
       aposta = perdasTotais / PAYOUT;
       break;
     case 'moderado':
-      // Meta: recuperar 100% das perdas + 10% de lucro ( conforme doc )
-      // Fórmula: entrada_próxima = (perdas_totais × 1.10) / payout
-      aposta = (perdasTotais * 1.10) / PAYOUT;
+      // Meta: recuperar 100% das perdas + 15% de lucro
+      aposta = (perdasTotais * 1.15) / PAYOUT;
       break;
     case 'agressivo':
-      // Meta: recuperar 100% das perdas + 20% de lucro ( conforme doc )
-      // Fórmula: entrada_próxima = (perdas_totais × 1.20) / payout
-      aposta = (perdasTotais * 1.20) / PAYOUT;
+      // Meta: recuperar 100% das perdas + 30% de lucro
+      aposta = (perdasTotais * 1.30) / PAYOUT;
       break;
   }
 
@@ -272,18 +270,22 @@ class RiskManager {
 
     // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
     if (this.consecutiveLosses > 0) {
+      // ✅ [ZENIX v3.0] Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (PA) ~ 95%
+      const PAYOUT_OVER3 = 0.63;
+      const PAYOUT_PA = 0.95;
+      const currentPayout = this.consecutiveLosses === 1 ? PAYOUT_OVER3 : PAYOUT_PA;
+
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
-          // CONSERVADOR: Recuperar apenas o valor da última perda (Break-even)
-          // Fórmula conforme pedido: nextStake = totalLossAccumulated / 0.92
-          nextStake = this.totalLossAccumulated / 0.92;
+          // Meta: recuperar apenas o valor da perda (break-even)
+          nextStake = this.totalLossAccumulated / currentPayout;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)}`);
+            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
           }
           if (saveLog) {
-            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`);
+            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta
@@ -297,28 +299,28 @@ class RiskManager {
           nextStake = baseStake;
         }
       }
-      // 2. MODERADO: Infinito + 25% de Lucro sobre a perda
+      // 2. MODERADO: Infinito + 15% de Lucro sobre a perda
       else if (this.riskMode === 'MODERADO') {
-        const targetRecovery = this.totalLossAccumulated * 1.25; // Recupera + 25%
-        nextStake = targetRecovery / PAYOUT_RATE;
+        const targetRecovery = this.totalLossAccumulated * 1.15; // Recupera + 15%
+        nextStake = targetRecovery / currentPayout;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 25%: $${nextStake.toFixed(2)}`);
+          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
         }
         if (saveLog) {
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: MODERADO (+25%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)}`);
         }
       }
-      // 3. AGRESSIVO: Infinito + 50% de Lucro sobre a perda
+      // 3. AGRESSIVO: Infinito + 30% de Lucro sobre a perda
       else if (this.riskMode === 'AGRESSIVO') {
-        const targetRecovery = this.totalLossAccumulated * 1.50; // Recupera + 50%
-        nextStake = targetRecovery / PAYOUT_RATE;
+        const targetRecovery = this.totalLossAccumulated * 1.30; // Recupera + 30%
+        nextStake = targetRecovery / currentPayout;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 50%: $${nextStake.toFixed(2)}`);
+          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
         }
         if (saveLog) {
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA\n• PERDA ACUMULADA: $${this.totalLossAccumulated.toFixed(2)}\n• MODO ATUAL: AGRESSIVO (+50%)\n• PRÓXIMA APOSTA: $${nextStake.toFixed(2)}`);
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)}`);
         }
       }
     }
@@ -743,11 +745,12 @@ export class OrionStrategy implements IStrategy {
 
     // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
     // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
-    // ✅ CORREÇÃO: Se >= 4 Losses, usar Lógica de Dígitos do Modo Lenta (Over 3)
-    // Se 1-3 Losses, usar Price Action (Active Fallback)
+    // ✅ CORREÇÃO: M1 (1 Loss) ainda é Over 3. Defesa PA apenas em M2+ (>= 2 Losses)
+    if (consecutiveLosses === 1) {
+      return 'DIGITOVER';
+    }
 
-    // Se 1-3 Losses (Defesa Leve / Active Fallback), usar Momentum + Força
-    if ((phase === 'DEFESA' || consecutiveLosses > 0) && consecutiveLosses < 4) {
+    if ((phase === 'DEFESA' || consecutiveLosses > 1) && consecutiveLosses < 4) {
       // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
       if (currentMode === 'veloz') {
         // Veloz: 2 ticks + delta 0.3
@@ -1393,8 +1396,9 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 3;
       if (state.isOperationActive) continue;
 
-      // ✅ CORREÇÃO MARTINGALE: Active Fallback usando Momentum + Delta (PRECISO: 3 Ticks + Delta 0.5)
-      if (state.perdaAcumulada > 0 && !defesaAtiva) {
+      // ✅ CORREÇÃO MARTINGALE: Active Fallback apenas em M2+ (>= 2 Losses)
+      // M1 (1 Loss) continua no check_signal (que retorna DIGITOVER)
+      if (state.perdaAcumulada > 0 && consecutiveLosses > 1 && !defesaAtiva) {
         // Usar lógica "Momentum + Delta" também para Preciso
         const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
 
@@ -1405,8 +1409,8 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Rápida (Martingale) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
+        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Fallback (M${entryNumber}) | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Fallback. Momentum + Delta (${novoSinal})`);
 
         await this.executeOrionOperation(state, novoSinal, 'preciso', entryNumber);
         continue;
@@ -1499,9 +1503,9 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
-      // ✅ CORREÇÃO MARTINGALE: Se há perda acumulada, continuar com martingale IMEDIATAMENTE (Active Fallback)
-      // ⚠️ FIX: Não ativar fallback se estiver em MODO DE DEFESA (3+ losses) para respeitar o tempo do filtro LENTO
-      if (state.perdaAcumulada > 0 && !defesaAtiva) {
+      // ✅ CORREÇÃO MARTINGALE: Active Fallback apenas em M2+ (>= 2 Losses)
+      // M1 (1 Loss) continua no check_signal (que retorna DIGITOVER)
+      if (state.perdaAcumulada > 0 && consecutiveLosses > 1 && !defesaAtiva) {
         // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (LENTA: 3 Ticks + Delta 0.5)
         const pullbackSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'LENTA');
 
@@ -1519,8 +1523,8 @@ export class OrionStrategy implements IStrategy {
         const entryNumber = (state.martingaleStep || 0) + 1;
         state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Rápida (Dinâmica) | Entrada: ${entryNumber} | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Rápida. Momentum + Delta (${novoSinal})`);
+        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Fallback (M${entryNumber}) | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Fallback. Momentum + Delta (${novoSinal})`);
 
         // Atualiza timestamp também na recuperação
         state.lastOperationTimestamp = Date.now();
@@ -1979,7 +1983,10 @@ export class OrionStrategy implements IStrategy {
         stakeAmount = baseStake;
         forcedStake = baseStake; // ✅ FORÇAR que este valor seja respeitado mesmo com RiskManager
       } else {
-        stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, payoutCliente, baseStake);
+        const PAYOUT_OVER3 = 0.63;
+        const PAYOUT_PA = 0.95;
+        const currentPayout = entry === 2 ? PAYOUT_OVER3 : PAYOUT_PA;
+        stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, currentPayout, baseStake);
       }
 
       // ✅ Arredondar para 2 casas decimais (requisito da Deriv)
