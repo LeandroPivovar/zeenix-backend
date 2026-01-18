@@ -95,12 +95,11 @@ export const ATLAS_VELOZ_CONFIG: ModeConfig = {
   betPercent: 0.005,
 };
 
-// Modo NORMAL: 5.000 ops/dia (~208 ops/minuto), intervalo 2.9s, máximo 1 derrota virtual
-// DOCUMENTAÇÃO: Verifica últimos 5 dígitos. Se ratio > 0.8 (4 ou 5 > 3), aguarda.
+// Modo NORMAL: Gatilho de 3 dígitos perdedores (<= 2)
 export const ATLAS_NORMAL_CONFIG: ModeConfig = {
-  amostraInicial: 5, // Analisa últimos 5 dígitos
-  intervaloSegundos: 2.9, // Uma operação a cada ~2.9 segundos
-  desequilibrioMin: 0.6, // Gatilho: 3/5 > 2
+  amostraInicial: 3, // Analisa últimos 3 dígitos
+  intervaloSegundos: 2.9,
+  desequilibrioMin: 1.0, // Gatilho: 3/3 <= 2
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
   payout: 0.40,
@@ -108,12 +107,11 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
   betPercent: 0.0075,
 };
 
-// Modo LENTO: 8.000 ops/dia (~333 ops/minuto), intervalo 1.8s, máximo 2 derrotas virtuais
-// DOCUMENTAÇÃO: Verifica últimos 10 dígitos. Se ratio > 0.7, aguarda.
+// Modo LENTO: Gatilho de 5 dígitos perdedores (<= 2)
 export const ATLAS_LENTO_CONFIG: ModeConfig = {
-  amostraInicial: 10, // Analisa últimos 10 dígitos
-  intervaloSegundos: 1.8, // Uma operação a cada ~1.8 segundos
-  desequilibrioMin: 0.8, // Gatilho: 8/10 > 2
+  amostraInicial: 5, // Analisa últimos 5 dígitos
+  intervaloSegundos: 1.8,
+  desequilibrioMin: 1.0, // Gatilho: 5/5 <= 2
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
   payout: 0.40,

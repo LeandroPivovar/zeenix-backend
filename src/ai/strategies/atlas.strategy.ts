@@ -19,16 +19,16 @@ function calcularProximaApostaAtlas(
 
   switch (modo) {
     case 'conservador':
-      // Recupera 100% da perda + alguns centavos (5% de lucro)
-      aposta = (perdasTotais * 1.05) / payout;
+      // Recupera 100% da perda (Zero a Zero)
+      aposta = perdasTotais / payout;
       break;
     case 'moderado':
       // Recupera 100% da perda + 15% de lucro
       aposta = (perdasTotais * 1.15) / payout;
       break;
     case 'agressivo':
-      // Recupera 100% da perda + 15% de lucro
-      aposta = (perdasTotais * 1.15) / payout;
+      // Recupera 100% da perda + 30% de lucro
+      aposta = (perdasTotais * 1.30) / payout;
       break;
   }
 
@@ -355,25 +355,33 @@ export class AtlasStrategy implements IStrategy {
       return;
     }
 
-    // ✅ ATLAS: Lógica de Recuperação (Price Action - Rise/Fall)
+    // ✅ [ZENIX v3.0] Lógica de Recuperação: M1 em Digits, M2+ em Price Action
     if (state.isInRecovery) {
-      // Tentar obter sinal de Price Action para recuperação
-      const recoverySignal = this.getRecoverySignal(state, symbol);
+      if (state.martingaleStep >= 2) {
+        // Tentar obter sinal de Price Action para recuperação (M2+)
+        const recoverySignal = this.getRecoverySignal(state, symbol);
 
-      if (recoverySignal) {
-        // Se encontrou sinal de recuperação, entra com a stake de recuperação
-        const signalOp = recoverySignal === 'CALL' ? 'CALL' : 'PUT';
-        const typeLabel = recoverySignal === 'CALL' ? 'Rise' : 'Fall';
-        await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()}: ${recoverySignal} (${typeLabel})`);
-      } else {
-        // Se não encontrou sinal, aguarda e loga (mas com moderação)
-        const key = `${symbol}_${state.userId}_waiting_recovery`;
-        if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
-          // this.saveAtlasLog(state.userId, symbol, 'info', `🛡️ Buscando oportunidade de recuperação (${state.mode})...`);
-          this.intervaloLogsEnviados.set(key, true);
+        if (recoverySignal) {
+          // Se encontrou sinal de recuperação, entra com a stake de recuperação
+          const signalOp = recoverySignal === 'CALL' ? 'CALL' : 'PUT';
+          const typeLabel = recoverySignal === 'CALL' ? 'Rise' : 'Fall';
+          await this.executeAtlasOperation(state, symbol, signalOp, `🔄 Recuperação ${state.mode.toUpperCase()} (M${state.martingaleStep}): ${recoverySignal} (${typeLabel})`);
+        } else {
+          // Se não encontrou sinal, aguarda e loga (mas com moderação)
+          const key = `${symbol}_${state.userId}_waiting_recovery`;
+          if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 10 === 0) {
+            this.intervaloLogsEnviados.set(key, true);
+          }
         }
+        return;
+      } else {
+        // M1 ainda opera em Digits (Digit Over 2)
+        const { canTrade, analysis } = this.checkAtlasTriggers(state, modeConfig);
+        if (canTrade) {
+          await this.executeAtlasOperation(state, symbol, 'OVER', analysis);
+        }
+        return;
       }
-      return;
     }
 
     // ✅ ATLAS: Se for SOROS, usa a lógica de entrada normal (Gatilhos)
@@ -450,44 +458,40 @@ export class AtlasStrategy implements IStrategy {
       }
     }
 
-    // ✅ 2. MODO NORMAL: 3 dos últimos 5 > 2
+    // ✅ 2. MODO NORMAL: 3 dígitos consecutivos <= 2 (Lógica de Exaustão V3.0)
     if (normalizedMode === 'normal') {
-      const window = state.digitBuffer.slice(-5);
-      const countOver2 = window.filter(d => d > 2).length;
-      if (countOver2 >= 3) {
-        const strength = (countOver2 / 5) * 100;
-        analysis += `✅ FILTRO: Densidade Alta (${countOver2}/5 > 2)\n`;
-        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
-        analysis += `💪 FORÇA DO SINAL: ${strength.toFixed(0)}%\n`;
+      const window = state.digitBuffer.slice(-3);
+      const allUnderOrEqual2 = window.length === 3 && window.every(d => d <= 2);
+
+      if (allUnderOrEqual2) {
+        analysis += `✅ GATILHO: 3 dígitos consecutively <= 2 (Exaustão)\n`;
+        analysis += `✅ PADRÃO: Reversão Esperada Confirmada\n`;
+        analysis += `💪 FORÇA DO SINAL: 72%\n`;
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ FILTRO: Densidade Baixa (${countOver2}/5 > 2)\n`;
-        analysis += `⏳ AGUARDANDO: Fluxo de Atividade Majoritária...`;
+        const countUnder = window.filter(d => d <= 2).length;
+        analysis += `❌ FILTRO: Aguardando Sequência (${countUnder}/3 <= 2)\n`;
+        analysis += `⏳ STATUS: Monitorando Exaustão...`;
         return { canTrade: false, analysis };
       }
     }
 
-    // ✅ 3. MODO LENTO: 8 dos últimos 10 > 2
+    // ✅ 3. MODO LENTO: 5 dígitos consecutivos <= 2 (Lógica de Exaustão V3.0)
     if (normalizedMode === 'lento') {
-      const window = state.digitBuffer.slice(-10);
-      const countOver2 = window.filter(d => d > 2).length;
-      // Requisito extra do Python: lastDigit > 2 também
-      if (countOver2 >= 8 && lastDigit > 2) {
-        const strength = (countOver2 / 10) * 100;
-        analysis += `✅ FILTRO: Dominância Absoluta (${countOver2}/10 > 2)\n`;
-        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
-        analysis += `💪 FORÇA DO SINAL: ${strength.toFixed(0)}%\n`;
+      const window = state.digitBuffer.slice(-5);
+      const allUnderOrEqual2 = window.length === 5 && window.every(d => d <= 2);
+
+      if (allUnderOrEqual2) {
+        analysis += `✅ GATILHO: 5 dígitos consecutively <= 2 (Exaustão Extrema)\n`;
+        analysis += `✅ PADRÃO: Reversão Sniper Confirmada\n`;
+        analysis += `💪 FORÇA DO SINAL: 85%\n`;
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        if (lastDigit <= 2) {
-          analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
-        }
-        if (countOver2 < 8) {
-          analysis += `❌ FILTRO: Dominância Insuficiente (${countOver2}/10 > 2)\n`;
-        }
-        analysis += `⏳ AGUARDANDO: Confirmação de Tendência Sólida...`;
+        const countUnder = window.filter(d => d <= 2).length;
+        analysis += `❌ FILTRO: Aguardando Sequência (${countUnder}/5 <= 2)\n`;
+        analysis += `⏳ STATUS: Monitorando Estabilidade...`;
         return { canTrade: false, analysis };
       }
     }
@@ -503,7 +507,7 @@ export class AtlasStrategy implements IStrategy {
    */
   private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ10V'): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
-    if (ticks.length < 2) return null;
+    if (ticks.length < 3) return null;
 
     const modeLower = (state.mode || 'veloz').toLowerCase();
     const normalizedMode = modeLower === 'moderado' ? 'normal' :
@@ -511,16 +515,23 @@ export class AtlasStrategy implements IStrategy {
 
     const t0 = ticks[ticks.length - 1]; // Atual
     const t1 = ticks[ticks.length - 2]; // Anterior
+    const t2 = ticks[ticks.length - 3]; // Penúltimo
 
-    const diff = t0.value - t1.value;
-    const absDiff = Math.abs(diff);
-    const direction = diff > 0 ? 'CALL' : (diff < 0 ? 'PUT' : null);
+    const move1 = t0.value - t1.value;
+    const move2 = t1.value - t2.value;
 
-    if (!direction) return null;
+    const isConsecutiveUp = move1 > 0 && move2 > 0;
+    const isConsecutiveDown = move1 < 0 && move2 < 0;
+
+    if (!isConsecutiveUp && !isConsecutiveDown) return null;
+
+    const direction = isConsecutiveUp ? 'CALL' : 'PUT';
+    const absDiff = Math.abs(move1); // Delta do último movimento (conforme padrão)
+
 
     // ✅ [ZENIX v3.3] Filtro Progressivo Simplificado
-    // VELOZ: Sem delta | NORMAL: 0.3 | LENTO: 0.5
-    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.3 : 1.0);
+    // VELOZ: Sem delta | NORMAL: 0.3 | LENTO: 0.7
+    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.3 : 0.7);
 
     if (absDiff >= threshold) {
       return direction;
@@ -748,8 +759,9 @@ export class AtlasStrategy implements IStrategy {
       // Martingale ou Soros
       if (state.isInRecovery && state.martingaleStep > 0) {
         // ✅ [ZENIX v3.2] Payout dinâmico para Martingale: 0.95 para Price Action (CALL/PUT), ou modeConfig.payout (~0.40)
-        const isPriceAction = operation === 'CALL' || operation === 'PUT';
-        const payout = isPriceAction ? 0.95 : modeConfig.payout;
+        // [V3.0] Rise/Fall apenas no M2+
+        const isPriceAction = (operation === 'CALL' || operation === 'PUT') && state.martingaleStep >= 2;
+        const payout = isPriceAction ? 0.95 : 0.40; // 0.40 para Digit Over 2 (M0, M1)
 
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
