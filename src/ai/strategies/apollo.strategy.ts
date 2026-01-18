@@ -125,31 +125,31 @@ export class ApolloStrategy implements IStrategy {
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[]) {
     // 0. INITIAL COUNTDOWN
-    // Apollo needs 5 ticks (SMA 5 / Lento Analysis) to start.
-    // Since 'ticks' passed here already has length >= 5 (checked in processTick),
-    // this specific check might seem redundant for the logic, but useful for user feedback if we consider "ticksColetados" as the user's personal wait time.
-    // However, since we use shared marketTicks, the strategy is "ready" as soon as market has ticks.
-    // Let's log the first few ticks for the user to see activity.
-    if (state.ticksColetados <= 5) {
-      this.saveLog(state.userId, 'info', `📊 [SISTEMA] Coletando dados de mercado: ${state.ticksColetados}/5`);
-      return; // ✅ Fix: Block execution until warm-up is complete
+    // Apollo needs 5 ticks (SMA 5 / Lento Analysis) to start generally, 
+    // BUT for VELOZ we only need 3 ticks.
+    const requiredTicks = state.mode === 'veloz' ? 3 : 5;
+
+    if (state.ticksColetados < requiredTicks) {
+      // Only log if really early to avoid spam, but we need to wait.
+      // Since processTick pushes to global marketTicks, checking state.ticksColetados is strictly user session time.
+      return;
     }
 
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
-    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 4 losses)
-    if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
+    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 3 losses)
+    if (state.consecutiveLosses >= 3 && state.mode !== 'lento') {
       if (!state.defenseMode) {
         state.defenseMode = true;
         state.mode = 'lento';
-        this.saveLog(state.userId, 'alerta', `🚨 [DEFESA] 4 Perdas Consecutivas. Ativando Modo LENTO (Sniper).`);
+        this.saveLog(state.userId, 'alerta', `🚨 [DEFESA] 3 Perdas Consecutivas. Ativando Modo LENTO (Sniper).`);
       }
     } else if (state.lastResultWin && state.mode === 'lento' && state.defenseMode) {
       // Return to NORMAL after 1 win in Lento (Recovery complete)
       state.defenseMode = false;
-      state.mode = 'normal'; // Always return to NORMAL, never directly to VELOZ
-      this.saveLog(state.userId, 'info', `✅ [RECUPERAÇÃO] Vitória no modo LENTO. Voltando ao modo NORMAL.`);
+      state.mode = state.originalMode === 'lento' ? 'normal' : state.originalMode;
+      this.saveLog(state.userId, 'info', `✅ [RECUPERAÇÃO] Vitória no modo LENTO. Voltando ao modo ${state.mode.toUpperCase()}.`);
     }
 
     // 3. ANALYZE SIGNAL
@@ -161,8 +161,9 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private analyzeSignal(state: ApolloUserState, prices: number[]): 'CALL' | 'PUT' | null {
-    // Need at least 5 ticks for LENTO analysis
-    if (prices.length < 5) return null;
+    // Need at least X ticks based on mode
+    const requiredTicks = state.mode === 'veloz' ? 3 : 5;
+    if (prices.length < requiredTicks) return null;
 
     const currentPrice = prices[prices.length - 1];
     const lastPrice = prices[prices.length - 2];
@@ -195,8 +196,8 @@ export class ApolloStrategy implements IStrategy {
     let validSignal = false;
 
     if (state.mode === 'veloz') {
-      // VELOZ: 3 Ticks (~3s), Delta >= 0.1
-      const MIN_DELTA = 0.1;
+      // VELOZ: 3 Ticks (~3s), Delta >= 0.3
+      const MIN_DELTA = 0.3;
       if (absDelta >= MIN_DELTA) {
         validSignal = true;
         strength = 60;
@@ -232,12 +233,14 @@ export class ApolloStrategy implements IStrategy {
       }
     }
     else if (state.mode === 'lento') {
-      // LENTO: 5 Ticks (~5s), Delta >= 1.0, Strong Trend (>= 3 of 4 moves same direction)
+      // LENTO: 5 Ticks (~5s), Delta >= 1.0 (Adjusted for R_25/R_100 Reality), SMA 5 Filter
       const MIN_DELTA = 1.0;
 
+      // SMA 5 Filter (Only buy if price is on the correct side of SMA)
+      const sma5 = prices.slice(-5).reduce((a, b) => a + b, 0) / 5;
+      const isSmaTrend = direction === 'CALL' ? currentPrice > sma5 : currentPrice < sma5;
+
       // Analyze last 4 moves (5 prices)
-      // P5->P4, P4->P3, P3->P2, P2->P1(Current)
-      // Prices index: length-5 (start), ..., length-1 (current)
       let upMoves = 0;
       let downMoves = 0;
       for (let i = prices.length - 1; i > prices.length - 5; i--) {
@@ -250,10 +253,15 @@ export class ApolloStrategy implements IStrategy {
 
       if (absDelta >= MIN_DELTA) {
         if (isStrongTrend) {
-          validSignal = true;
-          strength = 90;
-          filters.push(`Força Alta (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
-          filters.push(`Tendência Forte (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
+          if (isSmaTrend) {
+            validSignal = true;
+            strength = 90;
+            filters.push(`Força Alta (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
+            filters.push(`Tendência Forte (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
+            filters.push(`Acima/Abaixo SMA 5`);
+          } else {
+            reasons.push(`Filtro SMA 5 (${currentPrice.toFixed(2)} ${direction === 'CALL' ? '<' : '>'} SMA ${sma5.toFixed(2)})`);
+          }
         } else {
           reasons.push(`Tendência Fraca (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
         }
@@ -284,6 +292,9 @@ export class ApolloStrategy implements IStrategy {
   private async executeTrade(state: ApolloUserState, direction: 'CALL' | 'PUT') {
     // 1. CALCULATE STAKE
     let stake = this.calculateStake(state);
+
+    // Safety: Minimum Deriv Stake
+    stake = Math.max(0.35, stake);
 
     // 2. ADJUST FOR STOPS
     // Check remaining to stop loss / blindado
@@ -344,7 +355,6 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private async processResult(state: ApolloUserState, result: { profit: number, exitSpot: any, contractId: string }, stakeUsed: number, tradeId: number) {
-    state.isOperationActive = false;
     const profit = result.profit;
     const win = profit > 0;
 
@@ -408,6 +418,8 @@ export class ApolloStrategy implements IStrategy {
 
     // --- CHECK STOPS (Post-Trade) ---
     this.checkStops(state);
+
+    state.isOperationActive = false; // ✅ Moved to end to prevent race conditions
   }
 
   // --- LOGIC HELPERS ---
@@ -416,12 +428,14 @@ export class ApolloStrategy implements IStrategy {
     if (state.consecutiveLosses > 0) {
       // Martingale Inteligente
       // Conservador: 1.0 (Reset após 5) | Moderado: 1.15 | Agressivo: 1.30
+      // --- MARTINGALE MULTIPLIERS ---
       let multiplier = 1.0;
       const profile = state.riskProfile;
 
-      if (profile === 'agressivo') multiplier = 1.30;
-      else if (profile === 'moderado') multiplier = 1.15;
+      if (profile === 'agressivo') multiplier = 1.4;
+      else if (profile === 'moderado') multiplier = 1.2;
       else multiplier = 1.0; // Conservador (Recuperação sem lucro extra)
+
       // Conservador Reset logic
       if (profile === 'conservador' && state.consecutiveLosses > 5) {
         this.saveLog(state.userId, 'alerta', `♻️ [CONSERVADOR] Limite de recuperação atingido. Resetando stake.`);
@@ -431,19 +445,19 @@ export class ApolloStrategy implements IStrategy {
       }
 
       // Exact Formula: Stake = (Perda Acumulada * Multiplier) / 0.92
-      const PAYOUT_RATE = 0.92; // 92% Payout roughly
+      const PAYOUT_RATE = 0.92; // 92% Payout (Official Payout)
 
       // Calculate
-      // If totalLossAccumulated is 0 (shouldn't be if consecutiveLosses > 0), use base * multiplier fallback or just base?
-      // On first loss, totalLossAccumulated = stake.
       const lossToRecover = state.totalLossAccumulated || state.apostaInicial;
 
       const neededStake = (lossToRecover * multiplier) / PAYOUT_RATE;
       return Number(neededStake.toFixed(2));
     } else {
       // Soros Logic: Respect level
-      if (state.sorosLevel === 1) {
-        return Number((state.apostaInicial + state.lastProfit).toFixed(2));
+      // Critical Fix: Ensure last profit was positive and real to avoid negative stakes
+      if (state.sorosLevel === 1 && state.lastResultWin && state.lastProfit > 0) {
+        const nextStake = state.apostaInicial + state.lastProfit;
+        return Number(nextStake.toFixed(2));
       }
       return state.apostaInicial;
     }
