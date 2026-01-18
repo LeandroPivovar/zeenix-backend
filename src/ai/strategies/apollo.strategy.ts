@@ -445,8 +445,8 @@ export class ApolloStrategy implements IStrategy {
       let multiplier = 1.0;
       const profile = state.riskProfile;
 
-      if (profile === 'agressivo') multiplier = 1.4;
-      else if (profile === 'moderado') multiplier = 1.2;
+      if (profile === 'agressivo') multiplier = 1.5;
+      else if (profile === 'moderado') multiplier = 1.25;
       else multiplier = 1.0; // Conservador (Recuperação sem lucro extra)
 
       // Conservador Reset logic
