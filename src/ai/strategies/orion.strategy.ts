@@ -747,10 +747,6 @@ export class OrionStrategy implements IStrategy {
     // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
     // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
     // ✅ CORREÇÃO: M1 (1 Loss) ainda é Over 3. Defesa PA apenas em M2+ (>= 2 Losses)
-    if (consecutiveLosses === 1) {
-      return 'DIGITOVER';
-    }
-
     if ((phase === 'DEFESA' || consecutiveLosses > 1) && consecutiveLosses < 4) {
       // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
       if (currentMode === 'veloz') {
@@ -1397,24 +1393,36 @@ export class OrionStrategy implements IStrategy {
       const defesaAtiva = consecutiveLosses >= 4;
       if (state.isOperationActive) continue;
 
-      // ✅ CORREÇÃO MARTINGALE: Active Fallback apenas em M2+ (>= 2 Losses)
-      // M1 (1 Loss) continua no check_signal (que retorna DIGITOVER)
-      if (state.perdaAcumulada > 0 && consecutiveLosses > 1 && !defesaAtiva) {
-        // Usar lógica "Momentum + Delta" também para Preciso
-        const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
-
-        if (!momentumSignal) continue;
-
-        const novoSinal = momentumSignal;
-
+      // ✅ ORION v3.0: Recuperação Híbrida (Modo PRECISO)
+      if (state.perdaAcumulada > 0) {
         const entryNumber = (state.martingaleStep || 0) + 1;
-        state.ultimaDirecaoMartingale = novoSinal;
 
-        this.logger.log(`[ORION][Preciso][${userId}] 🔄 Recuperação Fallback (M${entryNumber}) | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Fallback. Momentum + Delta (${novoSinal})`);
+        // M1: Continua em Over 3 (Usa check_signal com filtro de 5 dígitos)
+        if (consecutiveLosses === 1) {
+          const riskManager = this.riskManagers.get(userId);
+          const sinal = this.check_signal(state, 'preciso', riskManager);
+          if (!sinal) continue;
 
-        await this.executeOrionOperation(state, novoSinal, 'preciso', entryNumber);
-        continue;
+          state.ultimaDirecaoMartingale = sinal;
+          this.logger.log(`[ORION][Preciso][${userId}] 🔄 M1 - Continuando em Over 3 | Entrada: ${entryNumber} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M1 - Continuando em Over 3 (mesmo contrato)`);
+
+          await this.executeOrionOperation(state, sinal, 'preciso', entryNumber);
+          continue;
+        }
+
+        // M2+: Rise/Fall PRECISO (3 ticks + delta 0.5)
+        if (consecutiveLosses >= 2) {
+          const momentumSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
+          if (!momentumSignal) continue;
+
+          state.ultimaDirecaoMartingale = momentumSignal;
+          this.logger.log(`[ORION][Preciso][${userId}] 🔄 M${entryNumber} - Rise/Fall PRECISO | Direção: ${momentumSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall PRECISO (Momentum + Delta) (${momentumSignal})`);
+
+          await this.executeOrionOperation(state, momentumSignal, 'preciso', entryNumber);
+          continue;
+        }
       }
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
@@ -1504,33 +1512,49 @@ export class OrionStrategy implements IStrategy {
         continue;
       }
 
-      // ✅ CORREÇÃO MARTINGALE: Active Fallback apenas em M2+ (>= 2 Losses)
-      // M1 (1 Loss) continua no check_signal (que retorna DIGITOVER)
-      if (state.perdaAcumulada > 0 && consecutiveLosses > 1 && !defesaAtiva) {
-        // ✅ [ZENIX v2.0] Active Fallback: Usar Momentum + Delta (LENTA: 3 Ticks + Delta 0.5)
-        const pullbackSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'LENTA');
+      // ✅ ORION v3.0: Recuperação Híbrida (Modo LENTA)
+      if (state.perdaAcumulada > 0) {
+        const entryNumber = (state.martingaleStep || 0) + 1;
 
-        if (!pullbackSignal) {
-          // Aguardando confirmação do Momentum...
-          const now = Date.now();
-          if (now - (state.lastRecoveryLog || 0) > 4000) {
-            state.lastRecoveryLog = now;
-            this.logger.debug(`[ORION][Lenta] ⏳ Aguardando Momentum (3 Ticks) + Delta >= 0.5...`);
-          }
+        // M1: Continua em Over 3 (Usa check_signal com filtro de 5 dígitos)
+        if (consecutiveLosses === 1) {
+          const riskManager = this.riskManagers.get(userId);
+          const sinal = this.check_signal(state, 'lenta', riskManager);
+          if (!sinal) continue;
+
+          state.ultimaDirecaoMartingale = sinal;
+          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M1 - Continuando em Over 3 | Entrada: ${entryNumber} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M1 - Continuando em Over 3 (mesmo contrato)`);
+
+          await this.executeOrionOperation(state, sinal, 'lenta', entryNumber);
           continue;
         }
 
-        const novoSinal = pullbackSignal;
-        const entryNumber = (state.martingaleStep || 0) + 1;
-        state.ultimaDirecaoMartingale = novoSinal;
+        // M2-M3: Rise/Fall NORMAL (3 ticks + delta 0.5)
+        if (consecutiveLosses >= 2 && !defesaAtiva) {
+          const pullbackSignal = this.checkMomentumAndStrength(state, 3, 0.5, 'MODERADO');
+          if (!pullbackSignal) continue;
 
-        this.logger.log(`[ORION][Lenta][${userId}] 🔄 Recuperação Fallback (M${entryNumber}) | Direção: ${novoSinal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-        this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 Recuperação Fallback. Momentum + Delta (${novoSinal})`);
+          state.ultimaDirecaoMartingale = pullbackSignal;
+          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${entryNumber} - Rise/Fall NORMAL | Direção: ${pullbackSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall NORMAL (3 Movimentos) (${pullbackSignal})`);
 
-        // Atualiza timestamp também na recuperação
-        state.lastOperationTimestamp = Date.now();
-        await this.executeOrionOperation(state, novoSinal, 'lenta', entryNumber);
-        continue;
+          await this.executeOrionOperation(state, pullbackSignal, 'lenta', entryNumber);
+          continue;
+        }
+
+        // M4+: Rise/Fall LENTO (2 ticks + delta 0.7)
+        if (defesaAtiva) {
+          const lentoSignal = this.checkMomentumAndStrength(state, 2, 0.7, 'LENTA');
+          if (!lentoSignal) continue;
+
+          state.ultimaDirecaoMartingale = lentoSignal;
+          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${entryNumber} - Rise/Fall LENTO | Direção: ${lentoSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall LENTO (2 Movimentos + Delta 0.7) (${lentoSignal})`);
+
+          await this.executeOrionOperation(state, lentoSignal, 'lenta', entryNumber);
+          continue;
+        }
       }
 
       const riskManager = this.riskManagers.get(userId);
