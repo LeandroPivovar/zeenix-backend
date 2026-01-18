@@ -266,15 +266,14 @@ class RiskManager {
     }
 
     let nextStake = baseStake;
-    const PAYOUT_RATE = 0.95; // Estimativa conservadora do Payout (95%)
+    // Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (PA) ~ 95%
+    const PAYOUT_OVER3 = 0.63;
+    const PAYOUT_PA = 0.95;
+    const currentPayout = this.consecutiveLosses === 1 ? PAYOUT_OVER3 : PAYOUT_PA;
+    const PAYOUT_RATE = currentPayout; // Usar o payout dinâmico para os cálculos de limite abaixo
 
     // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
     if (this.consecutiveLosses > 0) {
-      // ✅ [ZENIX v3.0] Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (PA) ~ 95%
-      const PAYOUT_OVER3 = 0.63;
-      const PAYOUT_PA = 0.95;
-      const currentPayout = this.consecutiveLosses === 1 ? PAYOUT_OVER3 : PAYOUT_PA;
-
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
@@ -285,7 +284,7 @@ class RiskManager {
             logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
           }
           if (saveLog) {
-            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)}`);
+            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $0.00`);
           }
         } else {
           // Aceita a perda e reseta
@@ -301,26 +300,28 @@ class RiskManager {
       }
       // 2. MODERADO: Infinito + 15% de Lucro sobre a perda
       else if (this.riskMode === 'MODERADO') {
-        const targetRecovery = this.totalLossAccumulated * 1.15; // Recupera + 15%
+        const targetProfit = this.totalLossAccumulated * 0.15;
+        const targetRecovery = this.totalLossAccumulated + targetProfit; // Recupera + 15%
         nextStake = targetRecovery / currentPayout;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
           logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
         }
         if (saveLog) {
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)}`);
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }
       // 3. AGRESSIVO: Infinito + 30% de Lucro sobre a perda
       else if (this.riskMode === 'AGRESSIVO') {
-        const targetRecovery = this.totalLossAccumulated * 1.30; // Recupera + 30%
+        const targetProfit = this.totalLossAccumulated * 0.30;
+        const targetRecovery = this.totalLossAccumulated + targetProfit; // Recupera + 30%
         nextStake = targetRecovery / currentPayout;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
           logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
         }
         if (saveLog) {
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)}`);
+          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }
     }
@@ -1997,8 +1998,12 @@ export class OrionStrategy implements IStrategy {
         stakeAmount = 0.35;
       }
 
+      // ✅ Cálculo do Lucro Alvo Real para o Log
+      let targetProfit = 0;
+      if (state.modoMartingale === 'moderado') targetProfit = state.perdaAcumulada * 0.15;
+      else if (state.modoMartingale === 'agressivo') targetProfit = state.perdaAcumulada * 0.30;
+
       // ✅ Log: Martingale Ativado (Formato Solicitado)
-      const targetProfit = 0; // Simplificação, ou calcular se disponível
       this.logger.log(`🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`);
       this.saveOrionLog(state.userId, this.symbol, 'alerta', `🔄 MARTINGALE ATIVADO\n• Nível: M${state.martingaleStep || 1}\n• Contrato: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Objetivo: Recuperar $${state.perdaAcumulada.toFixed(2)} + $${targetProfit.toFixed(2)}\n______________`);
     }
@@ -2230,7 +2235,8 @@ export class OrionStrategy implements IStrategy {
 
     // ✅ Log: Entrada Executada (Formato Solicitado)
     const formattedDirection = operation;
-    const payoutPercent = 92; // Payout padrão estimado
+    // Payout dinâmico para o log: Over 3 (~63%), PA (~95%)
+    const payoutPercent = operation === 'DIGITOVER' ? 63 : 95;
 
     this.logger.log(`📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
     this.saveOrionLog(state.userId, this.symbol, 'operacao', `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
