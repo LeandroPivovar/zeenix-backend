@@ -1278,8 +1278,8 @@ export class OrionStrategy implements IStrategy {
 
           state.ultimaDirecaoMartingale = smaSignal;
 
-          this.logger.log(`[ORION][Moderado][${userId}] 🔄 M${entryNumber} - Rise/Fall NORMAL | Direção: ${smaSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall NORMAL (3 Movimentos) (${smaSignal})`);
+          this.logger.log(`[ORION][Moderado][${userId}] 🔄 M${consecutiveLosses} - Rise/Fall NORMAL | Direção: ${smaSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${consecutiveLosses} - Rise/Fall NORMAL (3 Movimentos) (${smaSignal})`);
 
           await this.executeOrionOperation(state, smaSignal, 'moderado', entryNumber);
           continue;
@@ -1417,8 +1417,8 @@ export class OrionStrategy implements IStrategy {
           if (!momentumSignal) continue;
 
           state.ultimaDirecaoMartingale = momentumSignal;
-          this.logger.log(`[ORION][Preciso][${userId}] 🔄 M${entryNumber} - Rise/Fall PRECISO | Direção: ${momentumSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall PRECISO (Momentum + Delta) (${momentumSignal})`);
+          this.logger.log(`[ORION][Preciso][${userId}] 🔄 M${consecutiveLosses} - Rise/Fall PRECISO | Direção: ${momentumSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${consecutiveLosses} - Rise/Fall PRECISO (Momentum + Delta) (${momentumSignal})`);
 
           await this.executeOrionOperation(state, momentumSignal, 'preciso', entryNumber);
           continue;
@@ -1536,8 +1536,8 @@ export class OrionStrategy implements IStrategy {
           if (!pullbackSignal) continue;
 
           state.ultimaDirecaoMartingale = pullbackSignal;
-          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${entryNumber} - Rise/Fall NORMAL | Direção: ${pullbackSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall NORMAL (3 Movimentos) (${pullbackSignal})`);
+          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${consecutiveLosses} - Rise/Fall NORMAL | Direção: ${pullbackSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${consecutiveLosses} - Rise/Fall NORMAL (3 Movimentos) (${pullbackSignal})`);
 
           await this.executeOrionOperation(state, pullbackSignal, 'lenta', entryNumber);
           continue;
@@ -1549,8 +1549,8 @@ export class OrionStrategy implements IStrategy {
           if (!lentoSignal) continue;
 
           state.ultimaDirecaoMartingale = lentoSignal;
-          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${entryNumber} - Rise/Fall LENTO | Direção: ${lentoSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${entryNumber} - Rise/Fall LENTO (2 Movimentos + Delta 0.7) (${lentoSignal})`);
+          this.logger.log(`[ORION][Lenta][${userId}] 🔄 M${consecutiveLosses} - Rise/Fall LENTO | Direção: ${lentoSignal} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M${consecutiveLosses} - Rise/Fall LENTO (2 Movimentos + Delta 0.7) (${lentoSignal})`);
 
           await this.executeOrionOperation(state, lentoSignal, 'lenta', entryNumber);
           continue;
