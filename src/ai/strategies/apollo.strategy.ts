@@ -61,6 +61,7 @@ export interface ApolloUserState {
   // Statistics
   ticksColetados: number;
   totalLossAccumulated: number;
+  sorosLevel: number; // 0 = Base, 1 = Soros Active
 }
 
 @Injectable()
@@ -365,18 +366,34 @@ export class ApolloStrategy implements IStrategy {
     this.saveLog(state.userId, 'resultado', `${statusIcon} [${win ? 'WIN' : 'LOSS'}] ${win ? '+' : ''}$${profit.toFixed(2)} | Saldo: $${state.capital.toFixed(2)}`);
 
     // --- UPDATE STATE ---
+    // --- UPDATE STATE ---
     if (win) {
-      state.consecutiveLosses = 0;
+      if (state.consecutiveLosses > 0) {
+        // ✅ RECUPERAÇÃO (MARTINGALE) BEM-SUCEDIDA
+        // Reset absoluto. Não fazemos Soros com o lucro da recuperação (seria arriscado).
+        state.consecutiveLosses = 0;
+        state.totalLossAccumulated = 0;
+        state.sorosLevel = 0;
+        this.saveLog(state.userId, 'info', `✅ [RECUPERAÇÃO] Martingale finalizado com sucesso. Resetando para stake base.`);
+      } else {
+        // ✅ WIN NORMAL (Ciclo de Soros)
+        if (state.sorosLevel === 0) {
+          // Ativar Nível 1
+          state.sorosLevel = 1;
+          const nextStake = state.apostaInicial + profit;
+          this.saveLog(state.userId, 'info', `🚀 [SOROS] Nível 1 Habilitado. Próxima Stake: $${nextStake.toFixed(2)}`);
+        } else {
+          // Completou Nível 1 -> Reset
+          state.sorosLevel = 0;
+          this.saveLog(state.userId, 'info', `✅ [SOROS] Nível 1 Concluído! Retornando à stake base.`);
+        }
+      }
       state.totalLossAccumulated = 0;
-      // Soros Logic: Next stake will be Base + Profit
-      // Log handled in calculateStake or next entry? 
-      // User python code: "🚀 APLICANDO SOROS NÍVEL 1"
-      const nextStake = state.apostaInicial + profit;
-      this.saveLog(state.userId, 'info', `🚀 [SOROS] Nível 1 Habilitado. Próxima Stake: $${nextStake.toFixed(2)}`);
     } else {
+      // LOSS
       state.consecutiveLosses++;
       state.totalLossAccumulated += stakeUsed;
-      // On loss, soros resets (implied by calculateStake logic)
+      state.sorosLevel = 0; // ❌ Quebra o Soros se perder
     }
 
     // --- STOP BLINDADO UPDATE ---
@@ -424,10 +441,8 @@ export class ApolloStrategy implements IStrategy {
       const neededStake = (lossToRecover * multiplier) / PAYOUT_RATE;
       return Number(neededStake.toFixed(2));
     } else {
-      // Soros: If last was win, stake = base + lastProfit. 
-      // But need to be careful: if just started, lastProfit is 0. 
-      // If last was win, lastProfit > 0.
-      if (state.lastResultWin && state.lastProfit > 0) {
+      // Soros Logic: Respect level
+      if (state.sorosLevel === 1) {
         return Number((state.apostaInicial + state.lastProfit).toFixed(2));
       }
       return state.apostaInicial;
@@ -550,7 +565,8 @@ export class ApolloStrategy implements IStrategy {
       stopBlindadoFloor: 0,
       stopBlindadoActive: false,
       ticksColetados: 0,
-      totalLossAccumulated: 0
+      totalLossAccumulated: 0,
+      sorosLevel: 0
     };
 
     this.users.set(userId, initialState);
