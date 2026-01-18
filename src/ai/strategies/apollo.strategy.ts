@@ -155,6 +155,9 @@ export class ApolloStrategy implements IStrategy {
     // 3. ANALYZE SIGNAL
     const signal = this.analyzeSignal(state, ticks);
 
+    // ✅ Reset count after analysis (Respects "Wait for next X ticks" rule)
+    state.ticksColetados = 0;
+
     if (signal) {
       await this.executeTrade(state, signal);
     }
@@ -168,13 +171,14 @@ export class ApolloStrategy implements IStrategy {
     const currentPrice = prices[prices.length - 1];
     const lastPrice = prices[prices.length - 2];
     const price2 = prices[prices.length - 3];
-    const price3 = prices[prices.length - 4];
+    // price3 handles LENTO (5 ticks)
+    const price4 = prices[prices.length - 4];
+    const price5 = prices[prices.length - 5];
 
-    if (currentPrice === lastPrice) return null;
-
-    const delta = currentPrice - lastPrice;
-    const absDelta = Math.abs(delta);
-    let direction: 'CALL' | 'PUT' = delta > 0 ? 'CALL' : 'PUT';
+    // Local Delta overridden by mode window
+    let delta = 0;
+    let absDelta = 0;
+    let direction: 'CALL' | 'PUT' = 'CALL';
 
     const filters: string[] = [];
     const reasons: string[] = [];
@@ -196,26 +200,31 @@ export class ApolloStrategy implements IStrategy {
     let validSignal = false;
 
     if (state.mode === 'veloz') {
-      // VELOZ: 3 Ticks (~3s), Delta >= 0.3
+      // VELOZ: Window of 3 Ticks (P3 -> P1)
+      delta = currentPrice - price2;
+      absDelta = Math.abs(delta);
+      direction = delta > 0 ? 'CALL' : 'PUT';
+
       const MIN_DELTA = 0.3;
       if (absDelta >= MIN_DELTA) {
         validSignal = true;
         strength = 60;
-        filters.push(`Direção Imediata (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
+        filters.push(`Variação Janela (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
       }
     }
     else if (state.mode === 'normal') {
-      // NORMAL: 3 Ticks (~3s), Delta >= 0.5, Consistency (3 ticks same direction)
+      // NORMAL: Window of 3 Ticks, Delta >= 0.5, Consistency
+      delta = currentPrice - price2;
+      absDelta = Math.abs(delta);
+      direction = delta > 0 ? 'CALL' : 'PUT';
+
       const MIN_DELTA = 0.5;
 
-      // Consistency Check (Last 3 ticks: P3 -> P2 -> Current)
-      // Directions: P3->P2 and P2->Current must match current direction
-      const diff1 = lastPrice - price2; // Move 2
-      const diff2 = currentPrice - lastPrice; // Move 3 (Current)
-      // Check if all moves are consistent with 'direction'
-      // If direction is CALL (up), diff1 > 0 and diff2 > 0
+      // Consistency Check (All moves in same direction: P3->P2 and P2->P1)
+      const diff1 = lastPrice - price2;
+      const diff2 = currentPrice - lastPrice;
       const isConsistent = (direction === 'CALL' && diff1 > 0 && diff2 > 0) ||
         (direction === 'PUT' && diff1 < 0 && diff2 < 0);
 
@@ -233,14 +242,18 @@ export class ApolloStrategy implements IStrategy {
       }
     }
     else if (state.mode === 'lento') {
-      // LENTO: 5 Ticks (~5s), Delta >= 1.0 (Adjusted for R_25/R_100 Reality), SMA 5 Filter
+      // LENTO: Window of 5 Ticks, Delta >= 1.0, Strong Trend, SMA 5 Filter
+      delta = currentPrice - price5;
+      absDelta = Math.abs(delta);
+      direction = delta > 0 ? 'CALL' : 'PUT';
+
       const MIN_DELTA = 1.0;
 
-      // SMA 5 Filter (Only buy if price is on the correct side of SMA)
+      // SMA 5 Filter
       const sma5 = prices.slice(-5).reduce((a, b) => a + b, 0) / 5;
       const isSmaTrend = direction === 'CALL' ? currentPrice > sma5 : currentPrice < sma5;
 
-      // Analyze last 4 moves (5 prices)
+      // Analyze last 4 moves
       let upMoves = 0;
       let downMoves = 0;
       for (let i = prices.length - 1; i > prices.length - 5; i--) {
@@ -258,12 +271,12 @@ export class ApolloStrategy implements IStrategy {
             strength = 90;
             filters.push(`Força Alta (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
             filters.push(`Tendência Forte (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
-            filters.push(`Acima/Abaixo SMA 5`);
+            filters.push(`SMA 5 Direcional`);
           } else {
-            reasons.push(`Filtro SMA 5 (${currentPrice.toFixed(2)} ${direction === 'CALL' ? '<' : '>'} SMA ${sma5.toFixed(2)})`);
+            reasons.push(`Filtro SMA 5`);
           }
         } else {
-          reasons.push(`Tendência Fraca (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
+          reasons.push(`Tendência Fraca`);
         }
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
