@@ -4164,6 +4164,7 @@ export class AiService implements OnModuleInit {
           strategy,
           profit_target as profitTarget,
           loss_limit as lossLimit,
+          stop_blindado_percent as stopBlindadoPercent,
           last_trade_at as lastTradeAt,
           next_trade_at as nextTradeAt,
           total_trades as totalTrades,
