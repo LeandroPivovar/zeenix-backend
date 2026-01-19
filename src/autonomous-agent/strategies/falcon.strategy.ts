@@ -73,7 +73,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     try {
       const activeUsers = await this.dataSource.query(
         `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
-                initial_balance, deriv_token, currency, symbol, agent_type, stop_loss_type, risk_profile
+                initial_balance, deriv_token, currency, symbol, agent_type
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'falcon'
@@ -91,8 +91,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           currency: user.currency,
           symbol: 'R_100',
           initialBalance: parseFloat(user.initial_balance) || 0,
-          stopLossType: (user.stop_loss_type || 'normal').toLowerCase(),
-          riskProfile: (user.risk_profile || 'MODERADO').toUpperCase() as 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO',
+          stopLossType: 'normal',
+          riskProfile: 'MODERADO',
         };
 
         this.userConfigs.set(userId, config);
