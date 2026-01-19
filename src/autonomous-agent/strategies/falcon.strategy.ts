@@ -285,6 +285,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    // ✅ Log inicial de análise ou heartbeat a cada X ticks
+    if (userTicks.length === requiredTicks || userTicks.length % 50 === 0) {
+      this.logAnalysisStarted(userId, state.mode, userTicks.length);
+    }
+
     // ✅ Verificar novamente ANTES de fazer análise (evitar análise desnecessária)
     if (state.isWaitingContract) {
       return;
@@ -1877,9 +1882,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.saveLog(userId, 'INFO', 'ANALYZER', message);
   }
 
-  private logAnalysisStarted(userId: string, mode: string) {
-    const message = `🧠 ANÁLISE INICIADA...\n` +
-      `• Verificando condições para o modo: ${mode}`;
+  private logAnalysisStarted(userId: string, mode: string, tickCount?: number) {
+    const countStr = tickCount ? ` (Ticks: ${tickCount})` : '';
+    const message = `🧠 ANÁLISE DO MERCADO\n` +
+      `• MODO: ${mode}\n` +
+      `• STATUS: Monitorando padrões${countStr}\n` +
+      `• AÇÃO: Aguardando oportunidade...`;
 
     this.saveLog(userId, 'INFO', 'ANALYZER', message);
   }

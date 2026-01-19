@@ -1062,6 +1062,14 @@ export class AutonomousAgentService implements OnModuleInit {
       startDate.setDate(today.getDate() - days);
     }
 
+    // ✅ Filtro de sessão: Se houver sessão ativa, filtrar a partir da data da sessão
+    const config = await this.getAgentConfig(userId);
+    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+
+    if (sessionDate && sessionDate > startDate) {
+      startDate.setTime(sessionDate.getTime());
+    }
+
     // Select trades in the period
     const trades = await this.dataSource.query(
       `SELECT 
