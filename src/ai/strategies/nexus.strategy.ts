@@ -270,11 +270,17 @@ export class NexusStrategy implements IStrategy {
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
         // ✅ Python Nexus v2: Entrada Principal (Higher -0.15) + Recuperação (Rise/Fall)
-        const isRecovering = riskManager.consecutiveLosses > 0;
+
+        // 🧩 [NEXUS V3] Lógica de Recuperação Orion/Titan
+        // Perda 1 (M0): Contrato Inicial (Rise/Fall) -> Main Logic
+        // Perda 2 (M1): Contrato Inicial (Rise/Fall) -> Main Logic (Persistência de Contrato)
+        // Perda 3+ (M2+): Troca de Contrato (Higher -0.15) -> Recovery Logic
+
+        const isRecovering = riskManager.consecutiveLosses >= 2;
 
         if (!isRecovering) {
             // ═══════════════════════════════════════════════════════════════
-            // ANÁLISE PRINCIPAL (ENTRADA Higher -0.15)
+            // ANÁLISE PRINCIPAL (ENTRADA Rise/Fall - M0/M1)
             // ═══════════════════════════════════════════════════════════════
 
             if (state.mode === 'VELOZ') {
