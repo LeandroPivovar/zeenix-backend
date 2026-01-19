@@ -296,7 +296,7 @@ export class NexusStrategy implements IStrategy {
                         filters: ['1 tick favorável'],
                         trigger: 'Tendência Imediata (Veloz)',
                         probability: 60,
-                        contractType: 'RISE/FALL',
+                        contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
@@ -332,7 +332,7 @@ export class NexusStrategy implements IStrategy {
                         filters: ['3 ticks consecutivos', 'Delta > 0.3'],
                         trigger: 'Momentum de Alta',
                         probability: 75,
-                        contractType: 'RISE/FALL',
+                        contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
@@ -362,7 +362,7 @@ export class NexusStrategy implements IStrategy {
                         filters: ['5 ticks consecutivos', 'Delta > 0.5'],
                         trigger: 'Momentum Forte',
                         probability: 85,
-                        contractType: 'RISE/FALL',
+                        contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
@@ -411,7 +411,7 @@ export class NexusStrategy implements IStrategy {
                     filters: [modeInfo],
                     trigger: 'Recuperação Alta',
                     probability: 80,
-                    contractType: 'CALL',
+                    contractType: 'RISE/FALL',
                     direction: 'CALL'
                 });
                 return 'PAR'; // CALL
@@ -435,7 +435,7 @@ export class NexusStrategy implements IStrategy {
                     filters: [modeInfo],
                     trigger: 'Recuperação Baixa',
                     probability: 80,
-                    contractType: 'PUT',
+                    contractType: 'RISE/FALL',
                     direction: 'PUT'
                 });
                 return 'IMPAR'; // PUT
@@ -552,23 +552,30 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier: string | undefined = undefined; // ✅ [NEXUS v3.0] Entrada 1 agora é Rise/Fall (No Barrier)
+        let barrier: string | undefined = undefined;
 
-        // ✅ Lógica de Troca de Contrato (Estilo Orion)
-        // Entry 1 (M0): Rise/Fall
-        // Entry 2 (M1): Rise/Fall (Mantenha o mesmo contrato)
-        // Entry 3+ (M2+): Muda o contrato para Higher (-0.15) para maior assertividade
-        if (riskManager.consecutiveLosses >= 2) {
+        // 🧩 [NEXUS V3] Lógica de Contratos Invertida (Fix)
+        // Main Entry (M0/M1): Higher -0.15 (Barrier)
+        // Recovery (M2+): Rise/Fall (No Barrier)
+
+        if (riskManager.consecutiveLosses < 2) {
+            // ✅ Entrada Principal: Higher -0.15
             barrier = '-0.15';
+        } else {
+            // ✅ Recuperação: Rise/Fall (Sem Barreira)
+            barrier = undefined;
 
             // ✅ LOG PADRONIZADO V2: Troca de Contrato
-            const riskMode = (riskManager as any).riskMode;
-            this.logContractChange(state.userId, {
-                reason: '2+ Perdas Consecutivas (Recovery)',
-                oldContract: 'RISE/FALL',
-                newContract: 'HIGHER -0.15',
-                analysis: `Buscando barreira protegida em ${riskMode}`
-            });
+            // Apenas logar se for a primeira vez que entra em recuperação (consecutiveLosses === 2)
+            if (riskManager.consecutiveLosses === 2) {
+                const riskMode = (riskManager as any).riskMode;
+                this.logContractChange(state.userId, {
+                    reason: '2+ Perdas Consecutivas (Recovery)',
+                    oldContract: 'HIGHER -0.15',
+                    newContract: 'RISE/FALL',
+                    analysis: `Modo Recuperação em ${riskMode}`
+                });
+            }
         }
 
         state.isOperationActive = true;
