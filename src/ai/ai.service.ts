@@ -580,10 +580,11 @@ export class AiService implements OnModuleInit {
         await this.saveWebSocketState();
 
         this.subscribeToTicks();
-        // ✅ Subscritar também R_10, R_25 e 1HZ10V (Vol 10 1s) para Atlas/Orion
+        // ✅ Subscritar também R_10, R_25, 1HZ10V (Vol 10 1s) e 1HZ100V (Vol 100 1s) para Atlas/Orion/Apollo
         this.subscribeToSymbol('R_10');
         this.subscribeToSymbol('R_25');
         this.subscribeToSymbol('1HZ10V');
+        this.subscribeToSymbol('1HZ100V');
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
         this.startKeepAlive();
         resolve();
@@ -802,7 +803,7 @@ export class AiService implements OnModuleInit {
             this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
           }
           // Mapear subscriptionId para símbolo
-          if (symbolFromReq && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbolFromReq)) {
+          if (symbolFromReq && ['R_10', 'R_25', 'R_100', '1HZ10V', '1HZ100V'].includes(symbolFromReq)) {
             this.subscriptionIds.set(symbolFromReq, subId);
             this.logger.log(`[AiService] 📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromReq}`);
           }
@@ -891,15 +892,14 @@ export class AiService implements OnModuleInit {
     // ✅ Usar símbolo do tick ou o fornecido como parâmetro
     const tickSymbol = symbol || tick.symbol || this.symbol;
 
-    // Log a cada 50 ticks para diagnóstico
-    const currentTickCount = this.ticks.length;
-    if (currentTickCount % 50 === 0 || currentTickCount === 0) {
-      this.logger.log(`[AiService] 📊 Processando tick #${currentTickCount + 1} | Quote: ${tick.quote} | Symbol: ${tickSymbol} | WebSocket conectado: ${this.isConnected}`);
-    }
-
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
     const parity = this.getParityFromDigit(digit);
+
+    // ✅ DIAGNÓSTICO: Log de tick recebido para qualquer símbolo (limitado)
+    if (tickSymbol === '1HZ100V' || tickSymbol === '1HZ10V' || this.ticks.length % 100 === 0) {
+      this.logger.debug(`[AiService] 📊 Tick ${tickSymbol}: ${value} (digit: ${digit})`);
+    }
 
     const newTick: Tick = {
       value,
@@ -936,12 +936,12 @@ export class AiService implements OnModuleInit {
     }
 
     // Log de diagnóstico a cada 50 ticks
-    if (tickSymbol === 'R_100' && this.ticks.length % 50 === 0) {
-      this.logger.debug(`[AiService] 🔄 Enviando tick para StrategyManager | Total ticks: ${this.ticks.length} | Symbol: ${tickSymbol}`);
+    if (this.ticks.length % 50 === 0) {
+      this.logger.debug(`[AiService] 🔄 Enviando tick para StrategyManager | Total ticks R_100: ${this.ticks.length} | Symbol: ${tickSymbol}`);
     }
 
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
-      this.logger.error('[StrategyManager] Erro ao processar tick:', error);
+      this.logger.error(`[StrategyManager] Erro ao processar tick (${tickSymbol}):`, error);
     });
 
     // ✅ Compartilhar tick de R_100 com AutonomousAgentService

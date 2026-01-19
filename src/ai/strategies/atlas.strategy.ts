@@ -227,18 +227,18 @@ export class AtlasStrategy implements IStrategy {
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
 
-      // ✅ Mapear preferência "Vol 10" para "1HZ100V" (1s)
+      // ✅ Mapear preferência "Vol 10" e "Vol 100" para "1HZ100V" (1s)
       if (marketLower === 'r_10' || marketLower === 'vol10' || marketLower === 'volatility 10 index') {
         atlasSymbol = '1HZ100V';
       } else if (marketLower.includes('1hz100v') || marketLower.includes('1hz10v') || marketLower.includes('1s')) {
         atlasSymbol = '1HZ100V';
       } else if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
-        atlasSymbol = 'R_100';
+        atlasSymbol = '1HZ100V'; // ✅ Atlas v3.0 prefere 1s (1HZ100V)
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
       } else {
         // Fallback robusto
-        if (marketLower.includes('vol10') || marketLower.includes('r_10')) {
+        if (marketLower.includes('vol10') || marketLower.includes('r_10') || marketLower.includes('100')) {
           atlasSymbol = '1HZ100V'; // ✅ Preferência para 1HZ100V
         }
       }
