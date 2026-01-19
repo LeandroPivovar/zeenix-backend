@@ -271,23 +271,28 @@ export class AtlasStrategy implements IStrategy {
       const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
       this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
 
-      const blindadoStatus = stopLossBlindado
-        ? (profitTargetNum ? `ATIVADO (Gatilho: $${(profitTargetNum * 0.40).toFixed(2)})` : 'ATIVADO (Sem meta!)')
-        : 'DESATIVADO';
-
       const state = this.atlasUsers.get(userId);
       const saldoAtual = state ? state.capital : stakeAmountNum;
 
-      this.saveAtlasLog(userId, 'SISTEMA', 'info',
-        `⚙️ CONFIGURAÇÕES INICIAIS\n` +
-        `• Estratégia: ATLAS\n` +
-        `• Modo de Negociação: ${mode || 'veloz'}\n` +
-        `• Asset: ${atlasSymbol}\n` +
-        `• Saldo Atual: $${saldoAtual.toFixed(2)}\n` +
-        `• Gerenciamento: ${modoMartingale || 'conservador'}\n` +
-        `• Meta de Lucro: ${profitTargetNum ? `+$${profitTargetNum.toFixed(2)}` : 'Não definida'}\n` +
-        `• Stop Loss Normal: ${lossLimitNum ? `-$${Math.abs(lossLimitNum).toFixed(2)}` : 'Não definido'}\n` +
-        `• Stop Loss Blindado: ${blindadoStatus}`);
+      // ✅ LOG PADRONIZADO V2: Configuração Inicial
+      this.logInitialConfigV2(userId, {
+        strategyName: 'ATLAS 3.0',
+        operationMode: mode || 'veloz',
+        riskProfile: modoMartingale || 'conservador',
+        profitTarget: profitTargetNum || 0,
+        stopLoss: lossLimitNum ? Math.abs(lossLimitNum) : 0,
+        stopBlindadoEnabled: Boolean(stopLossBlindado),
+      });
+
+      // ✅ LOG PADRONIZADO V2: Início de Sessão
+      this.logSessionStart(userId, {
+        date: new Date(),
+        initialBalance: saldoAtual,
+        profitTarget: profitTargetNum || 0,
+        stopLoss: lossLimitNum ? Math.abs(lossLimitNum) : 0,
+        mode: mode || 'veloz',
+        strategyName: 'ATLAS 3.0',
+      });
 
       this.lastActivationLog.set(userId, now);
 
@@ -338,11 +343,12 @@ export class AtlasStrategy implements IStrategy {
       const logKey = `${symbol}_coleta`;
       const shouldLog = !set.has(logKey) || state.digitBuffer.length % 5 === 0;
       if (shouldLog) {
-        this.saveAtlasLog(state.userId, symbol, 'info',
-          `📊 ANÁLISE INICIAL\n` +
-          `• Amostra: ${state.digitBuffer.length} / ${modeConfig.amostraInicial}\n` +
-          `• Modo: ${state.mode.toUpperCase()}\n` +
-          `• Status: Coletando dígitos...`);
+        // ✅ LOG PADRONIZADO V2: Coleta de Dados
+        this.logDataCollection(state.userId, {
+          targetCount: modeConfig.amostraInicial,
+          currentCount: state.digitBuffer.length,
+          mode: state.mode.toUpperCase(),
+        });
         set.add(logKey);
         this.coletaLogsEnviados.set(keyUser, set);
         // Resetar após logar para permitir novo log quando necessário
@@ -601,6 +607,21 @@ export class AtlasStrategy implements IStrategy {
     }
     state.isOperationActive = true;
 
+    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+    // Tenta extrair informações da string de análise ou usa padrão
+    const probMatch = analysis ? analysis.match(/FORÇA DO SINAL: (\d+)%/) : null;
+    const probability = probMatch ? parseInt(probMatch[1]) : 75;
+
+    this.logSignalGenerated(state.userId, {
+      mode: state.mode.toUpperCase(),
+      isRecovery: state.isInRecovery,
+      filters: ['Análise de Fluxo', 'Padrão Numérico'],
+      trigger: 'Padrão Confirmado',
+      probability: probability,
+      contractType: operation === 'OVER' ? 'DIGIT OVER' : (operation === 'UNDER' ? 'DIGIT UNDER' : operation),
+      direction: operation === 'CALL' ? 'CALL' : (operation === 'PUT' ? 'PUT' : undefined)
+    });
+
     try {
       // ✅ [ORION PARALLEL CHECK] - Buscar limites frescos do banco antes de qualquer aposta
       const stopLossConfig = await this.dataSource.query(
@@ -756,6 +777,16 @@ export class AtlasStrategy implements IStrategy {
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
 
+        // ✅ LOG PADRONIZADO V2: Martingale
+        this.logMartingaleLevelV2(state.userId, {
+          level: state.martingaleStep,
+          lossNumber: state.martingaleStep,
+          accumulatedLoss: perdas,
+          calculatedStake: stakeAmount,
+          profitPercentage: state.modoMartingale === 'moderado' ? 15 : (state.modoMartingale === 'agressivo' ? 30 : 0),
+          contractType: operation
+        });
+
         // ✅ Todos os modos agora recuperam infinitamente (sem limite de M5)
         // Veloz: +5% | Moderado: +15% | Agressivo: +15%
 
@@ -772,10 +803,12 @@ export class AtlasStrategy implements IStrategy {
         }
       } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
         stakeAmount = state.apostaBase + state.ultimoLucro;
-        this.saveAtlasLog(state.userId, symbol, 'info',
-          `🚀 APLICANDO SOROS NÍVEL 1\n` +
-          `• Lucro Anterior: $${state.ultimoLucro.toFixed(2)}\n` +
-          `• Nova Stake: $${stakeAmount.toFixed(2)}`);
+        // ✅ LOG PADRONIZADO V2: Soros
+        this.logSorosActivation(state.userId, {
+          previousProfit: state.ultimoLucro,
+          stakeBase: state.apostaBase,
+          level: 1
+        });
       }
 
       stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
@@ -1128,13 +1161,16 @@ export class AtlasStrategy implements IStrategy {
         const perdaRecuperada = state.perdaAcumulada;
 
         // ✅ Calcular ganho bruto para exibição
+        // ✅ Calcular ganho bruto para exibição
         const ganhoBrutoRecuperacao = lucro + stakeAmount;
-        this.saveAtlasLog(state.userId, symbol, 'info',
-          `✅ MARTINGALE RECUPERADO\n` +
-          `• Nível: ${nivelAntes} → 0\n` +
-          `• Perda Recuperada: $${perdaRecuperada.toFixed(2)}\n` +
-          `• Ganho Bruto: $${ganhoBrutoRecuperacao.toFixed(2)}\n` +
-          `• Lucro Líquido: $${lucro.toFixed(2)}`);
+
+        // ✅ LOG PADRONIZADO V2: Recuperação Bem-Sucedida
+        this.logSuccessfulRecoveryV2(state.userId, {
+          recoveredLoss: perdaRecuperada,
+          additionalProfit: lucro,
+          profitPercentage: (lucro / perdaRecuperada) * 100,
+          stakeBase: state.apostaBase
+        });
 
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
@@ -1175,11 +1211,13 @@ export class AtlasStrategy implements IStrategy {
 
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
-      this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `🏁 RESULTADO DA ENTRADA\n` +
-        `• Status: VITÓRIA ✅\n` +
-        `• Lucro: $${lucro.toFixed(2)}\n` +
-        `• Saldo Atual: $${state.capital.toFixed(2)}`);
+      // ✅ LOG PADRONIZADO V2: Vitória
+      this.logTradeResultV2(state.userId, {
+        status: 'WIN',
+        profit: lucro,
+        stake: stakeAmount,
+        balance: state.capital
+      });
 
     } else {
       // ✅ DERROTA
@@ -1242,15 +1280,13 @@ export class AtlasStrategy implements IStrategy {
       const digitoResultado = exitPrice > 0 ? this.extractLastDigit(exitPrice) : 0;
       const opLabel = operation === 'CALL' ? 'Rise' : (operation === 'PUT' ? 'Fall' : operation);
 
-      this.saveAtlasLog(state.userId, symbol, 'resultado',
-        `🏁 RESULTADO DA ENTRADA\n` +
-        `• Status: DERROTA ❌\n` +
-        `• Operação: ${opLabel}\n` +
-        `• Dígito: ${digitoResultado}\n` +
-        `• Aposta: $${stakeAmount.toFixed(2)}\n` +
-        `• Perda: -$${perda.toFixed(2)}\n` +
-        `• Capital: $${state.capital.toFixed(2)}\n` +
-        `• Martingale: M${state.martingaleStep}${state.isInRecovery ? ' (Recovery)' : ''}`);
+      // ✅ LOG PADRONIZADO V2: Derrota
+      this.logTradeResultV2(state.userId, {
+        status: 'LOSS',
+        profit: -perda,
+        stake: stakeAmount,
+        balance: state.capital
+      });
 
     }
 
@@ -1794,6 +1830,190 @@ export class AtlasStrategy implements IStrategy {
   /**
    * ✅ ATLAS: Salva múltiplos logs em batch
    */
+
+  // ------------------------------------------------------------------
+  // ✅ LOGS PADRONIZADOS ZENIX v2.0 (Helpers)
+  // ------------------------------------------------------------------
+
+  private logInitialConfigV2(userId: string, config: {
+    strategyName: string;
+    operationMode: string;
+    riskProfile: string;
+    profitTarget: number;
+    stopLoss: number;
+    stopBlindadoEnabled: boolean;
+  }) {
+    const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
+      `• Estratégia: ${config.strategyName}\n` +
+      `• Modo: ${config.operationMode}\n` +
+      `• Perfil: ${config.riskProfile}\n` +
+      `• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}\n` +
+      `• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}\n` +
+      `• Stop Blindado: ${config.stopBlindadoEnabled ? 'Ativado' : 'Desativado'}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+  }
+
+  private logSessionStart(userId: string, session: {
+    date: Date;
+    initialBalance: number;
+    profitTarget: number;
+    stopLoss: number;
+    mode: string;
+    strategyName: string;
+  }) {
+    const message = `🚀 INÍCIO DE SESSÃO DIÁRIA\n` +
+      `• Data: ${session.date.toLocaleDateString('pt-BR')}\n` +
+      `• Banca Inicial: $${session.initialBalance.toFixed(2)}\n` +
+      `• Meta do Dia: $${session.profitTarget.toFixed(2)}\n` +
+      `• Stop Loss: $${session.stopLoss.toFixed(2)}\n` +
+      `• Modo: ${session.mode}\n` +
+      `• Estratégia: ${session.strategyName}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+  }
+
+  private logDataCollection(userId: string, data: {
+    targetCount: number;
+    currentCount: number;
+    mode?: string;
+  }) {
+    const percentage = Math.min(100, Math.round((data.currentCount / data.targetCount) * 100));
+    const message = `📡 COLETA DE DADOS${data.mode ? ` (${data.mode})` : ''}\n` +
+      `• Progresso: ${percentage}% (${data.currentCount}/${data.targetCount})\n` +
+      `• Status: Aguardando dados suficientes...`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+  }
+
+  private logAnalysisStarted(userId: string, mode: string) {
+    const message = `🔍 ANÁLISE DE MERCADO EXECUTADA\n` +
+      `• Modo: ${mode}\n` +
+      `• Status: Buscando oportunidades...`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
+  }
+
+  private logSignalGenerated(userId: string, signal: {
+    mode: string;
+    isRecovery: boolean;
+    filters: string[];
+    trigger: string;
+    probability: number;
+    contractType: string;
+    direction?: 'CALL' | 'PUT';
+  }) {
+    // Definir ícone baseado no tipo de análise
+    const icon = signal.isRecovery ? '🛡️' : '⚡'; // Escudo para recuperação, Raio para normal
+    const title = signal.isRecovery ? `SINAL GERADO (RECUPERAÇÃO)` : `SINAL IDENTIFICADO`;
+    const modeLabel = signal.isRecovery ? `${signal.mode} (RECUPERAÇÃO)` : signal.mode;
+
+    let message = `${icon} ${title}\n` +
+      `• Modo: ${modeLabel}\n`;
+
+    // Adicionar filtros aprovados
+    signal.filters.forEach((filter, index) => {
+      message += `✅ Filtro ${index + 1}: ${filter}\n`;
+    });
+
+    message += `✅ Gatilho: ${signal.trigger}\n` +
+      `💪 Probabilidade: ${signal.probability}%\n` +
+      `🎯 Contrato: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'sinal', message);
+  }
+
+  private logTradeResultV2(userId: string, result: {
+    status: 'WIN' | 'LOSS';
+    profit: number;
+    stake: number;
+    balance: number;
+  }) {
+    const isWin = result.status === 'WIN';
+    const icon = isWin ? '✅' : '❌';
+    const profitLabel = isWin ? 'Lucro' : 'Prejuízo';
+
+    // Formatação do valor (positivo para lucro, negativo para prejuízo)
+    const profitValue = isWin ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
+
+    const message = `🏁 TRADE FINALIZADO: ${result.status}\n` +
+      `${isWin ? '💰' : '📉'} ${profitLabel.toUpperCase()}: ${profitValue}\n` +
+      `📈 BANCA ATUAL: $${result.balance.toFixed(2)}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
+  }
+
+  private logMartingaleLevelV2(userId: string, martingale: {
+    level: number;
+    lossNumber: number;
+    accumulatedLoss: number;
+    calculatedStake: number;
+    profitPercentage: number;
+    contractType: string;
+  }) {
+    const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
+      `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
+      `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
+      `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
+      `• Objetivo: Recuperar + ${martingale.profitPercentage.toFixed(0)}%\n` +
+      `• Contrato: ${martingale.contractType}`;
+
+    // Usar tipo 'alerta' para destacar recuperação
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logSorosActivation(userId: string, soros: {
+    previousProfit: number;
+    stakeBase: number;
+    level?: number;
+  }) {
+    const level = soros.level || 1;
+    const newStake = soros.stakeBase + soros.previousProfit;
+
+    const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
+      `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
+      `• Nova Stake (Base + Lucro): $${newStake.toFixed(2)}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+  }
+
+  private logWinStreak(userId: string, streak: {
+    consecutiveWins: number;
+    accumulatedProfit: number;
+    currentStake: number;
+  }) {
+    const message = `🔥 WIN STREAK: ${streak.consecutiveWins} VITÓRIAS\n` +
+      `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
+      `• Stake Atual: $${streak.currentStake.toFixed(2)}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
+  }
+
+  private logSuccessfulRecoveryV2(userId: string, recovery: {
+    recoveredLoss: number;
+    additionalProfit: number;
+    profitPercentage: number;
+    stakeBase: number;
+  }) {
+    const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
+      `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
+      `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage.toFixed(2)}%)\n` +
+      `• Ação: Resetando sistema e voltando à entrada principal\n` +
+      `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
+  }
+
+  private logConservativeReset(userId: string, reset: {
+    stakeBase: number;
+  }) {
+    const message = `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n` +
+      `• Ação: Aceitando perda e resetando stake.\n` +
+      `• Próxima Entrada: Valor Inicial ($${reset.stakeBase.toFixed(2)})`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
   private async saveAtlasLogsBatch(
     userId: string,
     logs: Array<{
