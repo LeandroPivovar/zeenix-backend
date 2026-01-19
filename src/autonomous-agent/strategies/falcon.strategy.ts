@@ -205,9 +205,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
     // ✅ Log de debug para verificar se está recebendo ticks
-    if (this.userConfigs.size > 0) {
-      this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
-    }
+    // ✅ Log de debug para verificar se está recebendo ticks (Logar SEMPRE para debug)
+    // if (this.userConfigs.size > 0) {
+    this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
+    // }
 
     // ✅ Processar para todos os usuários ativos (sempre R_100, ignorar símbolo do banco se for R_75)
     for (const [userId, config] of this.userConfigs.entries()) {
