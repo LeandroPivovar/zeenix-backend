@@ -4863,12 +4863,27 @@ export class AiService implements OnModuleInit {
               this.logger.log(`[Monitor] Contrato ${contractId} fechado | tradeId=${tradeId} | exitPrice=${exitPrice} | profit=${profit} | status=${status}`);
 
               // Update database
-              await this.dataSource.query(
-                `UPDATE ai_trades
-                             SET exit_price = ?, profit_loss = ?, status = ?, closed_at = NOW()
-                             WHERE id = ?`,
-                [exitPrice, profit, status, tradeId],
-              );
+              // Update database with authoritative entry/exit prices
+              const entryPrice = Number(contract.entry_tick || contract.entry_spot || 0);
+
+              const updateQuery = `
+                UPDATE ai_trades
+                SET 
+                  exit_price = ?, 
+                  entry_price = CASE WHEN ? > 0 THEN ? ELSE entry_price END,
+                  profit_loss = ?, 
+                  status = ?, 
+                  closed_at = NOW()
+                WHERE id = ?
+              `;
+
+              await this.dataSource.query(updateQuery, [
+                exitPrice,
+                entryPrice, entryPrice, // Only update entry_price if we have a valid value
+                profit,
+                status,
+                tradeId
+              ]);
 
               this.logger.log(`[Monitor] ✅ exit_price atualizado no banco | tradeId=${tradeId} | exitPrice=${exitPrice}`);
 

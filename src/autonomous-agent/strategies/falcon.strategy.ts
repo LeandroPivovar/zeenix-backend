@@ -792,11 +792,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Payout fixo: 92.15%
     const zenixPayout = 0.9215;
 
+    //  ✅ FIX: Obter preço atual do último tick disponível para usar como entry price inicial
+    // Isso evita que trades sejam criados com entryPrice = 0 ou null
+    const userTicks = this.ticks.get(userId) || [];
+    const currentPrice = userTicks.length > 0
+      ? userTicks[userTicks.length - 1].value
+      : marketAnalysis.details?.currentPrice || 0;
+
+    this.logger.debug(`[Falcon][${userId}] 💰 Usando preço atual como entry price inicial: ${currentPrice}`);
+
     try {
       // ✅ Salvar tipo de contrato para usar no log de resultado
       state.lastContractType = contractType;
 
-      // ✅ Criar registro de trade ANTES de executar
+      // ✅ Criar registro de trade ANTES de executar - com preço atual como inicial
       const tradeId = await this.createTradeRecord(
         userId,
         {
@@ -805,7 +814,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           duration: 5,
           marketAnalysis: marketAnalysis,
           payout: zenixPayout,
-          entryPrice: 0,
+          entryPrice: currentPrice, // ✅ Usar preço atual instead of 0
         },
       );
 
@@ -1059,6 +1068,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               if (contract.entry_spot && state?.currentTradeId) {
                 this.updateTradeRecord(state.currentTradeId, {
                   entryPrice: Number(contract.entry_spot),
+                }).then(() => {
+                  this.logger.log(`[Falcon][${userId}] ✅ Entry price atualizado para ${contract.entry_spot} (trade #${state.currentTradeId})`);
                 }).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao atualizar entry_price:`, error);
                 });
