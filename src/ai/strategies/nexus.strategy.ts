@@ -270,8 +270,6 @@ export class NexusStrategy implements IStrategy {
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
         // ✅ Python Nexus v2: Entrada Principal (Higher -0.15) + Recuperação (Rise/Fall)
-
-        // Verificar se está em recuperação
         const isRecovering = riskManager.consecutiveLosses > 0;
 
         if (!isRecovering) {
@@ -298,12 +296,12 @@ export class NexusStrategy implements IStrategy {
                     return 'PAR';
                 } else {
                     // ❌ Log de análise rejeitada
-                    this.saveNexusLog(state.userId, this.symbol, 'analise',
-                        `❌ ANÁLISE REJEITADA (VELOZ)\n` +
-                        `• Motivo: Movimento contrário detectado\n` +
-                        `• Preços: ${lastTwo[0].value.toFixed(2)} → ${lastTwo[1].value.toFixed(2)}\n` +
-                        `• Aguardando: 1 tick de alta`
-                    );
+                    // this.saveNexusLog(state.userId, this.symbol, 'analise',
+                    //    `❌ ANÁLISE REJEITADA (VELOZ)\n` +
+                    //    `• Motivo: Movimento contrário detectado\n` +
+                    //    `• Preços: ${lastTwo[0].value.toFixed(2)} → ${lastTwo[1].value.toFixed(2)}\n` +
+                    //    `• Aguardando: 1 tick de alta`
+                    // );
                 }
 
             } else if (state.mode === 'NORMAL') {
@@ -321,136 +319,125 @@ export class NexusStrategy implements IStrategy {
                 const delta = prices[3] - prices[0];
 
                 if (upMomentum && delta > 0.3) {
-                    if (upMomentum && delta > 0.3) {
-                        // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                        this.logSignalGenerated(state.userId, {
-                            mode: state.mode,
-                            isRecovery: false,
-                            filters: ['3 ticks consecutivos', 'Delta > 0.3'],
-                            trigger: 'Momentum de Alta',
-                            probability: 75,
-                            contractType: 'RISE/FALL',
-                            direction: 'CALL'
-                        });
-                        return 'PAR';
-                    } else {
-                        // Log de análise rejeitada (silencioso no console interno, mas logado no sistema para o usuário ver se quiser)
-                        // (Log omitido se quiser silenciar as rejeições excessivas)
-                    }
-
-                } else if (state.mode === 'LENTO') {
-                    // LENTO: 5 ticks consecutivos + delta > 0.5
-                    if (this.ticks.length < 6) return null;
-
-                    const last6 = this.ticks.slice(-6);
-                    const prices = last6.map(t => t.value);
-
-                    // Verifica momentum de alta (5 ticks consecutivos)
-                    const upMomentum = prices[1] > prices[0] &&
-                        prices[2] > prices[1] &&
-                        prices[3] > prices[2] &&
-                        prices[4] > prices[3] &&
-                        prices[5] > prices[4];
-
-                    const delta = prices[5] - prices[0];
-
-                    if (upMomentum && delta > 0.5) {
-                        // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                        this.logSignalGenerated(state.userId, {
-                            mode: state.mode,
-                            isRecovery: false,
-                            filters: ['5 ticks consecutivos', 'Delta > 0.5'],
-                            trigger: 'Momentum Forte',
-                            probability: 85,
-                            contractType: 'RISE/FALL',
-                            direction: 'CALL'
-                        });
-                        return 'PAR';
-                    }
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', 'Delta > 0.3'],
+                        trigger: 'Momentum de Alta',
+                        probability: 75,
+                        contractType: 'RISE/FALL',
+                        direction: 'CALL'
+                    });
+                    return 'PAR';
                 }
 
+            } else if (state.mode === 'LENTO') {
+                // LENTO: 5 ticks consecutivos + delta > 0.5
+                if (this.ticks.length < 6) return null;
+
+                const last6 = this.ticks.slice(-6);
+                const prices = last6.map(t => t.value);
+
+                // Verifica momentum de alta (5 ticks consecutivos)
+                const upMomentum = prices[1] > prices[0] &&
+                    prices[2] > prices[1] &&
+                    prices[3] > prices[2] &&
+                    prices[4] > prices[3] &&
+                    prices[5] > prices[4];
+
+                const delta = prices[5] - prices[0];
+
+                if (upMomentum && delta > 0.5) {
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['5 ticks consecutivos', 'Delta > 0.5'],
+                        trigger: 'Momentum Forte',
+                        probability: 85,
+                        contractType: 'RISE/FALL',
+                        direction: 'CALL'
+                    });
+                    return 'PAR';
+                }
+            }
+        } else {
+            // ═══════════════════════════════════════════════════════════════
+            // RECUPERAÇÃO (RISE/FALL)
+            // ═══════════════════════════════════════════════════════════════
+
+            let requiredTicks: number;
+            let minDelta: number;
+            let modeInfo: string;
+
+            if (state.mode === 'VELOZ') {
+                // VELOZ: 2 ticks + delta 0.3
+                requiredTicks = 2;
+                minDelta = 0.3;
+                modeInfo = '2 ticks + delta 0.3';
             } else {
-                // ═══════════════════════════════════════════════════════════════
-                // RECUPERAÇÃO (RISE/FALL)
-                // ═══════════════════════════════════════════════════════════════
+                // NORMAL/LENTO: 3 ticks + delta 0.5
+                requiredTicks = 3;
+                minDelta = 0.5;
+                modeInfo = '3 ticks + delta 0.5';
+            }
 
-                let requiredTicks: number;
-                let minDelta: number;
-                let modeInfo: string;
+            if (this.ticks.length < requiredTicks + 1) return null;
 
-                if (state.mode === 'VELOZ') {
-                    // VELOZ: 2 ticks + delta 0.3
-                    requiredTicks = 2;
-                    minDelta = 0.3;
-                    modeInfo = '2 ticks + delta 0.3';
-                } else {
-                    // NORMAL/LENTO: 3 ticks + delta 0.5
-                    requiredTicks = 3;
-                    minDelta = 0.5;
-                    modeInfo = '3 ticks + delta 0.5';
+            const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
+
+            // === CALL (ALTA) ===
+            let upMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] <= prices[i]) {
+                    upMomentum = false;
+                    break;
                 }
+            }
+            const deltaUp = prices[prices.length - 1] - prices[0];
 
-                if (this.ticks.length < requiredTicks + 1) return null;
+            if (upMomentum && deltaUp > minDelta) {
+                // ✅ LOG PADRONIZADO V2: Sinal Recuperação
+                this.logSignalGenerated(state.userId, {
+                    mode: state.mode,
+                    isRecovery: true,
+                    filters: [modeInfo],
+                    trigger: 'Recuperação Alta',
+                    probability: 80,
+                    contractType: 'CALL',
+                    direction: 'CALL'
+                });
+                return 'PAR'; // CALL
+            }
 
-                const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
-
-                // === CALL (ALTA) ===
-                let upMomentum = true;
-                for (let i = 0; i < requiredTicks; i++) {
-                    if (prices[i + 1] <= prices[i]) {
-                        upMomentum = false;
-                        break;
-                    }
+            // === PUT (BAIXA) ===
+            let downMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] >= prices[i]) {
+                    downMomentum = false;
+                    break;
                 }
-                const deltaUp = prices[prices.length - 1] - prices[0];
+            }
+            const deltaDown = prices[0] - prices[prices.length - 1];
 
-                if (upMomentum && deltaUp > minDelta) {
-                    if (upMomentum && deltaUp > minDelta) {
-                        // ✅ LOG PADRONIZADO V2: Sinal Recuperação
-                        this.logSignalGenerated(state.userId, {
-                            mode: state.mode,
-                            isRecovery: true,
-                            filters: [modeInfo],
-                            trigger: 'Recuperação Alta',
-                            probability: 80,
-                            contractType: 'CALL',
-                            direction: 'CALL'
-                        });
-                        return 'PAR'; // CALL
-                    }
+            if (downMomentum && deltaDown > minDelta) {
+                // ✅ LOG PADRONIZADO V2: Sinal Recuperação
+                this.logSignalGenerated(state.userId, {
+                    mode: state.mode,
+                    isRecovery: true,
+                    filters: [modeInfo],
+                    trigger: 'Recuperação Baixa',
+                    probability: 80,
+                    contractType: 'PUT',
+                    direction: 'PUT'
+                });
+                return 'IMPAR'; // PUT
+            }
+        }
 
-                    // === PUT (BAIXA) ===
-                    let downMomentum = true;
-                    for (let i = 0; i < requiredTicks; i++) {
-                        if (prices[i + 1] >= prices[i]) {
-                            downMomentum = false;
-                            break;
-                        }
-                    }
-                    const deltaDown = prices[0] - prices[prices.length - 1];
-
-                    if (downMomentum && deltaDown > minDelta) {
-                        if (downMomentum && deltaDown > minDelta) {
-                            // ✅ LOG PADRONIZADO V2: Sinal Recuperação
-                            this.logSignalGenerated(state.userId, {
-                                mode: state.mode,
-                                isRecovery: true,
-                                filters: [modeInfo],
-                                trigger: 'Recuperação Baixa',
-                                probability: 80,
-                                contractType: 'PUT',
-                                direction: 'PUT'
-                            });
-                            return 'IMPAR'; // PUT
-                        }
-
-                        // Logs de rejeição (silenciados para não poluir demais)
-                    }
-
-                    return null;
-                    return null;
-                }
-            } // Fechamento do check_signal
+        return null;
+    }
 
     private calculateSMA(period: number): number {
         if (this.ticks.length < period) return this.ticks[this.ticks.length - 1]?.value || 0;
