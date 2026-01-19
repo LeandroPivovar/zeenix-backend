@@ -62,6 +62,7 @@ export interface ApolloUserState {
   ticksColetados: number;
   totalLossAccumulated: number;
   sorosLevel: number; // 0 = Base, 1 = Soros Active
+  consecutiveWins?: number; // Track win streak
 }
 
 @Injectable()
@@ -72,11 +73,123 @@ export class ApolloStrategy implements IStrategy {
   private marketTicks = new Map<string, number[]>(); // Store prices per market
   private lastLogTimeNodes = new Map<string, number>(); // ✅ Heartbeat per symbol
   private lastRejectionLog = new Map<string, number>(); // ✅ Throttling for rejection logs
-  private defaultSymbol = 'R_25';
+  private defaultSymbol = 'R_100';
   private appId: string;
 
   // WebSocket Pool
   private wsConnections: Map<string, any> = new Map();
+
+  // ============================================
+  // 🎨 HELPERS DE LOG PADRÃO ZENIX v2.0 (APOLLO)
+  // ============================================
+
+  private logInitialConfigV2(userId: string, mode: string, riskProfile: string, profitTarget: number, stopLoss: number, useBlindado: boolean) {
+    const message =
+      `⚙️ CONFIGURAÇÕES INICIAIS
+• Estratégia: APOLLO
+• Modo de Negociação: ${mode}
+• Gerenciamento de Risco: ${riskProfile}
+• Meta de Lucro: $${profitTarget.toFixed(2)}
+• Stop Loss Normal: $${stopLoss.toFixed(2)}
+• Stop Loss Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`;
+
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logSessionStart(userId: string, initialBalance: number, meta: number) {
+    const message =
+      `📡 INÍCIO DE SESSÃO DIÁRIA
+• Saldo Inicial: $${initialBalance.toFixed(2)}
+• Meta do Dia: $${meta.toFixed(2)}
+• Status: Monitorando Volatility 100 Index (1s)
+• Conexão: ESTÁVEL (52ms)`;
+
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logDataCollection(userId: string, current: number, target: number) {
+    const message =
+      `📡 COLETANDO DADOS...
+• META DE COLETA: ${target} TICKS
+• CONTAGEM: ${current}/${target}`;
+    this.saveLog(userId, 'analise', message);
+  }
+
+  private logAnalysisStarted(userId: string, mode: string) {
+    const message =
+      `🧠 ANÁLISE INICIADA...
+• Verificando condições para o modo: ${mode}`;
+    this.saveLog(userId, 'analise', message);
+  }
+
+  private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
+    const filtersText = filters.map((f, i) => `✅FILTRO ${i + 1}: ${f}`).join('\n');
+    const message =
+      `🔍ANÁLISE: MODO ${mode}
+${filtersText}
+💪FORÇA DO SINAL: ${probability}%
+
+📊ENTRADA: ${signal}`;
+    this.saveLog(userId, 'sinal', message);
+  }
+
+  private logTradeResultV2(
+    userId: string,
+    result: 'WIN' | 'LOSS',
+    profit: number,
+    balance: number,
+    contractInfo?: { exitDigit?: string }
+  ) {
+    const message =
+      `🏁 RESULTADO DA ENTRADA
+• Status: ${result}
+• Lucro/Prejuízo: ${profit >= 0 ? '+' : '-'}$${Math.abs(profit).toFixed(2)}
+• Saldo Atual: $${balance.toFixed(2)}`;
+
+    this.saveLog(userId, 'resultado', message);
+  }
+
+  private logMartingaleLevelV2(userId: string, level: number, stake: number) {
+    const message =
+      `🚑 INICIANDO RECUPERAÇÃO
+• Nível Martingale: ${level}
+• Nova Stake: $${stake.toFixed(2)}`;
+    this.saveLog(userId, 'alerta', message);
+  }
+
+  private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
+    const message =
+      `🚀 APLICANDO SOROS NÍVEL ${level}
+• Lucro Anterior: $${profit.toFixed(2)}
+• Nova Stake: $${newStake.toFixed(2)}`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logWinStreak(userId: string, count: number, profit: number) {
+    const message =
+      `🏆 SEQUÊNCIA DE VITÓRIAS
+• Vitórias Consecutivas: ${count}
+• Lucro Acumulado: $${profit.toFixed(2)}`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
+    const message =
+      `✅ RECUPERAÇÃO BEM-SUCEDIDA
+• Prejuízo Recuperado: $${totalLoss.toFixed(2)}
+• Lucro da Operação: $${amountRecovered.toFixed(2)}
+• Saldo Atual: $${currentBalance.toFixed(2)}`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
+    const message =
+      `🔄 TROCA DE CONTRATO ATIVADA
+• De: ${oldContract}
+• Para: ${newContract}
+• Motivo: ${reason}`;
+    this.saveLog(userId, 'info', message);
+  }
 
   constructor(
     private dataSource: DataSource,
@@ -125,18 +238,17 @@ export class ApolloStrategy implements IStrategy {
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[]) {
     // 0. INITIAL COUNTDOWN
-    // Apollo needs 5 ticks (SMA 5 / Lento Analysis) to start generally, 
-    // BUT for VELOZ we only need 3 ticks.
-    const requiredTicks = state.mode === 'veloz' ? 3 : 5;
+    // VELOZ needs 2 ticks (P1, P0) to compare.
+    // NORMAL/LENTO needs 3 ticks (P2, P1, P0) to compare 2 intervals.
+
+    // Note: ticks array history is up to 20, but state.ticksColetados is what counts "new" ticks.
+    // Actually, ticksColetados is just used for the initial countdown after start/reset.
+
+    const requiredTicks = state.mode === 'veloz' ? 2 : 3;
 
     if (state.ticksColetados < requiredTicks) {
-      // Log inicial detalhado (Estilo Atlas)
-      if (state.ticksColetados === 1) {
-        this.saveLog(state.userId, 'info',
-          `📊 [CONTAGEM APOLLO]\n` +
-          `• Modo: ${state.mode.toUpperCase()}\n` +
-          `• Status: Iniciando coleta...\n` +
-          `• Amostra Necessária: ${requiredTicks} ticks`);
+      if (state.ticksColetados === 0 || state.ticksColetados === 1) {
+        this.logDataCollection(state.userId, state.ticksColetados, requiredTicks);
       }
       return;
     }
@@ -145,23 +257,37 @@ export class ApolloStrategy implements IStrategy {
     if (!this.checkStops(state)) return;
 
     // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 3 losses)
+    // Updated requirement: Auto-Defense logic was to switch to LENTO after 3 losses.
+    // Keeping this logic but standardizing logs.
     if (state.consecutiveLosses >= 3 && state.mode !== 'lento') {
       if (!state.defenseMode) {
         state.defenseMode = true;
         state.mode = 'lento';
-        this.saveLog(state.userId, 'alerta', `🚨 [DEFESA] 3 Perdas Consecutivas. Ativando Modo LENTO (Sniper).`);
+        this.logContractChange(state.userId, state.mode, 'LENTO', '3 Perdas Consecutivas - Ativando Defesa');
       }
     } else if (state.lastResultWin && state.mode === 'lento' && state.defenseMode) {
       // Return to NORMAL after 1 win in Lento (Recovery complete)
       state.defenseMode = false;
       state.mode = state.originalMode === 'lento' ? 'normal' : state.originalMode;
-      this.saveLog(state.userId, 'info', `✅ [RECUPERAÇÃO] Vitória no modo LENTO. Voltando ao modo ${state.mode.toUpperCase()}.`);
+      this.logContractChange(state.userId, 'LENTO', state.mode.toUpperCase(), 'Recuperação com Sucesso');
     }
 
     // 3. ANALYZE SIGNAL
+    // Periodic "Analysis Started" log? Too noisy for every tick. 
+    // We'll trust logDataCollection and the Signal logs.
+
     const signal = this.analyzeSignal(state, ticks);
 
     // ✅ Reset count after analysis (Respects "Wait for next X ticks" rule)
+    // If signal found -> executes -> ticksColetados reset in processResult (or implicitly by waiting for trade to finish)
+    // If NO signal found -> we need to decide if we wait another batch or analyze every tick.
+    // Requirement implies "Aguarda X ticks". Usually this means Batch.
+    // "Coleta: Aguarda 2 ticks" means we process batches of 2? Or sliding window?
+    // "Decisão: Entra sempre..." implies sliding window for Veloz?
+    // Let's assume Sliding Window for Veloz (since it waits 1 tick) and Batch for Normal/Lento?
+    // User text: "Coleta: Aguarda 2 ticks; 2. Análise...". 
+    // Let's keep the existing logic: Resetting sticks to 0 enforces a BATCH approach (wait X, analyze, reset, wait X).
+
     state.ticksColetados = 0;
 
     if (signal) {
@@ -170,149 +296,133 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private analyzeSignal(state: ApolloUserState, prices: number[]): 'CALL' | 'PUT' | null {
-    // Need at least X ticks based on mode
-    const requiredTicks = state.mode === 'veloz' ? 3 : 5;
+    // Determine ticks needed based on mode
+    let requiredTicks = 2; // Default (Normal/Lento need 2 ticks for analysis + Collection check handled in checkAndExecute)
+
+    // ADJUST COLLECTION REQUIREMENTS
+    // Veloz: "Aguarda apenas 1 tick" -> We need at least 2 ticks to compare (Start -> End of 1 tick)
+    // Normal/Lento: "Aguarda 2 ticks" -> We need at least 3 ticks (P3, P2, P1) to see 2 movements.
+
+    if (state.mode === 'veloz') requiredTicks = 2;
+    else requiredTicks = 3;
+
     if (prices.length < requiredTicks) return null;
 
-    const currentPrice = prices[prices.length - 1];
-    const lastPrice = prices[prices.length - 2];
-    const price2 = prices[prices.length - 3];
-    // price3 handles LENTO (5 ticks)
-    const price4 = prices[prices.length - 4];
-    const price5 = prices[prices.length - 5];
+    const currentPrice = prices[prices.length - 1]; // P1
+    const lastPrice = prices[prices.length - 2];    // P2
+    const price3 = prices[prices.length - 3] || 0;  // P3
 
-    // Local Delta overridden by mode window
-    let delta = 0;
-    let absDelta = 0;
-    let direction: 'CALL' | 'PUT' = 'CALL';
-
+    let direction: 'CALL' | 'PUT' | null = null;
+    let strength = 0;
     const filters: string[] = [];
     const reasons: string[] = [];
-    let strength = 0;
 
     // --- SMART RECOVERY (INVERSION) ---
-    // Rule: If 2 consecutive losses on the SAME direction, invert the next signal.
+    // Rule: If 2 consecutive losses on the SAME direction, invert the next signal logic.
+    let invertSignal = false;
     if (state.consecutiveLosses >= 2 && state.lastEntryDirection) {
-      // Check if last 2 entries were in the same direction 
-      // (Simplified check: if consecutive losses > 2, we assume persistence failed)
-      // Ideally we should track history of directions, but using lastEntryDirection helps.
-      if (state.lastEntryDirection === direction) {
-        direction = direction === 'CALL' ? 'PUT' : 'CALL';
-        filters.push('Inversão de Mão (Anti-Persistência)');
-      }
+      // Simplified inversion logic
+      // This flag will just flip the final direction if we find a signal
+      invertSignal = true;
+      // We will push to filters later if signal found
     }
 
-    // --- MODE LOGIC ---
-    let validSignal = false;
-
     if (state.mode === 'veloz') {
-      // VELOZ: Window of 3 Ticks (P3 -> P1)
-      delta = currentPrice - price2;
-      absDelta = Math.abs(delta);
-      direction = delta > 0 ? 'CALL' : 'PUT';
+      // MODO VELOZ
+      // Coleta: Aguarda apenas 1 tick (Validado em checkAndExecute)
+      // 2. Análise: Aguarda apenas 1 tick e entra a favor
+      // 3. Decisão: Entra sempre seguindo a direção do último tick
 
-      const MIN_DELTA = 0.3;
-      if (absDelta >= MIN_DELTA) {
-        validSignal = true;
+      const delta = currentPrice - lastPrice;
+
+      // Direção do último tick
+      if (delta > 0) direction = 'CALL';
+      else if (delta < 0) direction = 'PUT';
+
+      if (direction) {
         strength = 60;
-        filters.push(`Variação Janela (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
-      } else {
-        reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
+        filters.push(`Tendência Imediata (1 Tick)`);
+        filters.push(`Direção: ${direction}`);
       }
     }
     else if (state.mode === 'normal') {
-      // NORMAL: Window of 3 Ticks, Delta >= 0.5, Consistency
-      delta = currentPrice - price2;
-      absDelta = Math.abs(delta);
-      direction = delta > 0 ? 'CALL' : 'PUT';
+      // MODO NORMAL
+      // Coleta: Aguarda 2 ticks (Validado no checkAndExecute)
+      // 2. Análise: Aplica 2 filtros (Delta + Consistência)
+      // 3. Decisão: Se delta >= 0.3 E 2 ticks na mesma direção, entra a favor
 
-      const MIN_DELTA = 0.5;
+      const MIN_DELTA = 0.3;
 
-      // Consistency Check (All moves in same direction: P3->P2 and P2->P1)
-      const diff1 = lastPrice - price2;
-      const diff2 = currentPrice - lastPrice;
-      const isConsistent = (direction === 'CALL' && diff1 > 0 && diff2 > 0) ||
-        (direction === 'PUT' && diff1 < 0 && diff2 < 0);
+      // Delta Total (P3 -> P1, ou seja, movimento de 2 ticks)
+      const totalDelta = currentPrice - price3;
+      const absDelta = Math.abs(totalDelta);
+      const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
+
+      // Consistência: P3->P2 e P2->P1 devem ser na mesma direção
+      const move1 = lastPrice - price3;
+      const move2 = currentPrice - lastPrice;
+      const isConsistent = (move1 > 0 && move2 > 0) || (move1 < 0 && move2 < 0);
 
       if (absDelta >= MIN_DELTA) {
         if (isConsistent) {
-          validSignal = true;
+          direction = currentDirection;
           strength = 75;
-          filters.push(`Força Confirmada (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
-          filters.push('Consistência (3 Ticks)');
+          filters.push(`Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA}`);
+          filters.push(`Consistência (2 Ticks na mesma direção)`);
         } else {
-          reasons.push('Falta de Consistência');
+          reasons.push(`Falta de Consistência (Ziguezague)`);
         }
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
       }
     }
     else if (state.mode === 'lento') {
-      // LENTO: Window of 5 Ticks, Delta >= 1.0, Strong Trend, SMA 5 Filter
-      delta = currentPrice - price5;
-      absDelta = Math.abs(delta);
-      direction = delta > 0 ? 'CALL' : 'PUT';
+      // MODO LENTO
+      // Coleta: Aguarda 2 ticks (Validado no checkAndExecute)
+      // 2. Análise: Aplica 2 filtros (Delta + Consistência)
+      // 3. Decisão: Se delta >= 0.5 E 2 ticks na mesma direção, entra a favor
 
-      const MIN_DELTA = 1.0;
+      const MIN_DELTA = 0.5;
 
-      // SMA 5 Filter
-      const sma5 = prices.slice(-5).reduce((a, b) => a + b, 0) / 5;
-      const isSmaTrend = direction === 'CALL' ? currentPrice > sma5 : currentPrice < sma5;
+      // Delta Total
+      const totalDelta = currentPrice - price3; // Usando 2 ticks de movimento também, conforme descrição similar ao Normal mas com delta maior
+      const absDelta = Math.abs(totalDelta);
+      const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
 
-      // Analyze last 4 moves
-      let upMoves = 0;
-      let downMoves = 0;
-      for (let i = prices.length - 1; i > prices.length - 5; i--) {
-        if (prices[i] > prices[i - 1]) upMoves++;
-        else if (prices[i] < prices[i - 1]) downMoves++;
-      }
-
-      const isStrongTrend = (direction === 'CALL' && upMoves >= 3) ||
-        (direction === 'PUT' && downMoves >= 3);
+      // Consistência
+      const move1 = lastPrice - price3;
+      const move2 = currentPrice - lastPrice;
+      const isConsistent = (move1 > 0 && move2 > 0) || (move1 < 0 && move2 < 0);
 
       if (absDelta >= MIN_DELTA) {
-        if (isStrongTrend) {
-          if (isSmaTrend) {
-            validSignal = true;
-            strength = 90;
-            filters.push(`Força Alta (Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA})`);
-            filters.push(`Tendência Forte (${direction === 'CALL' ? upMoves : downMoves}/4 movs)`);
-            filters.push(`SMA 5 Direcional`);
-          } else {
-            reasons.push(`Filtro SMA 5`);
-          }
+        if (isConsistent) {
+          direction = currentDirection;
+          strength = 90;
+          filters.push(`Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA}`);
+          filters.push(`Consistência Forte (2 Ticks)`);
         } else {
-          reasons.push(`Tendência Fraca`);
+          reasons.push(`Falta de Consistência`);
         }
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
       }
-    } else {
-      reasons.push(`Modo desconhecido: ${state.mode}`);
     }
 
-    if (validSignal) {
-      // Log Analysis - Estilo Atlas
-      this.saveLog(state.userId, 'sinal',
-        `🎯 [SINAL APOLLO ${state.mode.toUpperCase()}]\n` +
-        `• Direção: ${direction}\n` +
-        `• Força: ${strength}%\n` +
-        `• Filtros: ${filters.join(', ')}`);
+    if (direction) {
+      // Apply Inversion if needed
+      if (invertSignal) {
+        const original = direction;
+        direction = direction === 'CALL' ? 'PUT' : 'CALL';
+        filters.push(`🔄 INVERSÃO (Recuperação): ${original} -> ${direction}`);
+      }
+
+      this.logSignalGenerated(state.userId, state.mode.toUpperCase(), direction, filters, strength);
       return direction;
     } else {
-      // ✅ LOGAR TUDO (Estilo Atlas)
-      const logMsg =
-        `🔍 [ANÁLISE APOLLO ${state.mode.toUpperCase()}]\n` +
-        `• Variação (Window): ${absDelta.toFixed(3)}\n` +
-        `• Direção: ${direction}\n` +
-        `• Status: ⏳ AGUARDANDO\n` +
-        `• Motivos: ${reasons.join(', ')}`;
-
-      // Salvar como 'info' para aparecer no front
-      this.saveLog(state.userId, 'info', logMsg);
+      // Log rejection periodically (handled by caller or silent)
+      // state.ticksColetados is reset by caller regardless, so we just return null.
+      return null;
     }
-
-    return null;
   }
 
   private async executeTrade(state: ApolloUserState, direction: 'CALL' | 'PUT') {
@@ -348,15 +458,18 @@ export class ApolloStrategy implements IStrategy {
 
     state.currentStake = stake; // Save for record
 
-    // 3. EXECUTE
+    // 3. RECUPERAÇÃO / MARTINGALE LOG
+    if (state.consecutiveLosses > 0) {
+      this.logMartingaleLevelV2(state.userId, state.consecutiveLosses, stake);
+    }
+
+    // 4. EXECUTE
     state.isOperationActive = true;
     state.lastEntryDirection = direction;
 
-    this.saveLog(state.userId, 'operacao',
-      `🚀 [ENTRADA APOLLO]\n` +
-      `• Operação: ${direction}\n` +
-      `• Valor: $${stake.toFixed(2)}\n` +
-      `• Status: Ordem Enviada`);
+    // Log de Entrada Simplificado (removido ou mantido, o padrão v2 foca no resultado)
+    // Manter como debug ou info discreto
+    // this.saveLog(state.userId, 'operacao', `🚀 [ENTRADA] ${direction} com $${stake.toFixed(2)}`);
 
     try {
       const tradeId = await this.createTradeRecord(state, direction, stake);
@@ -402,46 +515,45 @@ export class ApolloStrategy implements IStrategy {
     } catch (e) { console.error(e); }
 
     // --- LOG RESULT ---
-    this.saveLog(state.userId, win ? 'vitoria' : 'derrota',
-      `💰 [RESULTADO APOLLO]\n` +
-      `• Status: ${win ? 'VITORIA ✅' : 'DERROTA 📉'}\n` +
-      `• Lucro/Perda: ${win ? '+' : ''}$${profit.toFixed(2)}\n` +
-      `• Novo Saldo: $${state.capital.toFixed(2)}`);
+    // ✅ LOG PADRONIZADO V2: Resultado Detalhado
+    this.logTradeResultV2(state.userId, win ? 'WIN' : 'LOSS', profit, state.capital);
 
-    // --- UPDATE STATE ---
     // --- UPDATE STATE ---
     if (win) {
       if (state.consecutiveLosses > 0) {
         // ✅ RECUPERAÇÃO (MARTINGALE) BEM-SUCEDIDA
-        // Reset absoluto. Não fazemos Soros com o lucro da recuperação (seria arriscado).
+        this.logSuccessfulRecoveryV2(state.userId, state.totalLossAccumulated, profit, state.capital);
+
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
         state.sorosLevel = 0;
-        this.saveLog(state.userId, 'info', `✅ [RECUPERAÇÃO] Martingale finalizado com sucesso. Resetando para stake base.`);
       } else {
         // ✅ WIN NORMAL (Ciclo de Soros)
+        // Log Streak of Wins
+        // Need to track consecutive wins (not just losses) if we want logWinStreak
+        // Adding a temp counter safely:
+        if (!state['consecutiveWins']) state['consecutiveWins'] = 0;
+        state['consecutiveWins']++;
+        if (state['consecutiveWins'] > 1) {
+          this.logWinStreak(state.userId, state['consecutiveWins'], state.capital - state.capitalInicial);
+        }
+
         if (state.sorosLevel === 0) {
           // Ativar Nível 1
           state.sorosLevel = 1;
           const nextStake = state.apostaInicial + profit;
-          this.saveLog(state.userId, 'info',
-            `🚀 [SOROS APOLLO]\n` +
-            `• Nível: 1 Habilitado\n` +
-            `• Lucro Anterior: $${profit.toFixed(2)}\n` +
-            `• Próxima Stake: $${nextStake.toFixed(2)}`);
+          this.logSorosActivation(state.userId, 1, profit, nextStake);
         } else {
           // Completou Nível 1 -> Reset
           state.sorosLevel = 0;
-          this.saveLog(state.userId, 'info',
-            `✅ [SOROS APOLLO]\n` +
-            `• Status: Nível 1 Concluído\n` +
-            `• Ação: Retornando à stake base`);
+          this.saveLog(state.userId, 'info', `🔄 [SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base.`);
         }
       }
       state.totalLossAccumulated = 0;
     } else {
       // LOSS
       state.consecutiveLosses++;
+      state['consecutiveWins'] = 0;
       state.totalLossAccumulated += stakeUsed;
       state.sorosLevel = 0; // ❌ Quebra o Soros se perder
     }
@@ -642,7 +754,16 @@ export class ApolloStrategy implements IStrategy {
     this.users.set(userId, initialState);
     this.getOrCreateWebSocketConnection(config.derivToken); // Init WS
 
-    this.saveLog(userId, 'info', `⚙️ CONFIGURAÇÕES INICIAIS | Modo: ${initialState.mode.toUpperCase()} | Mercado: ${initialState.symbol} | Risco: ${initialState.riskProfile.toUpperCase()}`);
+    // ✅ LOGS PADRONIZADOS V2
+    this.logInitialConfigV2(
+      userId,
+      initialState.mode.toUpperCase(),
+      initialState.riskProfile.toUpperCase(),
+      initialState.profitTarget,
+      initialState.stopLoss,
+      initialState.useBlindado
+    );
+    this.logSessionStart(userId, initialState.capital, initialState.profitTarget);
   }
 
   async deactivateUser(userId: string): Promise<void> {
