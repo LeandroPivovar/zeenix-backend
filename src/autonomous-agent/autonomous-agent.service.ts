@@ -1131,74 +1131,84 @@ export class AutonomousAgentService implements OnModuleInit {
    */
 
   async getDailyTrades(userId: string, date: string): Promise<any[]> {
-    // Buscar config para obter DATA DA SESSÃO
-    const config = await this.getAgentConfig(userId);
-    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+    try {
+      // Buscar config para obter DATA DA SESSÃO
+      const config = await this.getAgentConfig(userId);
+      const sessionDate = config?.session_date ? new Date(config.session_date) : null;
 
-    // Validar formato da data YYYY-MM-DD
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      // Validar formato da data YYYY-MM-DD
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-    let targetDateStr = date;
+      let targetDateStr = date;
 
-    if (date === 'today' || !dateRegex.test(date)) {
-      targetDateStr = new Date().toISOString().split('T')[0];
+      if (date === 'today' || !dateRegex.test(date)) {
+        targetDateStr = new Date().toISOString().split('T')[0];
+      }
+
+      // Se a data solicitada for HOJE, filtra pela SESSÃO ATUAL (se existir)
+      const todayStr = new Date().toISOString().split('T')[0];
+      const isToday = targetDateStr === todayStr;
+
+      // Definir início e fim do dia para compatibilidade com qualquer DB (SQLite, Postgres, etc)
+      // Assumindo UTC strings
+      const startOfDayStr = `${targetDateStr}T00:00:00.000Z`;
+      const endOfDayStr = `${targetDateStr}T23:59:59.999Z`;
+
+      let query = `
+         SELECT 
+           created_at,
+           symbol,
+           contract_type,
+           amount as stake,
+           profit_loss,
+           status,
+           entry_tick,
+           exit_tick
+         FROM autonomous_agent_trades 
+         WHERE user_id = ? 
+           AND created_at >= ?
+           AND created_at <= ?
+           AND status IN ('WON', 'LOST')
+      `;
+
+      const params: any[] = [userId, startOfDayStr, endOfDayStr];
+
+      // Adicionar filtro de sessão se for HOJE e tiver sessionDate
+      /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
+         Se filtrarmos aqui, a tabela mostrará apenas a sessão.
+         Mas o "Relatório Diário" implica dia todo.
+         Se a sessão começou ontem, "Sessão Atual" pode incluir ontem?
+         Session Date é timestamp.
+         
+         Vou assumir que o usuário quer ver TUDO do DIA, mas limitar estatísticas à sessão?
+         Ou ver apenas SESSÃO no relatório?
+         O prompt diz: "mostre aqui APENAS operações dentro da sessão atual"
+         Vou aplicar o filtro de sessão se for hoje.
+      */
+      if (isToday && sessionDate) {
+        query += ` AND created_at >= ?`;
+        params.push(sessionDate.toISOString());
+      }
+
+      query += ` ORDER BY created_at DESC`;
+
+      const trades = await this.dataSource.query(query, params);
+
+      return trades.map((t: any) => ({
+        time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
+        market: t.symbol,
+        contract: t.contract_type,
+        stake: parseFloat(t.stake) || 0,
+        profit: parseFloat(t.profit_loss) || 0,
+        result: (parseFloat(t.profit_loss) >= 0 ? '+' : '') + parseFloat(t.profit_loss).toFixed(2),
+        entry: t.entry_tick,
+        exit: t.exit_tick,
+        status: t.status
+      }));
+    } catch (error) {
+      Logger.error(`[GetDailyTrades] Error returning empty:`, error);
+      return [];
     }
-
-    // Se a data solicitada for HOJE, filtra pela SESSÃO ATUAL (se existir)
-    const todayStr = new Date().toISOString().split('T')[0];
-    const isToday = targetDateStr === todayStr;
-
-    let query = `
-       SELECT 
-         created_at,
-         symbol,
-         contract_type,
-         amount as stake,
-         profit_loss,
-         status,
-         entry_tick,
-         exit_tick
-       FROM autonomous_agent_trades 
-       WHERE user_id = ? 
-         AND created_at LIKE ?
-         AND status IN ('WON', 'LOST')
-    `;
-
-    const likeParam = `${targetDateStr}%`;
-    const params: any[] = [userId, likeParam];
-
-    // Adicionar filtro de sessão se for HOJE e tiver sessionDate
-    /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
-       Se filtrarmos aqui, a tabela mostrará apenas a sessão.
-       Mas o "Relatório Diário" implica dia todo.
-       Se a sessão começou ontem, "Sessão Atual" pode incluir ontem?
-       Session Date é timestamp.
-       
-       Vou assumir que o usuário quer ver TUDO do DIA, mas limitar estatísticas à sessão?
-       Ou ver apenas SESSÃO no relatório?
-       O prompt diz: "mostre aqui APENAS operações dentro da sessão atual"
-       Vou aplicar o filtro de sessão se for hoje.
-    */
-    if (isToday && sessionDate) {
-      query += ` AND created_at >= ?`;
-      params.push(sessionDate.toISOString());
-    }
-
-    query += ` ORDER BY created_at DESC`;
-
-    const trades = await this.dataSource.query(query, params);
-
-    return trades.map((t: any) => ({
-      time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
-      market: t.symbol,
-      contract: t.contract_type,
-      stake: parseFloat(t.stake) || 0,
-      profit: parseFloat(t.profit_loss) || 0,
-      result: (parseFloat(t.profit_loss) >= 0 ? '+' : '') + parseFloat(t.profit_loss).toFixed(2),
-      entry: t.entry_tick,
-      exit: t.exit_tick,
-      status: t.status
-    }));
   }
 
 }
