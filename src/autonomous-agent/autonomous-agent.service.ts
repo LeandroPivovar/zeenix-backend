@@ -1176,14 +1176,5 @@ export class AutonomousAgentService implements OnModuleInit {
     }));
   }
 
-  async getLogs(userId: string, limit: number = 50): Promise<any[]> {
-    return this.dataSource.query(
-      `SELECT * FROM autonomous_agent_logs 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT ?`,
-      [userId, limit]
-    );
-  }
 }
 
