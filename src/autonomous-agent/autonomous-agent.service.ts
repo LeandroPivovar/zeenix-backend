@@ -1091,7 +1091,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (days <= 1) {
         // 1 day: Hourly (1h)
-        tradeDate.setMinutes(0, 0, 0, 0);
+        tradeDate.setMinutes(0, 0, 0);
         bucketTime = tradeDate.getTime();
       } else if (days <= 2) {
         // 2 days: Every 6 hours (0, 6, 12, 18)
