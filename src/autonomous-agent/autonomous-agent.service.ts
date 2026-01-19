@@ -1172,8 +1172,8 @@ export class AutonomousAgentService implements OnModuleInit {
            stake_amount as stake,
            profit_loss,
            status,
-           entry_tick,
-           exit_tick
+           entry_price,
+           exit_price
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND created_at >= ?
@@ -1211,8 +1211,8 @@ export class AutonomousAgentService implements OnModuleInit {
         stake: parseFloat(t.stake) || 0,
         profit: parseFloat(t.profit_loss) || 0,
         result: (parseFloat(t.profit_loss) >= 0 ? '+' : '') + parseFloat(t.profit_loss).toFixed(2),
-        entry: t.entry_tick,
-        exit: t.exit_tick,
+        entry: t.entry_price,
+        exit: t.exit_price,
         status: t.status
       }));
     } catch (error) {
