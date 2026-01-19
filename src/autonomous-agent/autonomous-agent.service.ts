@@ -1023,6 +1023,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       return {
         date: new Date(day.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+        fullDate: new Date(day.date).toISOString().split('T')[0], // YYYY-MM-DD for querying
         profit: Number(netProfit.toFixed(2)),
         ops,
         winRate: Number(winRate.toFixed(2)),
@@ -1123,6 +1124,66 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     return dataPoints;
+  }
+
+  /**
+   * Obtém trades detalhados de um dia específico
+   */
+  async getDailyTrades(userId: string, date: string): Promise<any[]> {
+    // Configurar start e end do dia
+    // Se date for 'today', usa hoje. Se for 'YYYY-MM-DD', usa essa data.
+    const startOfDay = new Date();
+    if (date !== 'today') {
+      const parts = date.split('-'); // Espera YYYY-MM-DD
+      if (parts.length === 3) {
+        startOfDay.setFullYear(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      }
+    }
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const trades = await this.dataSource.query(
+      `SELECT 
+         created_at,
+         symbol,
+         contract_type,
+         amount as stake,
+         profit_loss,
+         status,
+         entry_tick,
+         exit_tick
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at >= ?
+         AND created_at <= ?
+         AND status IN ('WON', 'LOST')
+       ORDER BY created_at DESC`,
+      [userId, startOfDay.toISOString(), endOfDay.toISOString()]
+    );
+
+    return trades.map((t: any) => ({
+      time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
+      market: t.symbol,
+      contract: t.contract_type,
+      stake: parseFloat(t.stake) || 0,
+      profit: parseFloat(t.profit_loss) || 0,
+      result: (parseFloat(t.profit_loss) >= 0 ? '+' : '') + parseFloat(t.profit_loss).toFixed(2),
+      entry: t.entry_tick,
+      exit: t.exit_tick,
+      status: t.status
+    }));
+  }
+
+  async getLogs(userId: string, limit: number = 50): Promise<any[]> {
+    return this.dataSource.query(
+      `SELECT * FROM autonomous_agent_logs 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT ?`,
+      [userId, limit]
+    );
   }
 }
 

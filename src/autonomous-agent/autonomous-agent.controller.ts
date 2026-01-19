@@ -443,5 +443,26 @@ export class AutonomousAgentController {
       );
     }
   }
+  @Get('daily-trades/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getDailyTrades(@Param('userId') userId: string, @Query('date') date: string) {
+    try {
+      const trades = await this.agentService.getDailyTrades(userId, date || 'today');
+      return {
+        success: true,
+        data: trades,
+      };
+    } catch (error) {
+      this.logger.error(`[GetDailyTrades] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar trades diários',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 
