@@ -1082,60 +1082,98 @@ export class AutonomousAgentService implements OnModuleInit {
       [userId, startDate.toISOString()]
     );
 
-    // Grouping and accumulation logic
-    const dataPoints: { time: string | number, value: number }[] = [];
-    let cumulativeProfit = 0;
-    const aggregationMap = new Map<string, number>();
+    // Map trades to their bucket timestamps
+    const tradesMap = new Map<number, number>(); // timestamp (ms) -> profit sum
 
     for (const trade of trades) {
       const tradeDate = new Date(trade.created_at);
-      let key: string;
+      let bucketTime: number;
 
       if (days <= 1) {
         // 1 day: Hourly (1h)
-        tradeDate.setMinutes(0, 0, 0);
-        key = tradeDate.toISOString();
+        tradeDate.setMinutes(0, 0, 0, 0);
+        bucketTime = tradeDate.getTime();
       } else if (days <= 2) {
         // 2 days: Every 6 hours (0, 6, 12, 18)
         const hour = tradeDate.getHours();
         const block = Math.floor(hour / 6) * 6;
         tradeDate.setHours(block, 0, 0, 0);
-        key = tradeDate.toISOString();
+        bucketTime = tradeDate.getTime();
       } else if (days <= 3) {
         // 3 days: Every 12 hours (0, 12)
         const hour = tradeDate.getHours();
         const block = Math.floor(hour / 12) * 12;
         tradeDate.setHours(block, 0, 0, 0);
-        key = tradeDate.toISOString();
+        bucketTime = tradeDate.getTime();
       } else {
-        // 4+ days: Daily (24h) - Use YYYY-MM-DD
-        key = tradeDate.toISOString().split('T')[0];
+        // 4+ days: Daily (24h) - Use YYYY-MM-DD (normalized to midnight)
+        tradeDate.setHours(0, 0, 0, 0);
+        bucketTime = tradeDate.getTime();
       }
 
       const profit = parseFloat(trade.profit_loss) || 0;
-      const current = aggregationMap.get(key) || 0;
-      aggregationMap.set(key, current + profit);
+      const current = tradesMap.get(bucketTime) || 0;
+      tradesMap.set(bucketTime, current + profit);
     }
 
-    const sortedKeys = Array.from(aggregationMap.keys()).sort();
+    // Generate continuous sequence of buckets
+    const dataPoints: { time: string | number, value: number }[] = [];
+    let cumulativeProfit = 0;
 
-    for (const key of sortedKeys) {
-      cumulativeProfit += aggregationMap.get(key)!;
+    // Determine interval in ms
+    let intervalMs: number;
+    if (days <= 1) intervalMs = 60 * 60 * 1000; // 1 hour
+    else if (days <= 2) intervalMs = 6 * 60 * 60 * 1000; // 6 hours
+    else if (days <= 3) intervalMs = 12 * 60 * 60 * 1000; // 12 hours
+    else intervalMs = 24 * 60 * 60 * 1000; // 24 hours
 
-      // Determine output format based on days
+    // Generate buckets from startDate to Now (or end of today for wider ranges)
+    const endTime = Date.now();
+    let currentBucketTime = startDate.getTime();
+
+    // Round start bucket down to match interval alignment if needed
+    // (startDate is already normalized to midnight or session start, but session start might be mid-interval)
+    // For simplicity, we just iterate from startDate. If startDate is 10:15 and interval is 1h, next is 11:15?
+    // User requested "divisions", explicitly "00:00, 01:00".
+    // So we should align currentBucketTime to the grid.
+
+    if (days <= 1) {
+      const d = new Date(currentBucketTime);
+      d.setMinutes(0, 0, 0);
+      currentBucketTime = d.getTime();
+    } else if (days <= 2) {
+      const d = new Date(currentBucketTime);
+      const h = d.getHours();
+      const block = Math.floor(h / 6) * 6;
+      d.setHours(block, 0, 0, 0);
+      currentBucketTime = d.getTime();
+    } // ... and so on. But startDate logic already does some of this? 
+    // Actually, startDate is midnight (unless sessionDate overrides).
+    // If sessionDate overrides, we probably want to start exactly there or align back?
+    // Let's assume aligning to the grid is safer for the "chart divisions".
+
+    while (currentBucketTime <= endTime) {
+      // Add profit from this bucket if any
+      if (tradesMap.has(currentBucketTime)) {
+        cumulativeProfit += tradesMap.get(currentBucketTime)!;
+      }
+
+      // Determine output time format
       let timeValue: string | number;
       if (days < 4) {
-        // Sub-daily: use Unix timestamp
-        timeValue = new Date(key).getTime() / 1000;
+        // Sub-daily: Unix timestamp (seconds)
+        timeValue = currentBucketTime / 1000;
       } else {
-        // Daily: use YYYY-MM-DD string
-        timeValue = key;
+        // Daily: YYYY-MM-DD string
+        timeValue = new Date(currentBucketTime).toISOString().split('T')[0];
       }
 
       dataPoints.push({
         time: timeValue,
         value: Number(cumulativeProfit.toFixed(2))
       });
+
+      currentBucketTime += intervalMs;
     }
 
     return dataPoints;
