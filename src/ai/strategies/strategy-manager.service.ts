@@ -48,23 +48,24 @@ export class StrategyManagerService implements OnModuleInit {
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     const promises: Promise<void>[] = [];
 
-    // ORION agora usa R_100 como símbolo padrão
-    if (!symbol || symbol === 'R_100') {
-      promises.push(
-        this.orionStrategy.processTick(tick, 'R_100').catch(error => {
-          this.logger.error('[StrategyManager][Orion] Erro:', error);
-        }),
-        this.titanStrategy.processTick(tick, 'R_100').catch(error => {
-          this.logger.error('[StrategyManager][Titan] Erro:', error);
-        }),
-        this.nexusStrategy.processTick(tick, 'R_100').catch(error => {
-          this.logger.error('[StrategyManager][Nexus] Erro:', error);
-        })
-      );
-    }
+    // ✅ FIX: Sempre enviar ticks para TODAS as estratégias
+    // Cada estratégia filtra internamente qual symbol ela processa
 
-    // ATLAS processa R_10, R_25, R_100 e 1HZ100V
-    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
+    // ORION, TITAN, NEXUS: Processam R_100 (filtro interno)
+    promises.push(
+      this.orionStrategy.processTick(tick, symbol || 'R_100').catch(error => {
+        this.logger.error('[StrategyManager][Orion] Erro:', error);
+      }),
+      this.titanStrategy.processTick(tick, symbol || 'R_100').catch(error => {
+        this.logger.error('[StrategyManager][Titan] Erro:', error);
+      }),
+      this.nexusStrategy.processTick(tick, symbol || 'R_100').catch(error => {
+        this.logger.error('[StrategyManager][Nexus] Erro:', error);
+      })
+    );
+
+    // ATLAS: Processa R_10, R_25, R_100 e 1HZ100V
+    if (symbol) {
       promises.push(
         this.atlasStrategy.processTick(tick, symbol).catch(error => {
           this.logger.error('[StrategyManager][Atlas] Erro:', error);
@@ -72,15 +73,13 @@ export class StrategyManagerService implements OnModuleInit {
       );
     }
 
-    // APOLLO: Agora suporta múltiplos mercados (Dinâmico)
-    if (true /* Sempre checar, pois Apollo agora filtra internamente */) {
-      if (['1HZ10V', 'R_100', 'R_10', 'R_25'].includes(symbol!)) {
-        promises.push(
-          this.apolloStrategy.processTick(tick, symbol).catch(error => {
-            this.logger.error('[StrategyManager][Apollo] Erro:', error);
-          })
-        );
-      }
+    // APOLLO: Suporta múltiplos mercados
+    if (symbol) {
+      promises.push(
+        this.apolloStrategy.processTick(tick, symbol).catch(error => {
+          this.logger.error('[StrategyManager][Apollo] Erro:', error);
+        })
+      );
     }
 
     // Processar todas as estratégias em paralelo
