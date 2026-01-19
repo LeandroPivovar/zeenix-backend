@@ -1054,8 +1054,6 @@ export class AutonomousAgentService implements OnModuleInit {
     const startDate = new Date(today);
 
     // Adjust start date based on days parameter
-    // If days <= 1, we want hourly granularity for the last 24h or so, but let's stick to days logic as base
-    // Actually, 'days=1' usually means 'today' or 'last 24h'.
     if (days <= 1) {
       startDate.setTime(Date.now() - 24 * 60 * 60 * 1000); // Last 24 hours
     } else {
@@ -1086,59 +1084,57 @@ export class AutonomousAgentService implements OnModuleInit {
     // Grouping and accumulation logic
     const dataPoints: { time: string | number, value: number }[] = [];
     let cumulativeProfit = 0;
+    const aggregationMap = new Map<string, number>();
 
-    // We can just iterate and accumulate, effectively creating a point for each trade or group by granularity.
-    // For a smoother chart, grouping by hour (if days <= 1) or day (if days > 1) is better.
+    for (const trade of trades) {
+      const tradeDate = new Date(trade.created_at);
+      let key: string;
 
-    if (days <= 1) {
-      // Group by Hour
-      const hourlyMap = new Map<string, number>(); // "YYYY-MM-DD HH:00" -> profit sum
-
-      for (const trade of trades) {
-        const tradeDate = new Date(trade.created_at);
-        // Round down to hour
+      if (days <= 1) {
+        // 1 day: Hourly (1h)
         tradeDate.setMinutes(0, 0, 0);
-        const key = tradeDate.toISOString(); // Use ISO string as map key "2023-01-01T10:00:00.000Z"
-
-        const profit = parseFloat(trade.profit_loss) || 0;
-        const current = hourlyMap.get(key) || 0;
-        hourlyMap.set(key, current + profit);
+        key = tradeDate.toISOString();
+      } else if (days <= 2) {
+        // 2 days: Every 6 hours (0, 6, 12, 18)
+        const hour = tradeDate.getHours();
+        const block = Math.floor(hour / 6) * 6;
+        tradeDate.setHours(block, 0, 0, 0);
+        key = tradeDate.toISOString();
+      } else if (days <= 3) {
+        // 3 days: Every 12 hours (0, 12)
+        const hour = tradeDate.getHours();
+        const block = Math.floor(hour / 12) * 12;
+        tradeDate.setHours(block, 0, 0, 0);
+        key = tradeDate.toISOString();
+      } else {
+        // 4+ days: Daily (24h) - Use YYYY-MM-DD
+        key = tradeDate.toISOString().split('T')[0];
       }
 
-      // Sort keys and build cumulative
-      const sortedKeys = Array.from(hourlyMap.keys()).sort();
-      for (const key of sortedKeys) {
-        // We use timestamp for hours in lightweight-charts usually, but string works if formatted correctly.
-        // For intraday, unix timestamp is safer for 'time' scale in lightweight-charts if we want precise axis.
-        const timestamp = new Date(key).getTime() / 1000;
-        cumulativeProfit += hourlyMap.get(key)!;
+      const profit = parseFloat(trade.profit_loss) || 0;
+      const current = aggregationMap.get(key) || 0;
+      aggregationMap.set(key, current + profit);
+    }
 
-        dataPoints.push({
-          time: timestamp, // Unix timestamp for intraday
-          value: Number(cumulativeProfit.toFixed(2))
-        });
+    const sortedKeys = Array.from(aggregationMap.keys()).sort();
+
+    for (const key of sortedKeys) {
+      cumulativeProfit += aggregationMap.get(key)!;
+
+      // Determine output format based on days
+      let timeValue: string | number;
+      if (days < 4) {
+        // Sub-daily: use Unix timestamp
+        timeValue = new Date(key).getTime() / 1000;
+      } else {
+        // Daily: use YYYY-MM-DD string
+        timeValue = key;
       }
 
-    } else {
-      // Group by Day
-      const dailyMap = new Map<string, number>(); // "YYYY-MM-DD" -> profit sum
-
-      for (const trade of trades) {
-        const dateStr = new Date(trade.created_at).toISOString().split('T')[0];
-        const profit = parseFloat(trade.profit_loss) || 0;
-        const current = dailyMap.get(dateStr) || 0;
-        dailyMap.set(dateStr, current + profit);
-      }
-
-      const sortedKeys = Array.from(dailyMap.keys()).sort();
-      for (const key of sortedKeys) {
-        cumulativeProfit += dailyMap.get(key)!;
-
-        dataPoints.push({
-          time: key, // "YYYY-MM-DD" string works for daily scale
-          value: Number(cumulativeProfit.toFixed(2))
-        });
-      }
+      dataPoints.push({
+        time: timeValue,
+        value: Number(cumulativeProfit.toFixed(2))
+      });
     }
 
     return dataPoints;
