@@ -1055,7 +1055,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Adjust start date based on days parameter
     if (days <= 1) {
-      startDate.setTime(Date.now() - 24 * 60 * 60 * 1000); // Last 24 hours
+      // days=1 treated as "Today" (since midnight)
+      startDate.setTime(today.getTime());
     } else {
       startDate.setDate(today.getDate() - days);
     }
