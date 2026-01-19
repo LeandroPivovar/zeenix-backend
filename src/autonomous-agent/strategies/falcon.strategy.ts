@@ -312,12 +312,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ Log de debug da análise
+      // ✅ Log de debug da análise (Sempre logar se houver análise)
       if (marketAnalysis) {
-        this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${marketAnalysis.probability.toFixed(1)}%, signal=${marketAnalysis.signal}`);
+        const { signal, probability, details } = marketAnalysis;
+        const ups = details?.ups || 0;
+        const downs = details?.downs || 0;
+        const total = details?.totalMoves || 0;
+
+        this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}, moves=${ups}^/${downs}v`);
+
+        // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
+        const message = `📊 ANÁLISE COMPLETA\n` +
+          `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
+          `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'SEM PADRÃO CLARO ❌'}\n` +
+          `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'NORMAL' ? 67 : 85}%)`;
+
+        this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
       }
 
-      if (marketAnalysis) {
+      if (marketAnalysis && marketAnalysis.signal) {
         // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
         if (state.isWaitingContract) {
           this.processingLocks.set(userId, false); // Liberar lock antes de retornar
@@ -395,16 +408,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
     }
 
-    if (!signal) return null;
-
+    // ✅ Retornar objeto de análise mesmo sem sinal forte, para logs
     return {
       probability,
-      signal,
-      payout: 0.92, // Padrão aproximado
+      signal, // Pode ser null
+      payout: 0.92,
       confidence: probability / 100,
       details: {
-        trend: signal,
-        trendStrength: probability / 100
+        trend: signal || 'NEUTRAL',
+        trendStrength: probability / 100,
+        // Metadata adicional para debug
+        ups,
+        downs,
+        totalMoves: recentValues.length - 1
       },
     };
   }
