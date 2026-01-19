@@ -1086,132 +1086,128 @@ export class OrionStrategy implements IStrategy {
     const lastLogTime = (state as any).lastAnalysisLogTime || 0;
     if (agora - lastLogTime > 5000) {
       (state as any).lastAnalysisLogTime = agora;
-      if (agora - lastLogTime > 5000) {
-        (state as any).lastAnalysisLogTime = agora;
-        this.logAnalysisStarted(state.userId, currentMode.toUpperCase());
-      }
-
-      // Identificar fase atual (padrão: ATAQUE)
-      const phase = state.currentPhase || 'ATAQUE';
-      const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
-
-      // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
-      // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
-      // ✅ CORREÇÃO: M1 (1 Loss) ainda é Over 3. Defesa PA apenas em M2+ (>= 2 Losses)
-      if ((phase === 'DEFESA' || consecutiveLosses > 1) && consecutiveLosses < 4) {
-        // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
-        if (currentMode === 'veloz') {
-          // Veloz: 2 ticks + delta 0.3
-          return this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
-        } else {
-          // Normal/Lento/Preciso: 3 ticks + delta 0.5
-          return this.checkMomentumAndStrength(state, 3, 0.5, currentMode.toUpperCase());
-        }
-      }
-
-      // Se >= 4 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
-      // Se >= 4 Losses (Defesa Pesada), Alternar para Modo PRECISO (Recuperação com Momentum + Delta)
-      if (consecutiveLosses >= 4) {
-        // Debug apenas se mudou
-        const now = Date.now();
-        if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
-          (state as any).lastModeChangeLog = now;
-          this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo PRECISO (Momentum 3 ticks + Delta 0.5)`);
-        }
-
-        // ✅ Executar lógica de Recuperação PRECISO (3 ticks + Delta 0.5)
-        // Não cai mais (fallthrough) para a fase de ataque
-        // Retorna CALL ou PUT se encontrar sinal, ou null se não.
-        return this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
-      }
-
-      // --- 2. FASE DE ATAQUE (Digit Over 3) ---
-      // Busca falhas na sequência de dígitos baixos (< 4)
-
-      // ✅ MODO VELOZ: SEM FILTRO (Compra em todos os ticks)
-      if (currentMode === 'veloz') {
-        // Log simplificado para não spammar
-        // const now = Date.now();
-        // if (now - ((state as any).lastVelozLog || 0) > 1000) {
-        //   (state as any).lastVelozLog = now;
-        //   this.logger.log(`[ORION][VELOZ] 🚀 Modo Veloz: Entrada Direta (Sem Filtro)`);
-        // }
-
-        // Salvar log para frontend (Rate limited pelo próprio RiskManager/UI se necessário, mas aqui enviamos o sinal)
-        // Salvar log para frontend
-        this.logSignalGenerated(state.userId, {
-          mode: 'VELOZ',
-          isRecovery: false,
-          filters: ['Sem filtros - Modo Alta Frequência'],
-          trigger: 'Entrada Direta',
-          probability: 99,
-          contractType: 'DIGITOVER',
-          direction: undefined
-        });
-
-        return 'DIGITOVER';
-      }
-
-      // ✅ stateless implementation aligned with reference
-      let requiredLosses = 3;
-      // if (currentMode === 'veloz') requiredLosses = 0; // REMOVIDO: Veloz agora é tratado acima
-      if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
-      else if (currentMode === 'lenta') requiredLosses = 5;
-      else if (currentMode === 'preciso') requiredLosses = 5;
-
-      // Safety check
-      if (this.ticks.length < requiredLosses) return null;
-
-      // Lógica Stateless: Extrair últimos N dígitos
-      const lastTicks = this.ticks.slice(-requiredLosses);
-      const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
-
-      // Verificar se TODOS são < 4 (Dígitos Perdedores)
-      const analysisResults = lastDigits.map((d, i) => ({
-        digit: d,
-        value: lastTicks[i].value,
-        passed: d < 4,
-      }));
-
-      const isSignal = analysisResults.every((r) => r.passed);
-
-      if (isSignal) {
-        // ✅ LOGS EXATOS DA REFERÊNCIA
-        // ✅ LOGS EXATOS DA REFERÊNCIA
-        // Calcular Força (Simulada para alinhar com referência)
-        const strength = 60 + requiredLosses * 5;
-
-        this.logSignalGenerated(state.userId, {
-          mode: currentMode.toUpperCase(),
-          isRecovery: false,
-          filters: lastDigits.map((d, i) => `Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`),
-          trigger: `Sequência de ${requiredLosses} dígitos < 4 detectada`,
-          probability: strength,
-          contractType: 'DIGITOVER'
-        });
-
-        return 'DIGITOVER';
-      } else {
-        // ✅ LOG DE ANÁLISE RECUSADA (100% de Transparência por solicitação do usuário)
-        // APENAS SE NÃO FOR VELOZ (Veloz já retornou acima)
-        const failedFilters = analysisResults.filter((r) => !r.passed).length;
-        const totalFilters = analysisResults.length;
-
-        // Montar log detalhado da recusa
-        // Montar log detalhado da recusa
-        this.logBlockedEntry(state.userId, {
-          reason: 'filter',
-          details: {
-            digits: analysisResults.map(r => r.digit),
-            problem: `${failedFilters} de ${totalFilters} filtros falharam. (Valores: ${analysisResults.map(r => r.digit).join(',')})`
-          }
-        });
-      }
-
-      return null;
+      this.logAnalysisStarted(state.userId, currentMode.toUpperCase());
     }
 
-  // --- Helpers de Price Action (Defesa) ---
+    // Identificar fase atual (padrão: ATAQUE)
+    const phase = state.currentPhase || 'ATAQUE';
+    const consecutiveLosses = riskManager?.consecutiveLosses || state.consecutive_losses || 0;
+
+    // --- 1. FASE DE DEFESA (Recuperação com Price Action) ---
+    // Ativa se estiver na fase de defesa OU se tiver losses consecutivos
+    // ✅ CORREÇÃO: M1 (1 Loss) ainda é Over 3. Defesa PA apenas em M2+ (>= 2 Losses)
+    if ((phase === 'DEFESA' || consecutiveLosses > 1) && consecutiveLosses < 4) {
+      // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
+      if (currentMode === 'veloz') {
+        // Veloz: 2 ticks + delta 0.3
+        return this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
+      } else {
+        // Normal/Lento/Preciso: 3 ticks + delta 0.5
+        return this.checkMomentumAndStrength(state, 3, 0.5, currentMode.toUpperCase());
+      }
+    }
+
+    // Se >= 4 Losses (Defesa Pesada), forçamos modo LENTA para usar Análise de Dígitos estrita
+    // Se >= 4 Losses (Defesa Pesada), Alternar para Modo PRECISO (Recuperação com Momentum + Delta)
+    if (consecutiveLosses >= 4) {
+      // Debug apenas se mudou
+      const now = Date.now();
+      if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
+        (state as any).lastModeChangeLog = now;
+        this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo PRECISO (Momentum 3 ticks + Delta 0.5)`);
+      }
+
+      // ✅ Executar lógica de Recuperação PRECISO (3 ticks + Delta 0.5)
+      // Não cai mais (fallthrough) para a fase de ataque
+      // Retorna CALL ou PUT se encontrar sinal, ou null se não.
+      return this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
+    }
+
+    // --- 2. FASE DE ATAQUE (Digit Over 3) ---
+    // Busca falhas na sequência de dígitos baixos (< 4)
+
+    // ✅ MODO VELOZ: SEM FILTRO (Compra em todos os ticks)
+    if (currentMode === 'veloz') {
+      // Log simplificado para não spammar
+      // const now = Date.now();
+      // if (now - ((state as any).lastVelozLog || 0) > 1000) {
+      //   (state as any).lastVelozLog = now;
+      //   this.logger.log(`[ORION][VELOZ] 🚀 Modo Veloz: Entrada Direta (Sem Filtro)`);
+      // }
+
+      // Salvar log para frontend (Rate limited pelo próprio RiskManager/UI se necessário, mas aqui enviamos o sinal)
+      // Salvar log para frontend
+      this.logSignalGenerated(state.userId, {
+        mode: 'VELOZ',
+        isRecovery: false,
+        filters: ['Sem filtros - Modo Alta Frequência'],
+        trigger: 'Entrada Direta',
+        probability: 99,
+        contractType: 'DIGITOVER',
+        direction: undefined
+      });
+
+      return 'DIGITOVER';
+    }
+
+    // ✅ stateless implementation aligned with reference
+    let requiredLosses = 3;
+    // if (currentMode === 'veloz') requiredLosses = 0; // REMOVIDO: Veloz agora é tratado acima
+    if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
+    else if (currentMode === 'lenta') requiredLosses = 5;
+    else if (currentMode === 'preciso') requiredLosses = 5;
+
+    // Safety check
+    if (this.ticks.length < requiredLosses) return null;
+
+    // Lógica Stateless: Extrair últimos N dígitos
+    const lastTicks = this.ticks.slice(-requiredLosses);
+    const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
+
+    // Verificar se TODOS são < 4 (Dígitos Perdedores)
+    const analysisResults = lastDigits.map((d, i) => ({
+      digit: d,
+      value: lastTicks[i].value,
+      passed: d < 4,
+    }));
+
+    const isSignal = analysisResults.every((r) => r.passed);
+
+    if (isSignal) {
+      // ✅ LOGS EXATOS DA REFERÊNCIA
+      // ✅ LOGS EXATOS DA REFERÊNCIA
+      // Calcular Força (Simulada para alinhar com referência)
+      const strength = 60 + requiredLosses * 5;
+
+      this.logSignalGenerated(state.userId, {
+        mode: currentMode.toUpperCase(),
+        isRecovery: false,
+        filters: lastDigits.map((d, i) => `Dígito ${d} (Valor: ${lastTicks[i].value}) (Perdedor < 4)`),
+        trigger: `Sequência de ${requiredLosses} dígitos < 4 detectada`,
+        probability: strength,
+        contractType: 'DIGITOVER'
+      });
+
+      return 'DIGITOVER';
+    } else {
+      // ✅ LOG DE ANÁLISE RECUSADA (100% de Transparência por solicitação do usuário)
+      // APENAS SE NÃO FOR VELOZ (Veloz já retornou acima)
+      const failedFilters = analysisResults.filter((r) => !r.passed).length;
+      const totalFilters = analysisResults.length;
+
+      // Montar log detalhado da recusa
+      // Montar log detalhado da recusa
+      this.logBlockedEntry(state.userId, {
+        reason: 'filter',
+        details: {
+          digits: analysisResults.map(r => r.digit),
+          problem: `${failedFilters} de ${totalFilters} filtros falharam. (Valores: ${analysisResults.map(r => r.digit).join(',')})`
+        }
+      });
+    }
+
+    return null;
+  }
 
   /**
    * ✅ UNIFICADO: Momentum + Força do Mercado (Delta)
