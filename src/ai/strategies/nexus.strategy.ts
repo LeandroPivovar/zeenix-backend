@@ -106,28 +106,30 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.95;
+        // ✅ [ZENIX PRO] Payout Dinâmico conforme Contrato
+        // RF (M0/M1) ~95% | Higher -0.15 (M2+) ~63%
+        const currentPayout = this.consecutiveLosses >= 2 ? 0.63 : 0.95;
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
+                    nextStake = this.totalLossAccumulated / currentPayout;
                 } else {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
                     if (userId && symbol && logCallback) {
-                        logCallback(userId, symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($${baseStake.toFixed(2)})`);
+                        logCallback(userId, symbol, 'alerta', `⚠️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n• Ação: Aceitando perda e resetando stake.\n• Próxima Entrada: Valor Inicial ($$${baseStake.toFixed(2)})`);
                     }
                 }
             } else if (this.riskMode === 'MODERADO') {
                 // ✅ Zenix Pro: (TotalLoss * 1.15) / payout (Recupera + 15%)
                 const targetRecovery = this.totalLossAccumulated * 1.15;
-                nextStake = targetRecovery / PAYOUT_RATE;
+                nextStake = targetRecovery / currentPayout;
             } else if (this.riskMode === 'AGRESSIVO') {
                 // ✅ Zenix Pro: (TotalLoss * 1.30) / payout (Recupera + 30%)
                 const targetRecovery = this.totalLossAccumulated * 1.30;
-                nextStake = targetRecovery / PAYOUT_RATE;
+                nextStake = targetRecovery / currentPayout;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
             nextStake = baseStake + lastProfit;
