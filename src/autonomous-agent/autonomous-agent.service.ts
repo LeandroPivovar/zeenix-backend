@@ -1129,9 +1129,7 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * Obtém trades detalhados de um dia específico
    */
-  /**
-   * Obtém trades detalhados de um dia específico
-   */
+
   async getDailyTrades(userId: string, date: string): Promise<any[]> {
     // Buscar config para obter DATA DA SESSÃO
     const config = await this.getAgentConfig(userId);
@@ -1162,11 +1160,12 @@ export class AutonomousAgentService implements OnModuleInit {
          exit_tick
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND DATE(created_at) = ?
+         AND created_at LIKE ?
          AND status IN ('WON', 'LOST')
     `;
 
-    const params: any[] = [userId, targetDateStr];
+    const likeParam = `${targetDateStr}%`;
+    const params: any[] = [userId, likeParam];
 
     // Adicionar filtro de sessão se for HOJE e tiver sessionDate
     /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
