@@ -238,13 +238,10 @@ ${filtersText}
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[]) {
     // 0. INITIAL COUNTDOWN
-    // VELOZ needs 2 ticks (P1, P0) to compare.
-    // NORMAL/LENTO needs 3 ticks (P2, P1, P0) to compare 2 intervals.
+    // VELOZ needs 1 tick (P0) to compare with previous (P-1).
+    // NORMAL/LENTO needs 2 ticks (P1, P0) to compare 2 intervals (P2->P1, P1->P0).
 
-    // Note: ticks array history is up to 20, but state.ticksColetados is what counts "new" ticks.
-    // Actually, ticksColetados is just used for the initial countdown after start/reset.
-
-    const requiredTicks = state.mode === 'veloz' ? 2 : 3;
+    const requiredTicks = state.mode === 'veloz' ? 1 : 2;
 
     if (state.ticksColetados < requiredTicks) {
       this.logDataCollection(state.userId, state.ticksColetados, requiredTicks);
@@ -254,14 +251,13 @@ ${filtersText}
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
-    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 3 losses)
-    // Updated requirement: Auto-Defense logic was to switch to LENTO after 3 losses.
-    // Keeping this logic but standardizing logs.
-    if (state.consecutiveLosses >= 3 && state.mode !== 'lento') {
+    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 4 losses)
+    // Updated requirement: Auto-Defense logic switches to LENTO after 4 losses.
+    if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
       if (!state.defenseMode) {
         state.defenseMode = true;
         state.mode = 'lento';
-        this.logContractChange(state.userId, state.mode, 'LENTO', '3 Perdas Consecutivas - Ativando Defesa');
+        this.logContractChange(state.userId, state.mode, 'LENTO', '4 Perdas Consecutivas - Ativando Defesa');
       }
     } else if (state.lastResultWin && state.mode === 'lento' && state.defenseMode) {
       // Return to NORMAL after 1 win in Lento (Recovery complete)
@@ -271,21 +267,9 @@ ${filtersText}
     }
 
     // 3. ANALYZE SIGNAL
-    // Periodic "Analysis Started" log? Too noisy for every tick. 
-    // We'll trust logDataCollection and the Signal logs.
-
     const signal = this.analyzeSignal(state, ticks);
 
     // ✅ Reset count after analysis (Respects "Wait for next X ticks" rule)
-    // If signal found -> executes -> ticksColetados reset in processResult (or implicitly by waiting for trade to finish)
-    // If NO signal found -> we need to decide if we wait another batch or analyze every tick.
-    // Requirement implies "Aguarda X ticks". Usually this means Batch.
-    // "Coleta: Aguarda 2 ticks" means we process batches of 2? Or sliding window?
-    // "Decisão: Entra sempre..." implies sliding window for Veloz?
-    // Let's assume Sliding Window for Veloz (since it waits 1 tick) and Batch for Normal/Lento?
-    // User text: "Coleta: Aguarda 2 ticks; 2. Análise...". 
-    // Let's keep the existing logic: Resetting sticks to 0 enforces a BATCH approach (wait X, analyze, reset, wait X).
-
     state.ticksColetados = 0;
 
     if (signal) {
@@ -295,11 +279,11 @@ ${filtersText}
 
   private analyzeSignal(state: ApolloUserState, prices: number[]): 'CALL' | 'PUT' | null {
     // Determine ticks needed based on mode
-    let requiredTicks = 2; // Default (Normal/Lento need 2 ticks for analysis + Collection check handled in checkAndExecute)
+    let requiredTicks = 2;
 
     // ADJUST COLLECTION REQUIREMENTS
-    // Veloz: "Aguarda apenas 1 tick" -> We need at least 2 ticks to compare (Start -> End of 1 tick)
-    // Normal/Lento: "Aguarda 2 ticks" -> We need at least 3 ticks (P3, P2, P1) to see 2 movements.
+    // Veloz: Needs 2 ticks total history (Current, Previous)
+    // Normal/Lento: Needs 3 ticks total history (Current, P-1, P-2)
 
     if (state.mode === 'veloz') requiredTicks = 2;
     else requiredTicks = 3;
@@ -320,14 +304,12 @@ ${filtersText}
     let invertSignal = false;
     if (state.consecutiveLosses >= 2 && state.lastEntryDirection) {
       // Simplified inversion logic
-      // This flag will just flip the final direction if we find a signal
       invertSignal = true;
-      // We will push to filters later if signal found
     }
 
     if (state.mode === 'veloz') {
       // MODO VELOZ
-      // Coleta: Aguarda apenas 1 tick (Validado em checkAndExecute)
+      // Coleta: Aguarda apenas 1 tick
       // 2. Análise: Aguarda apenas 1 tick e entra a favor
       // 3. Decisão: Entra sempre seguindo a direção do último tick
 
@@ -345,13 +327,13 @@ ${filtersText}
     }
     else if (state.mode === 'normal') {
       // MODO NORMAL
-      // Coleta: Aguarda 2 ticks (Validado no checkAndExecute)
+      // Coleta: Aguarda 2 ticks
       // 2. Análise: Aplica 2 filtros (Delta + Consistência)
       // 3. Decisão: Se delta >= 0.3 E 2 ticks na mesma direção, entra a favor
 
       const MIN_DELTA = 0.3;
 
-      // Delta Total (P3 -> P1, ou seja, movimento de 2 ticks)
+      // Delta Total (P3 -> P1)
       const totalDelta = currentPrice - price3;
       const absDelta = Math.abs(totalDelta);
       const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
@@ -376,14 +358,14 @@ ${filtersText}
     }
     else if (state.mode === 'lento') {
       // MODO LENTO
-      // Coleta: Aguarda 2 ticks (Validado no checkAndExecute)
+      // Coleta: Aguarda 2 ticks
       // 2. Análise: Aplica 2 filtros (Delta + Consistência)
       // 3. Decisão: Se delta >= 0.5 E 2 ticks na mesma direção, entra a favor
 
       const MIN_DELTA = 0.5;
 
       // Delta Total
-      const totalDelta = currentPrice - price3; // Usando 2 ticks de movimento também, conforme descrição similar ao Normal mas com delta maior
+      const totalDelta = currentPrice - price3;
       const absDelta = Math.abs(totalDelta);
       const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
 
@@ -407,7 +389,6 @@ ${filtersText}
     }
 
     if (direction) {
-      // Apply Inversion if needed
       if (invertSignal) {
         const original = direction;
         direction = direction === 'CALL' ? 'PUT' : 'CALL';
@@ -417,8 +398,6 @@ ${filtersText}
       this.logSignalGenerated(state.userId, state.mode.toUpperCase(), direction, filters, strength);
       return direction;
     } else {
-      // Log rejection periodically (handled by caller or silent)
-      // state.ticksColetados is reset by caller regardless, so we just return null.
       return null;
     }
   }
@@ -464,10 +443,6 @@ ${filtersText}
     // 4. EXECUTE
     state.isOperationActive = true;
     state.lastEntryDirection = direction;
-
-    // Log de Entrada Simplificado (removido ou mantido, o padrão v2 foca no resultado)
-    // Manter como debug ou info discreto
-    // this.saveLog(state.userId, 'operacao', `🚀 [ENTRADA] ${direction} com $${stake.toFixed(2)}`);
 
     try {
       const tradeId = await this.createTradeRecord(state, direction, stake);
@@ -527,9 +502,6 @@ ${filtersText}
         state.sorosLevel = 0;
       } else {
         // ✅ WIN NORMAL (Ciclo de Soros)
-        // Log Streak of Wins
-        // Need to track consecutive wins (not just losses) if we want logWinStreak
-        // Adding a temp counter safely:
         if (!state['consecutiveWins']) state['consecutiveWins'] = 0;
         state['consecutiveWins']++;
         if (state['consecutiveWins'] > 1) {
@@ -553,7 +525,7 @@ ${filtersText}
       state.consecutiveLosses++;
       state['consecutiveWins'] = 0;
       state.totalLossAccumulated += stakeUsed;
-      state.sorosLevel = 0; // ❌ Quebra o Soros se perder
+      state.sorosLevel = 0;
     }
 
     // --- STOP BLINDADO UPDATE ---
@@ -569,7 +541,7 @@ ${filtersText}
     // --- CHECK STOPS (Post-Trade) ---
     this.checkStops(state);
 
-    state.isOperationActive = false; // ✅ Moved to end to prevent race conditions
+    state.isOperationActive = false;
   }
 
   // --- LOGIC HELPERS ---
@@ -577,16 +549,13 @@ ${filtersText}
   private calculateStake(state: ApolloUserState): number {
     if (state.consecutiveLosses > 0) {
       // Martingale Inteligente
-      // Conservador: 1.0 (Reset após 5) | Moderado: 1.15 | Agressivo: 1.30
-      // --- MARTINGALE MULTIPLIERS ---
       let multiplier = 1.0;
       const profile = state.riskProfile;
 
       if (profile === 'agressivo') multiplier = 1.5;
       else if (profile === 'moderado') multiplier = 1.25;
-      else multiplier = 1.0; // Conservador (Recuperação sem lucro extra)
+      else multiplier = 1.0;
 
-      // Conservador Reset logic
       if (profile === 'conservador' && state.consecutiveLosses > 5) {
         this.saveLog(state.userId, 'alerta', `♻️ [CONSERVADOR] Limite de recuperação atingido. Resetando stake.`);
         state.consecutiveLosses = 0;
@@ -594,17 +563,12 @@ ${filtersText}
         return state.apostaInicial;
       }
 
-      // Exact Formula: Stake = (Perda Acumulada * Multiplier) / 0.92
-      const PAYOUT_RATE = 0.92; // 92% Payout (Official Payout)
-
-      // Calculate
+      const PAYOUT_RATE = 0.92;
       const lossToRecover = state.totalLossAccumulated || state.apostaInicial;
 
       const neededStake = (lossToRecover * multiplier) / PAYOUT_RATE;
       return Number(neededStake.toFixed(2));
     } else {
-      // Soros Logic: Respect level
-      // Critical Fix: Ensure last profit was positive and real to avoid negative stakes
       if (state.sorosLevel === 1 && state.lastResultWin && state.lastProfit > 0) {
         const nextStake = state.apostaInicial + state.lastProfit;
         return Number(nextStake.toFixed(2));
@@ -620,7 +584,6 @@ ${filtersText}
     const target = state.profitTarget;
     const activationThreshold = target * 0.40;
 
-    // Check activation
     if (!state.stopBlindadoActive) {
       if (profit >= activationThreshold) {
         state.stopBlindadoActive = true;
@@ -640,11 +603,9 @@ ${filtersText}
         });
       }
     } else {
-      // Trailing Stop logic
       if (profit > state.peakProfit) {
         state.peakProfit = profit;
         state.stopBlindadoFloor = state.peakProfit * 0.50;
-        // Optional: Log trailing update?
       }
     }
   }
@@ -706,8 +667,8 @@ ${filtersText}
     let modeRaw = (config.mode || 'normal').toLowerCase();
     if (modeMap[modeRaw]) modeRaw = modeMap[modeRaw];
 
-    // Market Selection Logic (Matching Atlas)
-    let selectedSymbol = 'R_25'; // Default (Volatility 25)
+    // Market Selection
+    let selectedSymbol = 'R_100';
     const marketInput = (config.symbol || config.selectedMarket || '').toLowerCase();
 
     if (marketInput === 'r_100' || marketInput.includes('100')) selectedSymbol = 'R_100';
@@ -715,7 +676,6 @@ ${filtersText}
     else if (marketInput === 'r_25' || marketInput.includes('25')) selectedSymbol = 'R_25';
     else if (marketInput.includes('1hz10v')) selectedSymbol = '1HZ10V';
 
-    // If matches exact known symbol
     if (['R_10', 'R_25', 'R_100', '1HZ10V'].includes(config.symbol)) selectedSymbol = config.symbol;
 
     const initialState: ApolloUserState = {
@@ -750,7 +710,7 @@ ${filtersText}
     };
 
     this.users.set(userId, initialState);
-    this.getOrCreateWebSocketConnection(config.derivToken); // Init WS
+    this.getOrCreateWebSocketConnection(config.derivToken);
 
     // ✅ LOGS PADRONIZADOS V2
     this.logInitialConfigV2(
@@ -773,12 +733,10 @@ ${filtersText}
   private saveLog(userId: string, type: string, message: string) {
     const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌' };
 
-    // 1. Save to DB
     this.dataSource.query(`INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
       [userId, type, iconMap[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
     ).catch(e => console.error('Error saving log', e));
 
-    // 2. Emit Real-time Event (for Frontend)
     this.tradeEvents.emitLog({
       userId,
       type,
