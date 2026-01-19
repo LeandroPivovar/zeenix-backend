@@ -995,7 +995,17 @@ export class AutonomousAgentService implements OnModuleInit {
     today.setHours(0, 0, 0, 0);
     const startDate = new Date(today);
     startDate.setDate(today.getDate() - days);
-    startDate.setHours(0, 0, 0, 0); // Start of day 30 days ago
+    startDate.setHours(0, 0, 0, 0);
+
+    // Buscar config para obter DATA DA SESSÃO e filtrar
+    const config = await this.getAgentConfig(userId);
+    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+
+    // Se tiver sessao ativa, não mostrar dados anteriores a ela
+    let effectiveStartDate = startDate;
+    if (sessionDate && sessionDate > startDate) {
+      effectiveStartDate = sessionDate;
+    }
 
     const trades = await this.dataSource.query(
       `SELECT 
@@ -1010,7 +1020,7 @@ export class AutonomousAgentService implements OnModuleInit {
          AND status IN ('WON', 'LOST')
        GROUP BY DATE(created_at)
        ORDER BY date DESC`,
-      [userId, startDate.toISOString()]
+      [userId, effectiveStartDate.toISOString()]
     );
 
     const dailyData = trades.map((day: any) => {
@@ -1159,7 +1169,7 @@ export class AutonomousAgentService implements OnModuleInit {
            created_at,
            symbol,
            contract_type,
-           amount as stake,
+           stake_amount as stake,
            profit_loss,
            status,
            entry_tick,
