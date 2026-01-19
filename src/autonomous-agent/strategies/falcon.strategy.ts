@@ -1894,7 +1894,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     trigger: string;
     probability: number;
     contractType: string;
-    direction?: 'CALL' | 'PUT';
+    direction?: 'CALL' | 'PUT' | 'DIGIT';
   }) {
     let message = `🔍 ANÁLISE: MODO ${signal.mode}${signal.isRecovery ? ' (RECUPERAÇÃO)' : ''}\n`;
     signal.filters.forEach((filter, index) => {
