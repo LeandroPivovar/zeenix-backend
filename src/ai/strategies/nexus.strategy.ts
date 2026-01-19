@@ -121,12 +121,12 @@ class RiskManager {
                     }
                 }
             } else if (this.riskMode === 'MODERADO') {
-                // ✅ Python Nexus v2: (TotalLoss * 1.25) / payout (Recupera + 25%)
-                const targetRecovery = this.totalLossAccumulated * 1.25;
+                // ✅ Zenix Pro: (TotalLoss * 1.15) / payout (Recupera + 15%)
+                const targetRecovery = this.totalLossAccumulated * 1.15;
                 nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                // ✅ Python Nexus v2: (TotalLoss * 1.50) / payout (Recupera + 50%)
-                const targetRecovery = this.totalLossAccumulated * 1.50;
+                // ✅ Zenix Pro: (TotalLoss * 1.30) / payout (Recupera + 30%)
+                const targetRecovery = this.totalLossAccumulated * 1.30;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && (vitoriasConsecutivas % 2 !== 0)) {
@@ -157,9 +157,16 @@ class RiskManager {
             }
         }
 
+        // ✅ Lógica de Proteção de Capital (Diferenciando Normal de Blindado)
         if (this._blindadoActive) {
+            // No modo Blindado, o stop é o piso (50% do pico de lucro)
             const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
             minAllowedBalance = this.initialBalance + guaranteedProfit;
+
+            // ✅ [CORREÇÃO] Não reduzir stake proativamente para o piso do blindado (apenas parar se bater)
+            // Isso evita o erro de stake reduzida proativamente relatado pelo usuário.
+            // O stop real (limitRemaining) será verificado no stopUser.
+            minAllowedBalance = this.initialBalance - this.stopLossLimit; // Usa limite normal para cálculo de stake
         } else {
             minAllowedBalance = this.initialBalance - this.stopLossLimit;
         }
@@ -276,8 +283,8 @@ export class NexusStrategy implements IStrategy {
                         `🔍 SINAL DE ENTRADA\n` +
                         `• Modo: ${state.mode}\n` +
                         `• Filtro: 1 tick a favor da direção\n` +
-                        `• Contrato: Higher (-0.15)\n` +
-                        `• Payout: 60%`
+                        `• Contrato: RISE/FALL (CALL)\n` +
+                        `• Payout: 95%`
                     );
                     return 'PAR';
                 } else {
@@ -312,8 +319,8 @@ export class NexusStrategy implements IStrategy {
                         `• Direção: ALTA (CALL)\n` +
                         `• Delta: ${delta.toFixed(4)}\n` +
                         `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Contrato: Higher (-0.15)\n` +
-                        `• Payout: 60%`
+                        `• Contrato: RISE/FALL (CALL)\n` +
+                        `• Payout: 95%`
                     );
                     return 'PAR';
                 } else {
@@ -345,8 +352,8 @@ export class NexusStrategy implements IStrategy {
                         `• Direção: ALTA (CALL)\n` +
                         `• Delta: ${delta.toFixed(4)}\n` +
                         `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Contrato: Higher (-0.15)\n` +
-                        `• Payout: 60%`
+                        `• Contrato: RISE/FALL (CALL)\n` +
+                        `• Payout: 95%`
                     );
                     return 'PAR';
                 }
@@ -519,19 +526,20 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        let barrier: string | undefined = '-0.15'; // ✅ Python Nexus v2: Higher (-0.15) entrada principal
+        let barrier: string | undefined = undefined; // ✅ [NEXUS v3.0] Entrada 1 agora é Rise/Fall (No Barrier)
 
-        // ✅ Python Nexus v2: Recuperação Rise/Fall
-        // Se estiver em recuperação (Losses > 0), remove barreira e opera Rise/Fall (Payout ~95%)
-        if (riskManager.consecutiveLosses > 0) {
-            barrier = undefined;
+        // ✅ Lógica de Troca de Contrato (Estilo Orion)
+        // Entry 1 (M0): Rise/Fall
+        // Entry 2 (M1): Rise/Fall (Mantenha o mesmo contrato)
+        // Entry 3+ (M2+): Muda o contrato para Higher (-0.15) para maior assertividade
+        if (riskManager.consecutiveLosses >= 2) {
+            barrier = '-0.15';
 
-            // ✅ Log de Troca de Contrato (ANTES da execução)
+            // ✅ Log de Troca de Contrato
             const riskMode = (riskManager as any).riskMode;
-            // Python: Moderado 1.25 / 0.95 = 1.32x | Agressivo 1.50 / 0.95 = 1.58x
-            const multiplier = riskMode === 'AGRESSIVO' ? '1.58x' : riskMode === 'MODERADO' ? '1.32x' : '1.05x';
-
-            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA\n• Motivo: Loss na entrada principal (Higher).\n• Ação: Mudando para RISE/FALL para recuperação otimizada.\n• Análise: Seguindo direção dos últimos ticks.\n• Multiplicador: ${multiplier} (Modo ${riskMode})`);
+            // Payout Higher ~60%. Multiplicador deve ser maior para compensar.
+            // O stake é recalculado em calculateStake automaticamente.
+            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA (M2+)\n• Motivo: 2+ perdas consecutivas.\n• Ação: Mudando para HIGHER (-0.15) para maior segurança.\n• Análise: Buscando zona de barreira protegida.\n• Modo: ${riskMode}`);
         }
 
         state.isOperationActive = true;
