@@ -24,7 +24,7 @@ export class AutonomousAgentController {
   constructor(
     private readonly agentService: AutonomousAgentService,
     private readonly logsStreamService: AutonomousAgentLogsStreamService,
-  ) {}
+  ) { }
 
   @Post('activate')
   @UseGuards(AuthGuard('jwt'))
@@ -202,6 +202,54 @@ export class AutonomousAgentController {
         {
           success: false,
           message: 'Erro ao buscar histórico',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('daily-stats/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getDailyStats(@Param('userId') userId: string, @Query('days') days?: string) {
+    try {
+      const daysNum = days ? parseInt(days, 10) : 30;
+      const stats = await this.agentService.getDailyStats(userId, daysNum);
+
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      this.logger.error(`[GetDailyStats] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas diárias',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('profit-evolution/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getProfitEvolution(@Param('userId') userId: string, @Query('days') days?: string) {
+    try {
+      const daysNum = days ? parseInt(days, 10) : 30;
+      const evolution = await this.agentService.getProfitEvolution(userId, daysNum);
+
+      return {
+        success: true,
+        data: evolution,
+      };
+    } catch (error) {
+      this.logger.error(`[GetProfitEvolution] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar evolução do lucro',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,

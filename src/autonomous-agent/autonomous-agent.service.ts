@@ -50,7 +50,7 @@ export class AutonomousAgentService implements OnModuleInit {
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
       await this.initialize();
       this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
-      
+
       // Sincronizar agentes ativos do banco
       await this.syncActiveAgentsFromDb();
     } catch (error) {
@@ -210,14 +210,14 @@ export class AutonomousAgentService implements OnModuleInit {
           // ✅ Tentar identificar o símbolo pela subscription
           // A API da Deriv pode retornar o símbolo na mensagem (echo contém a requisição original)
           let symbolFromMsg = this.symbol; // Default
-          
+
           // Tentar extrair do echo (requisição original)
           if (msg.echo?.ticks_history) {
             symbolFromMsg = msg.echo.ticks_history;
           } else if (msg.ticks_history) {
             symbolFromMsg = msg.ticks_history;
           }
-          
+
           // Mapear subscription ID para símbolo
           this.subscriptions.set(symbolFromMsg, subId);
           this.logger.log(`📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromMsg}`);
@@ -231,15 +231,15 @@ export class AutonomousAgentService implements OnModuleInit {
         if (msg.tick) {
           // ✅ Todos os agentes autônomos usam R_100
           const symbolForTick = 'R_100';
-          
+
           if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
             this.subscriptionId = msg.subscription.id;
             this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
           }
-          
+
           // ✅ Log de debug para verificar se está recebendo ticks
           this.logger.debug(`[AutonomousAgent] 📥 Tick recebido: quote=${msg.tick.quote}, symbol=${symbolForTick}`);
-          
+
           this.processTick(msg.tick, symbolForTick);
         }
         break;
@@ -356,7 +356,7 @@ export class AutonomousAgentService implements OnModuleInit {
       symbol,
     );
   }
-  
+
   /**
    * ✅ NOVO: Obtém o símbolo associado a uma subscription ID
    */
@@ -588,7 +588,7 @@ export class AutonomousAgentService implements OnModuleInit {
       if (strategy === 'arion') {
         strategy = 'orion';
       }
-      
+
       // ✅ Suportar Orion, Sentinel e Falcon
       if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon') {
         this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel' e 'falcon' estão disponíveis. Usando 'orion'.`);
@@ -602,7 +602,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // ✅ Todos os agentes autônomos usam R_100
       const agentSymbol = config.symbol || 'R_100';
-      
+
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
         if (!this.subscriptions.has(agentSymbol)) {
@@ -619,7 +619,7 @@ export class AutonomousAgentService implements OnModuleInit {
           this.activeSymbols.add(agentSymbol);
         }
       }
-      
+
       // Ativar agente na estratégia
       try {
         await this.strategyManager.activateUser(strategy, userId, {
@@ -718,7 +718,7 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getSessionStats(userId: string): Promise<any> {
     // ✅ Buscar configuração do agente
-    const config = await this.dataSource.query( 
+    const config = await this.dataSource.query(
       `SELECT 
          daily_profit,
          daily_loss,
@@ -759,7 +759,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Buscar operações finalizadas da sessão atual (após session_date)
     const sessionDate = configData.session_date;
-    
+
     // ✅ Se não houver session_date, retornar valores zerados
     if (!sessionDate) {
       return {
@@ -841,7 +841,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
     const initialBalance = parseFloat(configData.initial_balance) || parseFloat(configData.totalCapital) || 0;
-    
+
     // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
     return {
       daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
@@ -912,12 +912,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
   async getLogs(userId: string, limit?: number): Promise<any[]> {
     const limitClause = limit ? `LIMIT ${limit}` : '';
-    
+
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;
     const cached = this.sessionDateCache.get(userId);
     const now = Date.now();
-    
+
     if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
       // Usar cache se ainda válido (menos de 30 segundos)
       sessionStartTime = cached.date;
@@ -929,7 +929,7 @@ export class AutonomousAgentService implements OnModuleInit {
          LIMIT 1`,
         [userId],
       );
-      
+
       if (config && config.length > 0 && config[0].session_date) {
         sessionStartTime = config[0].session_date;
         // Atualizar cache
@@ -945,15 +945,15 @@ export class AutonomousAgentService implements OnModuleInit {
         });
       }
     }
-    
+
     // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
-    const whereClause = sessionStartTime 
+    const whereClause = sessionStartTime
       ? `WHERE user_id = ? AND timestamp >= ?`
       : `WHERE user_id = ?`;
-    const params = sessionStartTime 
+    const params = sessionStartTime
       ? [userId, sessionStartTime]
       : [userId];
-    
+
     const logs = await this.dataSource.query(
       `SELECT 
          id,
@@ -969,7 +969,7 @@ export class AutonomousAgentService implements OnModuleInit {
        ${limitClause}`,
       params,
     );
-    
+
     // ✅ Converter campos snake_case para camelCase para o frontend
     return (logs || []).map((log: any) => ({
       id: log.id,
@@ -989,6 +989,140 @@ export class AutonomousAgentService implements OnModuleInit {
   async updateTradesWithMissingPrices(userId: string, limit: number = 10): Promise<any> {
     // Implementação similar à da IA
     return { updated: 0, deleted: 0, errors: 0 };
+  }
+  async getDailyStats(userId: string, days: number = 30): Promise<any> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - days);
+    startDate.setHours(0, 0, 0, 0); // Start of day 30 days ago
+
+    const trades = await this.dataSource.query(
+      `SELECT 
+         DATE(created_at) as date,
+         SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as profit,
+         SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as loss,
+         COUNT(*) as ops,
+         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at >= ?
+         AND status IN ('WON', 'LOST')
+       GROUP BY DATE(created_at)
+       ORDER BY date DESC`,
+      [userId, startDate.toISOString()]
+    );
+
+    const dailyData = trades.map((day: any) => {
+      const profit = parseFloat(day.profit) || 0;
+      const loss = parseFloat(day.loss) || 0;
+      const netProfit = profit - loss;
+      const ops = parseInt(day.ops) || 0;
+      const wins = parseInt(day.wins) || 0;
+      const winRate = ops > 0 ? (wins / ops) * 100 : 0;
+
+      return {
+        date: new Date(day.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+        profit: Number(netProfit.toFixed(2)),
+        ops,
+        winRate: Number(winRate.toFixed(2)),
+        // Assuming capital is not tracked historically daily here, would need separate tracking or estimation
+        // For now, returning structure compatible with frontend
+        capital: 0,
+        avgTime: '24min', // Placeholder
+        badge: ''
+      };
+    });
+
+    return dailyData;
+  }
+
+  async getProfitEvolution(userId: string, days: number = 30): Promise<any[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of today for consistent filtering
+    const startDate = new Date(today);
+
+    // Adjust start date based on days parameter
+    // If days <= 1, we want hourly granularity for the last 24h or so, but let's stick to days logic as base
+    // Actually, 'days=1' usually means 'today' or 'last 24h'.
+    if (days <= 1) {
+      startDate.setTime(Date.now() - 24 * 60 * 60 * 1000); // Last 24 hours
+    } else {
+      startDate.setDate(today.getDate() - days);
+    }
+
+    // Select trades in the period
+    const trades = await this.dataSource.query(
+      `SELECT 
+         created_at,
+         profit_loss
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at >= ?
+         AND status IN ('WON', 'LOST')
+       ORDER BY created_at ASC`,
+      [userId, startDate.toISOString()]
+    );
+
+    // Grouping and accumulation logic
+    const dataPoints: { time: string | number, value: number }[] = [];
+    let cumulativeProfit = 0;
+
+    // We can just iterate and accumulate, effectively creating a point for each trade or group by granularity.
+    // For a smoother chart, grouping by hour (if days <= 1) or day (if days > 1) is better.
+
+    if (days <= 1) {
+      // Group by Hour
+      const hourlyMap = new Map<string, number>(); // "YYYY-MM-DD HH:00" -> profit sum
+
+      for (const trade of trades) {
+        const tradeDate = new Date(trade.created_at);
+        // Round down to hour
+        tradeDate.setMinutes(0, 0, 0);
+        const key = tradeDate.toISOString(); // Use ISO string as map key "2023-01-01T10:00:00.000Z"
+
+        const profit = parseFloat(trade.profit_loss) || 0;
+        const current = hourlyMap.get(key) || 0;
+        hourlyMap.set(key, current + profit);
+      }
+
+      // Sort keys and build cumulative
+      const sortedKeys = Array.from(hourlyMap.keys()).sort();
+      for (const key of sortedKeys) {
+        // We use timestamp for hours in lightweight-charts usually, but string works if formatted correctly.
+        // For intraday, unix timestamp is safer for 'time' scale in lightweight-charts if we want precise axis.
+        const timestamp = new Date(key).getTime() / 1000;
+        cumulativeProfit += hourlyMap.get(key)!;
+
+        dataPoints.push({
+          time: timestamp, // Unix timestamp for intraday
+          value: Number(cumulativeProfit.toFixed(2))
+        });
+      }
+
+    } else {
+      // Group by Day
+      const dailyMap = new Map<string, number>(); // "YYYY-MM-DD" -> profit sum
+
+      for (const trade of trades) {
+        const dateStr = new Date(trade.created_at).toISOString().split('T')[0];
+        const profit = parseFloat(trade.profit_loss) || 0;
+        const current = dailyMap.get(dateStr) || 0;
+        dailyMap.set(dateStr, current + profit);
+      }
+
+      const sortedKeys = Array.from(dailyMap.keys()).sort();
+      for (const key of sortedKeys) {
+        cumulativeProfit += dailyMap.get(key)!;
+
+        dataPoints.push({
+          time: key, // "YYYY-MM-DD" string works for daily scale
+          value: Number(cumulativeProfit.toFixed(2))
+        });
+      }
+    }
+
+    return dataPoints;
   }
 }
 

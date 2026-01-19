@@ -169,18 +169,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const mode = state?.mode || 'NORMAL';
 
     // ✅ Log de ativação no padrão Orion
-    await this.saveLog(
-      userId,
-      'INFO',
-      'CORE',
-      `Usuário ATIVADO | Modo: ${mode} | Capital: $${falconConfig.initialStake.toFixed(2)} | Meta: $${falconConfig.dailyProfitTarget.toFixed(2)} | Stop: $${falconConfig.dailyLossLimit.toFixed(2)}`,
-    );
-    await this.saveLog(
-      userId,
-      'INFO',
-      'ANALYZER',
-      `📊 Aguardando 50 ticks para análise | Modo: ${mode} | Coleta inicial iniciada.`,
-    );
+    this.logInitialConfigV2(userId, {
+      agentName: 'FALCON',
+      operationMode: mode,
+      riskProfile: falconConfig.riskProfile || 'MODERADO',
+      profitTarget: falconConfig.dailyProfitTarget,
+      stopLoss: falconConfig.dailyLossLimit,
+      stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+    });
+
+    this.logSessionStart(userId, {
+      date: new Date(),
+      initialBalance: falconConfig.initialBalance,
+      profitTarget: falconConfig.dailyProfitTarget,
+      stopLoss: falconConfig.dailyLossLimit,
+      mode: mode,
+      agentName: 'FALCON'
+    });
 
     this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Symbol: ${falconConfig.symbol} | Total configs: ${this.userConfigs.size}`);
   }
@@ -270,12 +275,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const requiredTicks = state.mode === 'NORMAL' ? 5 : 7;
     if (userTicks.length < requiredTicks) {
       if (userTicks.length % 2 === 0) {
-        await this.saveLog(
-          userId,
-          'INFO',
-          'ANALYZER',
-          `📊 Aguardando ${requiredTicks - userTicks.length} ticks (${state.mode})`,
-        );
+        this.logDataCollection(userId, {
+          targetCount: requiredTicks,
+          currentCount: userTicks.length,
+          mode: state.mode
+        });
       }
       return;
     }
@@ -457,12 +461,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
 
       // ✅ Log de sinal no padrão Orion
-      await this.saveLog(
-        userId,
-        'INFO',
-        'DECISION',
-        `🎯 SINAL GERADO: ${marketAnalysis.signal} | Score: ${marketAnalysis.probability.toFixed(1)}%`,
-      );
+      this.logSignalGenerated(userId, {
+        mode: state.mode,
+        isRecovery: state.mode === 'LENTO',
+        filters: [`Janela ${state.mode === 'NORMAL' ? '5' : '7'} ticks`, 'Consistência Direcional'],
+        trigger: 'Padrão Identificado',
+        probability: marketAnalysis.probability,
+        contractType: 'RISE/FALL',
+        direction: marketAnalysis.signal
+      });
 
       return {
         action: 'BUY',
@@ -497,8 +504,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         directionChanged;
 
       if (shouldLog) {
-        await this.saveLog(userId, 'INFO', 'DECISION',
-          `⏸️ COMPRA NEGADA | Score: ${marketAnalysis.probability.toFixed(1)}% | Direção: ${marketAnalysis.signal || 'N/A'} | Motivo: ${reasonMsg}`);
+        this.logBlockedEntry(userId, {
+          reason: reasonMsg,
+          details: `Score: ${marketAnalysis.probability.toFixed(1)}% | Dir: ${marketAnalysis.signal || 'N/A'}`
+        });
 
         // ✅ Atualizar estado de último log
         state.lastDeniedLogTime = now;
@@ -532,8 +541,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Vamos considerar que um WIN no Lento resolve e volta pro Normal
         state.mode = 'NORMAL';
+        const recoveredLoss = state.totalLossAccumulated;
         state.totalLossAccumulated = 0; // Resetar acumulado
-        this.logger.log(`[Falcon][${userId}] ✅ Recuperação completa! Voltando para NORMAL`);
+
+        this.logSuccessfulRecoveryV2(userId, {
+          recoveredLoss: recoveredLoss,
+          additionalProfit: state.lastProfit,
+          profitPercentage: 0,
+          stakeBase: config.initialStake
+        });
       }
 
       // Soros: Resetar após Win3 (quando consecutiveWins = 3)
@@ -614,9 +630,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         stake = Math.round(stake * 100) / 100;
 
-        this.logger.log(
-          `[Falcon][${userId}] 🚑 RECUPERAÇÃO (${riskProfile}): Perda $${lossToRecover.toFixed(2)}, Fator ${profitFactor}x -> Stake $${stake.toFixed(2)}`,
-        );
+        this.logMartingaleLevelV2(userId, {
+          level: state.consecutiveLosses,
+          lossNumber: state.consecutiveLosses,
+          accumulatedLoss: lossToRecover,
+          calculatedStake: stake,
+          profitPercentage: riskProfile === 'CONSERVADOR' ? 0 : (riskProfile === 'MODERADO' ? 15 : 30),
+          contractType: state.lastContractType || 'RISE/FALL'
+        });
 
       } else {
         // Se modo lento mas sem perda (ex: acabou de entrar, ou bug), usa base.
@@ -630,7 +651,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Win1: A próxima aposta é Base + Lucro Anterior
         stake = config.initialStake + state.lastProfit;
         stake = Math.round(stake * 100) / 100;
-        this.logger.log(`[Falcon][${userId}] 🚀 SOROS NÍVEL 1: Stake ${stake.toFixed(2)}`);
+        this.logSorosActivation(userId, {
+          previousProfit: state.lastProfit,
+          stakeBase: config.initialStake,
+          level: 1
+        });
       } else {
         // Win0 (início), Win2 (já fez soros, ganhou, vai resetar), etc.
         stake = Math.round(config.initialStake * 100) / 100;
@@ -1079,7 +1104,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // Processar resultado
                 this.onContractFinish(
                   userId,
-                  { win, profit, contractId, exitPrice },
+                  { win, profit, contractId, exitPrice, stake },
                 ).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
                 });
@@ -1131,7 +1156,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   async onContractFinish(
     userId: string,
-    result: { win: boolean; profit: number; contractId: string; exitPrice?: number },
+    result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
   ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
@@ -1181,15 +1206,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
     const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
 
-    // ✅ Log de resultado no padrão Orion: ✅ GANHOU ou ❌ PERDEU | direção | P&L: $+X.XX
-    await this.saveLog(
-      userId,
-      'INFO',
-      'TRADER',
-      `${result.win ? '✅ GANHOU' : '❌ PERDEU'} | ${contractType} | P&L: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}`,
-    );
-
-    this.logger.log(`[FALCON][${userId}] ${status} | P&L: $${result.profit.toFixed(2)}`);
+    // ✅ Log de resultado no padrão Orion
+    this.logTradeResultV2(userId, {
+      status: result.win ? 'WIN' : 'LOSS',
+      profit: result.profit,
+      stake: result.stake,
+      balance: config.initialBalance + state.lucroAtual // Approximation of current balance? state.lucroAtual is profit relative to start.
+      // initialBalance + lucroAtual should be current balance.
+    });
 
     // Verificar se atingiu meta ou stop
     if (state.lucroAtual >= config.dailyProfitTarget) {
@@ -1781,6 +1805,213 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       conn.subscriptions.delete(subId);
     }
   }
+  // ============================================
+  // LOGS PADRONIZADOS ZENIX v2.0 (Portado de Orion)
+  // ============================================
+
+  // --- CATEGORIA 1: CONFIGURAÇÃO E MONITORAMENTO ---
+
+  private logInitialConfigV2(userId: string, config: {
+    agentName: string;
+    operationMode: string;
+    riskProfile: string;
+    profitTarget: number;
+    stopLoss: number;
+    stopBlindadoEnabled: boolean;
+  }) {
+    const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
+      `• Agente: ${config.agentName}\n` +
+      `• Modo: ${config.operationMode}\n` +
+      `• Perfil: ${config.riskProfile}\n` +
+      `• Meta Lucro: $${config.profitTarget.toFixed(2)}\n` +
+      `• Stop Loss: $${config.stopLoss.toFixed(2)}\n` +
+      `• Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVO 🛡️' : 'INATIVO ❌'}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'CORE', message);
+  }
+
+  private logSessionStart(userId: string, session: {
+    date: Date;
+    initialBalance: number;
+    profitTarget: number;
+    stopLoss: number;
+    mode: string;
+    agentName: string;
+  }) {
+    const message = `🚀 INICIANDO SESSÃO DE OPERAÇÕES\n` +
+      `• Banca Inicial: $${session.initialBalance.toFixed(2)}\n` +
+      `• Meta do Dia: +$${session.profitTarget.toFixed(2)}\n` +
+      `• Stop Loss: -$${session.stopLoss.toFixed(2)}\n` +
+      `• Modo: ${session.mode}\n` +
+      `• Agente: ${session.agentName}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'CORE', message);
+  }
+
+  // --- CATEGORIA 2: COLETA E ANÁLISE ---
+
+  private logDataCollection(userId: string, data: {
+    targetCount: number;
+    currentCount: number;
+    mode?: string;
+  }) {
+    const modeStr = data.mode ? ` (${data.mode})` : '';
+    const message = `📡 COLETANDO DADOS...\n` +
+      `• META DE COLETA: ${data.targetCount} TICKS${modeStr}\n` +
+      `• CONTAGEM: ${data.currentCount}/${data.targetCount}`;
+
+    this.saveLog(userId, 'INFO', 'ANALYZER', message);
+  }
+
+  private logAnalysisStarted(userId: string, mode: string) {
+    const message = `🧠 ANÁLISE INICIADA...\n` +
+      `• Verificando condições para o modo: ${mode}`;
+
+    this.saveLog(userId, 'INFO', 'ANALYZER', message);
+  }
+
+  private logBlockedEntry(userId: string, blocked: {
+    reason: string;
+    details?: string;
+  }) {
+    // ⏸️ ENTRADA BLOQUEADA
+    const message = `⏸️ ENTRADA BLOQUEADA\n` +
+      `• Motivo: ${blocked.reason}\n` +
+      (blocked.details ? `• Detalhes: ${blocked.details}` : '');
+
+    // Log debug only
+    // this.logger.debug(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    // Throttled log logic handled by caller usually, but here we just save
+    this.saveLog(userId, 'INFO', 'ANALYZER', message);
+  }
+
+  private logSignalGenerated(userId: string, signal: {
+    mode: string;
+    isRecovery: boolean;
+    filters: string[];
+    trigger: string;
+    probability: number;
+    contractType: string;
+    direction?: 'CALL' | 'PUT';
+  }) {
+    let message = `🔍 ANÁLISE: MODO ${signal.mode}${signal.isRecovery ? ' (RECUPERAÇÃO)' : ''}\n`;
+    signal.filters.forEach((filter, index) => {
+      message += `✅ FILTRO ${index + 1}: ${filter}\n`;
+    });
+    message += `✅ GATILHO: ${signal.trigger}\n`;
+    message += `💪 FORÇA DO SINAL: ${signal.probability}%\n`;
+
+    if (signal.direction) {
+      message += `📊 ENTRADA: ${signal.contractType} ${signal.direction}`;
+    } else {
+      message += `📊 ENTRADA: ${signal.contractType}`;
+    }
+
+    this.logger.log(`[Falcon][${userId}] SINAL: ${signal.trigger} | ${signal.direction}`);
+    this.saveLog(userId, 'INFO', 'DECISION', message);
+  }
+
+  // --- CATEGORIA 3: EXECUÇÃO E RESULTADO ---
+
+  private logTradeResultV2(userId: string, result: {
+    status: 'WIN' | 'LOSS';
+    profit: number;
+    stake: number;
+    balance: number;
+  }) {
+    const profitStr = result.status === 'WIN' ? `+$${result.profit.toFixed(2)}` : `-$${result.stake.toFixed(2)}`;
+    const message = `🎯 RESULTADO DA ENTRADA\n` +
+      `• Status: ${result.status}\n` +
+      `• Lucro/Prejuízo: ${profitStr}\n` +
+      `• Saldo Atual: $${result.balance.toFixed(2)}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'EXECUTION', message);
+  }
+
+  private logSorosActivation(userId: string, soros: {
+    previousProfit: number;
+    stakeBase: number;
+    level?: number;
+  }) {
+    const newStake = soros.stakeBase + soros.previousProfit;
+    const level = soros.level || 1;
+    const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
+      `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
+      `• Nova Stake: $${newStake.toFixed(2)}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'RISK', message);
+  }
+
+  private logWinStreak(userId: string, streak: {
+    consecutiveWins: number;
+    accumulatedProfit: number;
+    currentStake: number;
+  }) {
+    const message = `🔥 SEQUÊNCIA DE VITÓRIAS!\n` +
+      `• Vitórias Consecutivas: ${streak.consecutiveWins}\n` +
+      `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
+      `• Stake Atual: $${streak.currentStake.toFixed(2)}\n` +
+      `• Próxima Vitória: Reset para Stake Base`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'RISK', message);
+  }
+
+  // --- CATEGORIA 4: RECUPERAÇÃO E RISCO ---
+
+  private logMartingaleLevelV2(userId: string, martingale: {
+    level: number;
+    lossNumber: number;
+    accumulatedLoss: number;
+    calculatedStake: number;
+    profitPercentage: number;
+    contractType: string;
+  }) {
+    const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
+      `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
+      `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
+      `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
+      `• Objetivo: Recuperar + ${martingale.profitPercentage}%\n` +
+      `• Contrato: ${martingale.contractType}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'WARN', 'RISK', message);
+  }
+
+  private logSuccessfulRecoveryV2(userId: string, recovery: {
+    recoveredLoss: number;
+    additionalProfit: number;
+    profitPercentage: number;
+    stakeBase: number;
+  }) {
+    const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
+      `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
+      `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage}%)\n` +
+      `• Ação: Resetando sistema e voltando à entrada principal\n` +
+      `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'INFO', 'RISK', message);
+  }
+
+  private logStopLossAdjustmentV2(userId: string, adjustment: {
+    calculatedStake: number;
+    remainingUntilStop: number;
+    adjustedStake: number;
+  }) {
+    const message = `⚠️ AJUSTE DE RISCO (STOP LOSS)\n` +
+      `• Stake Calculada: $${adjustment.calculatedStake.toFixed(2)}\n` +
+      `• Saldo Restante até Stop: $${adjustment.remainingUntilStop.toFixed(2)}\n` +
+      `• Ação: Reduzindo para $${adjustment.adjustedStake.toFixed(2)}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, 'WARN', 'RISK', message);
+  }
+
 }
 
 /**
