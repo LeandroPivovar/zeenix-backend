@@ -3501,14 +3501,7 @@ export class OrionStrategy implements IStrategy {
       this.defesaDirecaoInvalidaLogsEnviados.delete(keyPreciso);
       this.defesaDirecaoInvalidaLogsEnviados.delete(keyLenta);
 
-      if (consecutiveLossesAntes > 0) {
-        this.logSuccessfulRecoveryV2(state.userId, {
-          recoveredLoss: state.perdaAcumulada || 0,
-          additionalProfit: profit,
-          profitPercentage: 0, // Calculado se possível, ou ajustar msg
-          stakeBase: state.apostaBase || 0.35
-        });
-      }
+
 
       // ✅ VITÓRIA: Verificar se estava em martingale ANTES de processar Soros
       // IMPORTANTE: Verificar ANTES de resetar perdaAcumulada
