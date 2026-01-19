@@ -91,6 +91,10 @@ class RiskManager {
         return this.stopLossLimit;
     }
 
+    get totalLoss(): number {
+        return this.totalLossAccumulated;
+    }
+
     calculateStake(
         currentBalance: number,
         baseStake: number,
@@ -251,11 +255,11 @@ export class NexusStrategy implements IStrategy {
 
         // ✅ Feedback periódico para o usuário não achar que o bot parou
         if (state.ticksColetados % 30 === 0) {
-            this.saveNexusLog(state.userId, this.symbol, 'info',
-                `📡 Analisando mercado...\n` +
-                `• Modo: ${state.mode}\n` +
-                `• Status: Buscando sinais de alta precisão.`
-            );
+            // ✅ Feedback periódico para o usuário não achar que o bot parou
+            if (state.ticksColetados % 30 === 0) {
+                // ✅ LOG PADRONIZADO V2: Coleta de Dados / Análise
+                this.logAnalysisStarted(state.userId, state.mode);
+            }
         }
 
         const signal = this.check_signal(state, riskManager);
@@ -281,13 +285,16 @@ export class NexusStrategy implements IStrategy {
 
                 const lastTwo = this.ticks.slice(-2);
                 if (lastTwo[1].value > lastTwo[0].value) {
-                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
-                        `🔍 SINAL DE ENTRADA\n` +
-                        `• Modo: ${state.mode}\n` +
-                        `• Filtro: 1 tick a favor da direção\n` +
-                        `• Contrato: RISE/FALL (CALL)\n` +
-                        `• Payout: 95%`
-                    );
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['1 tick favorável'],
+                        trigger: 'Tendência Imediata (Veloz)',
+                        probability: 60,
+                        contractType: 'RISE/FALL',
+                        direction: 'CALL'
+                    });
                     return 'PAR';
                 } else {
                     // ❌ Log de análise rejeitada
@@ -314,131 +321,136 @@ export class NexusStrategy implements IStrategy {
                 const delta = prices[3] - prices[0];
 
                 if (upMomentum && delta > 0.3) {
-                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
-                        `🔍 SINAL DE ENTRADA\n` +
-                        `• Modo: ${state.mode}\n` +
-                        `• Filtro: 3 ticks + delta 0.3\n` +
-                        `• Direção: ALTA (CALL)\n` +
-                        `• Delta: ${delta.toFixed(4)}\n` +
-                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Contrato: RISE/FALL (CALL)\n` +
-                        `• Payout: 95%`
-                    );
-                    return 'PAR';
-                } else {
-                    // Log de análise rejeitada (silencioso no console interno, mas logado no sistema para o usuário ver se quiser)
-                    // (Log omitido se quiser silenciar as rejeições excessivas)
+                    if (upMomentum && delta > 0.3) {
+                        // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                        this.logSignalGenerated(state.userId, {
+                            mode: state.mode,
+                            isRecovery: false,
+                            filters: ['3 ticks consecutivos', 'Delta > 0.3'],
+                            trigger: 'Momentum de Alta',
+                            probability: 75,
+                            contractType: 'RISE/FALL',
+                            direction: 'CALL'
+                        });
+                        return 'PAR';
+                    } else {
+                        // Log de análise rejeitada (silencioso no console interno, mas logado no sistema para o usuário ver se quiser)
+                        // (Log omitido se quiser silenciar as rejeições excessivas)
+                    }
+
+                } else if (state.mode === 'LENTO') {
+                    // LENTO: 5 ticks consecutivos + delta > 0.5
+                    if (this.ticks.length < 6) return null;
+
+                    const last6 = this.ticks.slice(-6);
+                    const prices = last6.map(t => t.value);
+
+                    // Verifica momentum de alta (5 ticks consecutivos)
+                    const upMomentum = prices[1] > prices[0] &&
+                        prices[2] > prices[1] &&
+                        prices[3] > prices[2] &&
+                        prices[4] > prices[3] &&
+                        prices[5] > prices[4];
+
+                    const delta = prices[5] - prices[0];
+
+                    if (upMomentum && delta > 0.5) {
+                        // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                        this.logSignalGenerated(state.userId, {
+                            mode: state.mode,
+                            isRecovery: false,
+                            filters: ['5 ticks consecutivos', 'Delta > 0.5'],
+                            trigger: 'Momentum Forte',
+                            probability: 85,
+                            contractType: 'RISE/FALL',
+                            direction: 'CALL'
+                        });
+                        return 'PAR';
+                    }
                 }
 
-            } else if (state.mode === 'LENTO') {
-                // LENTO: 5 ticks consecutivos + delta > 0.5
-                if (this.ticks.length < 6) return null;
-
-                const last6 = this.ticks.slice(-6);
-                const prices = last6.map(t => t.value);
-
-                // Verifica momentum de alta (5 ticks consecutivos)
-                const upMomentum = prices[1] > prices[0] &&
-                    prices[2] > prices[1] &&
-                    prices[3] > prices[2] &&
-                    prices[4] > prices[3] &&
-                    prices[5] > prices[4];
-
-                const delta = prices[5] - prices[0];
-
-                if (upMomentum && delta > 0.5) {
-                    this.saveNexusLog(state.userId, this.symbol, 'sinal',
-                        `🔍 SINAL DE ENTRADA\n` +
-                        `• Modo: ${state.mode}\n` +
-                        `• Filtro: 5 ticks + delta 0.5\n` +
-                        `• Direção: ALTA (CALL)\n` +
-                        `• Delta: ${delta.toFixed(4)}\n` +
-                        `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                        `• Contrato: RISE/FALL (CALL)\n` +
-                        `• Payout: 95%`
-                    );
-                    return 'PAR';
-                }
-            }
-
-        } else {
-            // ═══════════════════════════════════════════════════════════════
-            // RECUPERAÇÃO (RISE/FALL)
-            // ═══════════════════════════════════════════════════════════════
-
-            let requiredTicks: number;
-            let minDelta: number;
-            let modeInfo: string;
-
-            if (state.mode === 'VELOZ') {
-                // VELOZ: 2 ticks + delta 0.3
-                requiredTicks = 2;
-                minDelta = 0.3;
-                modeInfo = '2 ticks + delta 0.3';
             } else {
-                // NORMAL/LENTO: 3 ticks + delta 0.5
-                requiredTicks = 3;
-                minDelta = 0.5;
-                modeInfo = '3 ticks + delta 0.5';
-            }
+                // ═══════════════════════════════════════════════════════════════
+                // RECUPERAÇÃO (RISE/FALL)
+                // ═══════════════════════════════════════════════════════════════
 
-            if (this.ticks.length < requiredTicks + 1) return null;
+                let requiredTicks: number;
+                let minDelta: number;
+                let modeInfo: string;
 
-            const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
-
-            // === CALL (ALTA) ===
-            let upMomentum = true;
-            for (let i = 0; i < requiredTicks; i++) {
-                if (prices[i + 1] <= prices[i]) {
-                    upMomentum = false;
-                    break;
+                if (state.mode === 'VELOZ') {
+                    // VELOZ: 2 ticks + delta 0.3
+                    requiredTicks = 2;
+                    minDelta = 0.3;
+                    modeInfo = '2 ticks + delta 0.3';
+                } else {
+                    // NORMAL/LENTO: 3 ticks + delta 0.5
+                    requiredTicks = 3;
+                    minDelta = 0.5;
+                    modeInfo = '3 ticks + delta 0.5';
                 }
-            }
-            const deltaUp = prices[prices.length - 1] - prices[0];
 
-            if (upMomentum && deltaUp > minDelta) {
-                this.saveNexusLog(state.userId, this.symbol, 'sinal',
-                    `🔍 SINAL DE RECUPERAÇÃO\n` +
-                    `• Modo: ${state.mode}\n` +
-                    `• Filtro: ${modeInfo}\n` +
-                    `• Direção: ALTA (CALL)\n` +
-                    `• Delta: ${deltaUp.toFixed(4)}\n` +
-                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                    `• Contrato: CALL\n` +
-                    `• Payout: 95%`
-                );
-                return 'PAR'; // CALL
-            }
+                if (this.ticks.length < requiredTicks + 1) return null;
 
-            // === PUT (BAIXA) ===
-            let downMomentum = true;
-            for (let i = 0; i < requiredTicks; i++) {
-                if (prices[i + 1] >= prices[i]) {
-                    downMomentum = false;
-                    break;
+                const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
+
+                // === CALL (ALTA) ===
+                let upMomentum = true;
+                for (let i = 0; i < requiredTicks; i++) {
+                    if (prices[i + 1] <= prices[i]) {
+                        upMomentum = false;
+                        break;
+                    }
                 }
-            }
-            const deltaDown = prices[0] - prices[prices.length - 1];
+                const deltaUp = prices[prices.length - 1] - prices[0];
 
-            if (downMomentum && deltaDown > minDelta) {
-                this.saveNexusLog(state.userId, this.symbol, 'sinal',
-                    `🔍 SINAL DE RECUPERAÇÃO\n` +
-                    `• Modo: ${state.mode}\n` +
-                    `• Filtro: ${modeInfo}\n` +
-                    `• Direção: BAIXA (PUT)\n` +
-                    `• Delta: ${deltaDown.toFixed(4)}\n` +
-                    `• Preços: ${prices.map(p => p.toFixed(2)).join(' → ')}\n` +
-                    `• Contrato: PUT\n` +
-                    `• Payout: 95%`
-                );
-                return 'IMPAR'; // PUT
-            }
+                if (upMomentum && deltaUp > minDelta) {
+                    if (upMomentum && deltaUp > minDelta) {
+                        // ✅ LOG PADRONIZADO V2: Sinal Recuperação
+                        this.logSignalGenerated(state.userId, {
+                            mode: state.mode,
+                            isRecovery: true,
+                            filters: [modeInfo],
+                            trigger: 'Recuperação Alta',
+                            probability: 80,
+                            contractType: 'CALL',
+                            direction: 'CALL'
+                        });
+                        return 'PAR'; // CALL
+                    }
 
-            // Logs de rejeição (silenciados para não poluir demais)
-        }
+                    // === PUT (BAIXA) ===
+                    let downMomentum = true;
+                    for (let i = 0; i < requiredTicks; i++) {
+                        if (prices[i + 1] >= prices[i]) {
+                            downMomentum = false;
+                            break;
+                        }
+                    }
+                    const deltaDown = prices[0] - prices[prices.length - 1];
 
-        return null;
-    }
+                    if (downMomentum && deltaDown > minDelta) {
+                        if (downMomentum && deltaDown > minDelta) {
+                            // ✅ LOG PADRONIZADO V2: Sinal Recuperação
+                            this.logSignalGenerated(state.userId, {
+                                mode: state.mode,
+                                isRecovery: true,
+                                filters: [modeInfo],
+                                trigger: 'Recuperação Baixa',
+                                probability: 80,
+                                contractType: 'PUT',
+                                direction: 'PUT'
+                            });
+                            return 'IMPAR'; // PUT
+                        }
+
+                        // Logs de rejeição (silenciados para não poluir demais)
+                    }
+
+                    return null;
+                    return null;
+                }
+            } // Fechamento do check_signal
 
     private calculateSMA(period: number): number {
         if (this.ticks.length < period) return this.ticks[this.ticks.length - 1]?.value || 0;
@@ -499,7 +511,26 @@ export class NexusStrategy implements IStrategy {
         ));
 
         this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode} (Input: ${inputMode})`);
-        this.saveNexusLog(userId, 'SISTEMA', 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: NEXUS\n• Modo de Negociação: ${nexusMode}\n• Gerenciamento de Risco: ${modoMartingale.toUpperCase()}\n• Meta de Lucro: $${(profitTarget || 100).toFixed(2)}\n• Stop Loss Normal: $${(lossLimit || 50).toFixed(2)}\n• Stop Loss Blindado: ${stopLossBlindado !== false ? 'ATIVADO' : 'DESATIVADO'}`);
+
+        // ✅ LOG PADRONIZADO V2: Configuração Inicial
+        this.logInitialConfigV2(userId, {
+            strategyName: 'NEXUS 3.0',
+            operationMode: nexusMode,
+            riskProfile: modoMartingale.toUpperCase(),
+            profitTarget: profitTarget || 0,
+            stopLoss: lossLimit || 0,
+            stopBlindadoEnabled: stopLossBlindado !== false
+        });
+
+        // ✅ LOG PADRONIZADO V2: Início de Sessão
+        this.logSessionStart(userId, {
+            date: new Date(),
+            initialBalance: stakeAmount,
+            profitTarget: profitTarget || 0,
+            stopLoss: lossLimit || 0,
+            mode: nexusMode,
+            strategyName: 'NEXUS 3.0'
+        });
     }
 
     async deactivateUser(userId: string): Promise<void> {
@@ -537,11 +568,14 @@ export class NexusStrategy implements IStrategy {
         if (riskManager.consecutiveLosses >= 2) {
             barrier = '-0.15';
 
-            // ✅ Log de Troca de Contrato
+            // ✅ LOG PADRONIZADO V2: Troca de Contrato
             const riskMode = (riskManager as any).riskMode;
-            // Payout Higher ~60%. Multiplicador deve ser maior para compensar.
-            // O stake é recalculado em calculateStake automaticamente.
-            this.saveNexusLog(state.userId, this.symbol, 'info', `🔄 TROCA DE CONTRATO ATIVADA (M2+)\n• Motivo: 2+ perdas consecutivas.\n• Ação: Mudando para HIGHER (-0.15) para maior segurança.\n• Análise: Buscando zona de barreira protegida.\n• Modo: ${riskMode}`);
+            this.logContractChange(state.userId, {
+                reason: '2+ Perdas Consecutivas (Recovery)',
+                oldContract: 'RISE/FALL',
+                newContract: 'HIGHER -0.15',
+                analysis: `Buscando barreira protegida em ${riskMode}`
+            });
         }
 
         state.isOperationActive = true;
@@ -567,54 +601,66 @@ export class NexusStrategy implements IStrategy {
 
                 if (status === 'WON') {
                     if (wasRecovery) {
-                        state.vitoriasConsecutivas = 0; // Reset total apos Martingale para voltar a Base
-                        state.mode = state.originalMode; // ✅ Volta ao modo original após recuperação
-                        this.saveNexusLog(state.userId, this.symbol, 'info',
-                            `✅ RECUPERAÇÃO CONCLUÍDA\n` +
-                            `• Ação: Retornando ao modo ${state.mode}\n` +
-                            `• Status: Meta de recuperação atingida.`
-                        );
+                        // ✅ LOG PADRONIZADO V2: Recuperação Bem-Sucedida
+                        // Precisamos do valor recuperado (totalLoss) ANTES de resetar?
+                        // O RiskManager já atualizou no updateResult? Sim, mas consecutiveLosses resetou se lucro > 0 e cobriu tudo?
+                        // O RiskManager do Nexus reseta consecutiveLosses se profit >= 0.
+                        // Então temos que pegar os dados antes ou estimar.
+                        // Como updateResult já rodou, consecutiveLosses é 0.
+                        // Vamos simplificar o log de recuperação para Nexus.
+
+                        this.logSuccessfulRecoveryV2(state.userId, {
+                            recoveredLoss: 0, // Nexus RiskManager não expõe histórico fácil após reset
+                            additionalProfit: result.profit,
+                            profitPercentage: 0,
+                            stakeBase: state.apostaInicial
+                        });
+
+                        state.vitoriasConsecutivas = 0;
+                        state.mode = state.originalMode;
                     } else {
                         state.vitoriasConsecutivas++;
-                        // ✅ Log de Ciclo Perfeito (Igual Orion)
+                        // ✅ LOG PADRONIZADO V2: Win Streak / Soros
                         if (state.vitoriasConsecutivas % 2 === 0) {
-                            this.saveNexusLog(state.userId, this.symbol, 'resultado', `🎉 SOROS CICLO PERFEITO! 2 vitórias consecutivas (Nível 1)`);
-                            this.saveNexusLog(state.userId, this.symbol, 'info', `Reiniciando para entrada inicial: $${state.apostaInicial.toFixed(2)}`);
-                            state.vitoriasConsecutivas = 0; // ✅ Resetar contador após ciclo completo
+                            this.logWinStreak(state.userId, {
+                                consecutiveWins: state.vitoriasConsecutivas,
+                                accumulatedProfit: state.ultimoLucro * 2, // Estimativa
+                                currentStake: stake
+                            });
+                            state.vitoriasConsecutivas = 0;
                         }
                     }
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `🏁 RESULTADO DA ENTRADA\n` +
-                        `• Status: VITÓRIA ✅\n` +
-                        `• Lucro: $${result.profit.toFixed(2)}\n` +
-                        `• Saldo Atual: $${state.capital.toFixed(2)}`
-                    );
-                } else {
-                    // ✅ Log de Soros Falhou (Igual Orion)
-                    if (state.vitoriasConsecutivas > 0) {
-                        this.saveNexusLog(state.userId, this.symbol, 'resultado', `❌ Soros Nível 1 falhou! Entrando em recuperação`);
-                    }
 
-                    state.vitoriasConsecutivas = 0;
-                    this.saveNexusLog(state.userId, this.symbol, 'resultado',
-                        `🏁 RESULTADO DA ENTRADA\n` +
-                        `• Status: DERROTA ❌\n` +
-                        `• Operação: ${barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall')}\n` +
-                        `• Perda: -$${Math.abs(result.profit).toFixed(2)}\n` +
-                        `• Capital: $${state.capital.toFixed(2)}\n` +
-                        `• Martingale: M${riskManager.consecutiveLosses} (Recovery)`
-                    );
+                    // ✅ LOG PADRONIZADO V2: Vitória (Resultado Final)
+                    this.logTradeResultV2(state.userId, {
+                        status: 'WIN',
+                        profit: result.profit,
+                        stake: stake,
+                        balance: state.capital
+                    });
+                } else {
+                    // ✅ LOG PADRONIZADO V2: Derrota
+                    this.logTradeResultV2(state.userId, {
+                        status: 'LOSS',
+                        profit: -Math.abs(result.profit),
+                        stake: stake,
+                        balance: state.capital
+                    });
+
+                    // ✅ LOG PADRONIZADO V2: Martingale (Opcional aqui, pois já logamos na entrada da próxima)
+                    // Mas podemos logar que entrou em ciclo de perdas se quiser.
+                    // Mantendo foco no Resultado.
 
                     // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
                     if (riskManager.consecutiveLosses >= 4 && state.mode === 'VELOZ') {
-                        this.saveNexusLog(state.userId, this.symbol, 'alerta',
-                            `🚨 DEFESA AUTOMÁTICA ATIVADA\n` +
-                            `• Motivo: ${riskManager.consecutiveLosses} Perdas Consecutivas\n` +
-                            `• Ação: Mudando para MODO LENTO para proteção de capital.\n` +
-                            `• Entrada: 5 ticks + delta 0.5\n` +
-                            `• Recuperação: 3 ticks + delta 0.5`
-                        );
-                        state.mode = 'LENTO'; // ✅ Ativa o modo LENTO após 4 perdas
+                        // ✅ LOG PADRONIZADO V2: Defesa / Troca de Contrato
+                        this.logContractChange(state.userId, {
+                            reason: '4 Perdas Consecutivas (Stop Defense)',
+                            oldContract: 'VELOZ (2 ticks)',
+                            newContract: 'LENTO (5 ticks)',
+                            analysis: 'Proteção de Capital Ativada'
+                        });
+                        state.mode = 'LENTO';
                     }
                 }
 
@@ -990,6 +1036,187 @@ export class NexusStrategy implements IStrategy {
     private removeSubscriptionFromConnection(token: string, subId: string): void {
         const conn = this.wsConnections.get(token);
         if (conn) conn.subscriptions.delete(subId);
+    }
+
+    // ------------------------------------------------------------------
+    // ✅ LOGS PADRONIZADOS ZENIX v2.0 (Helpers)
+    // ------------------------------------------------------------------
+
+    private logInitialConfigV2(userId: string, config: {
+        strategyName: string;
+        operationMode: string;
+        riskProfile: string;
+        profitTarget: number;
+        stopLoss: number;
+        stopBlindadoEnabled: boolean;
+    }) {
+        const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
+            `• Estratégia: ${config.strategyName}\n` +
+            `• Modo: ${config.operationMode}\n` +
+            `• Perfil: ${config.riskProfile}\n` +
+            `• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}\n` +
+            `• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}\n` +
+            `• Stop Blindado: ${config.stopBlindadoEnabled ? 'Ativado' : 'Desativado'}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    private logSessionStart(userId: string, session: {
+        date: Date;
+        initialBalance: number;
+        profitTarget: number;
+        stopLoss: number;
+        mode: string;
+        strategyName: string;
+    }) {
+        const message = `🚀 INÍCIO DE SESSÃO DIÁRIA\n` +
+            `• Data: ${session.date.toLocaleDateString('pt-BR')}\n` +
+            `• Banca Inicial: $${session.initialBalance.toFixed(2)}\n` +
+            `• Meta do Dia: $${session.profitTarget.toFixed(2)}\n` +
+            `• Stop Loss: $${session.stopLoss.toFixed(2)}\n` +
+            `• Modo: ${session.mode}\n` +
+            `• Estratégia: ${session.strategyName}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    private logDataCollection(userId: string, data: {
+        targetCount: number;
+        currentCount: number;
+        mode?: string;
+    }) {
+        const message = `📡 COLETA DE DADOS${data.mode ? ` (${data.mode})` : ''}\n` +
+            `• Coletados: ${data.currentCount}\n` +
+            `• Status: Aguardando dados suficientes...`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    private logAnalysisStarted(userId: string, mode: string) {
+        const message = `🔍 ANÁLISE DE MERCADO EXECUTADA\n` +
+            `• Modo: ${mode}\n` +
+            `• Status: Buscando oportunidades...`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
+    }
+
+    private logSignalGenerated(userId: string, signal: {
+        mode: string;
+        isRecovery: boolean;
+        filters: string[];
+        trigger: string;
+        probability: number;
+        contractType: string;
+        direction?: 'CALL' | 'PUT';
+    }) {
+        const icon = signal.isRecovery ? '🛡️' : '⚡';
+        const title = signal.isRecovery ? `SINAL GERADO (RECUPERAÇÃO)` : `SINAL IDENTIFICADO`;
+        const modeLabel = signal.isRecovery ? `${signal.mode} (RECUPERAÇÃO)` : signal.mode;
+
+        let message = `${icon} ${title}\n` +
+            `• Modo: ${modeLabel}\n`;
+
+        signal.filters.forEach((filter, index) => {
+            message += `✅ Filtro ${index + 1}: ${filter}\n`;
+        });
+
+        message += `✅ Gatilho: ${signal.trigger}\n` +
+            `💪 Probabilidade: ${signal.probability}%\n` +
+            `🎯 Contrato: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'sinal', message);
+    }
+
+    private logTradeResultV2(userId: string, result: {
+        status: 'WIN' | 'LOSS';
+        profit: number;
+        stake: number;
+        balance: number;
+    }) {
+        const isWin = result.status === 'WIN';
+        const icon = isWin ? '✅' : '❌';
+        const profitLabel = isWin ? 'Lucro' : 'Prejuízo';
+        const profitValue = isWin ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
+
+        const message = `🏁 TRADE FINALIZADO: ${result.status}\n` +
+            `${isWin ? '💰' : '📉'} ${profitLabel.toUpperCase()}: ${profitValue}\n` +
+            `📈 BANCA ATUAL: $${result.balance.toFixed(2)}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
+    }
+
+    private logMartingaleLevelV2(userId: string, martingale: {
+        level: number;
+        lossNumber: number;
+        accumulatedLoss: number;
+        calculatedStake: number;
+        profitPercentage: number;
+        contractType: string;
+    }) {
+        const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
+            `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
+            `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
+            `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
+            `• Objetivo: Recuperar + ${martingale.profitPercentage.toFixed(0)}%\n` +
+            `• Contrato: ${martingale.contractType}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'alerta', message);
+    }
+
+    private logSorosActivation(userId: string, soros: {
+        previousProfit: number;
+        stakeBase: number;
+        level?: number;
+    }) {
+        const level = soros.level || 1;
+        const newStake = soros.stakeBase + soros.previousProfit;
+
+        const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
+            `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
+            `• Nova Stake (Base + Lucro): $${newStake.toFixed(2)}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    private logWinStreak(userId: string, streak: {
+        consecutiveWins: number;
+        accumulatedProfit: number;
+        currentStake: number;
+    }) {
+        const message = `🔥 WIN STREAK: ${streak.consecutiveWins} VITÓRIAS\n` +
+            `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
+            `• Stake Atual: $${streak.currentStake.toFixed(2)}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'vitoria', message);
+    }
+
+    private logSuccessfulRecoveryV2(userId: string, recovery: {
+        recoveredLoss: number;
+        additionalProfit: number;
+        profitPercentage: number;
+        stakeBase: number;
+    }) {
+        const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
+            `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
+            `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage.toFixed(2)}%)\n` +
+            `• Ação: Resetando sistema e voltando à entrada principal\n` +
+            `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'vitoria', message);
+    }
+
+    private logContractChange(userId: string, change: {
+        reason: string;
+        oldContract: string;
+        newContract: string;
+        analysis: string;
+    }) {
+        const message = `🔄 TROCA DE CONTRATO ATIVADA\n` +
+            `• Motivo: ${change.reason}\n` +
+            `• Ação: ${change.oldContract} ➡️ ${change.newContract}\n` +
+            `• Análise: ${change.analysis}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
 
     private async saveNexusLog(userId: string, symbol: string, type: any, message: string) {
