@@ -1129,23 +1129,29 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * Obtém trades detalhados de um dia específico
    */
+  /**
+   * Obtém trades detalhados de um dia específico
+   */
   async getDailyTrades(userId: string, date: string): Promise<any[]> {
-    // Configurar start e end do dia
-    // Se date for 'today', usa hoje. Se for 'YYYY-MM-DD', usa essa data.
-    const startOfDay = new Date();
-    if (date !== 'today') {
-      const parts = date.split('-'); // Espera YYYY-MM-DD
-      if (parts.length === 3) {
-        startOfDay.setFullYear(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-      }
+    // Buscar config para obter DATA DA SESSÃO
+    const config = await this.getAgentConfig(userId);
+    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+
+    // Validar formato da data YYYY-MM-DD
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    let targetDateStr = date;
+
+    if (date === 'today' || !dateRegex.test(date)) {
+      targetDateStr = new Date().toISOString().split('T')[0];
     }
-    startOfDay.setHours(0, 0, 0, 0);
 
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Se a data solicitada for HOJE, filtra pela SESSÃO ATUAL (se existir)
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isToday = targetDateStr === todayStr;
 
-    const trades = await this.dataSource.query(
-      `SELECT 
+    let query = `
+       SELECT 
          created_at,
          symbol,
          contract_type,
@@ -1156,12 +1162,32 @@ export class AutonomousAgentService implements OnModuleInit {
          exit_tick
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND created_at >= ?
-         AND created_at <= ?
+         AND DATE(created_at) = ?
          AND status IN ('WON', 'LOST')
-       ORDER BY created_at DESC`,
-      [userId, startOfDay.toISOString(), endOfDay.toISOString()]
-    );
+    `;
+
+    const params: any[] = [userId, targetDateStr];
+
+    // Adicionar filtro de sessão se for HOJE e tiver sessionDate
+    /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
+       Se filtrarmos aqui, a tabela mostrará apenas a sessão.
+       Mas o "Relatório Diário" implica dia todo.
+       Se a sessão começou ontem, "Sessão Atual" pode incluir ontem?
+       Session Date é timestamp.
+       
+       Vou assumir que o usuário quer ver TUDO do DIA, mas limitar estatísticas à sessão?
+       Ou ver apenas SESSÃO no relatório?
+       O prompt diz: "mostre aqui APENAS operações dentro da sessão atual"
+       Vou aplicar o filtro de sessão se for hoje.
+    */
+    if (isToday && sessionDate) {
+      query += ` AND created_at >= ?`;
+      params.push(sessionDate.toISOString());
+    }
+
+    query += ` ORDER BY created_at DESC`;
+
+    const trades = await this.dataSource.query(query, params);
 
     return trades.map((t: any) => ({
       time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
