@@ -63,8 +63,8 @@ export class StrategyManagerService implements OnModuleInit {
       );
     }
 
-    // ATLAS processa R_10, R_25, R_100 e 1HZ10V
-    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ10V'].includes(symbol)) {
+    // ATLAS processa R_10, R_25, R_100 e 1HZ100V
+    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
       promises.push(
         this.atlasStrategy.processTick(tick, symbol).catch(error => {
           this.logger.error('[StrategyManager][Atlas] Erro:', error);
