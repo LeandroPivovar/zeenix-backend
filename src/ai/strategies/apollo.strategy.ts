@@ -123,13 +123,13 @@ export class ApolloStrategy implements IStrategy {
   }
 
   private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
-    const filtersText = filters.map((f, i) => `✅FILTRO ${i + 1}: ${f}`).join('\n');
+    const filtersText = filters.map((f, i) => `✅ FILTRO ${i + 1}: ${f}`).join('\n');
     const message =
-      `🔍ANÁLISE: MODO ${mode}
+      `🔍 ANÁLISE: MODO ${mode}
 ${filtersText}
-💪FORÇA DO SINAL: ${probability}%
+💪 FORÇA DO SINAL: ${probability}%
 
-📊ENTRADA: ${signal}`;
+📊 ENTRADA: ${signal}`;
     this.saveLog(userId, 'sinal', message);
   }
 
@@ -247,9 +247,7 @@ ${filtersText}
     const requiredTicks = state.mode === 'veloz' ? 2 : 3;
 
     if (state.ticksColetados < requiredTicks) {
-      if (state.ticksColetados === 0 || state.ticksColetados === 1) {
-        this.logDataCollection(state.userId, state.ticksColetados, requiredTicks);
-      }
+      this.logDataCollection(state.userId, state.ticksColetados, requiredTicks);
       return;
     }
 
