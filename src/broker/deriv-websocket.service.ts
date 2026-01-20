@@ -78,15 +78,22 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     if (existingConnection) {
       if (existingConnection.ws && existingConnection.ws.readyState === WebSocket.OPEN && existingConnection.isAuthorized) {
-        this.logger.log(`[DerivWebSocketService] ✅ Reutilizando conexão existente para token ...${token.substring(0, 5)} (Login: ${existingConnection.loginid})`);
-
         // Validar loginid se fornecido
         if (loginid && existingConnection.loginid && loginid !== existingConnection.loginid) {
-          this.logger.warn(`[DerivWebSocketService] ⚠️ ALERTA: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}. Possível token duplicado.`);
-          // Não lançamos erro aqui para manter compatibilidade, mas logamos forte.
-          // A responsabilidade de usar o token certo é do frontend agora.
+          this.logger.warn(`[DerivWebSocketService] ⚠️ CONFLITO DE CONTA DETECTADO: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}.`);
+          this.logger.warn(`[DerivWebSocketService] 🔴 Forçando desconexão para garantir o contexto correto.`);
+
+          try {
+            this.disconnect(token);
+          } catch (e) {
+            this.logger.error(`Erro ao desconectar forçadamente: ${e.message}`);
+          }
+
+          // Prosseguir para criar nova conexão abaixo
+        } else {
+          this.logger.log(`[DerivWebSocketService] ✅ Reutilizando conexão existente para token ...${token.substring(0, 5)} (Login: ${existingConnection.loginid})`);
+          return;
         }
-        return;
       } else {
         // Conexão existe mas caiu/fechou? Reconectar.
         this.logger.log(`[DerivWebSocketService] 🔄 Conexão existente inativa. Reconectando...`);
