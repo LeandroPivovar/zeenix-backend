@@ -1526,6 +1526,31 @@ export class DerivController {
     }
   }
 
+  @Get('trading/active-symbols')
+  @UseGuards(AuthGuard('jwt'))
+  async getActiveSymbols(@Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Usuário ${userId} solicitando símbolos ativos`);
+
+    try {
+      const service = this.wsManager.getOrCreateService(userId);
+
+      // Se não estiver conectado, conectar primeiro
+      if (!service['isAuthorized']) {
+        const token = await this.getTokenFromStorage(userId);
+        if (token) {
+          await service.connect(token);
+        }
+      }
+
+      service.getActiveSymbols();
+      return { success: true, message: 'Solicitação de símbolos enviada' };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao solicitar símbolos: ${error.message}`);
+      throw new BadRequestException(error.message || 'Erro ao solicitar símbolos');
+    }
+  }
+
   @Get('trading/ticks')
   @UseGuards(AuthGuard('jwt'))
   async getTicks(@Query('symbol') symbol: string, @Req() req: any): Promise<{ ticks: Array<{ value: number; epoch: number }>; symbol: string; count: number }> {
