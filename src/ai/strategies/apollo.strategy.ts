@@ -846,6 +846,29 @@ ${filtersText}
       } catch (error: any) {
         const errorMessage = error?.message || JSON.stringify(error);
         this.saveLog(userId, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage}`);
+
+        if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          // ✅ Buscando contas do usuário para log detalhado
+          this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [userId])
+            .then((userDerivData) => {
+              if (userDerivData && userDerivData.length > 0 && userDerivData[0].deriv_raw) {
+                const derivData = typeof userDerivData[0].deriv_raw === 'string'
+                  ? JSON.parse(userDerivData[0].deriv_raw)
+                  : userDerivData[0].deriv_raw;
+
+                if (derivData.authorize && derivData.authorize.account_list && Array.isArray(derivData.authorize.account_list)) {
+                  const accountListInfo = derivData.authorize.account_list.map((acc: any) =>
+                    `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
+                  ).join('\n');
+
+                  this.saveLog(userId, 'alerta', `📋 Contas Disponíveis (Cache):\n${accountListInfo}`);
+                }
+              }
+            }).catch(err => {
+              this.logger.error(`[APOLLO] Erro ao buscar dados da conta para log de erro:`, err);
+            });
+        }
+
         return null;
       }
 

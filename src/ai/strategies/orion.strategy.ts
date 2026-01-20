@@ -2586,8 +2586,38 @@ export class OrionStrategy implements IStrategy {
       this.logger.warn(
         `[ORION][${mode}][${state.userId}] ❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)} (stake: $${stakeAmount.toFixed(2)} + margem)`,
       );
+
+      // ✅ Buscando contas do usuário para log detalhado
+      let accountListInfo = 'Nenhuma conta encontrada ou erro ao buscar.';
+      try {
+        const userDerivData = await this.dataSource.query(
+          `SELECT deriv_raw FROM users WHERE id = ?`,
+          [state.userId]
+        );
+
+        if (userDerivData && userDerivData.length > 0 && userDerivData[0].deriv_raw) {
+          const derivData = typeof userDerivData[0].deriv_raw === 'string'
+            ? JSON.parse(userDerivData[0].deriv_raw)
+            : userDerivData[0].deriv_raw;
+
+          if (derivData.authorize && derivData.authorize.account_list && Array.isArray(derivData.authorize.account_list)) {
+            accountListInfo = derivData.authorize.account_list.map((acc: any) =>
+              `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
+            ).join('\n');
+          }
+        }
+      } catch (err) {
+        this.logger.error(`[ORION][${mode}][${state.userId}] Erro ao buscar detalhes da conta para log:`, err);
+      }
+
       state.isOperationActive = false;
-      this.saveOrionLog(state.userId, this.symbol, 'erro', `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}`);
+      this.saveOrionLog(
+        state.userId,
+        this.symbol,
+        'erro',
+        `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}\n\n📋 Contas Cache:\n${accountListInfo}`
+      );
+
       // ✅ Resetar contador de ticks para permitir nova tentativa
       if ('ticksDesdeUltimaOp' in state) {
         state.ticksDesdeUltimaOp = 0;
@@ -3215,6 +3245,29 @@ export class OrionStrategy implements IStrategy {
         // ✅ FIX: Logar erro VISÍVEL para o usuário (Frontend)
         if (userId) {
           this.saveOrionLog(userId, this.symbol, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage} (Tentando novamente...)`);
+
+          if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+            // ✅ Buscando contas do usuário para log detalhado (Fallback caso o erro venha da API)
+            this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [userId])
+              .then((userDerivData) => {
+                if (userDerivData && userDerivData.length > 0 && userDerivData[0].deriv_raw) {
+                  const derivData = typeof userDerivData[0].deriv_raw === 'string'
+                    ? JSON.parse(userDerivData[0].deriv_raw)
+                    : userDerivData[0].deriv_raw;
+
+                  if (derivData.authorize && derivData.authorize.account_list && Array.isArray(derivData.authorize.account_list)) {
+                    const accountListInfo = derivData.authorize.account_list.map((acc: any) =>
+                      `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
+                    ).join('\n');
+
+                    this.saveOrionLog(userId, this.symbol, 'alerta', `📋 Contas Disponíveis (Cache):\n${accountListInfo}`);
+                  }
+                }
+              }).catch(err => {
+                this.logger.error(`[ORION] Erro ao buscar dados da conta para log de erro:`, err);
+              });
+          }
+
           if (errorMessage.includes('Timeout')) {
             this.saveOrionLog(userId, this.symbol, 'alerta', `💡 Timeout ao comprar contrato. Tente novamente.`);
           }
