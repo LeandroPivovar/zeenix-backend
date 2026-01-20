@@ -233,6 +233,30 @@ export class AutonomousAgentController {
     }
   }
 
+  @Get('weekly-stats/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getWeeklyStats(@Param('userId') userId: string, @Query('weeks') weeks?: string) {
+    try {
+      const weeksNum = weeks ? parseInt(weeks, 10) : 10;
+      const stats = await this.agentService.getWeeklyStats(userId, weeksNum);
+
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      this.logger.error(`[GetWeeklyStats] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas semanais',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('profit-evolution/:userId')
   @UseGuards(AuthGuard('jwt'))
   async getProfitEvolution(@Param('userId') userId: string, @Query('days') days?: string) {

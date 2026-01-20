@@ -1048,6 +1048,126 @@ export class AutonomousAgentService implements OnModuleInit {
     return dailyData;
   }
 
+  async getWeeklyStats(userId: string, weeks: number = 10): Promise<any[]> {
+    // Buscar config para obter DATA DA SESSÃO e Saldo Inicial
+    const config = await this.getAgentConfig(userId);
+    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+    const initialBalance = parseFloat(config?.initial_balance) || 0;
+
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - (weeks * 7)); // Look back X weeks
+
+    // Se tiver sessao ativa, não mostrar dados anteriores a ela
+    let effectiveStartDate = startDate;
+    if (sessionDate && sessionDate > startDate) {
+      effectiveStartDate = sessionDate;
+    }
+
+    // Query grouping by Year-Week
+    // Note: SQL syntax for week depends on DB. Assuming compatible/standard function or using DATE formatting.
+    // For universal support, we might fetch all trades and aggregate in JS, but let's try SQL grouping first.
+    // SQLite: strftime('%Y-%W', created_at)
+    // MySQL: DATE_FORMAT(created_at, '%Y-%u')
+    // We will use JS aggregation for safety across DB types if we want to be safe, 
+    // but the existing code uses Date(created_at), implying standard SQL or simple mapping.
+    // Let's fetch daily stats and aggregate weekly in JS to be safe and accurate with calendar weeks.
+
+    // Fetch trades for the period
+    const trades = await this.dataSource.query(
+      `SELECT 
+            created_at,
+            profit_loss,
+            status
+         FROM autonomous_agent_trades 
+         WHERE user_id = ? 
+           AND created_at >= ?
+           AND status IN ('WON', 'LOST')
+         ORDER BY created_at ASC`,
+      [userId, effectiveStartDate.toISOString()]
+    );
+
+    // Group by Week (Sunday-Saturday or similar)
+    const weeklyMap = new Map<string, {
+      start: Date,
+      end: Date,
+      profit: number,
+      wins: number,
+      ops: number
+    }>();
+
+    for (const trade of trades) {
+      const date = new Date(trade.created_at);
+      // Get start of week (Sunday)
+      const day = date.getDay(); // 0 is Sunday
+      const diff = date.getDate() - day; // adjust when day is sunday
+      const startOfWeek = new Date(date);
+      startOfWeek.setDate(diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const key = startOfWeek.toISOString().split('T')[0];
+
+      if (!weeklyMap.has(key)) {
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        weeklyMap.set(key, {
+          start: startOfWeek,
+          end: endOfWeek,
+          profit: 0,
+          wins: 0,
+          ops: 0
+        });
+      }
+
+      const stats = weeklyMap.get(key)!;
+      const profit = parseFloat(trade.profit_loss) || 0;
+      stats.profit += profit;
+      stats.ops += 1;
+      if (trade.status === 'WON') stats.wins += 1;
+    }
+
+    // Convert to array and calculate cumulative capital
+    const weeksList = Array.from(weeklyMap.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    let currentCapital = initialBalance;
+    const result: any[] = [];
+
+    for (const week of weeksList) {
+      // Formataçao da data: DD/MM - DD/MM
+      const startStr = week.start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const endStr = week.end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const period = `${startStr} - ${endStr}`;
+
+      // Atualiza capital
+      currentCapital += week.profit;
+
+      // Percentual de lucro da semana sobre o capital inicial da sessão? 
+      // Ou sobre o capital no inicio da semana? Usually over initial balance or current capital.
+      // The UI shows % likely relative to initial balance or weekly ROI. 
+      // Let's assume ROI relative to initial balance for consistency with other metrics, 
+      // OR relative to the capital at start of week. 
+      // Let's use relative to initialBalance as it's a "total growth" typically, or simply Week Profit / Start Week Capital.
+      // Given the example showed +3% etc, it looks like weekly yield. 
+      // Let's calculate: (Profit / (CurrentCapital - Profit)) * 100
+      const startWeekCapital = currentCapital - week.profit;
+      const percent = startWeekCapital > 0 ? (week.profit / startWeekCapital) * 100 : 0;
+
+      const winRate = week.ops > 0 ? (week.wins / week.ops) * 100 : 0;
+
+      result.push({
+        period,
+        profit: Number(week.profit.toFixed(2)),
+        finalCapital: Number(currentCapital.toFixed(2)),
+        percent: Number(percent.toFixed(2)),
+        ops: week.ops,
+        winRate: Number(winRate.toFixed(1))
+      });
+    }
+
+    // Sort descending (newest first) for UI
+    return result.reverse();
+  }
+
   async getProfitEvolution(userId: string, days: number = 30): Promise<any[]> {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Reset time to start of today for consistent filtering
