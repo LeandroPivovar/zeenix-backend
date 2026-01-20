@@ -381,12 +381,25 @@ export class CopyTradingController {
         isActive: Boolean(c.is_active) === true || c.session_status === 'active',
         allocationType: c.allocation_type,
         allocationValue: parseFloat(c.allocation_value) || 0,
+        totalOperations: parseInt(c.total_operations) || 0,
         // formattedDate: c.created_at || c.activated_at 
       }));
+
+      // Calcular estatísticas agregadas
+      const totalCopiers = mappedCopiers.length;
+      const managedBalance = mappedCopiers.reduce((sum, c) => sum + c.balance, 0);
+      const todayProfit = mappedCopiers.reduce((sum, c) => sum + c.pnl, 0);
+      const totalVolume = mappedCopiers.reduce((sum, c) => sum + c.balance, 0); // Volume = saldo gerenciado
 
       return {
         success: true,
         data: mappedCopiers,
+        summary: {
+          totalCopiers,
+          managedBalance,
+          todayProfit,
+          totalVolume,
+        },
       };
     } catch (error) {
       this.logger.error(

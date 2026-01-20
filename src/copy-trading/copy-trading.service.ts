@@ -5,6 +5,7 @@ import { ExpertEntity } from '../infrastructure/database/entities/expert.entity'
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { DerivWebSocketManager } from '../broker/deriv-websocket-manager.service';
 
 interface CopyTradingConfigData {
   traderId: string;
@@ -30,6 +31,7 @@ export class CopyTradingService {
     private readonly expertRepository: Repository<ExpertEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    private readonly wsManager: DerivWebSocketManager,
   ) { }
 
   async activateCopyTrading(
