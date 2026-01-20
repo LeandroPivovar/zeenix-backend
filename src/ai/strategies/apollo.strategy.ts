@@ -241,7 +241,11 @@ ${filtersText}
     // VELOZ needs 1 tick (P0) to compare with previous (P-1).
     // NORMAL/LENTO needs 2 ticks (P1, P0) to compare 2 intervals (P2->P1, P1->P0).
 
-    const requiredTicks = state.mode === 'veloz' ? 1 : 2;
+    // normal: needs 2 moves (2 ticks collected)
+    // lento: needs 3 moves (3 ticks collected)
+    let requiredTicks = 2;
+    if (state.mode === 'veloz') requiredTicks = 1;
+    else if (state.mode === 'lento') requiredTicks = 3;
 
     if (state.ticksColetados < requiredTicks) {
       this.logDataCollection(state.userId, state.ticksColetados, requiredTicks);
@@ -286,6 +290,7 @@ ${filtersText}
     // Normal/Lento: Needs 3 ticks total history (Current, P-1, P-2)
 
     if (state.mode === 'veloz') requiredTicks = 2;
+    else if (state.mode === 'lento') requiredTicks = 4; // Lento needs 3 moves (4 points)
     else requiredTicks = 3;
 
     if (prices.length < requiredTicks) return null;
@@ -357,31 +362,42 @@ ${filtersText}
       }
     }
     else if (state.mode === 'lento') {
-      // MODO LENTO
-      // Coleta: Aguarda 2 ticks
-      // 2. Análise: Aplica 2 filtros (Delta + Consistência)
-      // 3. Decisão: Se delta >= 0.5 E 2 ticks na mesma direção, entra a favor
+      // MODO LENTO - CORREÇÃO 4
+      // Coleta: Aguarda 3 ticks (para ter 3 movimentos)
+      // 2. Análise: Aplica 2 filtros (Delta + Consistência de 3 movimentos)
+      // 3. Decisão: Se delta >= 0.5 E 3 ticks (movimentos) na mesma direção, entra a favor
 
       const MIN_DELTA = 0.5;
 
-      // Delta Total
-      const totalDelta = currentPrice - price3;
+      // Delta Total (P4 -> P1, ou seja, Last 3 moves)
+      // Prices: [..., P4, P3, P2, P1] (P1=current)
+      // Indices: length-1(current), length-2, length-3, length-4
+      const price4 = prices[prices.length - 4] || 0; // P4
+
+      if (price4 === 0) return null; // Safety check
+
+      const totalDelta = currentPrice - price4; // Delta total dos 3 movimentos
       const absDelta = Math.abs(totalDelta);
       const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
 
-      // Consistência
-      const move1 = lastPrice - price3;
-      const move2 = currentPrice - lastPrice;
-      const isConsistent = (move1 > 0 && move2 > 0) || (move1 < 0 && move2 < 0);
+      // Consistência: 3 movimentos na mesma direção
+      // P4->P3, P3->P2, P2->P1
+      const move1 = price3 - price4;      // Move 1
+      const move2 = lastPrice - price3;   // Move 2
+      const move3 = currentPrice - lastPrice; // Move 3
+
+      const isConsistentUP = move1 > 0 && move2 > 0 && move3 > 0;
+      const isConsistentDOWN = move1 < 0 && move2 < 0 && move3 < 0;
+      const isConsistent = isConsistentUP || isConsistentDOWN;
 
       if (absDelta >= MIN_DELTA) {
         if (isConsistent) {
           direction = currentDirection;
           strength = 90;
           filters.push(`Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA}`);
-          filters.push(`Consistência Forte (2 Ticks)`);
+          filters.push(`Consistência Forte (3 Movimentos)`);
         } else {
-          reasons.push(`Falta de Consistência`);
+          reasons.push(`Falta de Consistência (3 Movimentos)`);
         }
       } else {
         reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
