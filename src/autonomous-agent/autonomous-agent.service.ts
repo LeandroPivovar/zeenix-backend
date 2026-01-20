@@ -1454,20 +1454,7 @@ export class AutonomousAgentService implements OnModuleInit {
         params.push(endDate);
       }
 
-
-      // 🔍 DEBUG: Verificar se há trades na tabela
-      const debugTotalTrades = await this.dataSource.query(`
-        SELECT COUNT(*) as total FROM ai_trades
-      `);
-      this.logger.log(`[GetGeneralStats] 🔍 Total de trades na tabela ai_trades: ${JSON.stringify(debugTotalTrades)}`);
-
-      // 🔍 DEBUG: Verificar trades por status
-      const debugByStatus = await this.dataSource.query(`
-        SELECT status, COUNT(*) as count FROM ai_trades GROUP BY status
-      `);
-      this.logger.log(`[GetGeneralStats] 🔍 Trades por status: ${JSON.stringify(debugByStatus)}`);
-
-      // NOVA ABORDAGEM: Queries separadas e mais simples (evita LEFT JOIN pesado)
+      // ABORDAGEM OTIMIZADA: Queries separadas e mais simples (evita LEFT JOIN pesado)
 
       // 1. Contar usuários por estratégia (rápido, sem JOIN)
       const userCounts = await this.dataSource.query(`
