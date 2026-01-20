@@ -488,6 +488,15 @@ export class DerivController {
         source: 'CONNECT',
       });
     } catch (error) {
+      const errorMsg = error.message || JSON.stringify(error);
+      const isAppIdError = errorMsg.includes('app ID') || errorMsg.includes('AppIdInvalid');
+
+      if (isAppIdError) {
+        this.logger.error(`[CONNECT] ❌ Erro de App ID: O token não é válido para o APP_ID atual. Limpando dados para forçar re-autenticação.`);
+        await this.clearDerivData(userId, 'CONNECT');
+        throw new BadRequestException('Seu token Deriv não é válido para o aplicativo atual configurado no servidor (APP_ID mudou). Por favor, reconecte sua conta.');
+      }
+
       const isUnauthorized =
         error.status === 401 ||
         error.statusCode === 401 ||
@@ -501,7 +510,7 @@ export class DerivController {
       }
 
       this.logger.error(
-        `[CONNECT] Erro na conexão Deriv: ${error.message || JSON.stringify(error)}`,
+        `[CONNECT] Erro na conexão Deriv: ${errorMsg}`,
       );
       throw error;
     }
@@ -566,6 +575,15 @@ export class DerivController {
         tokensByLoginId, // Retornar tokens para o frontend também
       };
     } catch (error) {
+      const errorMsg = error.message || JSON.stringify(error);
+      const isAppIdError = errorMsg.includes('app ID') || errorMsg.includes('AppIdInvalid');
+
+      if (isAppIdError) {
+        this.logger.error(`[CONNECT-OAUTH] ❌ Erro de App ID: O token gerado não é válido para o APP_ID atual.`);
+        await this.clearDerivData(userId, 'CONNECT-OAUTH');
+        throw new BadRequestException('Os tokens gerados pelo OAuth não são válidos para o APP_ID configurado no servidor. Verifique se o APP_ID no .env corresponde ao aplicativo onde o redirecionamento OAuth está configurado.');
+      }
+
       const isUnauthorized =
         error.status === 401 ||
         error.statusCode === 401 ||
@@ -579,7 +597,7 @@ export class DerivController {
       }
 
       this.logger.error(
-        `[CONNECT-OAUTH] Erro na conexão Deriv: ${error.message || JSON.stringify(error)}`,
+        `[CONNECT-OAUTH] Erro na conexão Deriv: ${errorMsg}`,
       );
       throw error;
     }
@@ -689,7 +707,16 @@ export class DerivController {
         }
         return finalResponse;
       } catch (error) {
-        this.logger.error(`[STATUS] Erro ao buscar saldo da Deriv: ${error.message}`);
+        const errorMsg = error.message || JSON.stringify(error);
+        const isAppIdError = errorMsg.includes('app ID') || errorMsg.includes('AppIdInvalid');
+
+        if (isAppIdError) {
+          this.logger.error(`[STATUS] ❌ Erro de App ID para usuário ${userId}. Limpando dados.`);
+          await this.clearDerivData(userId, 'STATUS');
+          throw new BadRequestException('Sua sessão Deriv expirou ou o APP_ID foi alterado. Por favor, reconecte sua conta nas configurações.');
+        }
+
+        this.logger.error(`[STATUS] Erro ao buscar saldo da Deriv: ${errorMsg}`);
       }
     }
 

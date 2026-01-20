@@ -124,8 +124,17 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       }, 15000); // 15s timeout
 
       ws.on('open', () => {
-        this.logger.log(`[DerivWS] WebSocket aberto. Enviando Authorize...`);
-        this.send({ authorize: this.state.token });
+        this.logger.log(`[DerivWS] WebSocket aberto. Aguardando estabilização...`);
+        // Pequeno atraso para garantir que o readyState esteja sincronizado
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            this.logger.log(`[DerivWS] Enviando Authorize...`);
+            this.send({ authorize: this.state.token });
+          } else {
+            this.logger.error(`[DerivWS] ❌ WS fechou prematuramente após open. Estado: ${ws.readyState}`);
+            reject(new Error('WebSocket fechou prematuramente após abertura'));
+          }
+        }, 100);
       });
 
       ws.on('message', (data: WebSocket.RawData) => {
@@ -150,7 +159,16 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
               resolve(true);
             } else {
               clearTimeout(timeout);
-              reject(new Error(msg.error.message));
+              const errorMsg = msg.error.message || 'Erro de autorização';
+
+              // Se for erro de App ID, logar com destaque
+              if (errorMsg.includes('app ID') || msg.error.code === 'AppIdInvalid') {
+                this.logger.error(`[DerivWS] ❌ O Token fornecido não é válido para o APP_ID atual (${this.appId}). É necessário re-autenticar a conta.`);
+              } else {
+                this.logger.error(`[DerivWS] ❌ Falha na autorização: ${errorMsg}`);
+              }
+
+              reject(new Error(errorMsg));
               this.disconnect();
             }
           }
