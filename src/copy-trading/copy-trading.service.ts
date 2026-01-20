@@ -1536,6 +1536,7 @@ export class CopyTradingService {
           allocationType: copier.allocation_type,
           allocationValue: parseFloat(copier.allocation_value || '0'),
           allocationPercentage: copier.allocation_percentage ? parseFloat(copier.allocation_percentage) : null,
+          derivToken: copier.deriv_token || '',
           // Retornar lista combinada (se não foi retornado antes)
         };
       });
