@@ -1431,7 +1431,7 @@ export class CopyTradingService {
             AND DATE(executed_at) = CURDATE()
           ), 0) as today_profit,
           COALESCE((
-            SELECT SUM(stake) 
+            SELECT SUM(stake_amount) 
             FROM copy_trading_operations 
             WHERE user_id = c.user_id 
           ), 0) as total_volume
@@ -1491,7 +1491,7 @@ export class CopyTradingService {
             AND DATE(executed_at) = CURDATE()
           ), 0) as today_profit,
           COALESCE((
-            SELECT SUM(stake) 
+            SELECT SUM(stake_amount) 
             FROM copy_trading_operations 
             WHERE user_id = s.user_id 
           ), 0) as total_volume

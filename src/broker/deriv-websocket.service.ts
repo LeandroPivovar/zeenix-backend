@@ -107,6 +107,10 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
               this.logger.log(`✅ Autorizado com sucesso! Conta: ${this.currentLoginid} (${currency}) | Saldo: ${balance}`);
 
+              if (this.currentLoginid && msg.authorize.loginid !== this.currentLoginid) {
+                this.logger.warn(`⚠️ ALERTA: Conectado à conta ${msg.authorize.loginid} mas esperava-se ${this.currentLoginid}. O token usado pode pertencer a outra conta!`);
+              }
+
               if (accountList && Array.isArray(accountList)) {
                 this.logger.log(`📋 Contas disponíveis nesta conexão:`);
                 accountList.forEach((acc: any) => {
