@@ -1659,13 +1659,14 @@ export class CopyTradingService {
           this.logger.log(`[ExecuteCopierTrade] Proposta recebida para ${userId}: ${proposal.id}, Price: $${proposal.askPrice}`);
 
           // Buy the contract
-          wsService.buyContract(
-            proposal.id,
-            proposal.askPrice,
-            tradeConfig.durationUnit,
-            tradeConfig.duration,
-            tradeConfig.contractType,
-          );
+          wsService.buyContract({
+            proposalId: proposal.id,
+            price: proposal.askPrice,
+            durationUnit: tradeConfig.durationUnit,
+            duration: tradeConfig.duration,
+            contractType: tradeConfig.contractType,
+            token: tradeConfig.derivToken // ✅ Passar token explícito para garantir contexto
+          });
 
           // Wait for buy confirmation
           const buyTimeout = setTimeout(() => {

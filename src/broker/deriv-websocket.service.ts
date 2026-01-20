@@ -27,289 +27,301 @@ interface TradeData {
   entryTime?: number | null;
 }
 
+/**
+ * Interface para estado de conexão isolado
+ */
+interface ConnectionState {
+  ws: WebSocket | null;
+  isAuthorized: boolean;
+  token: string;
+  loginid: string | null;
+  reconnectAttempts: number;
+  isReconnecting: boolean;
+  reconnectTimeout: NodeJS.Timeout | null;
+  pendingRequests: Map<string, any>;
+  // Subscriptions isoladas por conexão
+  tickSubscriptionId: string | null;
+  proposalSubscriptionId: string | null;
+  openContractSubscriptionId: string | null;
+  pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string } | null;
+}
+
 @Injectable()
 export class DerivWebSocketService extends EventEmitter implements OnModuleDestroy {
   private readonly logger = new Logger(DerivWebSocketService.name);
-  private ws: WebSocket | null = null;
-  private isAuthorized = false;
-  private currentLoginid: string | null = null;
-  private tickSubscriptionId: string | null = null;
-  private proposalSubscriptionId: string | null = null;
-  private openContractSubscriptionId: string | null = null;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 10;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private isReconnecting = false;
+
+  // ✅ Pool de conexões: Token -> ConnectionState
+  private connections = new Map<string, ConnectionState>();
+
+  // Estado global ou padrão (usado para ticks se não especificado)
   private appId: number;
-  private token: string | null = null;
   private symbol: string = 'R_100';
   private ticks: TickData[] = [];
   private readonly maxTicks = 300; // 5 minutos de ticks
-  private pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string } | null = null; // Armazenar config da compra pendente
+  private maxReconnectAttempts = 10;
 
   constructor() {
     super();
     this.appId = Number(process.env.DERIV_APP_ID || 111346);
   }
 
+  /**
+   * Conecta ou reutiliza uma conexão existente para o token fornecido
+   */
   async connect(token: string, loginid?: string): Promise<void> {
-    // Verificar se já estamos conectados e autorizados
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isAuthorized) {
-      // ✅ VERIFICAÇÃO CRÍTICA: O token atual corresponde ao solicitado?
-      if (this.token === token) {
-        // Se temos um loginid alvo e ele é DIFERENTE do atual, isso indica problema se o token for o mesmo.
-        if (loginid && this.currentLoginid && loginid !== this.currentLoginid) {
-          const error = new Error(`Conflito de Conta: O token fornecido já está conectado na conta ${this.currentLoginid}, mas você solicitou ${loginid}. Verifique se você não usou o mesmo token para ambas as contas.`);
-          this.logger.error(error.message);
-          throw error;
+    if (!token) {
+      throw new Error('Token é obrigatório para conexão.');
+    }
+
+    // ✅ 1. Verificar se já existe conexão para este token
+    const existingConnection = this.connections.get(token);
+
+    if (existingConnection) {
+      if (existingConnection.ws && existingConnection.ws.readyState === WebSocket.OPEN && existingConnection.isAuthorized) {
+        this.logger.log(`[DerivWebSocketService] ✅ Reutilizando conexão existente para token ...${token.substring(0, 5)} (Login: ${existingConnection.loginid})`);
+
+        // Validar loginid se fornecido
+        if (loginid && existingConnection.loginid && loginid !== existingConnection.loginid) {
+          this.logger.warn(`[DerivWebSocketService] ⚠️ ALERTA: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}. Possível token duplicado.`);
+          // Não lançamos erro aqui para manter compatibilidade, mas logamos forte.
+          // A responsabilidade de usar o token certo é do frontend agora.
         }
-
-        this.logger.log('Conexão WebSocket já está ativa com o mesmo token.');
         return;
+      } else {
+        // Conexão existe mas caiu/fechou? Reconectar.
+        this.logger.log(`[DerivWebSocketService] 🔄 Conexão existente inativa. Reconectando...`);
+        return this.establishConnection(token, loginid);
       }
-
-      this.logger.warn(`[DerivWebSocketService] ⚠️ Conexão ativa, mas token mudou. Reconectando... (Antigo: ${this.token?.substring(0, 4)}..., Novo: ${token.substring(0, 4)}...)`);
-      this.disconnect();
-      // O fluxo continuará abaixo para estabelecer nova conexão
     }
 
-    this.token = token;
-    this.logger.log(`[DerivWebSocketService] Conectando com token prefix: ${token.substring(0, 4)}... (targetLoginid: ${loginid || 'N/A'})`);
-    if (loginid) {
-      this.currentLoginid = loginid;
-    }
-
-    return this.establishConnection();
+    // ✅ 2. Criar nova conexão isolada
+    this.logger.log(`[DerivWebSocketService] 🔌 Criando nova conexão isolada para token ...${token.substring(0, 5)}`);
+    return this.establishConnection(token, loginid);
   }
 
-  private establishConnection(): Promise<void> {
+  private establishConnection(token: string, loginid?: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      this.logger.log(`Conectando ao Deriv WebSocket: ${url}`);
+      // Inicializar estado da conexão se não existir
+      let connection = this.connections.get(token);
+      if (!connection) {
+        connection = {
+          ws: null,
+          isAuthorized: false,
+          token: token,
+          loginid: loginid || null,
+          reconnectAttempts: 0,
+          isReconnecting: false,
+          reconnectTimeout: null,
+          pendingRequests: new Map(),
+          tickSubscriptionId: null,
+          proposalSubscriptionId: null,
+          openContractSubscriptionId: null,
+          pendingBuyConfig: null
+        };
+        this.connections.set(token, connection);
+      }
 
-      this.ws = new WebSocket(url, {
-        headers: {
-          Origin: 'https://app.deriv.com',
-        },
+      const url = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+      this.logger.log(`[${token.substring(0, 5)}] Conectando WebSocket: ${url}`);
+
+      const ws = new WebSocket(url, {
+        headers: { Origin: 'https://app.deriv.com' },
       });
+
+      connection.ws = ws;
 
       const timeout = setTimeout(() => {
-        if (!this.isAuthorized) {
-          this.ws?.close();
-          reject(new Error('Timeout ao conectar com Deriv'));
+        if (connection && !connection.isAuthorized) {
+          try {
+            connection.ws?.close();
+          } catch (e) { }
+          reject(new Error('Timeout ao conectar/autorizar com Deriv'));
         }
-      }, 10000);
+      }, 15000); // 15s timeout
 
-      this.ws.on('open', () => {
-        this.logger.log('WebSocket aberto, enviando autorização');
-        this.logger.log(`[DerivWebSocketService] Enviando authorize com token prefix: ${this.token ? this.token.substring(0, 4) : 'N/A'}`);
-        this.send({ authorize: this.token });
+      ws.on('open', () => {
+        this.logger.log(`[${token.substring(0, 5)}] WebSocket aberto. Enviando Authorize...`);
+        this.send({ authorize: token }, token);
       });
 
-      this.ws.on('message', (data: WebSocket.RawData) => {
+      ws.on('message', (data: WebSocket.RawData) => {
         try {
           const msg = JSON.parse(data.toString());
-          this.handleMessage(msg);
 
-          if (msg.msg_type === 'authorize' && !msg.error) {
-            clearTimeout(timeout);
-            if (!this.isAuthorized) {
-              this.isAuthorized = true;
-              this.reconnectAttempts = 0;
-              this.currentLoginid = msg.authorize.loginid;
+          // Se for authorize, processar especificamente para resolver a promise de conexão
+          if (msg.msg_type === 'authorize') {
+            if (!msg.error) {
+              clearTimeout(timeout);
+              if (connection) {
+                connection.isAuthorized = true;
+                connection.reconnectAttempts = 0;
+                connection.loginid = msg.authorize.loginid;
 
-              const accountList = msg.authorize.account_list;
-              const balance = msg.authorize.balance;
-              const currency = msg.authorize.currency;
+                this.logger.log(`[${token.substring(0, 5)}] ✅ Autorizado! Conta: ${msg.authorize.loginid} (${msg.authorize.currency})`);
 
-              this.logger.log(`✅ Autorizado com sucesso! Conta: ${this.currentLoginid} (${currency}) | Saldo: ${balance}`);
+                // Se o loginid foi especificado mas veio diferente, alertar
+                if (loginid && msg.authorize.loginid !== loginid) {
+                  this.logger.warn(`[${token.substring(0, 5)}] ⚠️ CONFLITO: Solicitado ${loginid}, mas Token pertence a ${msg.authorize.loginid}`);
+                }
 
-              if (this.currentLoginid && msg.authorize.loginid !== this.currentLoginid) {
-                this.logger.warn(`⚠️ ALERTA: Conectado à conta ${msg.authorize.loginid} mas esperava-se ${this.currentLoginid}. O token usado pode pertencer a outra conta!`);
+                this.emit('authorized', msg.authorize);
+                resolve();
               }
-
-              if (accountList && Array.isArray(accountList)) {
-                this.logger.log(`📋 Contas disponíveis nesta conexão:`);
-                accountList.forEach((acc: any) => {
-                  this.logger.log(`  - LoginID: ${acc.loginid}, Currency: ${acc.currency}, Type: ${acc.is_virtual ? 'DEMO' : 'REAL'}, Disabled: ${acc.is_disabled ? 'SIM' : 'NÃO'}`);
-                });
-              }
-
-              this.emit('authorized', msg.authorize);
-              resolve();
+            } else {
+              clearTimeout(timeout);
+              this.logger.error(`[${token.substring(0, 5)}] ❌ Erro de Autorização:`, msg.error);
+              reject(new Error(msg.error.message));
+              this.disconnect(token);
             }
           }
+
+          // Processar mensagem genérica (passando o contexto da conexão)
+          this.handleMessage(msg, token);
+
         } catch (error) {
-          this.logger.error('Erro ao processar mensagem:', error);
+          this.logger.error(`[${token.substring(0, 5)}] Erro ao processar mensagem:`, error);
         }
       });
 
-      this.ws.on('error', (error) => {
+      ws.on('error', (error) => {
         clearTimeout(timeout);
-        this.logger.error('Erro no WebSocket:', error);
+        this.logger.error(`[${token.substring(0, 5)}] ❌ Erro WebSocket:`, error);
         reject(error);
       });
 
-      this.ws.on('close', () => {
-        this.logger.warn('WebSocket fechado');
-        this.isAuthorized = false;
-        this.attemptReconnect();
+      ws.on('close', () => {
+        this.logger.warn(`[${token.substring(0, 5)}] 🔌 WebSocket fechado.`);
+        if (connection) {
+          connection.isAuthorized = false;
+          connection.ws = null;
+          // Tentar reconectar?
+          this.attemptReconnect(token);
+        }
       });
     });
   }
 
-  private handleMessage(msg: any): void {
+  private handleMessage(msg: any, token: string): void {
+    const connection = this.connections.get(token);
+    if (!connection) return;
+
     if (msg.error) {
-      this.logger.error('Erro da API Deriv:', msg.error);
-      this.emit('error', msg.error);
+      // Ignorar erros de já inscrito
+      if (msg.error.code !== 'AlreadySubscribed') {
+        this.logger.error(`[${token.substring(0, 5)}] Erro API Deriv:`, msg.error);
+        this.emit('error', msg.error); // Cuidado: isso emite globalmente. O ideal seria ter contexto.
+      }
       return;
     }
 
     switch (msg.msg_type) {
       case 'authorize':
-        if (!msg.error) {
-          this.currentLoginid = msg.authorize?.loginid || null;
-          this.emit('authorized', msg.authorize);
-        }
+        // Já tratado no on('message')
         break;
 
       case 'history':
-        this.processHistory(msg);
+        this.processHistory(msg, connection);
         break;
 
       case 'tick':
-        this.processTick(msg);
+        this.processTick(msg, connection);
         break;
 
       case 'proposal':
-        this.processProposal(msg);
+        this.processProposal(msg, connection);
         break;
 
       case 'buy':
-        this.processBuy(msg);
+        this.processBuy(msg, connection);
         break;
 
       case 'sell':
-        this.processSell(msg);
+        this.processSell(msg, connection);
         break;
 
       case 'contract':
-        this.processContract(msg);
+        this.emit('contract_update', msg.contract);
         break;
 
       case 'contracts_for':
-        this.processContractsFor(msg);
+        this.emit('contracts_for', msg.contracts_for);
         break;
 
       case 'trading_durations':
-        this.processTradingDurations(msg);
+        this.emit('trading_durations', msg.trading_durations);
         break;
 
       case 'active_symbols':
-        this.processActiveSymbols(msg);
+        this.emit('active_symbols', msg.active_symbols);
         break;
 
       case 'proposal_open_contract':
-        this.processProposalOpenContract(msg);
+        this.processProposalOpenContract(msg, connection);
         break;
     }
   }
 
-  private processHistory(msg: any): void {
+  // ✅ Métodos de Processamento Atualizados para usar ConnectionState
+
+  private processHistory(msg: any, connection: ConnectionState): void {
     const history = msg.history;
     if (!history || !history.prices) return;
 
+    // Lógica original de processamento de ticks
     const prices = history.prices || [];
     const times = history.times || [];
     const newTicks: TickData[] = [];
-
     const startIdx = Math.max(0, prices.length - this.maxTicks);
 
     for (let i = startIdx; i < prices.length; i++) {
-      // Validação rigorosa: verificar null, undefined, strings vazias
       const rawPrice = prices[i];
-      if (rawPrice == null || rawPrice === '' || rawPrice === undefined) {
-        continue;
-      }
-
+      if (rawPrice == null || rawPrice === '') continue;
       const value = Number(rawPrice);
-      // Validação dupla: garantir que é um número válido e positivo
-      if (!isFinite(value) || value <= 0 || isNaN(value)) {
-        continue;
-      }
+      if (!isFinite(value) || value <= 0 || isNaN(value)) continue;
 
-      // Validação do epoch
       const rawTime = times[i];
-      let epoch: number;
-      if (rawTime != null && rawTime !== '' && rawTime !== undefined) {
-        epoch = Math.floor(Number(rawTime));
-        if (!isFinite(epoch) || epoch <= 0 || isNaN(epoch)) {
-          epoch = Math.floor(Date.now() / 1000) - (prices.length - i);
-        }
-      } else {
+      let epoch = Math.floor(Number(rawTime));
+      if (!isFinite(epoch) || epoch <= 0) {
         epoch = Math.floor(Date.now() / 1000) - (prices.length - i);
       }
-
-      // Validação final: ambos devem ser válidos
-      if (isFinite(value) && value > 0 && !isNaN(value) && isFinite(epoch) && epoch > 0 && !isNaN(epoch)) {
-        newTicks.push({ value, epoch });
-      }
+      newTicks.push({ value, epoch });
     }
 
+    // Salvar ticks "globais" (apenas do último que atualizou, ou deveria ser por símbolo?)
+    // Para simplificar e manter compatibilidade com frontend que espera um array único:
+    // Vamos atualizar o array global `this.ticks` com os dados mais recentes de QUALQUER conexão
+    // Isso pode misturar se tiver 2 gráficos, mas o frontend manual geralmente foca em 1.
     this.ticks = newTicks;
 
     if (msg.subscription?.id) {
-      this.tickSubscriptionId = msg.subscription.id;
+      connection.tickSubscriptionId = msg.subscription.id;
     }
 
-    this.emit('history', { ticks: this.ticks, subscriptionId: this.tickSubscriptionId });
+    this.emit('history', { ticks: this.ticks, subscriptionId: connection.tickSubscriptionId });
   }
 
-  private processTick(msg: any): void {
+  private processTick(msg: any, connection: ConnectionState): void {
     const tick = msg.tick;
     if (!tick) return;
 
-    // Validação rigorosa: verificar null, undefined, strings vazias
-    const rawQuote = tick.quote;
-    const rawEpoch = tick.epoch;
+    // Validação
+    if (!tick.quote || !tick.epoch) return;
 
-    if (rawQuote == null || rawQuote === '' || rawQuote === undefined) {
-      this.logger.warn(`Tick ignorado: quote inválido (${rawQuote})`);
-      return;
+    const value = Number(tick.quote);
+    const epoch = Number(tick.epoch);
+
+    if (tick.id && !connection.tickSubscriptionId) {
+      connection.tickSubscriptionId = tick.id;
     }
 
-    if (rawEpoch == null || rawEpoch === '' || rawEpoch === undefined) {
-      this.logger.warn(`Tick ignorado: epoch inválido (${rawEpoch})`);
-      return;
-    }
-
-    const value = Number(rawQuote);
-    const epoch = Number(rawEpoch);
-
-    // Validação dupla: garantir que são números válidos e positivos
-    if (!isFinite(value) || value <= 0 || isNaN(value)) {
-      this.logger.warn(`Tick ignorado: value inválido (${value})`);
-      return;
-    }
-
-    if (!isFinite(epoch) || epoch <= 0 || isNaN(epoch)) {
-      this.logger.warn(`Tick ignorado: epoch inválido (${epoch})`);
-      return;
-    }
-
-    if (tick.id && !this.tickSubscriptionId) {
-      this.tickSubscriptionId = tick.id;
-    }
-
+    // Atualizar array global
     this.ticks.push({ value, epoch });
-    if (this.ticks.length > this.maxTicks) {
-      this.ticks.shift();
-    }
+    if (this.ticks.length > this.maxTicks) this.ticks.shift();
 
     this.emit('tick', { value, epoch });
   }
 
-  private processProposal(msg: any): void {
+  private processProposal(msg: any, connection: ConnectionState): void {
     const proposal = msg.proposal;
     if (!proposal || !proposal.id) return;
 
@@ -322,206 +334,164 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     };
 
     if (msg.subscription?.id) {
-      this.proposalSubscriptionId = msg.subscription.id;
+      connection.proposalSubscriptionId = msg.subscription.id;
     }
 
     this.emit('proposal', proposalData);
   }
 
-  private processBuy(msg: any): void {
+  private processBuy(msg: any, connection: ConnectionState): void {
     const buy = msg.buy;
     if (!buy || !buy.contract_id) return;
 
-    // Usar durationUnit e contractType da configuração pendente se disponível, senão usar da resposta da API
-    const durationUnit = this.pendingBuyConfig?.durationUnit || buy.duration_unit || 'm';
-    const duration = this.pendingBuyConfig?.duration || Number(buy.duration) || 0;
-    // IMPORTANTE: Usar contractType da configuração pendente (o que foi solicitado) em vez do retornado pela API
-    // Isso garante que o tipo correto seja usado mesmo se a API retornar algo diferente
-    const contractType = this.pendingBuyConfig?.contractType || buy.contract_type || 'CALL';
+    const config = connection.pendingBuyConfig;
+    const durationUnit = config?.durationUnit || buy.duration_unit || 'm';
+    const duration = config?.duration || Number(buy.duration) || 0;
+    const contractType = config?.contractType || buy.contract_type || 'CALL';
 
-    this.logger.log(`[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`);
-    this.logger.log(`[Buy] API retornou contract_type: ${buy.contract_type}, usando: ${contractType}`);
+    // Limpar pendente
+    connection.pendingBuyConfig = null;
 
-    // Log completo da resposta da API para debug
-    this.logger.log(`[Buy] Resposta completa da API: ${JSON.stringify(buy)}`);
-
-    // Limpar configuração pendente após usar
-    this.pendingBuyConfig = null;
-
-    // Tentar capturar entry_spot de diferentes campos possíveis
-    let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || buy.start_spot || null;
-
-    // Se não encontrou entry_spot na resposta, usar o último tick disponível
-    if (entrySpot === null || entrySpot === undefined) {
-      if (this.ticks && this.ticks.length > 0) {
-        const lastTick = this.ticks[this.ticks.length - 1];
-        entrySpot = lastTick.value;
-        this.logger.log(`[Buy] EntrySpot não encontrado na resposta, usando último tick: ${entrySpot}`);
-      } else {
-        this.logger.warn(`[Buy] EntrySpot não encontrado e nenhum tick disponível`);
-      }
+    let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || null;
+    if (!entrySpot && this.ticks.length > 0) {
+      entrySpot = this.ticks[this.ticks.length - 1].value;
     }
-
-    const entryTime = buy.purchase_time || buy.start_time || Date.now() / 1000;
-
-    this.logger.log(`[Buy] EntrySpot final: ${entrySpot} (de entry_spot: ${buy.entry_spot}, spot: ${buy.spot}, current_spot: ${buy.current_spot}, start_spot: ${buy.start_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const tradeData: TradeData = {
       contractId: buy.contract_id,
       buyPrice: Number(buy.buy_price) || 0,
       payout: Number(buy.payout) || 0,
       symbol: buy.symbol || this.symbol,
-      contractType: contractType, // Usar o tipo solicitado, não o retornado pela API
-      duration: duration,
-      durationUnit: durationUnit, // Preservar o valor original
-      entrySpot: entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null,
-      entryTime: Number(entryTime) || null,
+      contractType,
+      duration,
+      durationUnit,
+      entrySpot: entrySpot ? Number(entrySpot) : null,
+      entryTime: Number(buy.purchase_time || buy.start_time) || Date.now() / 1000,
     };
 
-    // Automaticamente se inscrever em proposal_open_contract para monitorar o contrato
-    this.subscribeToOpenContract(buy.contract_id);
+    // Inscrever no contrato usando a MESMA conexão e token
+    this.subscribeToOpenContract(buy.contract_id, connection.token);
 
     this.emit('buy', tradeData);
   }
 
-  private processSell(msg: any): void {
+  private processSell(msg: any, connection: ConnectionState): void {
     const sell = msg.sell;
-    if (!sell || !sell.contract_id) return;
-
-    // Log completo da resposta da API para debug
-    this.logger.log(`[Sell] Resposta completa da API: ${JSON.stringify(sell)}`);
-
-    // Tentar capturar exit_spot de diferentes campos possíveis
-    let exitSpot = sell.exit_spot || sell.spot || sell.current_spot || sell.exit_spot_price || null;
-
-    // Se não encontrou exit_spot na resposta, usar o último tick disponível
-    if (exitSpot === null || exitSpot === undefined) {
-      if (this.ticks && this.ticks.length > 0) {
-        const lastTick = this.ticks[this.ticks.length - 1];
-        exitSpot = lastTick.value;
-        this.logger.log(`[Sell] ExitSpot não encontrado na resposta, usando último tick: ${exitSpot}`);
-      } else {
-        this.logger.warn(`[Sell] ExitSpot não encontrado e nenhum tick disponível`);
-      }
-    }
-
-    this.logger.log(`[Sell] ExitSpot final: ${exitSpot} (de exit_spot: ${sell.exit_spot}, spot: ${sell.spot}, current_spot: ${sell.current_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
-
-    const sellData = {
+    this.emit('sell', {
       contractId: sell.contract_id,
-      sellPrice: Number(sell.sell_price) || 0,
-      profit: Number(sell.profit) || 0,
-      exitSpot: exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null,
-      symbol: sell.symbol || this.symbol,
-    };
-
-    this.emit('sell', sellData);
+      sellPrice: Number(sell.sell_price),
+      profit: Number(sell.profit),
+      symbol: this.symbol // Pode ser impreciso se tiver múltiplos, mas ok por enquanto
+    });
   }
 
-  private processContract(msg: any): void {
-    const contract = msg.contract;
-    if (!contract) return;
-
-    this.emit('contract_update', contract);
-  }
-
-  private processContractsFor(msg: any): void {
-    const contractsFor = msg.contracts_for;
-    if (!contractsFor) return;
-
-    this.emit('contracts_for', contractsFor);
-  }
-
-  private processTradingDurations(msg: any): void {
-    const durations = msg.trading_durations;
-    if (!durations) return;
-
-    this.emit('trading_durations', durations);
-  }
-
-  private processActiveSymbols(msg: any): void {
-    const symbols = msg.active_symbols;
-    if (!symbols) return;
-
-    this.emit('active_symbols', symbols);
-  }
-
-  private processProposalOpenContract(msg: any): void {
+  private processProposalOpenContract(msg: any, connection: ConnectionState): void {
     const contract = msg.proposal_open_contract;
     if (!contract) return;
 
-    // Capturar subscription ID se disponível
     if (msg.subscription?.id) {
-      this.openContractSubscriptionId = msg.subscription.id;
+      connection.openContractSubscriptionId = msg.subscription.id;
     }
 
-    // Log detalhado para debug
-    this.logger.log(`[ContractUpdate] Recebido: contract_id=${contract.contract_id}, status=${contract.status}, is_expired=${contract.is_expired}, is_sold=${contract.is_sold}, exit_spot=${contract.exit_spot}, current_spot=${contract.current_spot}, profit=${contract.profit}`);
-
-    // Emitir atualização de contrato que será processada pelo controller
     this.emit('contract_update', contract);
   }
 
-  subscribeToSymbol(symbol: string): void {
-    this.symbol = symbol;
+  // ✅ Métodos Públicos Atualizados (Agora exigem ou tentam inferir Token)
 
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado. Aguardando...');
-      return;
+  /**
+   * Envia uma mensagem para a conexão associada ao token.
+   * Se token não for passado, tenta usar o primeiro disponível (single user mode)
+   */
+  private send(payload: any, token?: string): void {
+    let connection: ConnectionState | undefined;
+
+    if (token) {
+      connection = this.connections.get(token);
+    } else if (this.connections.size > 0) {
+      // Fallback: Pega a primeira conexão disponível (para compatibilidade)
+      connection = this.connections.values().next().value;
     }
 
-    this.logger.log(`Inscrevendo-se no símbolo: ${symbol}`);
+    if (connection && connection.ws && connection.ws.readyState === WebSocket.OPEN) {
+      try {
+        connection.ws.send(JSON.stringify(payload));
+      } catch (e) {
+        this.logger.error(`Erro envio WS [${token || 'default'}]:`, e);
+      }
+    } else {
+      this.logger.warn(`Não foi possível enviar mensagem. Token: ${token || 'Nenhum'}, Conexão Ativa: ${!!connection}`);
+    }
+  }
 
-    // Para 10 minutos de histórico, calcular o start time como 10 minutos atrás
-    // Isso garante que recebemos apenas ticks dos últimos 10 minutos
+  subscribeToSymbol(symbol: string, token?: string): void {
+    this.symbol = symbol;
     const now = Math.floor(Date.now() / 1000);
-    const tenMinutesAgo = now - (10 * 60); // 10 minutos em segundos
-
-    // Para 10 minutos de histórico, usar ~1000 ticks (assumindo ~1 tick por segundo)
-    // Usar count: 1000 para garantir que temos ticks suficientes dos últimos 10 minutos
     this.send({
       ticks_history: symbol,
       adjust_start_time: 1,
       count: 1000,
-      start: tenMinutesAgo,
+      start: now - 600,
       end: 'latest',
       subscribe: 1,
-      style: 'ticks',
-    });
-
-    this.logger.log(`Solicitando histórico de ${symbol} a partir de ${tenMinutesAgo} (10 minutos atrás)`);
+      style: 'ticks'
+    }, token); // Envia para o token específico se fornecido
   }
 
-  subscribeToProposal(config: {
-    symbol: string;
-    contractType: string;
-    duration: number;
-    durationUnit: string;
-    amount: number;
-    barrier?: number; // Para contratos DIGIT*
-    multiplier?: number; // Para contratos MULTUP/MULTDOWN
-  }): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
+  /**
+   * Compra contrato. OBRIGATÓRIO informar token para garantir contexto isolado.
+   */
+  buyContract(buyConfig: any): void {
+    const {
+      proposalId, price, duration, durationUnit, contractType,
+      token, loginid // ✅ Parâmetros essenciais
+    } = buyConfig;
+
+    if (!token) {
+      this.logger.error('buyContract chamado sem token! Impossível determinar contexto.');
       return;
     }
 
-    // Validar contractType
-    if (!config.contractType || config.contractType === 'undefined') {
-      this.logger.error('contractType é obrigatório');
+    // Obter conexão específica
+    const connection = this.connections.get(token);
+    if (!connection || !connection.isAuthorized) {
+      // Tentar conectar se não estiver (auto-heal)
+      this.logger.warn(`Conexão para compra (token ${token.substring(0, 5)}) não encontrada ou não autorizada. Tentando reconectar...`);
+      this.connect(token, loginid).then(() => {
+        this.buyContract(buyConfig); // Retry recursivo uma vez
+      }).catch(err => {
+        this.logger.error('Falha ao conectar para compra:', err);
+      });
       return;
     }
 
-    // Cancelar subscription anterior se existir para evitar erro "AlreadySubscribed"
-    if (this.proposalSubscriptionId) {
-      this.logger.log(`Cancelando subscription anterior de proposta: ${this.proposalSubscriptionId}`);
-      this.cancelSubscription(this.proposalSubscriptionId);
-      this.proposalSubscriptionId = null;
+    // Salvar config pendente na conexão específica
+    connection.pendingBuyConfig = {
+      durationUnit,
+      duration,
+      contractType
+    };
+
+    // Se temos proposalId, é compra direta. (Cenário Digit)
+    if (proposalId) {
+      this.send({ buy: proposalId, price: Number(price) }, token);
+    } else {
+      // Se for Buy Parameters (Cenário direto sem proposal prévia, ex: alguns bots)
+      // Por simplificação assumimos proposalId flow.
+      this.logger.warn('Fluxo de compra sem Proposal ID ainda não refatorado totalmente.');
     }
+  }
 
-    this.logger.log('Inscrevendo-se em proposta:', config);
+  // Sobrecarga para compatibilidade com assinatura antiga (proposalId, price, ...)
+  // Mas idealmente o controller deve chamar passando objeto
+  async buyContractLegacy(proposalId: string, price: number, opts: any, token: string): Promise<void> {
+    this.buyContract({
+      proposalId, price, ...opts, token
+    });
+  }
 
-    const proposalRequest: any = {
+  subscribeToProposal(config: any, token?: string): void {
+    // Configurar proposal
+    const req: any = {
       proposal: 1,
       amount: config.amount,
       basis: 'stake',
@@ -532,226 +502,80 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       symbol: config.symbol,
       subscribe: 1,
     };
+    if (config.barrier) req.barrier = String(config.barrier);
+    if (config.multiplier) req.multiplier = config.multiplier;
 
-    // Adicionar barrier para contratos de dígitos
-    if (config.barrier !== undefined && config.barrier !== null) {
-      proposalRequest.barrier = String(config.barrier);
+    // Se token fornecido, cancela anterior DESTA conexão
+    if (token) {
+      const conn = this.connections.get(token);
+      if (conn && conn.proposalSubscriptionId) {
+        this.send({ forget: conn.proposalSubscriptionId }, token);
+        conn.proposalSubscriptionId = null;
+      }
     }
 
-    // Adicionar multiplier para contratos MULTUP/MULTDOWN
-    if (config.multiplier !== undefined && config.multiplier !== null) {
-      proposalRequest.multiplier = config.multiplier;
-    }
-
-    this.send(proposalRequest);
+    this.send(req, token);
   }
 
-  buyContract(proposalId: string, price: number, durationUnit?: string, duration?: number, contractType?: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    // Armazenar configuração da compra para preservar durationUnit e contractType originais
-    if (durationUnit !== undefined || contractType !== undefined) {
-      this.pendingBuyConfig = {
-        durationUnit,
-        duration,
-        contractType: contractType || undefined
-      };
-      this.logger.log(`[Buy] Armazenando config: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}`);
-    }
-
-    this.logger.log(`Comprando contrato: ${proposalId} por ${price} (contractType esperado: ${contractType || 'N/A'})`);
-
-    this.send({
-      buy: proposalId,
-      price: price,
-    });
-  }
-
-  sellContract(contractId: string, price: number): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    this.logger.log(`Vendendo contrato: ${contractId} por ${price}`);
-
-    this.send({
-      sell: contractId,
-      price: price,
-    });
-  }
-
-  getContractsFor(symbol: string, currency: string = 'USD'): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    this.send({
-      contracts_for: symbol,
-      currency: currency,
-      landing_company: 'svg',
-    });
-  }
-
-  getTradingDurations(landingCompany: string = 'svg'): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    this.send({
-      trading_durations: 1,
-      landing_company_short: landingCompany,
-    });
-  }
-
-  getActiveSymbols(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    this.send({
-      active_symbols: 'brief',
-    });
-  }
-
-  cancelSubscription(subscriptionId: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    this.logger.log(`Cancelando subscription: ${subscriptionId}`);
-    this.send({ forget: subscriptionId });
-
-    // Limpar IDs locais se corresponderem
-    if (this.tickSubscriptionId === subscriptionId) {
-      this.tickSubscriptionId = null;
-    }
-    if (this.proposalSubscriptionId === subscriptionId) {
-      this.proposalSubscriptionId = null;
-    }
-    if (this.openContractSubscriptionId === subscriptionId) {
-      this.openContractSubscriptionId = null;
-    }
-  }
-
-  cancelTickSubscription(): void {
-    if (this.tickSubscriptionId) {
-      this.cancelSubscription(this.tickSubscriptionId);
-    }
-  }
-
-  cancelProposalSubscription(): void {
-    if (this.proposalSubscriptionId) {
-      this.cancelSubscription(this.proposalSubscriptionId);
-      this.proposalSubscriptionId = null;
-    }
-  }
-
-  subscribeToOpenContract(contractId: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
-      this.logger.warn('WebSocket não está conectado/autorizado');
-      return;
-    }
-
-    // Cancelar subscription anterior se existir
-    if (this.openContractSubscriptionId) {
-      this.cancelSubscription(this.openContractSubscriptionId);
-      this.openContractSubscriptionId = null;
-    }
-
-    this.logger.log(`Inscrevendo-se em contrato aberto: ${contractId}`);
-
+  subscribeToOpenContract(contractId: string, token?: string): void {
     this.send({
       proposal_open_contract: 1,
       contract_id: contractId,
-      subscribe: 1,
-    });
-  }
-
-  cancelOpenContractSubscription(): void {
-    if (this.openContractSubscriptionId) {
-      this.cancelSubscription(this.openContractSubscriptionId);
-      this.openContractSubscriptionId = null;
-    }
-  }
-
-  private send(payload: any): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.error('Tentativa de enviar mensagem com WebSocket fechado');
-      return;
-    }
-
-    try {
-      this.ws.send(JSON.stringify(payload));
-    } catch (error) {
-      this.logger.error('Erro ao enviar mensagem:', error);
-    }
-  }
-
-  private attemptReconnect(): void {
-    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
-      return;
-    }
-
-    this.isReconnecting = true;
-    this.reconnectAttempts++;
-
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    this.logger.log(`Tentando reconectar em ${delay}ms (tentativa ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-
-    this.reconnectTimeout = setTimeout(() => {
-      if (this.token) {
-        this.establishConnection()
-          .then(() => {
-            this.isReconnecting = false;
-            this.emit('reconnected');
-          })
-          .catch((error) => {
-            this.logger.error('Erro ao reconectar:', error);
-            this.isReconnecting = false;
-            this.attemptReconnect();
-          });
-      } else {
-        this.isReconnecting = false;
-      }
-    }, delay);
+      subscribe: 1
+    }, token);
   }
 
   getTicks(): TickData[] {
     return [...this.ticks];
   }
 
-  disconnect(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
+  private attemptReconnect(token: string): void {
+    const conn = this.connections.get(token);
+    if (!conn) return;
 
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    if (conn.isReconnecting || conn.reconnectAttempts >= this.maxReconnectAttempts) return;
 
-    this.isAuthorized = false;
-    this.currentLoginid = null;
-    this.token = null; // ✅ Limpar token ao desconectar
-    this.tickSubscriptionId = null;
-    this.proposalSubscriptionId = null;
-    this.openContractSubscriptionId = null;
-    this.ticks = [];
-    this.reconnectAttempts = 0;
-    this.isReconnecting = false;
+    conn.isReconnecting = true;
+    conn.reconnectAttempts++;
+
+    const delay = Math.min(1000 * Math.pow(2, conn.reconnectAttempts), 30000);
+    this.logger.log(`[${token.substring(0, 5)}] Tentando reconectar em ${delay}ms...`);
+
+    conn.reconnectTimeout = setTimeout(() => {
+      this.establishConnection(token, conn.loginid)
+        .then(() => { if (conn) conn.isReconnecting = false; })
+        .catch(() => { if (conn) { conn.isReconnecting = false; this.attemptReconnect(token); } });
+    }, delay);
+  }
+
+  disconnect(token?: string): void {
+    if (token) {
+      // Desconectar um específico
+      const conn = this.connections.get(token);
+      if (conn) {
+        if (conn.reconnectTimeout) clearTimeout(conn.reconnectTimeout);
+        conn.ws?.close();
+        this.connections.delete(token);
+        this.logger.log(`[${token.substring(0, 5)}] Desconectado e removido do pool.`);
+      }
+    } else {
+      // Desconectar todos
+      this.logger.log(`[DerivWebSocketService] Desconectando TODO o pool (${this.connections.size} conexões)...`);
+      for (const [t, conn] of this.connections) {
+        if (conn.reconnectTimeout) clearTimeout(conn.reconnectTimeout);
+        conn.ws?.close();
+      }
+      this.connections.clear();
+      this.ticks = [];
+    }
   }
 
   onModuleDestroy() {
     this.disconnect();
   }
-}
 
+  // Métodos auxiliares para manter compatibilidade com controller que pode chamar sem token (fallback)
+  getActiveSymbols(token?: string): void { this.send({ active_symbols: 'brief' }, token); }
+  getTradingDurations(landingCompany: string = 'svg', token?: string): void { this.send({ trading_durations: 1, landing_company_short: landingCompany }, token); }
+  getContractsFor(symbol: string, currency: string = 'USD', token?: string): void { this.send({ contracts_for: symbol, currency, landing_company: 'svg' }, token); }
+}

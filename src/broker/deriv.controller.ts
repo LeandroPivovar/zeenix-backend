@@ -1824,7 +1824,16 @@ export class DerivController {
 
       // Executar compra, passando durationUnit e duration para preservar valores originais
       // Também passar contractType para validação no processamento
-      service.buyContract(proposalId, body.amount, body.durationUnit, body.duration, body.contractType);
+      // ✅ ATUALIZAÇÃO REFACTOR: Passar objeto com token explícito para garantir uso da conexão correta
+      service.buyContract({
+        proposalId,
+        price: body.amount,
+        durationUnit: body.durationUnit,
+        duration: body.duration,
+        contractType: body.contractType,
+        token: (body as any).token, // Token explícito da requisição
+        loginid: targetLoginid      // Login ID alvo
+      });
 
       return {
         success: true,
