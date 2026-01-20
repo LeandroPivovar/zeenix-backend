@@ -402,5 +402,35 @@ export class CopyTradingController {
       );
     }
   }
+  @Post('promote/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async promoteToMasterTrader(
+    @Req() req: any,
+    @Param('userId') userId: string
+  ) {
+    try {
+      // TODO: Adicionar verificação de admin se necessário
+      // const requesterId = req.user?.userId || req.user?.sub || req.user?.id;
+
+      const result = await this.copyTradingService.promoteToMasterTrader(userId);
+
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(
+        `[PromoteToMasterTrader] Erro ao promover usuário: ${error.message}`,
+        error.stack,
+      );
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Erro ao promover usuário',
+        },
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

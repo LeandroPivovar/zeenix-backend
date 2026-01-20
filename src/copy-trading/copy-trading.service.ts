@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -27,6 +28,8 @@ export class CopyTradingService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(ExpertEntity)
     private readonly expertRepository: Repository<ExpertEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
   ) { }
 
   async activateCopyTrading(
@@ -382,47 +385,51 @@ export class CopyTradingService {
 
   async getAvailableTraders() {
     try {
-      // Buscar experts que estão ativos e disponíveis para copy trading
-      const experts = await this.expertRepository.find({
-        where: {
-          isActive: true,
-        },
-        order: {
-          rating: 'DESC',
-          winRate: 'DESC',
-        },
-      });
+      // Buscar usuários que são traders mestres
+      // Fazemos LEFT JOIN com experts somente para pegar metadados extras se existirem (avatar, bio, etc)
+      // Se não existir registro em experts, usamos dados do usuário
+
+      const traders = await this.userRepository.createQueryBuilder('user')
+        .leftJoinAndSelect('experts', 'expert', 'expert.user_id = user.id')
+        .where('user.trader_mestre = :isMaster', { isMaster: true })
+        .andWhere('user.isActive = :isActive', { isActive: true })
+        .getRawMany();
 
       // Formatar dados dos traders para o frontend
-      return experts.map((expert) => {
-        // Calcular ROI baseado no winRate (aproximação)
+      return traders.map((row) => {
+        // Dados do expert (pode ser null)
+        // Mapeando colunas raw retornadas pelo TypeORM (prefixo expert_ se houver join)
+
+        // Nota: TypeORM getRawMany retorna algo como: user_id, user_name, expert_id, expert_win_rate...
+
+        const expertWinRate = row.expert_win_rate ? parseFloat(row.expert_win_rate) : 0;
+
+        // Simulação de stats se não tiver histórico (ou pegar do expert se tiver)
+        const winRate = expertWinRate || 0;
+
         // ROI médio = winRate * multiplicador_lucro - (100 - winRate) * multiplicador_perda
-        // Assumindo lucro médio de 80% e perda média de 100% do stake
-        const winRate = expert.winRate ? parseFloat(expert.winRate.toString()) : 0;
         const roi = winRate > 0 ? (winRate * 0.8) - ((100 - winRate) * 1.0) : 0;
 
-        // Calcular drawdown aproximado baseado no winRate
-        // Drawdown menor quando winRate maior
-        const dd = winRate > 0 ? Math.max(0, (100 - winRate) * 0.12) : 10;
+        const dd = winRate > 0 ? Math.max(0, (100 - winRate) * 0.12) : 0;
 
-        // Converter followers para formato "k" (milhares)
-        const totalFollowers = expert.totalFollowers || 0;
+        const totalFollowers = row.expert_total_followers || 0;
         const followersK = totalFollowers >= 1000
           ? (totalFollowers / 1000).toFixed(1)
           : totalFollowers.toString();
 
         return {
-          id: expert.id,
-          name: expert.name,
+          id: row.user_id, // IMPORTANTE: O ID agora é o ID do usuário, não do expert
+          name: row.expert_name || row.user_name, // Prefere nome do expert (display name) ou nome do user
           roi: Math.max(0, roi).toFixed(0),
           dd: dd.toFixed(1),
           followers: followersK,
           winRate: winRate.toFixed(1),
-          totalTrades: expert.totalSignals || 0,
-          rating: expert.rating ? parseFloat(expert.rating.toString()).toFixed(1) : '0.0',
-          specialty: expert.specialty || '',
-          isVerified: expert.isVerified || false,
-          connectionStatus: expert.connectionStatus || 'Desconectado',
+          totalTrades: row.expert_total_signals || 0,
+          rating: row.expert_rating ? parseFloat(row.expert_rating).toFixed(1) : '0.0',
+          specialty: row.expert_specialty || 'General',
+          isVerified: row.expert_is_verified === 1 || false,
+          connectionStatus: row.expert_connection_status || 'Offline',
+          avatarUrl: row.expert_avatar_url || null,
         };
       });
     } catch (error) {
@@ -1438,239 +1445,10 @@ export class CopyTradingService {
 
       this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores para trader ${masterUserId}`);
 
-      // Log detalhado dos copiadores encontrados
-      if (copiers.length > 0) {
-        copiers.forEach((copier, index) => {
-          this.logger.log(`[GetCopiers] Copiador ${index + 1}: user_id=${copier.user_id}, name=${copier.user_name}, trader_id=${copier.trader_id}`);
-        });
-      }
-
-      // PASSO 4: Debug detalhado se não encontrou copiadores
+      // Se não encontrou nada, apenas logar
       if (copiers.length === 0) {
-        this.logger.log(`[GetCopiers] PASSO 4: DEBUG - Nenhum copiador encontrado, investigando...`);
-
-        // NOVO: Verificar se algum trader_id que tem copiadores corresponde ao master trader
-        this.logger.log(`[GetCopiers] PASSO 4.1: Verificando trader_ids que têm copiadores e sua relação com o master`);
-        const tradersWithCopiers = await this.dataSource.query(
-          `SELECT DISTINCT c.trader_id, COUNT(*) as total_copiadores
-           FROM copy_trading_config c
-           GROUP BY c.trader_id
-           HAVING total_copiadores > 0
-           ORDER BY total_copiadores DESC`,
-        );
-
-        for (const traderRow of tradersWithCopiers) {
-          const traderId = traderRow.trader_id;
-          this.logger.log(`[GetCopiers] PASSO 4.1 - Trader ${traderId} tem ${traderRow.total_copiadores} copiador(es)`);
-
-          // Verificar se esse trader_id é expert.id do master
-          const expertRelation = await this.dataSource.query(
-            `SELECT id, user_id, name FROM experts WHERE id = ? AND user_id = ?`,
-            [traderId, masterUserId],
-          );
-
-          if (expertRelation && expertRelation.length > 0) {
-            this.logger.log(`[GetCopiers] PASSO 4.1 - ✅ DESCOBERTO! trader_id ${traderId} é expert.id do master trader! Adicionando à busca...`);
-            traderIdsToSearch.push(traderId);
-
-            // Buscar copiadores com esse trader_id
-            const foundCopiers = await this.dataSource.query(
-              `SELECT c.user_id, u.name, u.email, c.trader_id
-               FROM copy_trading_config c
-               INNER JOIN users u ON c.user_id = u.id
-               WHERE c.trader_id = ?`,
-              [traderId],
-            );
-            this.logger.log(`[GetCopiers] PASSO 4.1 - Copiadores encontrados para trader_id ${traderId}: ${foundCopiers.length}`);
-            foundCopiers.forEach((copier, idx) => {
-              this.logger.log(`[GetCopiers] PASSO 4.1 - Copiador ${idx + 1}: user_id=${copier.user_id}, name=${copier.name}, email=${copier.email}`);
-            });
-          } else {
-            // DEBUG ADICIONAL: Se não for do master, de quem é?
-            const actualExpert = await this.dataSource.query(
-              `SELECT id, user_id, name FROM experts WHERE id = ?`,
-              [traderId]
-            );
-            if (actualExpert && actualExpert.length > 0) {
-              this.logger.log(`[GetCopiers] PASSO 4.1 - ⚠️ trader_id ${traderId} ("${actualExpert[0].name}") pertence ao user_id: ${actualExpert[0].user_id} (Master atual é: ${masterUserId})`);
-            } else {
-              this.logger.log(`[GetCopiers] PASSO 4.1 - ⚠️ trader_id ${traderId} NÃO foi encontrado na tabela experts!`);
-            }
-          }
-        }
-
-        // Se encontrou novos trader_ids, buscar novamente
-        if (traderIdsToSearch.length > 0) {
-          const uniqueTraderIds = [...new Set(traderIdsToSearch)];
-          this.logger.log(`[GetCopiers] PASSO 4.2: Buscando novamente com trader_ids atualizados: ${uniqueTraderIds.join(', ')}`);
-
-          // Buscar copiadores novamente com os trader_ids atualizados
-          const retryCopiersFromConfig = await this.dataSource.query(
-            `SELECT 
-              c.id,
-              c.user_id,
-              c.trader_id,
-              c.trader_name,
-              c.allocation_type,
-              c.allocation_value,
-              c.allocation_percentage,
-              c.leverage,
-              c.stop_loss,
-              c.take_profit,
-              c.blind_stop_loss,
-              c.is_active,
-              c.session_status,
-              c.session_balance,
-              c.total_operations,
-              c.total_wins,
-              c.total_losses,
-              c.activated_at,
-              c.created_at,
-              u.name as user_name,
-              u.email as user_email,
-              COALESCE((
-                SELECT SUM(profit) 
-                FROM copy_trading_operations 
-                WHERE user_id = c.user_id 
-                AND result IN ('win', 'loss')
-              ), 0) as total_profit
-            FROM copy_trading_config c
-            INNER JOIN users u ON c.user_id = u.id
-            WHERE c.trader_id IN (${uniqueTraderIds.map(() => '?').join(',')})
-            ORDER BY c.created_at DESC`,
-            uniqueTraderIds,
-          );
-
-          const retryCopiersFromSessions = await this.dataSource.query(
-            `SELECT DISTINCT
-              c.id,
-              s.user_id,
-              s.trader_id,
-              s.trader_name,
-              c.allocation_type,
-              c.allocation_value,
-              c.allocation_percentage,
-              c.leverage,
-              c.stop_loss,
-              c.take_profit,
-              c.blind_stop_loss,
-              c.is_active,
-              c.session_status,
-              s.current_balance as session_balance,
-              s.total_operations,
-              s.total_wins,
-              s.total_losses,
-              s.started_at as activated_at,
-              c.created_at,
-              u.name as user_name,
-              u.email as user_email,
-              s.status as session_status_active,
-              COALESCE((
-                SELECT SUM(profit) 
-                FROM copy_trading_operations 
-                WHERE user_id = s.user_id 
-                AND result IN ('win', 'loss')
-              ), 0) as total_profit
-            FROM copy_trading_sessions s
-            INNER JOIN copy_trading_config c ON s.config_id = c.id
-            INNER JOIN users u ON s.user_id = u.id
-            WHERE s.trader_id IN (${uniqueTraderIds.map(() => '?').join(',')})
-              AND s.status = 'active'
-            ORDER BY s.started_at DESC`,
-            uniqueTraderIds,
-          );
-
-          // Combinar resultados
-          const retryCopiersMap = new Map();
-          retryCopiersFromConfig.forEach(copier => {
-            retryCopiersMap.set(copier.user_id, copier);
-          });
-          retryCopiersFromSessions.forEach(copier => {
-            retryCopiersMap.set(copier.user_id, copier);
-          });
-
-          const retryCopiers = Array.from(retryCopiersMap.values());
-          this.logger.log(`[GetCopiers] PASSO 4.2 - Após retry, encontrados ${retryCopiers.length} copiadores`);
-
-          if (retryCopiers.length > 0) {
-            // Substituir o array de copiadores
-            copiers.length = 0;
-            copiers.push(...retryCopiers);
-            this.logger.log(`[GetCopiers] PASSO 4.2 - ✅ SUCESSO! Copiadores encontrados após verificação adicional`);
-          }
-        }
-
-        // Verificar TODOS os registros na config (sem filtro de trader_id)
-        const allConfigs = await this.dataSource.query(
-          `SELECT trader_id, user_id, trader_name, is_active, session_status, created_at
-           FROM copy_trading_config 
-           ORDER BY created_at DESC 
-           LIMIT 20`,
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Todos os registros na config (últimos 20):`);
-        allConfigs.forEach((config, idx) => {
-          this.logger.log(`[GetCopiers] PASSO 4 - Config ${idx + 1}: trader_id=${config.trader_id}, user_id=${config.user_id}, trader_name=${config.trader_name}, is_active=${config.is_active}`);
-        });
-
-        // Verificar TODAS as sessões ativas
-        const allActiveSessions = await this.dataSource.query(
-          `SELECT trader_id, user_id, trader_name, status, started_at
-           FROM copy_trading_sessions 
-           WHERE status = 'active'
-           ORDER BY started_at DESC 
-           LIMIT 20`,
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Todas as sessões ativas (últimas 20):`);
-        allActiveSessions.forEach((session, idx) => {
-          this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: trader_id=${session.trader_id}, user_id=${session.user_id}, trader_name=${session.trader_name}, status=${session.status}`);
-        });
-
-        // Verificar se o masterUserId aparece em algum lugar
-        const masterInConfig = await this.dataSource.query(
-          `SELECT * FROM copy_trading_config WHERE user_id = ? OR trader_id = ?`,
-          [masterUserId, masterUserId],
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Registros onde masterUserId (${masterUserId}) aparece: ${masterInConfig.length}`);
-        if (masterInConfig.length > 0) {
-          masterInConfig.forEach((record, idx) => {
-            this.logger.log(`[GetCopiers] PASSO 4 - Registro ${idx + 1}: id=${record.id}, user_id=${record.user_id}, trader_id=${record.trader_id}, trader_name=${record.trader_name}`);
-          });
-        }
-
-        // Verificar se o masterUserId aparece nas sessões
-        const masterInSessions = await this.dataSource.query(
-          `SELECT * FROM copy_trading_sessions WHERE user_id = ? OR trader_id = ?`,
-          [masterUserId, masterUserId],
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Sessões onde masterUserId (${masterUserId}) aparece: ${masterInSessions.length}`);
-        if (masterInSessions.length > 0) {
-          masterInSessions.forEach((session, idx) => {
-            this.logger.log(`[GetCopiers] PASSO 4 - Sessão ${idx + 1}: id=${session.id}, user_id=${session.user_id}, trader_id=${session.trader_id}, status=${session.status}`);
-          });
-        }
-
-        // Mostrar todos os trader_ids únicos na tabela config
-        const allTraderIdsConfig = await this.dataSource.query(
-          `SELECT DISTINCT trader_id, COUNT(*) as total_copiadores
-           FROM copy_trading_config 
-           GROUP BY trader_id 
-           ORDER BY total_copiadores DESC 
-           LIMIT 10`,
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids na config:`, JSON.stringify(allTraderIdsConfig));
-
-        // Mostrar todos os trader_ids únicos na tabela sessions
-        const allTraderIdsSessions = await this.dataSource.query(
-          `SELECT DISTINCT trader_id, COUNT(*) as total_sessoes
-           FROM copy_trading_sessions 
-           WHERE status = 'active'
-           GROUP BY trader_id 
-           ORDER BY total_sessoes DESC 
-           LIMIT 10`,
-        );
-        this.logger.log(`[GetCopiers] PASSO 4 - Top 10 trader_ids nas sessões ativas:`, JSON.stringify(allTraderIdsSessions));
+        this.logger.log(`[GetCopiers] Nenhum copiador encontrado.`);
       }
-
       this.logger.log(`[GetCopiers] ========== FIM BUSCA COPIADORES ==========`);
 
       // Formatar dados dos copiadores
@@ -1707,6 +1485,25 @@ export class CopyTradingService {
     } catch (error) {
       this.logger.error(
         `[GetCopiers] Erro ao buscar copiadores: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  async promoteToMasterTrader(userId: string) {
+    try {
+      this.logger.log(`[PromoteToMasterTrader] Promovendo usuário ${userId} a Master Trader`);
+
+      await this.userRepository.update(userId, {
+        traderMestre: true
+      });
+
+      this.logger.log(`[PromoteToMasterTrader] Usuário ${userId} promovido com sucesso`);
+      return { success: true, message: 'Usuário promovido a Master Trader' };
+    } catch (error) {
+      this.logger.error(
+        `[PromoteToMasterTrader] Erro ao promover usuário: ${error.message}`,
         error.stack,
       );
       throw error;
