@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
-import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+
 import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
@@ -138,7 +138,7 @@ export class AtlasStrategy implements IStrategy {
   constructor(
     private readonly dataSource: DataSource,
     private readonly tradeEvents: TradeEventsService,
-    private readonly copyTradingService: CopyTradingService,
+
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -1637,24 +1637,7 @@ export class AtlasStrategy implements IStrategy {
       const tradeId = result?.insertId || null;
 
       if (tradeId) {
-        // ✅ COPY TRADING: Replicar operação para copiadores (assíncrono, não bloqueia)
-        if (this.copyTradingService) {
-          this.copyTradingService.replicateAIOperation(
-            trade.userId,
-            {
-              tradeId: tradeId,
-              contractId: trade.contractId || '',
-              contractType: trade.contractType,
-              symbol: trade.symbol,
-              duration: 1,
-              stakeAmount: trade.stakeAmount,
-              entrySpot: trade.entryPrice,
-              entryTime: Math.floor(Date.now() / 1000),
-            }
-          ).catch(error => {
-            this.logger.error(`[Atlas][CopyTrading] Erro ao replicar operação: ${error.message}`);
-          });
-        }
+
 
         this.tradeEvents.emit({
           userId: trade.userId,
@@ -1725,30 +1708,7 @@ export class AtlasStrategy implements IStrategy {
         values
       );
 
-      // ✅ COPY TRADING: Atualizar resultado para copiadores (assíncrono, não bloqueia)
-      if ((update.status === 'WON' || update.status === 'LOST') && this.copyTradingService) {
-        const tradeData = await this.dataSource.query(
-          `SELECT user_id, contract_id, stake_amount FROM ai_trades WHERE id = ?`,
-          [tradeId]
-        );
 
-        if (tradeData && tradeData.length > 0) {
-          const trade = tradeData[0];
-          const contractId = trade.contract_id;
-
-          if (contractId) {
-            this.copyTradingService.updateCopyTradingOperationsResult(
-              trade.user_id,
-              contractId,
-              update.status === 'WON' ? 'win' : 'loss',
-              update.profitLoss || 0,
-              parseFloat(trade.stake_amount) || 0,
-            ).catch((error: any) => {
-              this.logger.error(`[Atlas][CopyTrading] Erro ao atualizar copiadores: ${error.message}`);
-            });
-          }
-        }
-      }
 
       if (update.status || update.profitLoss !== undefined) {
         this.tradeEvents.emit({

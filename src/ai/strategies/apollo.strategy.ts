@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { Tick } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
-import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+
 
 /**
  * 🛡️ APOLLO v1.0 (OFFICIAL) - Price Action Strategy
@@ -194,7 +194,7 @@ ${filtersText}
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
-    private copyTradingService: CopyTradingService,
+
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -511,7 +511,7 @@ ${filtersText}
         `UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`,
         [win ? 'WON' : 'LOST', profit, result.exitSpot, tradeId]
       );
-      this.updateCopyTrading(tradeId, result.contractId, win, profit, stakeUsed);
+
     } catch (e) { console.error(e); }
 
     // --- LOG RESULT ---
@@ -795,19 +795,7 @@ ${filtersText}
     }
   }
 
-  private updateCopyTrading(tradeId: number, contractId: string, win: boolean, profit: number, stake: number) {
-    if (!this.copyTradingService) return;
-    // Implementation omitted for brevity to focus on strategy logic, 
-    // but should be identical to other strategies. 
-    // Assumed existing service handles this if called correctly.
-    // Re-adding the code from previous version for completeness:
-    this.dataSource.query(`SELECT user_id FROM ai_trades WHERE id = ?`, [tradeId]).then(res => {
-      if (res && res.length > 0) {
-        this.copyTradingService.updateCopyTradingOperationsResult(res[0].user_id, contractId, win ? 'win' : 'loss', profit, stake)
-          .catch(e => this.logger.error(e));
-      }
-    });
-  }
+
 
   private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<{ contractId: string, profit: number, exitSpot: any, entrySpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
