@@ -1,12 +1,16 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CopyTradingController } from './copy-trading.controller';
 import { CopyTradingService } from './copy-trading.service';
 import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { BrokerModule } from '../broker/broker.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ExpertEntity, UserEntity])],
+  imports: [
+    TypeOrmModule.forFeature([ExpertEntity, UserEntity]),
+    forwardRef(() => BrokerModule),
+  ],
   controllers: [CopyTradingController],
   providers: [CopyTradingService],
   exports: [CopyTradingService],

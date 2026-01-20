@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DerivController } from './deriv.controller';
 import { DerivService } from './deriv.service';
@@ -12,10 +12,10 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 
 @Module({
   imports: [
-    UserModule, 
+    UserModule,
     SettingsModule,
     TypeOrmModule.forFeature([TradeEntity]),
-    CopyTradingModule,
+    forwardRef(() => CopyTradingModule),
   ],
   controllers: [DerivController],
   providers: [
@@ -31,6 +31,6 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
     DerivWebSocketPoolService,
   ],
 })
-export class BrokerModule {}
+export class BrokerModule { }
 
 
