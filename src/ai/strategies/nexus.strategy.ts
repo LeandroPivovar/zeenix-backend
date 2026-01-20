@@ -111,8 +111,8 @@ class RiskManager {
 
         let nextStake = baseStake;
         // ✅ [ZENIX PRO] Payout Dinâmico conforme Contrato
-        // RF (M0/M1) ~95% | Higher -0.15 (M2+) ~63%
-        const currentPayout = this.consecutiveLosses >= 2 ? 0.63 : 0.95;
+        // RF (M2+) ~95% | Higher -0.15 (M0/M1) ~63%
+        const currentPayout = this.consecutiveLosses >= 2 ? 0.95 : 0.63;
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
@@ -280,13 +280,11 @@ export class NexusStrategy implements IStrategy {
 
         if (!isRecovering) {
             // ═══════════════════════════════════════════════════════════════
-            // ANÁLISE PRINCIPAL (ENTRADA Rise/Fall - M0/M1)
+            // ANÁLISE PRINCIPAL (ENTRADA BARREIRA - M0/M1)
             // ═══════════════════════════════════════════════════════════════
 
             if (state.mode === 'VELOZ') {
                 // VELOZ: 1 tick a favor da direção
-                if (this.ticks.length < 2) return null;
-
                 const lastTwo = this.ticks.slice(-2);
                 if (lastTwo[1].value > lastTwo[0].value) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
@@ -300,6 +298,18 @@ export class NexusStrategy implements IStrategy {
                         direction: 'CALL'
                     });
                     return 'PAR';
+                } else if (lastTwo[1].value < lastTwo[0].value) {
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['1 tick favorável'],
+                        trigger: 'Tendência Imediata (Veloz)',
+                        probability: 60,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return 'IMPAR';
                 } else {
                     // ❌ Log de análise rejeitada
                     // this.saveNexusLog(state.userId, this.symbol, 'analise',
@@ -322,6 +332,11 @@ export class NexusStrategy implements IStrategy {
                     prices[2] > prices[1] &&
                     prices[3] > prices[2];
 
+                // Verifica momentum de baixa (3 ticks consecutivos)
+                const downMomentum = prices[1] < prices[0] &&
+                    prices[2] < prices[1] &&
+                    prices[3] < prices[2];
+
                 const delta = prices[3] - prices[0];
 
                 if (upMomentum && delta > 0.3) {
@@ -336,6 +351,18 @@ export class NexusStrategy implements IStrategy {
                         direction: 'CALL'
                     });
                     return 'PAR';
+                } else if (downMomentum && delta < -0.3) {
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', 'Delta < -0.3'],
+                        trigger: 'Momentum de Baixa',
+                        probability: 75,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return 'IMPAR';
                 }
 
             } else if (state.mode === 'LENTO') {
@@ -352,6 +379,13 @@ export class NexusStrategy implements IStrategy {
                     prices[4] > prices[3] &&
                     prices[5] > prices[4];
 
+                // Verifica momentum de baixa (5 ticks consecutivos)
+                const downMomentum = prices[1] < prices[0] &&
+                    prices[2] < prices[1] &&
+                    prices[3] < prices[2] &&
+                    prices[4] < prices[3] &&
+                    prices[5] < prices[4];
+
                 const delta = prices[5] - prices[0];
 
                 if (upMomentum && delta > 0.5) {
@@ -360,12 +394,24 @@ export class NexusStrategy implements IStrategy {
                         mode: state.mode,
                         isRecovery: false,
                         filters: ['5 ticks consecutivos', 'Delta > 0.5'],
-                        trigger: 'Momentum Forte',
+                        trigger: 'Momentum Forte (Alta)',
                         probability: 85,
                         contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
+                } else if (downMomentum && delta < -0.5) {
+                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['5 ticks consecutivos', 'Delta < -0.5'],
+                        trigger: 'Momentum Forte (Baixa)',
+                        probability: 85,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return 'IMPAR';
                 }
             }
         } else {
@@ -559,8 +605,8 @@ export class NexusStrategy implements IStrategy {
         // Recovery (M2+): Rise/Fall (No Barrier)
 
         if (riskManager.consecutiveLosses < 2) {
-            // ✅ Entrada Principal: Higher -0.15
-            barrier = '-0.15';
+            // ✅ Entrada Principal: Higher -0.15 / Lower +0.15
+            barrier = direction === 'PAR' ? '-0.15' : '+0.15';
         } else {
             // ✅ Recuperação: Rise/Fall (Sem Barreira)
             barrier = undefined;
@@ -571,7 +617,7 @@ export class NexusStrategy implements IStrategy {
                 const riskMode = (riskManager as any).riskMode;
                 this.logContractChange(state.userId, {
                     reason: '2+ Perdas Consecutivas (Recovery)',
-                    oldContract: 'HIGHER -0.15',
+                    oldContract: 'BARRIER (-0.15/+0.15)',
                     newContract: 'RISE/FALL',
                     analysis: `Modo Recuperação em ${riskMode}`
                 });
@@ -745,7 +791,7 @@ export class NexusStrategy implements IStrategy {
 
     private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction };
-        const signalLabel = barrier ? 'Higher' : (direction === 'PAR' ? 'Rise' : 'Fall');
+        const signalLabel = direction === 'PAR' ? 'CALL' : 'PUT';
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
              VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5)`,
