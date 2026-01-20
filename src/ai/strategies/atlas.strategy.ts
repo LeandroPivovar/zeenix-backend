@@ -105,7 +105,7 @@ export class AtlasStrategy implements IStrategy {
       '1HZ100V': [],
     };
 
-  private appId: string;
+  private appId: number;
   private maxTicks = 50; // ✅ ATLAS: Buffer menor para análise ultrarrápida
 
   // ✅ Sistema de logs (similar à Trinity)
@@ -140,7 +140,7 @@ export class AtlasStrategy implements IStrategy {
     private readonly tradeEvents: TradeEventsService,
 
   ) {
-    this.appId = process.env.DERIV_APP_ID || '111346';
+    this.appId = Number(process.env.DERIV_APP_ID || 1089);
   }
 
   async initialize(): Promise<void> {

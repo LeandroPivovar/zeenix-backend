@@ -74,7 +74,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
   constructor() {
     super();
-    this.appId = Number(process.env.DERIV_APP_ID || 111346);
+    this.appId = Number(process.env.DERIV_APP_ID || 1089);
   }
 
   /**
@@ -114,8 +114,10 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
       this.state.ws = ws;
 
-      const timeout = setTimeout(() => {
-        if (!this.state.isAuthorized) {
+      let authResolved = false;
+      const connectionTimeout = setTimeout(() => {
+        if (!authResolved) {
+          authResolved = true;
           try {
             this.state.ws?.close();
           } catch (e) { }
@@ -129,9 +131,16 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
         setTimeout(() => {
           if (ws.readyState === WebSocket.OPEN) {
             this.logger.log(`[DerivWS] Enviando Authorize...`);
-            this.send({ authorize: this.state.token });
+            try {
+              ws.send(JSON.stringify({ authorize: this.state.token }));
+            } catch (error) {
+              this.logger.error(`[DerivWS] ❌ Erro ao enviar Authorize: ${error.message}`);
+              if (connectionTimeout) clearTimeout(connectionTimeout);
+              reject(new Error(`Falha ao enviar autorização: ${error.message}`));
+            }
           } else {
             this.logger.error(`[DerivWS] ❌ WS fechou prematuramente após open. Estado: ${ws.readyState}`);
+            if (connectionTimeout) clearTimeout(connectionTimeout);
             reject(new Error('WebSocket fechou prematuramente após abertura'));
           }
         }, 100);
@@ -150,7 +159,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
           if (msg.msg_type === 'authorize') {
             if (!msg.error) {
-              clearTimeout(timeout);
+              if (connectionTimeout) clearTimeout(connectionTimeout);
+              authResolved = true;
               this.state.isAuthorized = true;
               this.state.reconnectAttempts = 0;
               this.state.loginid = msg.authorize.loginid;
@@ -158,7 +168,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
               this.emit('authorized', msg.authorize);
               resolve(true);
             } else {
-              clearTimeout(timeout);
+              if (connectionTimeout) clearTimeout(connectionTimeout);
+              authResolved = true;
               const errorMsg = msg.error.message || 'Erro de autorização';
 
               // Se for erro de App ID, logar com destaque
@@ -180,16 +191,24 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       });
 
       ws.on('error', (error) => {
-        clearTimeout(timeout);
+        if (connectionTimeout) clearTimeout(connectionTimeout);
         this.logger.error(`[DerivWS] ❌ Erro WebSocket:`, error);
         reject(error);
       });
 
       ws.on('close', () => {
+        if (connectionTimeout) clearTimeout(connectionTimeout);
         this.logger.warn(`[DerivWS] 🔌 WebSocket fechado.`);
         this.state.isAuthorized = false;
         this.state.ws = null;
-        this.attemptReconnect();
+
+        // Se ainda estiver na fase de conexão inicial, rejeitar a promise
+        if (!authResolved) {
+          authResolved = true;
+          reject(new Error('Conexão fechada antes da autorização'));
+        } else {
+          this.attemptReconnect();
+        }
       });
     });
   }
