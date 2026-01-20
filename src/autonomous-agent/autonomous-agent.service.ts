@@ -46,8 +46,12 @@ export class AutonomousAgentService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('🚀 Inicializando AutonomousAgentService...');
     try {
+      // Criar view de estatísticas para performance
+      await this.createStatsView();
+
       // Inicializar conexão WebSocket
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
+
       await this.initialize();
       this.logger.log('✅ Conexão WebSocket estabelecida com sucesso');
 
@@ -1384,8 +1388,48 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
+   * Cria/atualiza view de estatísticas para melhor performance
+   * Esta view pre-agrega os dados das IAs para consultas rápidas
+   */
+  private async createStatsView(): Promise<void> {
+    try {
+      this.logger.log('[CreateStatsView] Criando/atualizando view de estatísticas...');
+
+      // Drop view if exists and recreate (para garantir que está atualizada)
+      await this.dataSource.query(`DROP VIEW IF EXISTS ai_stats_summary`);
+
+      // Criar view com dados agregados
+      const createViewQuery = `
+        CREATE VIEW ai_stats_summary AS
+        SELECT 
+          c.strategy,
+          COUNT(DISTINCT c.user_id) as totalUsers,
+          COUNT(t.id) as totalTrades,
+          SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
+          SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
+          SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END) as totalProfit,
+          SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END) as totalLoss,
+          SUM(t.profit_loss) as netProfit,
+          DATE(t.created_at) as trade_date
+        FROM ai_user_config c
+        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
+          AND t.status IN ('WON', 'LOST')
+        WHERE c.strategy IN ('orion', 'apollo', 'nexus', 'titan', 'atlas')
+        GROUP BY c.strategy, DATE(t.created_at)
+      `;
+
+      await this.dataSource.query(createViewQuery);
+      this.logger.log('[CreateStatsView] ✅ View criada com sucesso');
+    } catch (error) {
+      this.logger.error('[CreateStatsView] Erro ao criar view:', error);
+      // Não lançar erro - o serviço pode funcionar sem a view (só será mais lento)
+    }
+  }
+
+  /**
    * Obtém estatísticas gerais de todas as IAs com filtro de data
-   * Retorna dados agregados para as 5 IAs ativas: Orion, Apollo, Nexus, Titan, Falcon
+   * Retorna dados agregados para as 5 IAs ativas: Orion, Apollo, Nexus, Titan, Atlas
+   * OTIMIZADO: Usa view pre-agregada para performance
    */
   async getGeneralStats(startDate?: string, endDate?: string): Promise<any> {
     try {
@@ -1394,39 +1438,36 @@ export class AutonomousAgentService implements OnModuleInit {
       // Definir estratégias disponíveis (IAs usam 'strategy' field em ai_user_config)
       const strategies = ['orion', 'apollo', 'nexus', 'titan', 'atlas'];
 
-      // Construir filtro de data para subquery
+      // Construir filtro de data
       let dateFilter = '';
       const params: any[] = [];
 
       if (startDate && endDate) {
-        dateFilter = ` AND DATE(t.created_at) BETWEEN ? AND ?`;
+        dateFilter = ` AND trade_date BETWEEN ? AND ?`;
         params.push(startDate, endDate);
       } else if (startDate) {
-        dateFilter = ` AND DATE(t.created_at) >= ?`;
+        dateFilter = ` AND trade_date >= ?`;
         params.push(startDate);
       } else if (endDate) {
-        dateFilter = ` AND DATE(t.created_at) <= ?`;
+        dateFilter = ` AND trade_date <= ?`;
         params.push(endDate);
       }
 
-      // Buscar estatísticas agregadas por estratégia
-      // CORRIGIDO: Usar ai_user_config e ai_trades (tabelas das IAs)
+      // Buscar estatísticas agregadas da VIEW (muito mais rápido!)
       const statsQuery = `
         SELECT 
-          c.strategy as strategy,
-          COUNT(DISTINCT c.user_id) as totalUsers,
-          COALESCE(COUNT(t.id), 0) as totalTrades,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END), 0) as losses,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
-          COALESCE(SUM(t.profit_loss), 0) as netProfit
-        FROM ai_user_config c
-        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
-          AND t.status IN ('WON', 'LOST')
-          ${dateFilter}
-        WHERE c.strategy IN (?, ?, ?, ?, ?)
-        GROUP BY c.strategy
+          strategy,
+          SUM(totalUsers) as totalUsers,
+          SUM(totalTrades) as totalTrades,
+          SUM(wins) as wins,
+          SUM(losses) as losses,
+          SUM(totalProfit) as totalProfit,
+          SUM(totalLoss) as totalLoss,
+          SUM(netProfit) as netProfit
+        FROM ai_stats_summary
+        WHERE strategy IN (?, ?, ?, ?, ?)
+        ${dateFilter}
+        GROUP BY strategy
       `;
 
       const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
