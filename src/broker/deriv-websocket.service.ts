@@ -28,7 +28,7 @@ interface TradeData {
 }
 
 /**
- * Interface para estado de conexão isolado
+ * Interface para estado de conexão único
  */
 interface ConnectionState {
   ws: WebSocket | null;
@@ -39,7 +39,7 @@ interface ConnectionState {
   isReconnecting: boolean;
   reconnectTimeout: NodeJS.Timeout | null;
   pendingRequests: Map<string, any>;
-  // Subscriptions isoladas por conexão
+  // Subscriptions do usuário
   tickSubscriptionId: string | null;
   proposalSubscriptionId: string | null;
   openContractSubscriptionId: string | null;
@@ -50,10 +50,22 @@ interface ConnectionState {
 export class DerivWebSocketService extends EventEmitter implements OnModuleDestroy {
   private readonly logger = new Logger(DerivWebSocketService.name);
 
-  // ✅ Pool de conexões: Token -> ConnectionState
-  private connections = new Map<string, ConnectionState>();
+  // ✅ Estado único por serviço (Uma conexão por usuário)
+  private state: ConnectionState = {
+    ws: null,
+    isAuthorized: false,
+    token: '',
+    loginid: null,
+    reconnectAttempts: 0,
+    isReconnecting: false,
+    reconnectTimeout: null,
+    pendingRequests: new Map(),
+    tickSubscriptionId: null,
+    proposalSubscriptionId: null,
+    openContractSubscriptionId: null,
+    pendingBuyConfig: null
+  };
 
-  // Estado global ou padrão (usado para ticks se não especificado)
   private appId: number;
   private symbol: string = 'R_100';
   private ticks: TickData[] = [];
@@ -66,269 +78,175 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   }
 
   /**
-   * Conecta ou reutiliza uma conexão existente para o token fornecido
+   * Conecta ou reutiliza uma conexão existente
    */
-  async connect(token: string, loginid?: string): Promise<void> {
+  async connect(token: string, loginid?: string): Promise<boolean> {
     if (!token) {
       throw new Error('Token é obrigatório para conexão.');
     }
 
-    // ✅ 1. Verificar se já existe conexão para este token
-    const existingConnection = this.connections.get(token);
-
-    if (existingConnection) {
-      if (existingConnection.ws && existingConnection.ws.readyState === WebSocket.OPEN && existingConnection.isAuthorized) {
-        // Validar loginid se fornecido
-        if (loginid && existingConnection.loginid && loginid !== existingConnection.loginid) {
-          this.logger.warn(`[DerivWebSocketService] ⚠️ CONFLITO DE CONTA: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}.`);
-          this.logger.warn(`[DerivWebSocketService] 🔄 Frontend Authority: Forçando desconexão para reconectar com o contexto solicitado.`);
-
-          try {
-            this.disconnect(token);
-          } catch (e) {
-            this.logger.error(`Erro ao desconectar forçadamente: ${e.message}`);
-          }
-
-          // Prosseguir para criar nova conexão abaixo (sai do if e vai para establishConnection)
-        } else {
-          this.logger.log(`[DerivWebSocketService] ✅ Reutilizando conexão existente para token ...${token.substring(0, 5)} (Login: ${existingConnection.loginid})`);
-          return;
-        }
-      } else {
-        // Conexão existe mas caiu/fechou? Reconectar.
-        this.logger.log(`[DerivWebSocketService] 🔄 Conexão existente inativa. Reconectando...`);
-        return this.establishConnection(token, loginid);
+    // Se já estiver conectado com o mesmo token e loginid, reutilizar
+    if (this.state.ws && this.state.ws.readyState === WebSocket.OPEN && this.state.isAuthorized) {
+      if (this.state.token === token && (!loginid || this.state.loginid === loginid)) {
+        this.logger.log(`[DerivWS] ✅ Reutilizando conexão existente (Login: ${this.state.loginid})`);
+        return true;
       }
+
+      // Se mudou o token ou loginid, ou houver conflito, desconectar e reconectar
+      this.logger.warn(`[DerivWS] 🔄 Mudança de contexto ou reforço solicitado. Login original: ${this.state.loginid}, Novo: ${loginid}`);
+      this.disconnect();
     }
 
-    // ✅ 2. Criar nova conexão isolada
-    this.logger.log(`[DerivWebSocketService] 🔌 Criando nova conexão isolada para token ...${token.substring(0, 5)}`);
-    return this.establishConnection(token, loginid);
+    // Criar nova conexão
+    this.state.token = token;
+    this.state.loginid = loginid || null;
+    return this.establishConnection();
   }
 
-  private establishConnection(token: string, loginid?: string): Promise<void> {
+  private establishConnection(): Promise<boolean> {
     return new Promise((resolve, reject) => {
-      // Inicializar estado da conexão se não existir
-      let connection = this.connections.get(token);
-      if (!connection) {
-        connection = {
-          ws: null,
-          isAuthorized: false,
-          token: token,
-          loginid: loginid || null,
-          reconnectAttempts: 0,
-          isReconnecting: false,
-          reconnectTimeout: null,
-          pendingRequests: new Map(),
-          tickSubscriptionId: null,
-          proposalSubscriptionId: null,
-          openContractSubscriptionId: null,
-          pendingBuyConfig: null
-        };
-        this.connections.set(token, connection);
-      }
-
       const url = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      this.logger.log(`[${token.substring(0, 5)}] Conectando WebSocket: ${url}`);
+      this.logger.log(`[DerivWS] Conectando WebSocket: ${url}`);
 
       const ws = new WebSocket(url, {
         headers: { Origin: 'https://app.deriv.com' },
       });
 
-      connection.ws = ws;
+      this.state.ws = ws;
 
       const timeout = setTimeout(() => {
-        if (connection && !connection.isAuthorized) {
+        if (!this.state.isAuthorized) {
           try {
-            connection.ws?.close();
+            this.state.ws?.close();
           } catch (e) { }
           reject(new Error('Timeout ao conectar/autorizar com Deriv'));
         }
       }, 15000); // 15s timeout
 
       ws.on('open', () => {
-        this.logger.log(`[${token.substring(0, 5)}] WebSocket aberto. Enviando Authorize...`);
-        this.send({ authorize: token }, token);
+        this.logger.log(`[DerivWS] WebSocket aberto. Enviando Authorize...`);
+        this.send({ authorize: this.state.token });
       });
 
       ws.on('message', (data: WebSocket.RawData) => {
         try {
           const msg = JSON.parse(data.toString());
 
-          // Se for authorize, processar especificamente para resolver a promise de conexão
-          if (msg.msg_type === 'authorize') {
-            if (!msg.error) {
-              clearTimeout(timeout);
-              if (connection) {
-                connection.isAuthorized = true;
-                connection.reconnectAttempts = 0;
-                connection.loginid = msg.authorize.loginid;
-
-                this.logger.log(`[${token.substring(0, 5)}] ✅ Autorizado! Conta: ${msg.authorize.loginid} (${msg.authorize.currency})`);
-
-                // Se o loginid foi especificado mas veio diferente, alertar
-                if (loginid && msg.authorize.loginid !== loginid) {
-                  this.logger.warn(`[${token.substring(0, 5)}] ⚠️ CONFLITO: Solicitado ${loginid}, mas Token pertence a ${msg.authorize.loginid}`);
-                }
-
-                this.emit('authorized', msg.authorize);
-                resolve();
-              }
-            } else {
-              clearTimeout(timeout);
-              this.logger.error(`[${token.substring(0, 5)}] ❌ Erro de Autorização:`, msg.error);
-              reject(new Error(msg.error.message));
-              this.disconnect(token);
+          if (msg.error) {
+            if (msg.error.code !== 'AlreadySubscribed') {
+              this.logger.error(`[DerivWS] Erro API Deriv:`, msg.error);
+              this.emit('error', msg.error);
             }
           }
 
-          // Processar mensagem genérica (passando o contexto da conexão)
-          this.handleMessage(msg, token);
+          if (msg.msg_type === 'authorize') {
+            if (!msg.error) {
+              clearTimeout(timeout);
+              this.state.isAuthorized = true;
+              this.state.reconnectAttempts = 0;
+              this.state.loginid = msg.authorize.loginid;
+              this.logger.log(`[DerivWS] ✅ Autorizado! Conta: ${this.state.loginid} (${msg.authorize.currency})`);
+              this.emit('authorized', msg.authorize);
+              resolve(true);
+            } else {
+              clearTimeout(timeout);
+              reject(new Error(msg.error.message));
+              this.disconnect();
+            }
+          }
 
+          this.handleMessage(msg);
         } catch (error) {
-          this.logger.error(`[${token.substring(0, 5)}] Erro ao processar mensagem:`, error);
+          this.logger.error(`[DerivWS] Erro ao processar mensagem:`, error);
         }
       });
 
       ws.on('error', (error) => {
         clearTimeout(timeout);
-        this.logger.error(`[${token.substring(0, 5)}] ❌ Erro WebSocket:`, error);
+        this.logger.error(`[DerivWS] ❌ Erro WebSocket:`, error);
         reject(error);
       });
 
       ws.on('close', () => {
-        this.logger.warn(`[${token.substring(0, 5)}] 🔌 WebSocket fechado.`);
-        if (connection) {
-          connection.isAuthorized = false;
-          connection.ws = null;
-          // Tentar reconectar?
-          this.attemptReconnect(token);
-        }
+        this.logger.warn(`[DerivWS] 🔌 WebSocket fechado.`);
+        this.state.isAuthorized = false;
+        this.state.ws = null;
+        this.attemptReconnect();
       });
     });
   }
 
-  private handleMessage(msg: any, token: string): void {
-    const connection = this.connections.get(token);
-    if (!connection) return;
-
-    if (msg.error) {
-      // Ignorar erros de já inscrito
-      if (msg.error.code !== 'AlreadySubscribed') {
-        this.logger.error(`[${token.substring(0, 5)}] Erro API Deriv:`, msg.error);
-        this.emit('error', msg.error); // Cuidado: isso emite globalmente. O ideal seria ter contexto.
-      }
-      return;
-    }
-
+  private handleMessage(msg: any): void {
     switch (msg.msg_type) {
-      case 'authorize':
-        // Já tratado no on('message')
-        break;
-
       case 'history':
-        this.processHistory(msg, connection);
+        this.processHistory(msg);
         break;
-
       case 'tick':
-        this.processTick(msg, connection);
+        this.processTick(msg);
         break;
-
       case 'proposal':
-        this.processProposal(msg, connection);
+        this.processProposal(msg);
         break;
-
       case 'buy':
-        this.processBuy(msg, connection);
+        this.processBuy(msg);
         break;
-
       case 'sell':
-        this.processSell(msg, connection);
+        this.processSell(msg);
         break;
-
       case 'contract':
-        this.emit('contract_update', msg.contract);
+      case 'proposal_open_contract':
+        this.processProposalOpenContract(msg);
         break;
-
       case 'contracts_for':
         this.emit('contracts_for', msg.contracts_for);
         break;
-
       case 'trading_durations':
         this.emit('trading_durations', msg.trading_durations);
         break;
-
       case 'active_symbols':
         this.emit('active_symbols', msg.active_symbols);
-        break;
-
-      case 'proposal_open_contract':
-        this.processProposalOpenContract(msg, connection);
         break;
     }
   }
 
-  // ✅ Métodos de Processamento Atualizados para usar ConnectionState
-
-  private processHistory(msg: any, connection: ConnectionState): void {
+  private processHistory(msg: any): void {
     const history = msg.history;
     if (!history || !history.prices) return;
 
-    // Lógica original de processamento de ticks
-    const prices = history.prices || [];
-    const times = history.times || [];
+    const prices = history.prices;
+    const times = history.times;
     const newTicks: TickData[] = [];
     const startIdx = Math.max(0, prices.length - this.maxTicks);
 
     for (let i = startIdx; i < prices.length; i++) {
-      const rawPrice = prices[i];
-      if (rawPrice == null || rawPrice === '') continue;
-      const value = Number(rawPrice);
-      if (!isFinite(value) || value <= 0 || isNaN(value)) continue;
-
-      const rawTime = times[i];
-      let epoch = Math.floor(Number(rawTime));
-      if (!isFinite(epoch) || epoch <= 0) {
-        epoch = Math.floor(Date.now() / 1000) - (prices.length - i);
-      }
-      newTicks.push({ value, epoch });
+      newTicks.push({ value: Number(prices[i]), epoch: Number(times[i]) });
     }
 
-    // Salvar ticks "globais" (apenas do último que atualizou, ou deveria ser por símbolo?)
-    // Para simplificar e manter compatibilidade com frontend que espera um array único:
-    // Vamos atualizar o array global `this.ticks` com os dados mais recentes de QUALQUER conexão
-    // Isso pode misturar se tiver 2 gráficos, mas o frontend manual geralmente foca em 1.
     this.ticks = newTicks;
-
     if (msg.subscription?.id) {
-      connection.tickSubscriptionId = msg.subscription.id;
+      this.state.tickSubscriptionId = msg.subscription.id;
     }
-
-    this.emit('history', { ticks: this.ticks, subscriptionId: connection.tickSubscriptionId });
+    this.emit('history', { ticks: this.ticks, subscriptionId: this.state.tickSubscriptionId });
   }
 
-  private processTick(msg: any, connection: ConnectionState): void {
+  private processTick(msg: any): void {
     const tick = msg.tick;
     if (!tick) return;
-
-    // Validação
-    if (!tick.quote || !tick.epoch) return;
 
     const value = Number(tick.quote);
     const epoch = Number(tick.epoch);
 
-    if (tick.id && !connection.tickSubscriptionId) {
-      connection.tickSubscriptionId = tick.id;
+    if (tick.id && !this.state.tickSubscriptionId) {
+      this.state.tickSubscriptionId = tick.id;
     }
 
-    // Atualizar array global
     this.ticks.push({ value, epoch });
     if (this.ticks.length > this.maxTicks) this.ticks.shift();
 
     this.emit('tick', { value, epoch });
   }
 
-  private processProposal(msg: any, connection: ConnectionState): void {
+  private processProposal(msg: any): void {
     const proposal = msg.proposal;
     if (!proposal || !proposal.id) return;
 
@@ -341,96 +259,68 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     };
 
     if (msg.subscription?.id) {
-      connection.proposalSubscriptionId = msg.subscription.id;
+      this.state.proposalSubscriptionId = msg.subscription.id;
     }
 
     this.emit('proposal', proposalData);
   }
 
-  private processBuy(msg: any, connection: ConnectionState): void {
+  private processBuy(msg: any): void {
     const buy = msg.buy;
     if (!buy || !buy.contract_id) return;
 
-    const config = connection.pendingBuyConfig;
-    const durationUnit = config?.durationUnit || buy.duration_unit || 'm';
-    const duration = config?.duration || Number(buy.duration) || 0;
-    const contractType = config?.contractType || buy.contract_type || 'CALL';
-
-    // Limpar pendente
-    connection.pendingBuyConfig = null;
-
-    let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || null;
-    if (!entrySpot && this.ticks.length > 0) {
-      entrySpot = this.ticks[this.ticks.length - 1].value;
-    }
-
+    const config = this.state.pendingBuyConfig;
     const tradeData: TradeData = {
       contractId: buy.contract_id,
       buyPrice: Number(buy.buy_price) || 0,
       payout: Number(buy.payout) || 0,
       symbol: buy.symbol || this.symbol,
-      contractType,
-      duration,
-      durationUnit,
-      entrySpot: entrySpot ? Number(entrySpot) : null,
+      contractType: config?.contractType || buy.contract_type || 'CALL',
+      duration: config?.duration || Number(buy.duration) || 0,
+      durationUnit: config?.durationUnit || buy.duration_unit || 'm',
+      entrySpot: Number(buy.entry_spot || buy.current_spot || 0),
       entryTime: Number(buy.purchase_time || buy.start_time) || Date.now() / 1000,
     };
 
-    // Inscrever no contrato usando a MESMA conexão e token
-    this.subscribeToOpenContract(buy.contract_id, connection.token);
-
+    this.state.pendingBuyConfig = null;
+    this.subscribeToOpenContract(buy.contract_id);
     this.emit('buy', tradeData);
   }
 
-  private processSell(msg: any, connection: ConnectionState): void {
+  private processSell(msg: any): void {
     const sell = msg.sell;
     this.emit('sell', {
       contractId: sell.contract_id,
       sellPrice: Number(sell.sell_price),
       profit: Number(sell.profit),
-      symbol: this.symbol // Pode ser impreciso se tiver múltiplos, mas ok por enquanto
+      symbol: this.symbol
     });
   }
 
-  private processProposalOpenContract(msg: any, connection: ConnectionState): void {
-    const contract = msg.proposal_open_contract;
+  private processProposalOpenContract(msg: any): void {
+    const contract = msg.proposal_open_contract || msg.contract;
     if (!contract) return;
 
     if (msg.subscription?.id) {
-      connection.openContractSubscriptionId = msg.subscription.id;
+      this.state.openContractSubscriptionId = msg.subscription.id;
     }
 
     this.emit('contract_update', contract);
   }
 
-  // ✅ Métodos Públicos Atualizados (Agora exigem ou tentam inferir Token)
-
-  /**
-   * Envia uma mensagem para a conexão associada ao token.
-   * Se token não for passado, tenta usar o primeiro disponível (single user mode)
-   */
-  private send(payload: any, token?: string): void {
-    let connection: ConnectionState | undefined;
-
-    if (token) {
-      connection = this.connections.get(token);
-    } else if (this.connections.size > 0) {
-      // Fallback: Pega a primeira conexão disponível (para compatibilidade)
-      connection = this.connections.values().next().value;
-    }
-
-    if (connection && connection.ws && connection.ws.readyState === WebSocket.OPEN) {
+  private send(payload: any): void {
+    if (this.state.ws && this.state.ws.readyState === WebSocket.OPEN) {
       try {
-        connection.ws.send(JSON.stringify(payload));
+        this.state.ws.send(JSON.stringify(payload));
       } catch (e) {
-        this.logger.error(`Erro envio WS [${token || 'default'}]:`, e);
+        this.logger.error(`[DerivWS] Erro envio:`, e);
       }
     } else {
-      this.logger.warn(`Não foi possível enviar mensagem. Token: ${token || 'Nenhum'}, Conexão Ativa: ${!!connection}`);
+      this.logger.warn(`[DerivWS] WS não está aberto para envio.`);
     }
   }
 
-  subscribeToSymbol(symbol: string, token?: string): void {
+  subscribeToSymbol(symbol: string): void {
     this.symbol = symbol;
     const now = Math.floor(Date.now() / 1000);
     this.send({
@@ -441,63 +331,20 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       end: 'latest',
       subscribe: 1,
       style: 'ticks'
-    }, token); // Envia para o token específico se fornecido
-  }
-
-  /**
-   * Compra contrato. OBRIGATÓRIO informar token para garantir contexto isolado.
-   */
-  buyContract(buyConfig: any): void {
-    const {
-      proposalId, price, duration, durationUnit, contractType,
-      token, loginid // ✅ Parâmetros essenciais
-    } = buyConfig;
-
-    if (!token) {
-      this.logger.error('buyContract chamado sem token! Impossível determinar contexto.');
-      return;
-    }
-
-    // Obter conexão específica
-    const connection = this.connections.get(token);
-    if (!connection || !connection.isAuthorized) {
-      // Tentar conectar se não estiver (auto-heal)
-      this.logger.warn(`Conexão para compra (token ${token.substring(0, 5)}) não encontrada ou não autorizada. Tentando reconectar...`);
-      this.connect(token, loginid).then(() => {
-        this.buyContract(buyConfig); // Retry recursivo uma vez
-      }).catch(err => {
-        this.logger.error('Falha ao conectar para compra:', err);
-      });
-      return;
-    }
-
-    // Salvar config pendente na conexão específica
-    connection.pendingBuyConfig = {
-      durationUnit,
-      duration,
-      contractType
-    };
-
-    // Se temos proposalId, é compra direta. (Cenário Digit)
-    if (proposalId) {
-      this.send({ buy: proposalId, price: Number(price) }, token);
-    } else {
-      // Se for Buy Parameters (Cenário direto sem proposal prévia, ex: alguns bots)
-      // Por simplificação assumimos proposalId flow.
-      this.logger.warn('Fluxo de compra sem Proposal ID ainda não refatorado totalmente.');
-    }
-  }
-
-  // Sobrecarga para compatibilidade com assinatura antiga (proposalId, price, ...)
-  // Mas idealmente o controller deve chamar passando objeto
-  async buyContractLegacy(proposalId: string, price: number, opts: any, token: string): Promise<void> {
-    this.buyContract({
-      proposalId, price, ...opts, token
     });
   }
 
-  subscribeToProposal(config: any, token?: string): void {
-    // Configurar proposal
+  buyContract(buyConfig: any): void {
+    const { proposalId, price, duration, durationUnit, contractType } = buyConfig;
+
+    this.state.pendingBuyConfig = { durationUnit, duration, contractType };
+
+    if (proposalId) {
+      this.send({ buy: proposalId, price: Number(price) });
+    }
+  }
+
+  subscribeToProposal(config: any): void {
     const req: any = {
       proposal: 1,
       amount: config.amount,
@@ -512,105 +359,66 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     if (config.barrier) req.barrier = String(config.barrier);
     if (config.multiplier) req.multiplier = config.multiplier;
 
-    // Se token fornecido, cancela anterior DESTA conexão
-    if (token) {
-      const conn = this.connections.get(token);
-      if (conn && conn.proposalSubscriptionId) {
-        this.send({ forget: conn.proposalSubscriptionId }, token);
-        conn.proposalSubscriptionId = null;
-      }
+    if (this.state.proposalSubscriptionId) {
+      this.send({ forget: this.state.proposalSubscriptionId });
     }
 
-    this.send(req, token);
+    this.send(req);
   }
 
-  subscribeToOpenContract(contractId: string, token?: string): void {
+  subscribeToOpenContract(contractId: string): void {
     this.send({
       proposal_open_contract: 1,
       contract_id: contractId,
       subscribe: 1
-    }, token);
+    });
   }
 
   getTicks(): TickData[] {
     return [...this.ticks];
   }
 
-  private attemptReconnect(token: string): void {
-    const conn = this.connections.get(token);
-    if (!conn) return;
+  private attemptReconnect(): void {
+    if (this.state.isReconnecting || this.state.reconnectAttempts >= this.maxReconnectAttempts) return;
 
-    if (conn.isReconnecting || conn.reconnectAttempts >= this.maxReconnectAttempts) return;
+    this.state.isReconnecting = true;
+    this.state.reconnectAttempts++;
 
-    conn.isReconnecting = true;
-    conn.reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, this.state.reconnectAttempts), 30000);
+    this.logger.log(`[DerivWS] Tentando reconectar em ${delay}ms...`);
 
-    const delay = Math.min(1000 * Math.pow(2, conn.reconnectAttempts), 30000);
-    this.logger.log(`[${token.substring(0, 5)}] Tentando reconectar em ${delay}ms...`);
-
-    conn.reconnectTimeout = setTimeout(() => {
-      this.establishConnection(token, conn.loginid || undefined)
-        .then(() => { if (conn) conn.isReconnecting = false; })
-        .catch(() => { if (conn) { conn.isReconnecting = false; this.attemptReconnect(token); } });
+    this.state.reconnectTimeout = setTimeout(() => {
+      this.establishConnection()
+        .then(() => { this.state.isReconnecting = false; })
+        .catch(() => { this.state.isReconnecting = false; this.attemptReconnect(); });
     }, delay);
   }
 
-  disconnect(token?: string): void {
-    if (token) {
-      // Desconectar um específico
-      const conn = this.connections.get(token);
-      if (conn) {
-        if (conn.reconnectTimeout) clearTimeout(conn.reconnectTimeout);
-        conn.ws?.close();
-        this.connections.delete(token);
-        this.logger.log(`[${token.substring(0, 5)}] Desconectado e removido do pool.`);
-      }
-    } else {
-      // Desconectar todos
-      this.logger.log(`[DerivWebSocketService] Desconectando TODO o pool (${this.connections.size} conexões)...`);
-      for (const [t, conn] of this.connections) {
-        if (conn.reconnectTimeout) clearTimeout(conn.reconnectTimeout);
-        conn.ws?.close();
-      }
-      this.connections.clear();
-      this.ticks = [];
+  disconnect(): void {
+    if (this.state.reconnectTimeout) clearTimeout(this.state.reconnectTimeout);
+    if (this.state.ws) {
+      this.state.ws.close();
+      this.state.ws = null;
     }
+    this.state.isAuthorized = false;
+    this.ticks = [];
   }
 
   onModuleDestroy() {
     this.disconnect();
   }
 
-  // Métodos auxiliares para manter compatibilidade com controller que pode chamar sem token (fallback)
-  getActiveSymbols(token?: string): void { this.send({ active_symbols: 'brief' }, token); }
-  getTradingDurations(landingCompany: string = 'svg', token?: string): void { this.send({ trading_durations: 1, landing_company_short: landingCompany }, token); }
-  getContractsFor(symbol: string, currency: string = 'USD', token?: string): void { this.send({ contracts_for: symbol, currency, landing_company: 'svg' }, token); }
-
-  sellContract(contractId: string, price: number, token?: string): void {
-    // Se não tiver token, teria que varrer as conexões ou assumir uma default?
-    // O controller passa 0 como preço (venda a mercado)
-    this.send({ sell: contractId, price: price }, token);
+  getActiveSymbols(): void { this.send({ active_symbols: 'brief' }); }
+  getTradingDurations(landingCompany: string = 'svg'): void { this.send({ trading_durations: 1, landing_company_short: landingCompany }); }
+  getContractsFor(symbol: string, currency: string = 'USD'): void { this.send({ contracts_for: symbol, currency, landing_company: 'svg' }); }
+  sellContract(contractId: string, price: number): void { this.send({ sell: contractId, price: price }); }
+  cancelSubscription(subscriptionId: string): void { this.send({ forget: subscriptionId }); }
+  cancelTickSubscription(): void {
+    this.send({ forget_all: 'ticks' });
+    this.state.tickSubscriptionId = null;
   }
-
-  cancelSubscription(subscriptionId: string, token?: string): void {
-    this.send({ forget: subscriptionId }, token);
-    // Opcional: limpar subscriptionId do estado se encontrar em alguma conexão
-    // Mas teria que varrer connection.tickSubscriptionId === subscriptionId etc.
-  }
-
-  cancelTickSubscription(token?: string): void {
-    this.send({ forget_all: 'ticks' }, token);
-    if (token) {
-      const conn = this.connections.get(token);
-      if (conn) conn.tickSubscriptionId = null;
-    }
-  }
-
-  cancelProposalSubscription(token?: string): void {
-    this.send({ forget_all: 'proposal' }, token);
-    if (token) {
-      const conn = this.connections.get(token);
-      if (conn) conn.proposalSubscriptionId = null;
-    }
+  cancelProposalSubscription(): void {
+    this.send({ forget_all: 'proposal' });
+    this.state.proposalSubscriptionId = null;
   }
 }
