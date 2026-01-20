@@ -45,5 +45,5 @@ COMMENT='Configuração de IA de trading por usuário - permite execução em ba
 -- ALTER TABLE ai_user_config ADD COLUMN loss_limit DECIMAL(10, 2) NULL COMMENT 'Limite de perda diária' AFTER profit_target;
 
 -- OU use o endpoint da API para criar automaticamente:
--- POST https://taxafacil.site/api/ai/init-tables
+-- POST https://iazenix.com/api/ai/init-tables
 

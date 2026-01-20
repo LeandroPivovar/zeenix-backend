@@ -72,6 +72,6 @@ WHERE TABLE_SCHEMA = DATABASE()
 -- ========================================
 -- OU USE O ENDPOINT DA API (RECOMENDADO)
 -- ========================================
--- POST https://taxafacil.site/api/ai/init-tables
+-- POST https://iazenix.com/api/ai/init-tables
 -- Este endpoint fará todas as migrações automaticamente!
 

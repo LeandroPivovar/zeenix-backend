@@ -31,7 +31,7 @@ Para usar o monitoramento integrado na interface web:
    ```
 
 2. **Acessar a página de Estatísticas das IAs**:
-   - Navegue até `https://taxafacil.site/stats-ias`
+   - Navegue até `https://iazenix.com/stats-ias`
 
 3. **Ativar o Monitor**:
    - Clique no botão **"▶ Ativar IA"** na seção "Monitor de Volatilidade 100"

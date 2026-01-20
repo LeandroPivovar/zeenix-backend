@@ -31,7 +31,7 @@ http {
 
 ### Opção 2: Configuração por Site
 
-No arquivo de configuração do seu site (geralmente em `/etc/nginx/sites-available/taxafacil.site` ou similar):
+No arquivo de configuração do seu site (geralmente em `/etc/nginx/sites-available/iazenix.com` ou similar):
 
 ```nginx
 server {
@@ -40,7 +40,7 @@ server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     
-    server_name taxafacil.site;
+    server_name iazenix.com;
     
     # Limite para uploads de vídeo (2GB)
     client_max_body_size 2048M;

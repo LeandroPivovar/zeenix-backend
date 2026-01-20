@@ -34,12 +34,12 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly settingsService: SettingsService,
-  ) {}
+  ) { }
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() body: RegisterDto, @Req() req: any) {
-    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://iazenix.com';
     return this.authService.register(body, frontendUrl);
   }
 
@@ -48,7 +48,7 @@ export class AuthController {
   async login(@Body() body: LoginDto, @Req() req: any) {
     const result = await this.authService.login(body.email, body.password);
     const token = result.token;
-    
+
     // ✅ OTIMIZAÇÃO: Criar sessão e log de atividade de forma não-bloqueante
     // Isso evita que o login trave esperando operações de banco de dados
     setImmediate(async () => {
@@ -59,7 +59,7 @@ export class AuthController {
           const device = req.headers['user-agent']?.includes('Mobile') ? 'Mobile' : 'Desktop';
           const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
           const userAgent = req.headers['user-agent'] || 'unknown';
-          
+
           await this.settingsService.createSession(user.id, token, device, userAgent, ipAddress);
           await this.settingsService.logActivity(
             user.id,
@@ -74,14 +74,14 @@ export class AuthController {
         // Não falhar o login se a criação de sessão falhar
       }
     });
-    
+
     return { token };
   }
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   async forgotPassword(@Body() body: { email: string }, @Req() req: any) {
-    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://taxafacil.site';
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'https://iazenix.com';
     return await this.authService.forgotPassword(body.email, frontendUrl);
   }
 

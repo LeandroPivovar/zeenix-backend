@@ -17,7 +17,7 @@ export class ExpertsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   async findAll() {
     const experts = await this.expertRepository.find({
@@ -107,7 +107,7 @@ export class ExpertsService {
     const existingUser = await this.authService.findUserByEmail(email);
     if (existingUser) {
       // Se já existe, apenas envia email de recuperação de senha
-      const frontendUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+      const frontendUrl = process.env.FRONTEND_URL || 'https://iazenix.com';
       await this.authService.forgotPassword(email, frontendUrl);
       return;
     }
@@ -139,7 +139,7 @@ export class ExpertsService {
     );
 
     // Construir URL de reset
-    const frontendUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://iazenix.com';
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
     // Enviar email de ativação

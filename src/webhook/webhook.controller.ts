@@ -15,7 +15,7 @@ export class WebhookController {
   constructor(
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   @Post()
   async handleWebhook(@Body() payload: any) {
@@ -23,16 +23,16 @@ export class WebhookController {
     this.logger.log(`Tipo do payload: ${typeof payload}`);
     this.logger.log(`Payload é array: ${Array.isArray(payload)}`);
     this.logger.log(`Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`);
-    
+
     const maskedPayload = this.maskSensitiveData(payload);
     this.logger.log(`Webhook recebido (mascarado): ${JSON.stringify(maskedPayload)}`);
-    
+
     // Log dos campos importantes para debug
     this.logger.log(`webhook_event_type: ${payload?.webhook_event_type || 'UNDEFINED'}`);
     this.logger.log(`order_status: ${payload?.order_status || 'UNDEFINED'}`);
     this.logger.log(`Customer existe: ${!!payload?.Customer}`);
     this.logger.log(`Customer.email: ${payload?.Customer?.email || 'N/A'}`);
-    
+
     // Verificar se o payload tem a estrutura esperada
     if (!payload || typeof payload !== 'object') {
       this.logger.error('❌ Payload inválido ou não é um objeto');
@@ -116,7 +116,7 @@ export class WebhookController {
       this.logger.log(`✅ Usuário salvo no banco com sucesso! ID: ${createdUser.id}`);
 
       // Obter URL da plataforma
-      const platformUrl = process.env.FRONTEND_URL || 'https://taxafacil.site';
+      const platformUrl = process.env.FRONTEND_URL || 'https://iazenix.com';
       this.logger.log(`URL da plataforma: ${platformUrl}`);
 
       // Enviar email de boas-vindas
@@ -167,7 +167,7 @@ export class WebhookController {
       .split('')
       .sort(() => Math.random() - 0.5)
       .join('');
-    
+
     this.logger.debug(`Senha temporária gerada com ${shuffledPassword.length} caracteres`);
     return shuffledPassword;
   }

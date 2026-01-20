@@ -24,10 +24,9 @@ export class AuthService {
     private readonly emailService: EmailService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService?: NotificationsService,
-  ) {}
+  ) { }
 
-  async register(payload: CreateUserDto, frontendUrl?: string): Promise<{ message: string }>
-  {
+  async register(payload: CreateUserDto, frontendUrl?: string): Promise<{ message: string }> {
     const existing = await this.userRepository.findByEmail(payload.email);
     if (existing) {
       throw new ConflictException('Email já está em uso');
@@ -37,7 +36,7 @@ export class AuthService {
     if (payload.phone) {
       // Validar usando libphonenumber-js
       const validation = validateBrazilianPhone(payload.phone);
-      
+
       if (!validation.isValid || !validation.phoneDigits) {
         throw new BadRequestException(validation.error || 'Telefone inválido');
       }
@@ -77,7 +76,7 @@ export class AuthService {
     );
 
     // Construir URL de confirmação
-    const url = frontendUrl || process.env.FRONTEND_URL || 'https://taxafacil.site';
+    const url = frontendUrl || process.env.FRONTEND_URL || 'https://iazenix.com';
     const confirmationUrl = `${url}/confirm-account?token=${confirmationToken}`;
 
     // Enviar email de confirmação
@@ -94,8 +93,7 @@ export class AuthService {
     return { message: 'Cadastro realizado com sucesso! Verifique seu e-mail para confirmar a conta.' };
   }
 
-  async login(email: string, password: string): Promise<{ token: string }>
-  {
+  async login(email: string, password: string): Promise<{ token: string }> {
     const user = await this.userRepository.findByEmail(email);
     if (!user) {
       throw new UnauthorizedException('Credenciais inválidas');
@@ -146,7 +144,7 @@ export class AuthService {
 
   async forgotPassword(email: string, frontendUrl: string): Promise<{ message: string }> {
     const user = await this.userRepository.findByEmail(email);
-    
+
     // Por segurança, sempre retornamos sucesso mesmo se o email não existir
     if (!user) {
       return { message: 'Se o email existir, você receberá instruções de recuperação de senha.' };
@@ -192,7 +190,7 @@ export class AuthService {
     // Verificar se o token expirou
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expiry);
-    
+
     if (now > expiryDate) {
       throw new BadRequestException('Token expirado. Solicite uma nova recuperação de senha.');
     }
@@ -234,7 +232,7 @@ export class AuthService {
     // Verificar se o token expirou
     const now = new Date();
     const expiryDate = new Date(user.reset_token_expiry);
-    
+
     if (now > expiryDate) {
       throw new BadRequestException('Token expirado. Solicite um novo link de confirmação.');
     }
