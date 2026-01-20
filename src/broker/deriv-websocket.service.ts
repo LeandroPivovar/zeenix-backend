@@ -80,8 +80,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       if (existingConnection.ws && existingConnection.ws.readyState === WebSocket.OPEN && existingConnection.isAuthorized) {
         // Validar loginid se fornecido
         if (loginid && existingConnection.loginid && loginid !== existingConnection.loginid) {
-          this.logger.warn(`[DerivWebSocketService] ⚠️ CONFLITO DE CONTA DETECTADO: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}.`);
-          this.logger.warn(`[DerivWebSocketService] 🔴 Forçando desconexão para garantir o contexto correto.`);
+          this.logger.warn(`[DerivWebSocketService] ⚠️ CONFLITO DE CONTA: Token ...${token.substring(0, 5)} está conectado em ${existingConnection.loginid}, mas foi solicitado para ${loginid}.`);
+          this.logger.warn(`[DerivWebSocketService] 🔄 Frontend Authority: Forçando desconexão para reconectar com o contexto solicitado.`);
 
           try {
             this.disconnect(token);
@@ -89,7 +89,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
             this.logger.error(`Erro ao desconectar forçadamente: ${e.message}`);
           }
 
-          // Prosseguir para criar nova conexão abaixo
+          // Prosseguir para criar nova conexão abaixo (sai do if e vai para establishConnection)
         } else {
           this.logger.log(`[DerivWebSocketService] ✅ Reutilizando conexão existente para token ...${token.substring(0, 5)} (Login: ${existingConnection.loginid})`);
           return;
