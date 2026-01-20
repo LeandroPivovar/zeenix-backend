@@ -24,7 +24,7 @@ export class SettingsService {
     private readonly activityLogRepository: Repository<UserActivityLogEntity>,
     @InjectRepository(UserSessionEntity)
     private readonly sessionRepository: Repository<UserSessionEntity>,
-  ) {}
+  ) { }
 
   async getSettings(userId: string) {
     const user = await this.userRepository.findById(userId);
@@ -73,7 +73,7 @@ export class SettingsService {
     const updatedUser = user.update(newName.trim(), user.email);
     await this.userRepository.update(updatedUser);
     await this.logActivity(userId, 'UPDATE_NAME', `Alterou o nome de "${oldName}" para "${newName.trim()}"`, ipAddress, userAgent);
-    
+
     return { success: true, message: 'Nome atualizado com sucesso' };
   }
 
@@ -95,7 +95,7 @@ export class SettingsService {
     const updatedUser = user.update(user.name, newEmail);
     await this.userRepository.update(updatedUser);
     await this.logActivity(userId, 'UPDATE_EMAIL', `Alterou o email de "${oldEmail}" para "${newEmail}"`, ipAddress, userAgent);
-    
+
     return { success: true, message: 'Email atualizado com sucesso' };
   }
 
@@ -116,7 +116,7 @@ export class SettingsService {
     const updatedUser = user.changePassword(hashed);
     await this.userRepository.update(updatedUser);
     await this.logActivity(userId, 'UPDATE_PASSWORD', 'Alterou a senha', ipAddress, userAgent);
-    
+
     return { success: true, message: 'Senha atualizada com sucesso' };
   }
 
@@ -188,21 +188,61 @@ export class SettingsService {
       normalizedUpdates.tradeCurrency !== previousState.tradeCurrency
     ) {
       changes.push(`Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`);
-      
+
       // Atualizar também a coluna deriv_currency na tabela users
       // Se for DEMO, manter a moeda base (USD) na deriv_currency
       const currencyForDeriv = normalizedUpdates.tradeCurrency === 'DEMO' ? 'USD' : normalizedUpdates.tradeCurrency;
-      
+
       // Buscar o loginId atual para não sobrescrever
       const currentDerivInfo = await this.userRepository.getDerivInfo(userId);
-      const currentLoginId = currentDerivInfo?.loginId || userId;
-      
+      let targetLoginId = currentDerivInfo?.loginId || userId;
+      let targetBalance: number | undefined = currentDerivInfo?.balance ? parseFloat(currentDerivInfo.balance) : undefined;
+
+      // ✅ FIX: Resolver LoginID e Saldo corretos com base no modo (DEMO vs REAL)
+      if (currentDerivInfo?.raw) {
+        try {
+          const rawData = typeof currentDerivInfo.raw === 'string'
+            ? JSON.parse(currentDerivInfo.raw)
+            : currentDerivInfo.raw;
+
+          const accountList = rawData?.authorize?.account_list;
+
+          if (Array.isArray(accountList)) {
+            let foundAccount: any = null;
+
+            if (normalizedUpdates.tradeCurrency === 'DEMO') {
+              // Buscar conta Demo (Virtual)
+              foundAccount = accountList.find((acc: any) => acc.is_virtual === 1 || acc.is_virtual === true);
+            } else {
+              // Buscar conta Real com a moeda específica
+              foundAccount = accountList.find((acc: any) =>
+                (acc.is_virtual === 0 || acc.is_virtual === false) &&
+                acc.currency === normalizedUpdates.tradeCurrency
+              );
+            }
+
+            if (foundAccount) {
+              targetLoginId = foundAccount.loginid;
+              // Atualizar saldo se disponível na lista
+              if (foundAccount.balance !== undefined) {
+                targetBalance = parseFloat(foundAccount.balance);
+              }
+              this.logger.log(`[SettingsService] Conta alterada para: ${targetLoginId} (${normalizedUpdates.tradeCurrency}) | Saldo: ${targetBalance}`);
+            } else {
+              this.logger.warn(`[SettingsService] Nenhuma conta compatível encontrada para ${normalizedUpdates.tradeCurrency}. Mantendo LoginID anterior.`);
+            }
+          }
+        } catch (e) {
+          this.logger.error(`[SettingsService] Erro ao resolver conta Deriv:`, e);
+        }
+      }
+
       // Atualizar deriv_currency na tabela users
       this.logger.log(`[SettingsService] Atualizando deriv_currency para ${currencyForDeriv} na tabela users para userId: ${userId}`);
       await this.userRepository.updateDerivInfo(userId, {
-        loginId: currentLoginId,
+        loginId: targetLoginId,
         currency: currencyForDeriv,
-        balance: currentDerivInfo?.balance ? parseFloat(currentDerivInfo.balance) : undefined,
+        balance: targetBalance,
         raw: currentDerivInfo?.raw,
       });
       this.logger.log(`[SettingsService] deriv_currency atualizado com sucesso`);
@@ -220,8 +260,7 @@ export class SettingsService {
       normalizedUpdates.emailNotifications !== previousState.emailNotifications
     ) {
       changes.push(
-        `Alterou notificações por email para ${
-          normalizedUpdates.emailNotifications ? 'ativado' : 'desativado'
+        `Alterou notificações por email para ${normalizedUpdates.emailNotifications ? 'ativado' : 'desativado'
         }`,
       );
     }

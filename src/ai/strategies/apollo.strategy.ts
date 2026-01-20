@@ -409,6 +409,33 @@ ${filtersText}
     // Safety: Minimum Deriv Stake
     stake = Math.max(0.35, stake);
 
+    // ✅ CHECK INSUFFICIENT BALANCE (Before Trade)
+    // Validate if local capital estimate is enough (with 10% margin)
+    const requiredBalance = stake * 1.1;
+    if (state.capital < requiredBalance) {
+      this.saveLog(state.userId, 'erro', `❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${requiredBalance.toFixed(2)}`);
+
+      // Detailed log with available accounts (Async)
+      this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [state.userId])
+        .then(res => {
+          let accountInfo = 'Sem dados de conta.';
+          try {
+            if (res && res.length > 0 && res[0].deriv_raw) {
+              const raw = typeof res[0].deriv_raw === 'string' ? JSON.parse(res[0].deriv_raw) : res[0].deriv_raw;
+              if (raw?.authorize?.account_list) {
+                accountInfo = raw.authorize.account_list
+                  .map((acc: any) => `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`)
+                  .join('\n');
+              }
+            }
+          } catch (e) { accountInfo = 'Erro ao ler dados da conta.'; }
+
+          this.saveLog(state.userId, 'erro', `📋 Contas Disponíveis:\n${accountInfo}`);
+        });
+
+      return;
+    }
+
     // 2. ADJUST FOR STOPS
     // Check remaining to stop loss / blindado
     const currentBalance = state.capital - state.capitalInicial;
