@@ -1454,6 +1454,46 @@ export class AutonomousAgentService implements OnModuleInit {
         params.push(endDate);
       }
 
+      // 🔍 DEBUG: Verificar se há trades na tabela
+      const debugTotalTrades = await this.dataSource.query(`
+        SELECT COUNT(*) as total FROM ai_trades
+      `);
+      this.logger.log(`[GetGeneralStats] 🔍 Total de trades na tabela ai_trades: ${JSON.stringify(debugTotalTrades)}`);
+
+      // 🔍 DEBUG: Verificar trades por status
+      const debugByStatus = await this.dataSource.query(`
+        SELECT status, COUNT(*) as count FROM ai_trades GROUP BY status
+      `);
+      this.logger.log(`[GetGeneralStats] 🔍 Trades por status: ${JSON.stringify(debugByStatus)}`);
+
+      // 🔍 DEBUG: Verificar se user_ids batem
+      const debugUserMatch = await this.dataSource.query(`
+        SELECT 
+          c.strategy,
+          COUNT(DISTINCT c.user_id) as users_in_config,
+          COUNT(DISTINCT t.user_id) as users_with_trades
+        FROM ai_user_config c
+        LEFT JOIN ai_trades t ON c.user_id = t.user_id
+        WHERE c.strategy IN (?, ?, ?, ?, ?)
+        GROUP BY c.strategy
+      `, strategies);
+      this.logger.log(`[GetGeneralStats] 🔍 Match de user_ids: ${JSON.stringify(debugUserMatch)}`);
+
+      // 🔍 DEBUG: Verificar trades no período
+      if (startDate && endDate) {
+        const debugDateRange = await this.dataSource.query(`
+          SELECT 
+            DATE(created_at) as date,
+            COUNT(*) as count
+          FROM ai_trades
+          WHERE DATE(created_at) BETWEEN ? AND ?
+          GROUP BY DATE(created_at)
+          ORDER BY date DESC
+          LIMIT 10
+        `, [startDate, endDate]);
+        this.logger.log(`[GetGeneralStats] 🔍 Trades no período ${startDate} a ${endDate}: ${JSON.stringify(debugDateRange)}`);
+      }
+
       // Buscar estatísticas agregadas por estratégia (query direta sem view)
       const statsQuery = `
         SELECT 
@@ -1473,8 +1513,10 @@ export class AutonomousAgentService implements OnModuleInit {
         GROUP BY c.strategy
       `;
 
-      const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
+      this.logger.log(`[GetGeneralStats] Query SQL: ${statsQuery}`);
+      this.logger.log(`[GetGeneralStats] Params: ${JSON.stringify([...strategies, ...params])}`);
 
+      const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
 
       this.logger.log(`[GetGeneralStats] Resultados da query: ${JSON.stringify(stats)}`);
 
