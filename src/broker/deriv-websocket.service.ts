@@ -57,6 +57,13 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isAuthorized) {
       // ✅ VERIFICAÇÃO CRÍTICA: O token atual corresponde ao solicitado?
       if (this.token === token) {
+        // Se temos um loginid alvo e ele é DIFERENTE do atual, isso indica problema se o token for o mesmo.
+        if (loginid && this.currentLoginid && loginid !== this.currentLoginid) {
+          const error = new Error(`Conflito de Conta: O token fornecido já está conectado na conta ${this.currentLoginid}, mas você solicitou ${loginid}. Verifique se você não usou o mesmo token para ambas as contas.`);
+          this.logger.error(error.message);
+          throw error;
+        }
+
         this.logger.log('Conexão WebSocket já está ativa com o mesmo token.');
         return;
       }
