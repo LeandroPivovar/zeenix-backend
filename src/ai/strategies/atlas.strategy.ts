@@ -1946,7 +1946,7 @@ export class AtlasStrategy implements IStrategy {
       `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
       `• Stake Atual: $${streak.currentStake.toFixed(2)}`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
 
   private logSuccessfulRecoveryV2(userId: string, recovery: {
@@ -1961,7 +1961,7 @@ export class AtlasStrategy implements IStrategy {
       `• Ação: Resetando sistema e voltando à entrada principal\n` +
       `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
 
   private logConservativeReset(userId: string, reset: {
