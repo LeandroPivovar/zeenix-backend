@@ -534,8 +534,8 @@ export class AtlasStrategy implements IStrategy {
 
 
     // ✅ [ZENIX v3.3] Filtro Progressivo Simplificado
-    // VELOZ: Sem delta | NORMAL: 0.5 | LENTO: 0.7
-    const threshold = normalizedMode === 'veloz' ? 0.0 : (normalizedMode === 'normal' ? 0.5 : 0.7);
+    // VELOZ: 0.2 | NORMAL: 0.3 | LENTO: 0.5
+    const threshold = normalizedMode === 'veloz' ? 0.2 : (normalizedMode === 'normal' ? 0.3 : 0.5);
 
     if (absDiff >= threshold) {
       return direction;
@@ -1259,8 +1259,8 @@ export class AtlasStrategy implements IStrategy {
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
-      // ✅ ATLAS: Reset após M5 (6ª perda) - Limite máximo de recuperação
-      if (state.isInRecovery && state.martingaleStep > 5) {
+      // ✅ ATLAS: Reset após M5 (6ª perda) - Apenas modo CONSERVADOR
+      if (state.isInRecovery && state.martingaleStep > 5 && state.modoMartingale === 'conservador') {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO\n` +
           `• Motivo: 6 Perdas Consecutivas (M5).\n` +
