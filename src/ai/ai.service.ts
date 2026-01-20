@@ -3832,6 +3832,102 @@ export class AiService implements OnModuleInit {
     this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
   }
 
+  /**
+   * ✅ ZENIX v2.0: Resolve Conta Deriv (Prioriza Demo se Real zerada)
+   * Busca deriv_raw do banco e decide qual conta usar baseada no saldo
+   */
+  private async resolveDerivAccount(
+    userId: string,
+    providedToken: string,
+    requestedCurrency: string
+  ): Promise<{ token: string; currency: string; loginid: string, isVirtual: boolean }> {
+    try {
+      // 1. Buscar dados raw do usuário
+      const userResult = await this.dataSource.query(
+        `SELECT deriv_raw FROM users WHERE id = ?`,
+        [userId]
+      );
+
+      if (!userResult || userResult.length === 0 || !userResult[0].deriv_raw) {
+        this.logger.warn(`[ResolveDeriv] ⚠️ deriv_raw não encontrado para user ${userId}. Usando token fornecido.`);
+        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+      }
+
+      let derivRaw: any;
+      try {
+        derivRaw = typeof userResult[0].deriv_raw === 'string'
+          ? JSON.parse(userResult[0].deriv_raw)
+          : userResult[0].deriv_raw;
+      } catch (e) {
+        this.logger.error(`[ResolveDeriv] ❌ Erro ao parsear deriv_raw`, e);
+        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+      }
+
+      // Se não tiver balancesByCurrency, não podemos decidir
+      if (!derivRaw.balancesByCurrencyReal || !derivRaw.balancesByCurrencyDemo) {
+        this.logger.warn(`[ResolveDeriv] ⚠️ Estrutura balancesByCurrency incompleta.`);
+        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+      }
+
+      // 2. Verificar saldo da conta Real (USD)
+      const realBalance = derivRaw.balancesByCurrencyReal['USD'] || 0;
+      const demoBalance = derivRaw.balancesByCurrencyDemo['USD'] || 0;
+
+      // Buscar Tokens
+      const tokens = derivRaw.tokensByLoginId || {};
+      let realToken = '';
+      let demoToken = '';
+      let realLoginId = '';
+      let demoLoginId = '';
+
+      // Tentar identificar tokens (VRTC = Demo, CR = Real)
+      for (const [loginAndToken, tokenValue] of Object.entries(tokens)) {
+        // A chave pode ser o loginid (ex: CR9809146) e o valor o token? 
+        // O JSON de exemplo mostra: "tokensByLoginId": {"CR9809146": "token..."}
+        if (loginAndToken.startsWith('VRTC')) {
+          demoLoginId = loginAndToken;
+          demoToken = tokenValue as string;
+        } else if (loginAndToken.startsWith('CR')) {
+          realLoginId = loginAndToken;
+          realToken = tokenValue as string;
+        }
+      }
+
+      this.logger.log(`[ResolveDeriv] 📊 Análise de Saldo: REAL=$${realBalance} | DEMO=$${demoBalance}`);
+
+      // 3. HEURÍSTICA DE DECISÃO
+      // Se o usuário pediu PRA VALER (Real) mas está SEM SALDO (< $1), e tem DEMO com saldo...
+      // FORÇAR MUDANÇA PARA DEMO para evitar erro "Insufficient Balance"
+      if (requestedCurrency !== 'DEMO' && realBalance < 1.00 && demoBalance >= 1.00) {
+        if (demoToken) {
+          this.logger.warn(`[ResolveDeriv] ⚠️ CONTA REAL INSUFICIENTE ($${realBalance}). Mudando automaticamente para DEMO ($${demoBalance}).`);
+          return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
+        }
+      }
+
+      // Se o usuário pediu DEMO, garantir que retorna o token DEMO correto
+      if (requestedCurrency === 'DEMO') {
+        if (demoToken) {
+          return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
+        }
+      }
+
+      // Caso padrão: Tentar usar o que foi pedido, mas validar token real
+      if (requestedCurrency !== 'DEMO' && realToken) {
+        // Se pediu Real e temos token Real, verificar se é o mesmo fornecido (opcional, mas seguro usar do banco)
+        // Vamos confiar no banco
+        return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
+      }
+
+      // Fallback final
+      return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+
+    } catch (error) {
+      this.logger.error(`[ResolveDeriv] ❌ Erro crítico na resolução:`, error);
+      return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+    }
+  }
+
   async activateUserAI(
     userId: string,
     stakeAmount: number, // Capital total da conta
@@ -3846,8 +3942,26 @@ export class AiService implements OnModuleInit {
     stopLossBlindado?: boolean, // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false/null = desativado)
     symbol?: string, // ✅ ZENIX v2.0: Símbolo/Ativo (opcional)
   ): Promise<void> {
+
+    // ✅ PASSO 0: RESOLVER CONTA (Evitar Insufficient Balance)
+    const resolvedAccount = await this.resolveDerivAccount(userId, derivToken, currency);
+
+    // Atualizar variáveis com valores resolvidos
+    const finalToken = resolvedAccount.token;
+    // Se foi resolvido para virtual e a moeda pedida não era MEMO/DEMO, 
+    // precisamos ajustar a moeda gravada no banco para não confundir o frontend?
+    // O frontend costuma enviar 'USD' ou 'DEMO'.
+    // Se resolveDerivAccount retornou isVirtual=true, vamos tratar como 'DEMO' para logs, mas 'USD' para deriv
+    const finalCurrency = resolvedAccount.isVirtual ? 'USD' : (currency === 'DEMO' || !currency ? 'USD' : currency);
+    // Nota: O 'currency' gravado no banco costuma ser 'USD' mesmo para demo, mas vamos manter coerência.
+
+    // Se houve troca forçada, logar aviso claro
+    if (resolvedAccount.token !== derivToken) {
+      this.logger.warn(`[ActivateAI] 🔄 Token substituído! (Front: ${derivToken.substring(0, 8)}... -> Banco: ${finalToken.substring(0, 8)}...)`);
+    }
+
     // ✅ Normalizar moeda (DEMO não é uma moeda válida para a Deriv, usar USD como padrão para contas virtuais)
-    const normalizedCurrency = (currency === 'DEMO' || !currency) ? 'USD' : currency;
+    const normalizedCurrency = (finalCurrency === 'DEMO' || !finalCurrency) ? 'USD' : finalCurrency;
 
     this.logger.log(
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency} (original: ${currency}) | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy} | symbol=${symbol}`,
@@ -3900,7 +4014,7 @@ export class AiService implements OnModuleInit {
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
          VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+        [userId, stakeAmount, entryValue || 0.35, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -3915,7 +4029,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              [userId, stakeAmount, entryValue || 0.35, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
             );
           } catch (error2: any) {
             // Se entry_value também não existir
@@ -3924,7 +4038,7 @@ export class AiService implements OnModuleInit {
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                  VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
@@ -3937,7 +4051,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, derivToken, currency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+              [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
             );
           } catch (error2: any) {
             // Se stop_blindado_percent também não existir
@@ -3946,7 +4060,7 @@ export class AiService implements OnModuleInit {
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                  VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
@@ -3972,8 +4086,8 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || 0.35, // ✅ Passar entryValue
-        derivToken,
-        currency,
+        derivToken: finalToken,
+        currency: normalizedCurrency,
       });
       this.removeModeradoUserState(userId);
       this.removePrecisoUserState(userId);
@@ -3985,8 +4099,8 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || 0.35, // ✅ Passar entryValue
-        derivToken,
-        currency,
+        derivToken: finalToken,
+        currency: normalizedCurrency,
       });
       this.removeVelozUserState(userId);
       this.removePrecisoUserState(userId);
@@ -3998,8 +4112,8 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || 0.35, // ✅ Passar entryValue
-        derivToken,
-        currency,
+        derivToken: finalToken,
+        currency: normalizedCurrency,
       });
       this.removeVelozUserState(userId);
       this.removeModeradoUserState(userId);
