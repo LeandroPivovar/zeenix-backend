@@ -1485,6 +1485,17 @@ export class CopyTradingService {
             foundCopiers.forEach((copier, idx) => {
               this.logger.log(`[GetCopiers] PASSO 4.1 - Copiador ${idx + 1}: user_id=${copier.user_id}, name=${copier.name}, email=${copier.email}`);
             });
+          } else {
+            // DEBUG ADICIONAL: Se não for do master, de quem é?
+            const actualExpert = await this.dataSource.query(
+              `SELECT id, user_id, name FROM experts WHERE id = ?`,
+              [traderId]
+            );
+            if (actualExpert && actualExpert.length > 0) {
+              this.logger.log(`[GetCopiers] PASSO 4.1 - ⚠️ trader_id ${traderId} ("${actualExpert[0].name}") pertence ao user_id: ${actualExpert[0].user_id} (Master atual é: ${masterUserId})`);
+            } else {
+              this.logger.log(`[GetCopiers] PASSO 4.1 - ⚠️ trader_id ${traderId} NÃO foi encontrado na tabela experts!`);
+            }
           }
         }
 
