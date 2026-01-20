@@ -1454,6 +1454,7 @@ export class AutonomousAgentService implements OnModuleInit {
         params.push(endDate);
       }
 
+
       // 🔍 DEBUG: Verificar se há trades na tabela
       const debugTotalTrades = await this.dataSource.query(`
         SELECT COUNT(*) as total FROM ai_trades
@@ -1466,80 +1467,67 @@ export class AutonomousAgentService implements OnModuleInit {
       `);
       this.logger.log(`[GetGeneralStats] 🔍 Trades por status: ${JSON.stringify(debugByStatus)}`);
 
-      // 🔍 DEBUG: Verificar se user_ids batem
-      const debugUserMatch = await this.dataSource.query(`
+      // NOVA ABORDAGEM: Queries separadas e mais simples (evita LEFT JOIN pesado)
+
+      // 1. Contar usuários por estratégia (rápido, sem JOIN)
+      const userCounts = await this.dataSource.query(`
+        SELECT 
+          strategy,
+          COUNT(DISTINCT user_id) as totalUsers
+        FROM ai_user_config
+        WHERE strategy IN (?, ?, ?, ?, ?)
+        GROUP BY strategy
+      `, strategies);
+
+      this.logger.log(`[GetGeneralStats] 📊 Usuários por estratégia: ${JSON.stringify(userCounts)}`);
+
+      // 2. Buscar estatísticas de trades (INNER JOIN - só usuários com trades)
+      const tradeStatsQuery = `
         SELECT 
           c.strategy,
-          COUNT(DISTINCT c.user_id) as users_in_config,
-          COUNT(DISTINCT t.user_id) as users_with_trades
+          COUNT(t.id) as totalTrades,
+          SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
+          SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
+          SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END) as totalProfit,
+          SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END) as totalLoss,
+          SUM(t.profit_loss) as netProfit
         FROM ai_user_config c
-        LEFT JOIN ai_trades t ON c.user_id = t.user_id
+        INNER JOIN ai_trades t ON c.user_id = t.user_id 
         WHERE c.strategy IN (?, ?, ?, ?, ?)
-        GROUP BY c.strategy
-      `, strategies);
-      this.logger.log(`[GetGeneralStats] 🔍 Match de user_ids: ${JSON.stringify(debugUserMatch)}`);
-
-      // 🔍 DEBUG: Verificar trades no período
-      if (startDate && endDate) {
-        const debugDateRange = await this.dataSource.query(`
-          SELECT 
-            DATE(created_at) as date,
-            COUNT(*) as count
-          FROM ai_trades
-          WHERE DATE(created_at) BETWEEN ? AND ?
-          GROUP BY DATE(created_at)
-          ORDER BY date DESC
-          LIMIT 10
-        `, [startDate, endDate]);
-        this.logger.log(`[GetGeneralStats] 🔍 Trades no período ${startDate} a ${endDate}: ${JSON.stringify(debugDateRange)}`);
-      }
-
-      // Buscar estatísticas agregadas por estratégia (query direta sem view)
-      const statsQuery = `
-        SELECT 
-          c.strategy as strategy,
-          COUNT(DISTINCT c.user_id) as totalUsers,
-          COALESCE(COUNT(t.id), 0) as totalTrades,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END), 0) as losses,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
-          COALESCE(SUM(t.profit_loss), 0) as netProfit
-        FROM ai_user_config c
-        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
           AND t.status IN ('WON', 'LOST')
           ${dateFilter}
-        WHERE c.strategy IN (?, ?, ?, ?, ?)
         GROUP BY c.strategy
       `;
 
-      this.logger.log(`[GetGeneralStats] Query SQL: ${statsQuery}`);
-      this.logger.log(`[GetGeneralStats] Params: ${JSON.stringify([...strategies, ...params])}`);
+      this.logger.log(`[GetGeneralStats] 🔍 Executando query de trades...`);
+      const tradeStats = await this.dataSource.query(tradeStatsQuery, [...strategies, ...params]);
+      this.logger.log(`[GetGeneralStats] 📊 Stats de trades: ${JSON.stringify(tradeStats)}`);
 
-      const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
-
-      this.logger.log(`[GetGeneralStats] Resultados da query: ${JSON.stringify(stats)}`);
 
       // Processar resultados e preencher estratégias sem dados
       const strategyStats = strategies.map(strategy => {
-        const found = stats.find((s: any) => s.strategy === strategy);
+        // Buscar contagem de usuários
+        const userCount = userCounts.find((u: any) => u.strategy === strategy);
+        const totalUsers = userCount ? parseInt(userCount.totalUsers) || 0 : 0;
 
-        // Se encontrou dados na query, usar esses dados
-        if (found) {
-          const totalTrades = parseInt(found.totalTrades) || 0;
-          const wins = parseInt(found.wins) || 0;
-          const losses = parseInt(found.losses) || 0;
+        // Buscar estatísticas de trades
+        const tradeStat = tradeStats.find((t: any) => t.strategy === strategy);
+
+        if (tradeStat) {
+          const totalTrades = parseInt(tradeStat.totalTrades) || 0;
+          const wins = parseInt(tradeStat.wins) || 0;
+          const losses = parseInt(tradeStat.losses) || 0;
           const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(2) : '0.00';
 
           return {
             name: this.getStrategyDisplayName(strategy),
             strategy: strategy,
-            status: 'active', // ✅ Sempre ativa
-            totalUsers: parseInt(found.totalUsers) || 0,
+            status: 'active',
+            totalUsers: totalUsers,
             totalTrades: totalTrades,
             wins: wins,
             losses: losses,
-            profit: parseFloat(found.netProfit) || 0,
+            profit: parseFloat(tradeStat.netProfit) || 0,
             winRate: parseFloat(winRate),
             profitReached: 0,
             lossReached: 0,
@@ -1548,12 +1536,12 @@ export class AutonomousAgentService implements OnModuleInit {
             tradeMode: 'N/A',
           };
         } else {
-          // Se não encontrou na query, retornar com zeros mas status ativo
+          // Se não encontrou trades, retornar com zeros mas com contagem de usuários
           return {
             name: this.getStrategyDisplayName(strategy),
             strategy: strategy,
-            status: 'active', // ✅ Sempre ativa mesmo sem dados
-            totalUsers: 0,
+            status: 'active',
+            totalUsers: totalUsers,
             totalTrades: 0,
             wins: 0,
             losses: 0,
@@ -1567,6 +1555,7 @@ export class AutonomousAgentService implements OnModuleInit {
           };
         }
       });
+
 
       // Calcular totais
       const totalActiveIAs = 5; // ✅ Sempre 5 IAs ativas
