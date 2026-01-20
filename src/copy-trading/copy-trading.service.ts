@@ -5,7 +5,7 @@ import { ExpertEntity } from '../infrastructure/database/entities/expert.entity'
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { DerivWebSocketManager } from '../broker/deriv-websocket-manager.service';
+import { DerivWebSocketManagerService } from '../broker/deriv-websocket-manager.service';
 
 interface CopyTradingConfigData {
   traderId: string;
@@ -31,7 +31,7 @@ export class CopyTradingService {
     private readonly expertRepository: Repository<ExpertEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
-    private readonly wsManager: DerivWebSocketManager,
+    private readonly wsManager: DerivWebSocketManagerService,
   ) { }
 
   async activateCopyTrading(
@@ -655,6 +655,42 @@ export class CopyTradingService {
           this.logger.log(
             `[ReplicateManualOperation] ✅ Operação replicada para copiador ${copier.userId} - Session: ${activeSession.id}, Stake: $${followerStakeAmount.toFixed(2)}`,
           );
+
+          // Execute trade on Deriv API
+          try {
+            const derivContractId = await this.executeCopierTrade(copier.userId, {
+              symbol: operationData.symbol,
+              contractType: operationData.contractType,
+              duration: operationData.duration,
+              durationUnit: operationData.durationUnit,
+              stakeAmount: followerStakeAmount,
+              derivToken: copier.derivToken,
+            });
+
+            if (derivContractId) {
+              // Update operation with real Deriv contract ID
+              await this.dataSource.query(
+                `UPDATE copy_trading_operations 
+                 SET trader_operation_id = ?
+                 WHERE session_id = ? AND user_id = ? 
+                 ORDER BY executed_at DESC LIMIT 1`,
+                [derivContractId, activeSession.id, copier.userId],
+              );
+
+              this.logger.log(
+                `[ReplicateManualOperation] ✅ Trade executado na Deriv para ${copier.userId}: ${derivContractId}`,
+              );
+            } else {
+              this.logger.warn(
+                `[ReplicateManualOperation] ⚠️ Falha ao executar trade na Deriv para ${copier.userId} - operação salva apenas no banco`,
+              );
+            }
+          } catch (derivError) {
+            this.logger.error(
+              `[ReplicateManualOperation] Erro ao executar trade na Deriv para ${copier.userId}: ${derivError.message}`,
+            );
+            // Continue with other copiers even if Deriv execution fails
+          }
         } catch (error) {
           this.logger.error(
             `[ReplicateManualOperation] Erro ao replicar para copiador ${copier.userId}: ${error.message}`,
@@ -1376,6 +1412,7 @@ export class CopyTradingService {
           c.total_losses,
           c.activated_at,
           c.created_at,
+          c.deriv_token,
           u.name as user_name,
           u.email as user_email,
           COALESCE((
@@ -1422,6 +1459,7 @@ export class CopyTradingService {
           s.total_losses,
           s.started_at as activated_at,
           c.created_at,
+          c.deriv_token,
           u.name as user_name,
           u.email as user_email,
           s.status as session_status_active,
@@ -1536,6 +1574,109 @@ export class CopyTradingService {
     if (!leverage) return 1;
     const match = leverage.match(/(\d+)x?/i);
     return match ? parseInt(match[1], 10) : 1;
+  }
+
+  /**
+   * Executa trade na Deriv API para um copiador
+   */
+  private async executeCopierTrade(
+    userId: string,
+    tradeConfig: {
+      symbol: string;
+      contractType: string;
+      duration: number;
+      durationUnit: string;
+      stakeAmount: number;
+      derivToken: string;
+    },
+  ): Promise<string | null> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        this.logger.log(
+          `[ExecuteCopierTrade] Executando trade para copiador ${userId} - Symbol: ${tradeConfig.symbol}, Type: ${tradeConfig.contractType}, Stake: $${tradeConfig.stakeAmount.toFixed(2)}`,
+        );
+
+        // Get or create WebSocket service for this copier
+        const wsService = this.wsManager.getOrCreateService(userId);
+
+        // Connect if not connected
+        const isConnected = await wsService.connect(tradeConfig.derivToken).catch((error) => {
+          this.logger.error(`[ExecuteCopierTrade] Erro ao conectar WebSocket para ${userId}: ${error.message}`);
+          return false;
+        });
+
+        if (!isConnected) {
+          this.logger.error(`[ExecuteCopierTrade] Falha ao conectar para ${userId}`);
+          resolve(null);
+          return;
+        }
+
+        // Subscribe to proposal
+        wsService.subscribeToProposal({
+          symbol: tradeConfig.symbol,
+          contractType: tradeConfig.contractType,
+          duration: tradeConfig.duration,
+          durationUnit: tradeConfig.durationUnit,
+          amount: tradeConfig.stakeAmount,
+        });
+
+        // Wait for proposal and buy
+        const proposalTimeout = setTimeout(() => {
+          this.logger.error(`[ExecuteCopierTrade] Timeout aguardando proposta para ${userId}`);
+          resolve(null);
+        }, 10000); // 10 seconds timeout
+
+        (wsService as any).once('proposal', (proposal: any) => {
+          clearTimeout(proposalTimeout);
+
+          this.logger.log(`[ExecuteCopierTrade] Proposta recebida para ${userId}: ${proposal.id}, Price: $${proposal.askPrice}`);
+
+          // Buy the contract
+          wsService.buyContract(
+            proposal.id,
+            proposal.askPrice,
+            tradeConfig.durationUnit,
+            tradeConfig.duration,
+            tradeConfig.contractType,
+          );
+
+          // Wait for buy confirmation
+          const buyTimeout = setTimeout(() => {
+            this.logger.error(`[ExecuteCopierTrade] Timeout aguardando confirmação de compra para ${userId}`);
+            resolve(null);
+          }, 10000);
+
+          (wsService as any).once('buy', (buyData: any) => {
+            clearTimeout(buyTimeout);
+
+            this.logger.log(
+              `[ExecuteCopierTrade] ✅ Trade executado para ${userId}: Contract ID: ${buyData.contractId}, Buy Price: $${buyData.buyPrice}`,
+            );
+
+            resolve(buyData.contractId);
+          });
+
+          (wsService as any).once('error', (error: any) => {
+            clearTimeout(buyTimeout);
+            this.logger.error(`[ExecuteCopierTrade] Erro ao comprar contrato para ${userId}: ${error.message || JSON.stringify(error)}`);
+            resolve(null);
+          });
+        });
+
+        wsService.once('error', (error: any) => {
+          clearTimeout(proposalTimeout);
+          this.logger.error(`[ExecuteCopierTrade] Erro na proposta para ${userId}: ${error.message || JSON.stringify(error)}`);
+          resolve(null);
+        });
+
+      } catch (error) {
+        this.logger.error(
+          `[ExecuteCopierTrade] Erro ao executar trade para ${userId}: ${error.message}`,
+          error.stack,
+        );
+        resolve(null);
+      }
+    });
   }
 }
 
