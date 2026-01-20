@@ -1391,8 +1391,8 @@ export class AutonomousAgentService implements OnModuleInit {
     try {
       this.logger.log(`[GetGeneralStats] Buscando estatísticas gerais (startDate: ${startDate}, endDate: ${endDate})`);
 
-      // Definir estratégias disponíveis
-      const strategies = ['orion', 'apollo', 'nexus', 'titan', 'falcon'];
+      // Definir estratégias disponíveis (IAs usam 'strategy' field em ai_user_config)
+      const strategies = ['orion', 'apollo', 'nexus', 'titan', 'atlas'];
 
       // Construir filtro de data para subquery
       let dateFilter = '';
@@ -1410,10 +1410,10 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // Buscar estatísticas agregadas por estratégia
-      // Usar subquery para garantir que todas as estratégias apareçam
+      // CORRIGIDO: Usar ai_user_config e ai_trades (tabelas das IAs)
       const statsQuery = `
         SELECT 
-          c.agent_type as strategy,
+          c.strategy as strategy,
           COUNT(DISTINCT c.user_id) as totalUsers,
           COALESCE(COUNT(t.id), 0) as totalTrades,
           COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
@@ -1421,12 +1421,12 @@ export class AutonomousAgentService implements OnModuleInit {
           COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
           COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
           COALESCE(SUM(t.profit_loss), 0) as netProfit
-        FROM autonomous_agent_config c
-        LEFT JOIN autonomous_agent_trades t ON c.user_id = t.user_id 
+        FROM ai_user_config c
+        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
           AND t.status IN ('WON', 'LOST')
           ${dateFilter}
-        WHERE c.agent_type IN (?, ?, ?, ?, ?)
-        GROUP BY c.agent_type
+        WHERE c.strategy IN (?, ?, ?, ?, ?)
+        GROUP BY c.strategy
       `;
 
       const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
@@ -1522,7 +1522,8 @@ export class AutonomousAgentService implements OnModuleInit {
       apollo: 'IA Apollo',
       nexus: 'IA Nexus',
       titan: 'IA Titan',
-      falcon: 'IA Falcon',
+      atlas: 'IA Atlas',
+      falcon: 'IA Falcon', // Mantido para compatibilidade
     };
     return names[strategy] || strategy.toUpperCase();
   }
