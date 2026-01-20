@@ -46,9 +46,8 @@ export class AutonomousAgentService implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('🚀 Inicializando AutonomousAgentService...');
     try {
-      // TEMPORARIAMENTE DESABILITADO: View estava causando travamento no startup
-      // await this.createStatsView();
-      this.logger.log('[CreateStatsView] ⚠️ Criação de view desabilitada temporariamente');
+      // Criar índices para otimizar queries de estatísticas
+      await this.createStatsIndexes();
 
       // Inicializar conexão WebSocket
       this.logger.log('🔌 Inicializando conexão WebSocket com Deriv API...');
@@ -1389,45 +1388,41 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * Cria/atualiza view de estatísticas para melhor performance
-   * Esta view pre-agrega os dados das IAs para consultas rápidas
+   * Cria índices para otimizar queries de estatísticas
+   * Índices são mais leves que views e não causam locks
    */
-  private async createStatsView(): Promise<void> {
+  private async createStatsIndexes(): Promise<void> {
     try {
-      this.logger.log('[CreateStatsView] Criando/atualizando view de estatísticas...');
+      this.logger.log('[CreateStatsIndexes] Criando índices para otimização...');
 
-      // Drop view if exists and recreate (para garantir que está atualizada)
-      await this.dataSource.query(`DROP VIEW IF EXISTS ai_stats_summary`);
-      this.logger.log('[CreateStatsView] View antiga removida (se existia)');
+      // Índice em ai_user_config.strategy (usado no WHERE)
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_user_config_strategy 
+        ON ai_user_config(strategy)
+      `).catch(() => { }); // Ignora se já existe
 
-      // Criar view com dados agregados - SIMPLIFICADA para MySQL
-      const createViewQuery = `
-        CREATE VIEW ai_stats_summary AS
-        SELECT 
-          c.strategy,
-          COUNT(DISTINCT c.user_id) as totalUsers,
-          COALESCE(COUNT(t.id), 0) as totalTrades,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END), 0) as losses,
-          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
-          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
-          COALESCE(SUM(t.profit_loss), 0) as netProfit,
-          CAST(t.created_at AS DATE) as trade_date
-        FROM ai_user_config c
-        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
-          AND t.status IN ('WON', 'LOST')
-        WHERE c.strategy IN ('orion', 'apollo', 'nexus', 'titan', 'atlas')
-        GROUP BY c.strategy, CAST(t.created_at AS DATE)
-      `;
+      // Índice em ai_trades.user_id (usado no JOIN)
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_user_id 
+        ON ai_trades(user_id)
+      `).catch(() => { });
 
-      this.logger.log('[CreateStatsView] Executando CREATE VIEW...');
-      await this.dataSource.query(createViewQuery);
-      this.logger.log('[CreateStatsView] ✅ View criada com sucesso');
+      // Índice em ai_trades.status (usado no WHERE)
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_status 
+        ON ai_trades(status)
+      `).catch(() => { });
+
+      // Índice composto em ai_trades para filtro de data
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_created_status 
+        ON ai_trades(created_at, status)
+      `).catch(() => { });
+
+      this.logger.log('[CreateStatsIndexes] ✅ Índices criados/verificados com sucesso');
     } catch (error) {
-      this.logger.error('[CreateStatsView] ❌ Erro ao criar view:');
-      this.logger.error(`[CreateStatsView] Mensagem: ${error.message}`);
-      this.logger.error(`[CreateStatsView] Stack: ${error.stack}`);
-      // Não lançar erro - o serviço pode funcionar sem a view (só será mais lento)
+      this.logger.error('[CreateStatsIndexes] ❌ Erro ao criar índices:', error.message);
+      // Não lançar erro - o serviço pode funcionar sem os índices (só será mais lento)
     }
   }
 
