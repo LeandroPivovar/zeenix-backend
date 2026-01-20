@@ -633,13 +633,21 @@ export class CopyTradingService {
 
           // Atualizar estatísticas da sessão
           const newTotalOperations = (activeSession.totalOperations || 0) + 1;
+          const currentBalance = (activeSession.currentBalance || 0) - followerStakeAmount;
+
+          // Se for a primeira operação, definir saldo inicial
+          const initialBalance = activeSession.totalOperations === 0
+            ? (activeSession.currentBalance || 0)
+            : activeSession.initialBalance;
 
           await this.dataSource.query(
             `UPDATE copy_trading_sessions 
              SET total_operations = ?,
+                 current_balance = ?,
+                 initial_balance = ?,
                  last_operation_at = NOW()
              WHERE id = ?`,
-            [newTotalOperations, activeSession.id],
+            [newTotalOperations, currentBalance, initialBalance, activeSession.id],
           );
 
           this.logger.log(
@@ -851,7 +859,10 @@ export class CopyTradingService {
           // Atualizar estatísticas da sessão
           const sessionId = operation.session_id;
           const currentBalance = parseFloat(operation.current_balance) || 0;
-          const newBalance = currentBalance + copierProfit;
+
+          // Retornar o stake + profit ao saldo (stake foi debitado quando a operação foi criada)
+          const newBalance = currentBalance + copierStakeAmount + copierProfit;
+
           const totalOperations = (operation.total_operations || 0);
           const totalWins = result === 'win' ? (operation.total_wins || 0) + 1 : (operation.total_wins || 0);
           const totalLosses = result === 'loss' ? (operation.total_losses || 0) + 1 : (operation.total_losses || 0);
