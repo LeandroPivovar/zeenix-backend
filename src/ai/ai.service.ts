@@ -3894,13 +3894,16 @@ export class AiService implements OnModuleInit {
     // ✅ ZENIX v2.0: Stop-Loss Blindado - se ativado, usar 50% (padrão da documentação)
     const stopBlindadoPercent = stopLossBlindado === true ? 50.00 : null; // null = desativado, 50.00 = ativado
 
+    // ✅ ZENIX v2.0: Garantir que o símbolo seja salvo (padrão R_100 se não fornecido)
+    const symbolToSave = symbol || 'R_100';
+
     // ✅ Adicionar entry_value e stop_blindado_percent se as colunas existirem
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
-         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+       (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
+       VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbolToSave, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -3908,23 +3911,47 @@ export class AiService implements OnModuleInit {
         const missingField = error.sqlMessage?.match(/Unknown column '([^']+)'/)?.[1];
         this.logger.warn(`[ActivateAI] Campo '${missingField}' não existe, tentando inserir sem ele`);
 
-        // Tentar inserir sem stop_blindado_percent
+        // Tentar inserir sem stop_blindado_percent (mantendo symbol)
         if (missingField === 'stop_blindado_percent') {
           try {
             await this.dataSource.query(
               `INSERT INTO ai_user_config 
-               (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-               VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+             (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, symbol, next_trade_at, created_at, updated_at) 
+             VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+              [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, symbolToSave, nextTradeAt],
             );
           } catch (error2: any) {
-            // Se entry_value também não existir
-            if (error2.code === 'ER_BAD_FIELD_ERROR' && error2.sqlMessage?.includes('entry_value')) {
+            const missingField2 = error2.sqlMessage?.match(/Unknown column '([^']+)'/)?.[1];
+
+            // Se entry_value não existir
+            if (missingField2 === 'entry_value') {
+              try {
+                await this.dataSource.query(
+                  `INSERT INTO ai_user_config 
+                     (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, symbol, next_trade_at, created_at, updated_at) 
+                     VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                  [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, symbolToSave, nextTradeAt],
+                );
+              } catch (error3: any) {
+                // Fallback final: se symbol também não existir
+                if (error3.sqlMessage?.includes("symbol")) {
+                  await this.dataSource.query(
+                    `INSERT INTO ai_user_config 
+                             (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+                             VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                    [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                  );
+                } else {
+                  throw error3;
+                }
+              }
+            } else if (missingField2 === 'symbol') {
+              // Se o erro foi no symbol mas entry_value existe
               await this.dataSource.query(
                 `INSERT INTO ai_user_config 
-                 (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-                 VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                     (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
+                     VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                [userId, stakeAmount, entryValue || 0.35, derivToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
