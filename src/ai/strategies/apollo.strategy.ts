@@ -85,51 +85,44 @@ export class ApolloStrategy implements IStrategy {
 
   private logInitialConfigV2(userId: string, mode: string, riskProfile: string, profitTarget: number, stopLoss: number, useBlindado: boolean) {
     const message =
-      `⚙️ CONFIGURAÇÕES INICIAIS
-• Estratégia: APOLLO
-• Modo de Negociação: ${mode}
-• Gerenciamento de Risco: ${riskProfile}
-• Meta de Lucro: $${profitTarget.toFixed(2)}
-• Stop Loss Normal: $${stopLoss.toFixed(2)}
-• Stop Loss Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`;
+      `❄️ Zenix v2.0 | APOLLO | ⚙️ Configurações Iniciais
+• Modo: ${mode}
+• Perfil: ${riskProfile}
+• Meta: $${profitTarget.toFixed(2)}
+• Stop Loss: $${stopLoss.toFixed(2)}
+• Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`;
 
     this.saveLog(userId, 'info', message);
   }
 
   private logSessionStart(userId: string, initialBalance: number, meta: number) {
     const message =
-      `📡 INÍCIO DE SESSÃO DIÁRIA
+      `❄️ Zenix v2.0 | APOLLO | 📡 Início de Sessão
 • Saldo Inicial: $${initialBalance.toFixed(2)}
 • Meta do Dia: $${meta.toFixed(2)}
-• Status: Monitorando Volatility 100 Index (1s)
-• Conexão: ESTÁVEL (52ms)`;
+• Status: Monitorando Mercado`;
 
     this.saveLog(userId, 'info', message);
   }
 
   private logDataCollection(userId: string, current: number, target: number) {
     const message =
-      `📡 COLETANDO DADOS...
-• META DE COLETA: ${target} TICKS
-• CONTAGEM: ${current}/${target}`;
+      `❄️ Zenix v2.0 | APOLLO | 📡 Coletando dados... (${current}/${target})`;
     this.saveLog(userId, 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
     const message =
-      `🧠 ANÁLISE INICIADA...
-• Verificando condições para o modo: ${mode}`;
+      `❄️ Zenix v2.0 | APOLLO | 🧠 Analisando Mercado (${mode})`;
     this.saveLog(userId, 'analise', message);
   }
 
   private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
-    const filtersText = filters.map((f, i) => `✅ FILTRO ${i + 1}: ${f}`).join('\n');
+    const filtersText = filters.map((f, i) => `• ${f}`).join('\n');
     const message =
-      `🔍 ANÁLISE: MODO ${mode}
+      `❄️ Zenix v2.0 | APOLLO | 🎯 Sinal Detectado: ${signal}
 ${filtersText}
-💪 FORÇA DO SINAL: ${probability}%
-
-📊 ENTRADA: ${signal}`;
+• Força: ${probability}%`;
     this.saveLog(userId, 'sinal', message);
   }
 
@@ -140,26 +133,25 @@ ${filtersText}
     balance: number,
     contractInfo?: { exitDigit?: string }
   ) {
+    const emoji = result === 'WIN' ? '✅' : '❌';
     const message =
-      `🏁 RESULTADO DA ENTRADA
-• Status: ${result}
-• Lucro/Prejuízo: ${profit >= 0 ? '+' : '-'}$${Math.abs(profit).toFixed(2)}
-• Saldo Atual: $${balance.toFixed(2)}`;
+      `❄️ Zenix v2.0 | APOLLO | ${emoji} Resultado: ${result}
+• Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
+• Saldo: $${balance.toFixed(2)}`;
 
     this.saveLog(userId, 'resultado', message);
   }
 
   private logMartingaleLevelV2(userId: string, level: number, stake: number) {
     const message =
-      `🚑 INICIANDO RECUPERAÇÃO
-• Nível Martingale: ${level}
-• Nova Stake: $${stake.toFixed(2)}`;
+      `❄️ Zenix v2.0 | APOLLO | 🔄 Martingale Nível ${level}
+• Próxima Stake: $${stake.toFixed(2)}`;
     this.saveLog(userId, 'alerta', message);
   }
 
   private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
     const message =
-      `🚀 APLICANDO SOROS NÍVEL ${level}
+      `❄️ Zenix v2.0 | APOLLO | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
@@ -167,24 +159,22 @@ ${filtersText}
 
   private logWinStreak(userId: string, count: number, profit: number) {
     const message =
-      `🏆 SEQUÊNCIA DE VITÓRIAS
-• Vitórias Consecutivas: ${count}
+      `❄️ Zenix v2.0 | APOLLO | 🏆 Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
   }
 
   private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
     const message =
-      `✅ RECUPERAÇÃO BEM-SUCEDIDA
-• Prejuízo Recuperado: $${totalLoss.toFixed(2)}
-• Lucro da Operação: $${amountRecovered.toFixed(2)}
+      `❄️ Zenix v2.0 | APOLLO | 🛡️ Recuperação Concluída
+• Recuperado: $${totalLoss.toFixed(2)}
 • Saldo Atual: $${currentBalance.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
   }
 
   private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
     const message =
-      `🔄 TROCA DE CONTRATO ATIVADA
+      `❄️ Zenix v2.0 | APOLLO | 🔄 Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;
