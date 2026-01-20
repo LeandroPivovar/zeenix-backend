@@ -1395,25 +1395,21 @@ export class AutonomousAgentService implements OnModuleInit {
     try {
       this.logger.log('[CreateStatsIndexes] Criando índices para otimização...');
 
-      // Índice em ai_user_config.strategy (usado no WHERE)
+      // Índices para ai_user_config
       await this.dataSource.query(`
         CREATE INDEX IF NOT EXISTS idx_ai_user_config_strategy 
         ON ai_user_config(strategy)
-      `).catch(() => { }); // Ignora se já existe
-
-      // Índice em ai_trades.user_id (usado no JOIN)
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_user_id 
-        ON ai_trades(user_id)
       `).catch(() => { });
 
-      // Índice em ai_trades.status (usado no WHERE)
+      // ÍNDICE COMPOSTO CRÍTICO para ai_trades (otimizado para a query de stats)
+      // Este índice cobre: user_id, status, created_at, profit_loss
+      // Permite "covering index" - MySQL não precisa acessar a tabela
       await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_status 
-        ON ai_trades(status)
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_stats_query 
+        ON ai_trades(user_id, status, created_at, profit_loss)
       `).catch(() => { });
 
-      // Índice composto em ai_trades para filtro de data
+      // Índice adicional para filtros de data (caso a query mude)
       await this.dataSource.query(`
         CREATE INDEX IF NOT EXISTS idx_ai_trades_created_status 
         ON ai_trades(created_at, status)
@@ -1421,7 +1417,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       this.logger.log('[CreateStatsIndexes] ✅ Índices criados/verificados com sucesso');
     } catch (error) {
-      this.logger.error('[CreateStatsIndexes] ❌ Erro ao criar índices:', error.message);
+      this.logger.error('[CreateStatsIndexes] Erro ao criar índices:', error);
       // Não lançar erro - o serviço pode funcionar sem os índices (só será mais lento)
     }
   }
@@ -1468,7 +1464,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       this.logger.log(`[GetGeneralStats] 📊 Usuários por estratégia: ${JSON.stringify(userCounts)}`);
 
-      // 2. Buscar estatísticas de trades (INNER JOIN - só usuários com trades)
+      // 2. Buscar estatísticas de trades (LEFT JOIN - inclui estratégias sem trades)
       const tradeStatsQuery = `
         SELECT 
           c.strategy,
@@ -1479,10 +1475,10 @@ export class AutonomousAgentService implements OnModuleInit {
           SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END) as totalLoss,
           SUM(t.profit_loss) as netProfit
         FROM ai_user_config c
-        INNER JOIN ai_trades t ON c.user_id = t.user_id 
-        WHERE c.strategy IN (?, ?, ?, ?, ?)
+        LEFT JOIN ai_trades t ON c.user_id = t.user_id 
           AND t.status IN ('WON', 'LOST')
           ${dateFilter}
+        WHERE c.strategy IN (?, ?, ?, ?, ?)
         GROUP BY c.strategy
       `;
 
