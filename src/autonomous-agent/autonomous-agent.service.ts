@@ -1394,7 +1394,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Definir estratégias disponíveis
       const strategies = ['orion', 'apollo', 'nexus', 'titan', 'falcon'];
 
-      // Construir query base
+      // Construir filtro de data para subquery
       let dateFilter = '';
       const params: any[] = [];
 
@@ -1410,13 +1410,14 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       // Buscar estatísticas agregadas por estratégia
+      // Usar subquery para garantir que todas as estratégias apareçam
       const statsQuery = `
         SELECT 
           c.agent_type as strategy,
           COUNT(DISTINCT c.user_id) as totalUsers,
-          COUNT(t.id) as totalTrades,
-          SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
-          SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
+          COALESCE(COUNT(t.id), 0) as totalTrades,
+          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
+          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END), 0) as losses,
           COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
           COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
           COALESCE(SUM(t.profit_loss), 0) as netProfit
@@ -1430,9 +1431,13 @@ export class AutonomousAgentService implements OnModuleInit {
 
       const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
 
+      this.logger.log(`[GetGeneralStats] Resultados da query: ${JSON.stringify(stats)}`);
+
       // Processar resultados e preencher estratégias sem dados
       const strategyStats = strategies.map(strategy => {
         const found = stats.find((s: any) => s.strategy === strategy);
+
+        // Se encontrou dados na query, usar esses dados
         if (found) {
           const totalTrades = parseInt(found.totalTrades) || 0;
           const wins = parseInt(found.wins) || 0;
@@ -1442,24 +1447,25 @@ export class AutonomousAgentService implements OnModuleInit {
           return {
             name: this.getStrategyDisplayName(strategy),
             strategy: strategy,
-            status: 'active',
+            status: 'active', // ✅ Sempre ativa
             totalUsers: parseInt(found.totalUsers) || 0,
             totalTrades: totalTrades,
             wins: wins,
             losses: losses,
             profit: parseFloat(found.netProfit) || 0,
             winRate: parseFloat(winRate),
-            profitReached: 0, // TODO: implementar se necessário
-            lossReached: 0, // TODO: implementar se necessário
-            activeStop: 0, // TODO: implementar se necessário
-            riskMode: 'N/A', // TODO: implementar se necessário
-            tradeMode: 'N/A', // TODO: implementar se necessário
+            profitReached: 0,
+            lossReached: 0,
+            activeStop: 0,
+            riskMode: 'N/A',
+            tradeMode: 'N/A',
           };
         } else {
+          // Se não encontrou na query, retornar com zeros mas status ativo
           return {
             name: this.getStrategyDisplayName(strategy),
             strategy: strategy,
-            status: 'inactive',
+            status: 'active', // ✅ Sempre ativa mesmo sem dados
             totalUsers: 0,
             totalTrades: 0,
             wins: 0,
@@ -1476,7 +1482,7 @@ export class AutonomousAgentService implements OnModuleInit {
       });
 
       // Calcular totais
-      const totalActiveIAs = strategyStats.filter(s => s.totalTrades > 0).length;
+      const totalActiveIAs = 5; // ✅ Sempre 5 IAs ativas
       const combinedProfit = strategyStats.reduce((sum, s) => sum + s.profit, 0);
       const totalTrades = strategyStats.reduce((sum, s) => sum + s.totalTrades, 0);
       const totalWins = strategyStats.reduce((sum, s) => sum + s.wins, 0);
@@ -1486,6 +1492,8 @@ export class AutonomousAgentService implements OnModuleInit {
       const topPerformer = strategyStats.reduce((top, current) => {
         return current.profit > top.profit ? current : top;
       }, strategyStats[0]);
+
+      this.logger.log(`[GetGeneralStats] Resumo: ${totalActiveIAs} IAs, ${totalTrades} trades, lucro combinado: ${combinedProfit}`);
 
       return {
         strategies: strategyStats,
@@ -1520,4 +1528,3 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
 }
-
