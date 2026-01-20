@@ -201,50 +201,6 @@ ${filtersText}
 
   async initialize(): Promise<void> {
     this.logger.log('🛡️ [APOLLO] Oficial v1.0 Strategy Initialized (Price Action)');
-    await this.syncFromDb();
-  }
-
-  private async syncFromDb(): Promise<void> {
-    try {
-      this.logger.log('🔄 [APOLLO] Syncing active users from database...');
-      const activeUsers = await this.dataSource.query(
-        `SELECT 
-           user_id as userId,
-           deriv_token as derivToken,
-           currency,
-           stake_amount as stakeAmount,
-           mode,
-           modo_martingale as riskProfile,
-           profit_target as profitTarget,
-           loss_limit as stopLoss,
-           stop_blindado_percent as stopBlindadoPercent,
-           symbol,
-           entry_value as entryValue
-         FROM ai_user_config 
-         WHERE is_active = TRUE AND strategy = 'apollo'`
-      );
-
-      this.logger.log(`🔄 [APOLLO] Found ${activeUsers.length} active users.`);
-
-      for (const row of activeUsers) {
-        // Hydrate user state
-        const config = {
-          derivToken: row.derivToken,
-          currency: row.currency,
-          stakeAmount: row.stakeAmount,
-          mode: row.mode,
-          modoMartingale: row.riskProfile,
-          profitTarget: row.profitTarget,
-          lossLimit: row.stopLoss,
-          useBlindado: row.stopBlindadoPercent !== null,
-          symbol: row.symbol,
-          entryValue: row.entryValue
-        };
-        await this.activateUser(row.userId, config);
-      }
-    } catch (e) {
-      this.logger.error(`❌ [APOLLO] Error syncing users: ${e}`);
-    }
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
