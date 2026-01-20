@@ -488,5 +488,30 @@ export class AutonomousAgentController {
       );
     }
   }
+
+  @Get('general-stats')
+  @UseGuards(AuthGuard('jwt'))
+  async getGeneralStats(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    try {
+      const stats = await this.agentService.getGeneralStats(startDate, endDate);
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      this.logger.error(`[GetGeneralStats] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas gerais',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
 

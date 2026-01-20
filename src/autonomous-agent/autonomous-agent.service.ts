@@ -1383,5 +1383,141 @@ export class AutonomousAgentService implements OnModuleInit {
     }
   }
 
+  /**
+   * Obtém estatísticas gerais de todas as IAs com filtro de data
+   * Retorna dados agregados para as 5 IAs ativas: Orion, Apollo, Nexus, Titan, Falcon
+   */
+  async getGeneralStats(startDate?: string, endDate?: string): Promise<any> {
+    try {
+      this.logger.log(`[GetGeneralStats] Buscando estatísticas gerais (startDate: ${startDate}, endDate: ${endDate})`);
+
+      // Definir estratégias disponíveis
+      const strategies = ['orion', 'apollo', 'nexus', 'titan', 'falcon'];
+
+      // Construir query base
+      let dateFilter = '';
+      const params: any[] = [];
+
+      if (startDate && endDate) {
+        dateFilter = ` AND DATE(t.created_at) BETWEEN ? AND ?`;
+        params.push(startDate, endDate);
+      } else if (startDate) {
+        dateFilter = ` AND DATE(t.created_at) >= ?`;
+        params.push(startDate);
+      } else if (endDate) {
+        dateFilter = ` AND DATE(t.created_at) <= ?`;
+        params.push(endDate);
+      }
+
+      // Buscar estatísticas agregadas por estratégia
+      const statsQuery = `
+        SELECT 
+          c.agent_type as strategy,
+          COUNT(DISTINCT c.user_id) as totalUsers,
+          COUNT(t.id) as totalTrades,
+          SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
+          SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
+          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
+          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
+          COALESCE(SUM(t.profit_loss), 0) as netProfit
+        FROM autonomous_agent_config c
+        LEFT JOIN autonomous_agent_trades t ON c.user_id = t.user_id 
+          AND t.status IN ('WON', 'LOST')
+          ${dateFilter}
+        WHERE c.agent_type IN (?, ?, ?, ?, ?)
+        GROUP BY c.agent_type
+      `;
+
+      const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
+
+      // Processar resultados e preencher estratégias sem dados
+      const strategyStats = strategies.map(strategy => {
+        const found = stats.find((s: any) => s.strategy === strategy);
+        if (found) {
+          const totalTrades = parseInt(found.totalTrades) || 0;
+          const wins = parseInt(found.wins) || 0;
+          const losses = parseInt(found.losses) || 0;
+          const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(2) : '0.00';
+
+          return {
+            name: this.getStrategyDisplayName(strategy),
+            strategy: strategy,
+            status: 'active',
+            totalUsers: parseInt(found.totalUsers) || 0,
+            totalTrades: totalTrades,
+            wins: wins,
+            losses: losses,
+            profit: parseFloat(found.netProfit) || 0,
+            winRate: parseFloat(winRate),
+            profitReached: 0, // TODO: implementar se necessário
+            lossReached: 0, // TODO: implementar se necessário
+            activeStop: 0, // TODO: implementar se necessário
+            riskMode: 'N/A', // TODO: implementar se necessário
+            tradeMode: 'N/A', // TODO: implementar se necessário
+          };
+        } else {
+          return {
+            name: this.getStrategyDisplayName(strategy),
+            strategy: strategy,
+            status: 'inactive',
+            totalUsers: 0,
+            totalTrades: 0,
+            wins: 0,
+            losses: 0,
+            profit: 0,
+            winRate: 0,
+            profitReached: 0,
+            lossReached: 0,
+            activeStop: 0,
+            riskMode: 'N/A',
+            tradeMode: 'N/A',
+          };
+        }
+      });
+
+      // Calcular totais
+      const totalActiveIAs = strategyStats.filter(s => s.totalTrades > 0).length;
+      const combinedProfit = strategyStats.reduce((sum, s) => sum + s.profit, 0);
+      const totalTrades = strategyStats.reduce((sum, s) => sum + s.totalTrades, 0);
+      const totalWins = strategyStats.reduce((sum, s) => sum + s.wins, 0);
+      const globalAccuracy = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(2) : '0.00';
+
+      // Identificar IA com maior lucro
+      const topPerformer = strategyStats.reduce((top, current) => {
+        return current.profit > top.profit ? current : top;
+      }, strategyStats[0]);
+
+      return {
+        strategies: strategyStats,
+        summary: {
+          totalActiveIAs: totalActiveIAs,
+          combinedProfit: parseFloat(combinedProfit.toFixed(2)),
+          globalAccuracy: parseFloat(globalAccuracy),
+          topPerformer: {
+            name: topPerformer.name,
+            profit: parseFloat(topPerformer.profit.toFixed(2)),
+          },
+        },
+      };
+    } catch (error) {
+      this.logger.error('[GetGeneralStats] Erro ao buscar estatísticas gerais:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Retorna nome de exibição da estratégia
+   */
+  private getStrategyDisplayName(strategy: string): string {
+    const names: { [key: string]: string } = {
+      orion: 'IA Orion',
+      apollo: 'IA Apollo',
+      nexus: 'IA Nexus',
+      titan: 'IA Titan',
+      falcon: 'IA Falcon',
+    };
+    return names[strategy] || strategy.toUpperCase();
+  }
+
 }
 
