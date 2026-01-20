@@ -117,6 +117,10 @@ class BuyContractDto {
   @IsOptional()
   @IsInt()
   multiplier?: number; // Para contratos MULTUP/MULTDOWN
+
+  @IsOptional()
+  @IsString()
+  token?: string; // Token explícito (padrão IA)
 }
 
 class SellContractDto {
@@ -1731,9 +1735,19 @@ export class DerivController {
       if (needsReconnect) {
         this.logger.log(`[Trading] Reconectando: isAuthorized=${service['isAuthorized']}, currentLoginid=${currentLoginid}, targetLoginid=${targetLoginid}`);
 
-        // Buscar token do loginid específico ou fallback
-        let token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || null;
+        // 1. Tentar token explícito do corpo da requisição (Padrão IA / Robustez)
+        let token = (body as any).token;
 
+        if (token) {
+          this.logger.log(`[Trading] Usando token explícito fornecido na requisição`);
+        }
+
+        // 2. Se não veio no body, buscar do mapeamento no banco
+        if (!token) {
+          token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || null;
+        }
+
+        // 3. Fallback: buscar do storage antigo
         if (!token) {
           token = await this.getTokenFromStorage(userId, targetLoginid);
         }
