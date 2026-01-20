@@ -67,46 +67,49 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   private async createStatsIndexes(): Promise<void> {
     try {
-      this.logger.log('[CreateStatsIndexes] Criando índices e coluna strategy...');
+      this.logger.log('[CreateStatsIndexes] Verificando e atualizando esquema do banco de dados...');
 
-      // 1. Adicionar coluna strategy se não existir
-      await this.dataSource.query(`
-        ALTER TABLE ai_trades 
-        ADD COLUMN IF NOT EXISTS strategy VARCHAR(50) DEFAULT NULL
-      `);
-      this.logger.log('[CreateStatsIndexes] ✅ Coluna strategy verificada');
+      // 1. Tentar adicionar coluna strategy (capturando erro se já existir)
+      // Evita uso de IF NOT EXISTS que pode não ser suportado em versões antigas do MySQL
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE ai_trades 
+          ADD COLUMN strategy VARCHAR(50) DEFAULT NULL
+        `);
+        this.logger.log('[CreateStatsIndexes] ✅ Coluna strategy adicionada com sucesso');
+      } catch (error) {
+        // Ignorar erro de coluna duplicada (1060: Duplicate column name)
+        if (error.errno === 1060 || error.code === 'ER_DUP_FIELDNAME') {
+          // Coluna já existe, tudo bem.
+        } else {
+          this.logger.error('[CreateStatsIndexes] Erro ao adicionar coluna strategy:', error);
+        }
+      }
 
-      // 2. Criar índices para otimização
+      // 2. Criar índices (um por um, ignorando erro de duplicidade)
+      const createIndex = async (query: string, name: string) => {
+        try {
+          await this.dataSource.query(query);
+          this.logger.log(`[CreateStatsIndexes] ✅ Índice ${name} criado`);
+        } catch (error) {
+          // 1061: Duplicate key name
+          if (error.errno === 1061 || error.code === 'ER_DUP_KEYNAME' || error.message?.includes('already exists')) {
+            // Índice já existe
+          } else {
+            this.logger.error(`[CreateStatsIndexes] Erro ao criar índice ${name}:`, error);
+          }
+        }
+      };
 
-      // Índice para filtro por estratégia
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_strategy 
-        ON ai_trades(strategy, status, created_at)
-      `);
+      await createIndex(`CREATE INDEX idx_ai_trades_strategy ON ai_trades(strategy, status, created_at)`, 'idx_ai_trades_strategy');
+      await createIndex(`CREATE INDEX idx_ai_user_config_strategy ON ai_user_config(strategy)`, 'idx_ai_user_config_strategy');
+      await createIndex(`CREATE INDEX idx_ai_trades_stats_query ON ai_trades(user_id, status, created_at, profit_loss)`, 'idx_ai_trades_stats_query');
+      await createIndex(`CREATE INDEX idx_ai_trades_created_status ON ai_trades(created_at, status)`, 'idx_ai_trades_created_status');
 
-      // Índice para ai_user_config (usado na contagem de usuários)
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_user_config_strategy 
-        ON ai_user_config(strategy)
-      `).catch(() => { });
-
-      // ÍNDICE COMPOSTO CRÍTICO para ai_trades (otimizado para a query de stats)
-      // Este índice cobre: user_id, status, created_at, profit_loss
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_stats_query 
-        ON ai_trades(user_id, status, created_at, profit_loss)
-      `).catch(() => { });
-
-      // Índice adicional para filtros de data
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_created_status 
-        ON ai_trades(created_at, status)
-      `).catch(() => { });
-
-      this.logger.log('[CreateStatsIndexes] ✅ Todos os índices criados com sucesso');
+      this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
     } catch (error) {
-      this.logger.error('[CreateStatsIndexes] Erro ao criar índices:', error);
-      // Não lançar erro - o serviço pode funcionar sem os índices
+      this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
+      // Não lançar erro para não parar a inicialização
     }
   }
 
