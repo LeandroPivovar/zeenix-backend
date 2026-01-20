@@ -17,7 +17,7 @@ import { CopyTradingService } from './copy-trading.service';
 export class CopyTradingController {
   private readonly logger = new Logger(CopyTradingController.name);
 
-  constructor(private readonly copyTradingService: CopyTradingService) {}
+  constructor(private readonly copyTradingService: CopyTradingService) { }
 
   @Post('activate')
   @UseGuards(AuthGuard('jwt'))
@@ -40,7 +40,7 @@ export class CopyTradingController {
   ) {
     try {
       const userId = req.user?.userId || req.user?.sub || req.user?.id;
-      
+
       if (!userId) {
         throw new HttpException(
           {
@@ -367,9 +367,26 @@ export class CopyTradingController {
       const copiers = await this.copyTradingService.getCopiers(masterUserId);
       this.logger.log(`[GetCopiers] Retornando ${copiers.length} copiadores`);
 
+      const mappedCopiers = copiers.map((c: any) => ({
+        id: c.id,
+        userId: c.user_id,
+        name: c.user_name || 'Usuário',
+        email: c.user_email || '',
+        tag: (Boolean(c.is_active) === true || c.session_status === 'active') ? 'Ativo' : 'Inativo',
+        multiplier: c.leverage ? `${c.leverage}x` : '1x',
+        profitTarget: parseFloat(c.take_profit) || 0,
+        lossLimit: parseFloat(c.stop_loss) || 0,
+        balance: parseFloat(c.session_balance) || 0,
+        pnl: parseFloat(c.total_profit) || 0,
+        isActive: Boolean(c.is_active) === true || c.session_status === 'active',
+        allocationType: c.allocation_type,
+        allocationValue: parseFloat(c.allocation_value) || 0,
+        // formattedDate: c.created_at || c.activated_at 
+      }));
+
       return {
         success: true,
-        data: copiers,
+        data: mappedCopiers,
       };
     } catch (error) {
       this.logger.error(

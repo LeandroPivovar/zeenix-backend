@@ -1690,11 +1690,7 @@ export class CopyTradingService {
           allocationType: copier.allocation_type,
           allocationValue: parseFloat(copier.allocation_value || '0'),
           allocationPercentage: copier.allocation_percentage ? parseFloat(copier.allocation_percentage) : null,
-          totalOperations: copier.total_operations || 0,
-          totalWins: copier.total_wins || 0,
-          totalLosses: copier.total_losses || 0,
-          activatedAt: copier.activated_at,
-          createdAt: copier.created_at,
+          // Retornar lista combinada (se não foi retornado antes)
         };
       });
     } catch (error) {
