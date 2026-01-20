@@ -59,6 +59,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     }
 
     this.token = token;
+    this.logger.log(`[DerivWebSocketService] Conectando com token prefix: ${token.substring(0, 4)} (targetLoginid: ${loginid || 'N/A'})`);
     if (loginid) {
       this.currentLoginid = loginid;
     }
@@ -86,6 +87,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
       this.ws.on('open', () => {
         this.logger.log('WebSocket aberto, enviando autorização');
+        this.logger.log(`[DerivWebSocketService] Enviando authorize com token prefix: ${this.token ? this.token.substring(0, 4) : 'N/A'}`);
         this.send({ authorize: this.token });
       });
 

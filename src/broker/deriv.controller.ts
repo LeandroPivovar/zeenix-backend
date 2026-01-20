@@ -1738,7 +1738,7 @@ export class DerivController {
           throw new BadRequestException('Token não encontrado. Conecte-se primeiro.');
         }
 
-        this.logger.log(`[Trading] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'}`);
+        this.logger.log(`[Trading] Token encontrado para loginid ${targetLoginid}: ${token ? 'SIM' : 'NÃO'} (Prefix: ${token ? token.substring(0, 4) : 'N/A'})`);
 
         // Se já estiver conectado, desconectar primeiro
         if (service['isAuthorized']) {
