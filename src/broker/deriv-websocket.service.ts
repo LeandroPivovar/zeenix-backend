@@ -542,7 +542,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     this.logger.log(`[${token.substring(0, 5)}] Tentando reconectar em ${delay}ms...`);
 
     conn.reconnectTimeout = setTimeout(() => {
-      this.establishConnection(token, conn.loginid)
+      this.establishConnection(token, conn.loginid || undefined)
         .then(() => { if (conn) conn.isReconnecting = false; })
         .catch(() => { if (conn) { conn.isReconnecting = false; this.attemptReconnect(token); } });
     }, delay);
@@ -578,4 +578,32 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   getActiveSymbols(token?: string): void { this.send({ active_symbols: 'brief' }, token); }
   getTradingDurations(landingCompany: string = 'svg', token?: string): void { this.send({ trading_durations: 1, landing_company_short: landingCompany }, token); }
   getContractsFor(symbol: string, currency: string = 'USD', token?: string): void { this.send({ contracts_for: symbol, currency, landing_company: 'svg' }, token); }
+
+  sellContract(contractId: string, price: number, token?: string): void {
+    // Se não tiver token, teria que varrer as conexões ou assumir uma default?
+    // O controller passa 0 como preço (venda a mercado)
+    this.send({ sell: contractId, price: price }, token);
+  }
+
+  cancelSubscription(subscriptionId: string, token?: string): void {
+    this.send({ forget: subscriptionId }, token);
+    // Opcional: limpar subscriptionId do estado se encontrar em alguma conexão
+    // Mas teria que varrer connection.tickSubscriptionId === subscriptionId etc.
+  }
+
+  cancelTickSubscription(token?: string): void {
+    this.send({ forget_all: 'ticks' }, token);
+    if (token) {
+      const conn = this.connections.get(token);
+      if (conn) conn.tickSubscriptionId = null;
+    }
+  }
+
+  cancelProposalSubscription(token?: string): void {
+    this.send({ forget_all: 'proposal' }, token);
+    if (token) {
+      const conn = this.connections.get(token);
+      if (conn) conn.proposalSubscriptionId = null;
+    }
+  }
 }
