@@ -912,7 +912,11 @@ ${filtersText}
       const contractId = buyResponse.buy.contract_id;
       const buyDuration = Date.now() - buyStartTime;
 
-      this.saveLog(userId, 'info', `🚀 Ordem enviada! ID: ${contractId} | Prop: ${proposalDuration}ms | Compra: ${buyDuration}ms | Aguardando resultado...`);
+      this.saveLog(userId, 'operacao',
+        `✅ CONTRATO CRIADO\n` +
+        `• ID: ${contractId}\n` +
+        `• Latência Proposta: ${proposalDuration}ms\n` +
+        `• Latência Compra: ${buyDuration}ms`);
 
       // ✅ PASSO 3: Monitorar Resultado (Timeout 90s) usando Subscription
       const monitorStartTime = Date.now();
