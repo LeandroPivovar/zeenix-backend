@@ -1397,31 +1397,35 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Drop view if exists and recreate (para garantir que está atualizada)
       await this.dataSource.query(`DROP VIEW IF EXISTS ai_stats_summary`);
+      this.logger.log('[CreateStatsView] View antiga removida (se existia)');
 
-      // Criar view com dados agregados
+      // Criar view com dados agregados - SIMPLIFICADA para MySQL
       const createViewQuery = `
         CREATE VIEW ai_stats_summary AS
         SELECT 
           c.strategy,
           COUNT(DISTINCT c.user_id) as totalUsers,
-          COUNT(t.id) as totalTrades,
-          SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
-          SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
-          SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END) as totalProfit,
-          SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END) as totalLoss,
-          SUM(t.profit_loss) as netProfit,
-          DATE(t.created_at) as trade_date
+          COALESCE(COUNT(t.id), 0) as totalTrades,
+          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END), 0) as wins,
+          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END), 0) as losses,
+          COALESCE(SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END), 0) as totalProfit,
+          COALESCE(SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END), 0) as totalLoss,
+          COALESCE(SUM(t.profit_loss), 0) as netProfit,
+          CAST(t.created_at AS DATE) as trade_date
         FROM ai_user_config c
         LEFT JOIN ai_trades t ON c.user_id = t.user_id 
           AND t.status IN ('WON', 'LOST')
         WHERE c.strategy IN ('orion', 'apollo', 'nexus', 'titan', 'atlas')
-        GROUP BY c.strategy, DATE(t.created_at)
+        GROUP BY c.strategy, CAST(t.created_at AS DATE)
       `;
 
+      this.logger.log('[CreateStatsView] Executando CREATE VIEW...');
       await this.dataSource.query(createViewQuery);
       this.logger.log('[CreateStatsView] ✅ View criada com sucesso');
     } catch (error) {
-      this.logger.error('[CreateStatsView] Erro ao criar view:', error);
+      this.logger.error('[CreateStatsView] ❌ Erro ao criar view:');
+      this.logger.error(`[CreateStatsView] Mensagem: ${error.message}`);
+      this.logger.error(`[CreateStatsView] Stack: ${error.stack}`);
       // Não lançar erro - o serviço pode funcionar sem a view (só será mais lento)
     }
   }
