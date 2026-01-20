@@ -1464,21 +1464,26 @@ export class AutonomousAgentService implements OnModuleInit {
 
       this.logger.log(`[GetGeneralStats] 📊 Usuários por estratégia: ${JSON.stringify(userCounts)}`);
 
-      // 2. Buscar estatísticas de trades (LEFT JOIN - inclui estratégias sem trades)
+      // 2. Buscar estatísticas de trades (usando subquery para evitar duplicação)
+      // PROBLEMA: Um usuário pode ter múltiplas configs para mesma estratégia
+      // SOLUÇÃO: Usar DISTINCT user_ids como filtro, não JOIN direto
       const tradeStatsQuery = `
         SELECT 
-          c.strategy,
+          strategy,
           COUNT(t.id) as totalTrades,
           SUM(CASE WHEN t.status = 'WON' THEN 1 ELSE 0 END) as wins,
           SUM(CASE WHEN t.status = 'LOST' THEN 1 ELSE 0 END) as losses,
           SUM(CASE WHEN t.status = 'WON' THEN t.profit_loss ELSE 0 END) as totalProfit,
           SUM(CASE WHEN t.status = 'LOST' THEN t.profit_loss ELSE 0 END) as totalLoss,
           SUM(t.profit_loss) as netProfit
-        FROM ai_user_config c
+        FROM (
+          SELECT DISTINCT strategy, user_id 
+          FROM ai_user_config 
+          WHERE strategy IN (?, ?, ?, ?, ?)
+        ) c
         LEFT JOIN ai_trades t ON c.user_id = t.user_id 
           AND t.status IN ('WON', 'LOST')
           ${dateFilter}
-        WHERE c.strategy IN (?, ?, ?, ?, ?)
         GROUP BY c.strategy
       `;
 
