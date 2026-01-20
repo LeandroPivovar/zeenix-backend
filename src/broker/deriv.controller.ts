@@ -611,10 +611,16 @@ export class DerivController {
         const derivInfoForTokens = await this.userRepository.getDerivInfo(userId);
         const tokensByLoginIdForAccount = derivInfoForTokens?.raw?.tokensByLoginId || {};
 
-        // Adicionar tokensByLoginId ao account antes de passar para buildResponse
+        // Adicionar tokensByLoginId ao account (MERGE) antes de passar para buildResponse e salvar
+        // Isso garante que não perderemos os tokens de outras contas ao atualizar o saldo de uma conta específica
+        const mergedTokens = {
+          ...tokensByLoginIdForAccount,
+          ...(account.tokensByLoginId || {})
+        };
+
         const accountWithTokens = {
           ...account,
-          tokensByLoginId: tokensByLoginIdForAccount,
+          tokensByLoginId: mergedTokens,
         };
 
         const sessionPayload = {
@@ -627,17 +633,17 @@ export class DerivController {
           balancesByCurrencyReal: sessionPayload.balancesByCurrencyReal
         })}`);
         this.derivService.setSession(userId, sessionPayload);
-        this.logger.log(`[STATUS] DEBUG - account sendo salvo como raw: ${JSON.stringify({
-          hasBalancesByCurrencyDemo: !!account.balancesByCurrencyDemo,
-          hasBalancesByCurrencyReal: !!account.balancesByCurrencyReal,
-          balancesByCurrencyDemo: account.balancesByCurrencyDemo,
-          balancesByCurrencyReal: account.balancesByCurrencyReal
+        this.logger.log(`[STATUS] DEBUG - account sendo salvo como raw (WITH TOKENS): ${JSON.stringify({
+          hasBalancesByCurrencyDemo: !!accountWithTokens.balancesByCurrencyDemo,
+          hasBalancesByCurrencyReal: !!accountWithTokens.balancesByCurrencyReal,
+          tokensCount: Object.keys(accountWithTokens.tokensByLoginId || {}).length,
+          tokensKeys: Object.keys(accountWithTokens.tokensByLoginId || {})
         })}`);
         await this.userRepository.updateDerivInfo(userId, {
           loginId: sessionPayload.loginid ?? account.loginid ?? userId,
           currency: sessionPayload.currency ?? account.currency,
           balance: sessionPayload.balance?.value ?? account.balance?.value ?? undefined,
-          raw: account,
+          raw: accountWithTokens,
         });
         this.logger.log(`[STATUS] Saldo atualizado com sucesso: ${JSON.stringify(account)}`);
         this.logger.log(`[STATUS] SessionPayload retornado: ${JSON.stringify({
