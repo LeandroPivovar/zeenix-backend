@@ -703,7 +703,7 @@ export class TitanStrategy implements IStrategy {
         if (stake <= 0) {
             const blindadoMsg = riskManager.blindadoActive
                 ? `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${riskManager.guaranteedProfit.toFixed(2)} - IA DESATIVADA`
-                : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} | Limite: $${riskManager.stopLossLimit.toFixed(2)} - IA DESATIVADA`;
+                : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
 
