@@ -53,13 +53,21 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   }
 
   async connect(token: string, loginid?: string): Promise<void> {
+    // Verificar se já estamos conectados e autorizados
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isAuthorized) {
-      this.logger.log('Conexão WebSocket já está ativa');
-      return;
+      // ✅ VERIFICAÇÃO CRÍTICA: O token atual corresponde ao solicitado?
+      if (this.token === token) {
+        this.logger.log('Conexão WebSocket já está ativa com o mesmo token.');
+        return;
+      }
+
+      this.logger.warn(`[DerivWebSocketService] ⚠️ Conexão ativa, mas token mudou. Reconectando... (Antigo: ${this.token?.substring(0, 4)}..., Novo: ${token.substring(0, 4)}...)`);
+      this.disconnect();
+      // O fluxo continuará abaixo para estabelecer nova conexão
     }
 
     this.token = token;
-    this.logger.log(`[DerivWebSocketService] Conectando com token prefix: ${token.substring(0, 4)} (targetLoginid: ${loginid || 'N/A'})`);
+    this.logger.log(`[DerivWebSocketService] Conectando com token prefix: ${token.substring(0, 4)}... (targetLoginid: ${loginid || 'N/A'})`);
     if (loginid) {
       this.currentLoginid = loginid;
     }
@@ -726,6 +734,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     this.isAuthorized = false;
     this.currentLoginid = null;
+    this.token = null; // ✅ Limpar token ao desconectar
     this.tickSubscriptionId = null;
     this.proposalSubscriptionId = null;
     this.openContractSubscriptionId = null;
