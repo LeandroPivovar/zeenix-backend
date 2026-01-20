@@ -1009,7 +1009,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     const trades = await this.dataSource.query(
       `SELECT 
-         DATE(created_at) as date,
+         DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) as date,
          SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as profit,
          SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as loss,
          COUNT(*) as ops,
@@ -1018,7 +1018,7 @@ export class AutonomousAgentService implements OnModuleInit {
        WHERE user_id = ? 
          AND created_at >= ?
          AND status IN ('WON', 'LOST')
-       GROUP BY DATE(created_at)
+       GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '-03:00'))
        ORDER BY date DESC`,
       [userId, effectiveStartDate.toISOString()]
     );
@@ -1339,12 +1339,11 @@ export class AutonomousAgentService implements OnModuleInit {
            exit_price
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
-           AND created_at >= ?
-           AND created_at <= ?
+           AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
            AND status IN ('WON', 'LOST')
       `;
 
-      const params: any[] = [userId, startOfDayStr, endOfDayStr];
+      const params: any[] = [userId, targetDateStr];
 
       // Adicionar filtro de sessão se for HOJE e tiver sessionDate
       /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
