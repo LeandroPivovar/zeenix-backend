@@ -1802,7 +1802,7 @@ export class DerivController {
         proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
       }
 
-      const proposal = await this.getProposalInternal(service, proposalConfig);
+      const proposal = await this.getProposalInternal(service, proposalConfig, (body as any).token);
 
       if (!proposal || !proposal.id) {
         throw new BadRequestException('Não foi possível obter proposta para compra.');
@@ -1847,20 +1847,24 @@ export class DerivController {
     }
   }
 
-  private async getProposalInternal(service: any, config: ProposalDto): Promise<any> {
+  private async getProposalInternal(service: any, config: ProposalDto, token?: string): Promise<any> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        service.removeListener('proposal', handler); // Clean up on timeout
         reject(new Error('Timeout ao buscar proposta'));
       }, 10000);
 
       const handler = (proposalData: any) => {
+        // Validate if this proposal matches our request context if possible, 
+        // but for now just take the first one since we are serialized by user action usually.
+        // TODO: In future better to match by ID or internal request tracking.
         clearTimeout(timeout);
-        service.removeListener('proposal', handler);
+        // service.removeListener('proposal', handler); // removed here as 'once' handles it
         resolve(proposalData);
       };
 
-      // Remover listeners antigos para evitar vazamento
-      service.removeAllListeners('proposal');
+      // REMOVIDO: removeAllListeners causava timeout em requisições paralelas
+      // service.removeAllListeners('proposal');
 
       service.once('proposal', handler);
 
@@ -1894,7 +1898,8 @@ export class DerivController {
         }
       }
 
-      service.subscribeToProposal(proposalConfig);
+      // ✅ Usar token explícito para garantir envio na conexão correta
+      service.subscribeToProposal(proposalConfig, token);
     });
   }
 

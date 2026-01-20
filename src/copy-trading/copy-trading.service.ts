@@ -1645,7 +1645,7 @@ export class CopyTradingService {
           duration: tradeConfig.duration,
           durationUnit: tradeConfig.durationUnit,
           amount: tradeConfig.stakeAmount,
-        });
+        }, tradeConfig.derivToken);
 
         // Wait for proposal and buy
         const proposalTimeout = setTimeout(() => {
