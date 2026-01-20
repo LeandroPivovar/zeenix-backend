@@ -552,6 +552,8 @@ export class TitanStrategy implements IStrategy {
 
         // Só executar operação se houver sinal
         if (signal) {
+            // Reset ticks counter after signal or if analysis window is consumed
+            state.ticksColetados = 0;
             await this.executeOperation(state, signal);
         }
     }
@@ -598,8 +600,21 @@ export class TitanStrategy implements IStrategy {
         else if (effectiveModeUser === 'NORMAL') analysisMode = 'NORMAL';
         else analysisMode = 'LENTO'; // PRECISO maps to LENTO
 
+        // ✅ 3. Verificar Janela de Dados (Wait for next X ticks)
+        const config = MODE_CONFIGS[analysisMode];
+        if (state.ticksColetados < config.windowSize) {
+            // Log de progresso da coleta (Feedback periódico)
+            if (state.ticksColetados % 2 === 0 || state.ticksColetados === 0) {
+                this.logDataCollection(state.userId, state.ticksColetados, config.windowSize);
+            }
+            return null;
+        }
+
         // Executar Análise Titan
         const result = analyzeTitan(this.ticks, analysisMode);
+
+        // ✅ Reset incremental para garantir que esperará novos dados após cada análise
+        state.ticksColetados = 0;
 
         // 🔍 DEBUG INTERNO
         // this.logger.debug(`[TITAN][ANALYSIS] ${state.userId} | Mode: ${analysisMode} | Result: ${result.hasSignal ? 'SIGNAL' : 'NO_SIGNAL'} (${result.reason})`);
@@ -620,10 +635,9 @@ export class TitanStrategy implements IStrategy {
                     this.logDataCollection(state.userId, parseInt(progressMatch[1]), parseInt(progressMatch[2]));
                 }
             } else {
-                // Log da análise sem sinal (Feedback periódico)
-                this.logAnalysisStarted(state.userId, analysisMode);
+                // Log da análise sem sinal (Se quiser reduzir spam, pode remover ou throtar)
+                // this.logAnalysisStarted(state.userId, analysisMode);
             }
-            return null;
             return null;
         }
 
