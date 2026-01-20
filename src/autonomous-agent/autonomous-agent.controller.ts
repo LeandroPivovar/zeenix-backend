@@ -496,7 +496,9 @@ export class AutonomousAgentController {
     @Query('endDate') endDate?: string,
   ) {
     try {
+      this.logger.log(`[GetGeneralStats] Endpoint chamado com startDate=${startDate}, endDate=${endDate}`);
       const stats = await this.agentService.getGeneralStats(startDate, endDate);
+      this.logger.log(`[GetGeneralStats] Estatísticas retornadas com sucesso`);
       return {
         success: true,
         data: stats,
