@@ -2667,11 +2667,17 @@ export class AiService implements OnModuleInit {
       this.logger.debug(
         `[SyncVeloz] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | martingale=${config.modoMartingale}`,
       );
+
+      // ✅ ZENIX v2.0: Resolver conta antes de sincronizar/restaurar
+      const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
+      const finalToken = resolved.token;
+      const finalCurrency = resolved.isVirtual ? 'USD' : (config.currency === 'DEMO' || !config.currency ? 'USD' : config.currency);
+
       this.upsertVelozUserState({
         userId: config.userId,
         stakeAmount: Number(config.stakeAmount) || 0,
-        derivToken: config.derivToken,
-        currency: config.currency || 'USD',
+        derivToken: finalToken,
+        currency: finalCurrency,
         modoMartingale: config.modoMartingale || 'conservador',
       });
     }
@@ -2728,13 +2734,18 @@ export class AiService implements OnModuleInit {
           `[SyncAtlas] Lido do banco: userId=${config.userId} | stake=${config.stakeAmount} | mode=${config.mode}`,
         );
 
+        // ✅ ZENIX v2.0: Resolver conta antes de sincronizar/restaurar
+        const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
+        const finalToken = resolved.token;
+        const finalCurrency = resolved.isVirtual ? 'USD' : (config.currency === 'DEMO' || !config.currency ? 'USD' : config.currency);
+
         try {
           await this.strategyManager.activateUser(config.userId, 'atlas', {
             mode: config.mode || 'veloz',
             stakeAmount: Number(config.stakeAmount) || 0,
             entryValue: Number(config.entryValue) || 0.35,
-            derivToken: config.derivToken,
-            currency: config.currency || 'USD',
+            derivToken: finalToken,
+            currency: finalCurrency,
             modoMartingale: config.modoMartingale || 'conservador',
             profitTarget: config.profitTarget || null,
             lossLimit: config.lossLimit || null,
@@ -3834,7 +3845,7 @@ export class AiService implements OnModuleInit {
 
   /**
    * ✅ ZENIX v2.0: Resolve Conta Deriv (Prioriza Demo se Real zerada)
-   * Busca deriv_raw do banco e decide qual conta usar baseada no saldo
+   * Busca deriv_raw do banco e decide qual conta usar baseada no saldo E nas configurações do usuário
    */
   private async resolveDerivAccount(
     userId: string,
@@ -3842,9 +3853,12 @@ export class AiService implements OnModuleInit {
     requestedCurrency: string
   ): Promise<{ token: string; currency: string; loginid: string, isVirtual: boolean }> {
     try {
-      // 1. Buscar dados raw do usuário
+      // 1. Buscar configurações do usuário (trade_currency) E dados raw
       const userResult = await this.dataSource.query(
-        `SELECT deriv_raw FROM users WHERE id = ?`,
+        `SELECT u.deriv_raw, s.trade_currency 
+         FROM users u
+         LEFT JOIN user_settings s ON u.id = s.user_id
+         WHERE u.id = ?`,
         [userId]
       );
 
@@ -3852,6 +3866,9 @@ export class AiService implements OnModuleInit {
         this.logger.warn(`[ResolveDeriv] ⚠️ deriv_raw não encontrado para user ${userId}. Usando token fornecido.`);
         return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
       }
+
+      const userPreferredCurrency = (userResult[0].trade_currency || 'USD').toUpperCase();
+      this.logger.log(`[ResolveDeriv] 👤 Preferência do usuário: ${userPreferredCurrency}`);
 
       let derivRaw: any;
       try {
@@ -3873,53 +3890,68 @@ export class AiService implements OnModuleInit {
       const realBalance = derivRaw.balancesByCurrencyReal['USD'] || 0;
       const demoBalance = derivRaw.balancesByCurrencyDemo['USD'] || 0;
 
-      // Buscar Tokens
+      // Buscar Tokens por loginid
       const tokens = derivRaw.tokensByLoginId || {};
       let realToken = '';
       let demoToken = '';
       let realLoginId = '';
       let demoLoginId = '';
 
-      // Tentar identificar tokens (VRTC = Demo, CR = Real)
-      for (const [loginAndToken, tokenValue] of Object.entries(tokens)) {
-        // A chave pode ser o loginid (ex: CR9809146) e o valor o token? 
-        // O JSON de exemplo mostra: "tokensByLoginId": {"CR9809146": "token..."}
-        if (loginAndToken.startsWith('VRTC')) {
-          demoLoginId = loginAndToken;
+      // Identificar contas (VRTC = Demo, CR = Real)
+      for (const [loginid, tokenValue] of Object.entries(tokens)) {
+        if (loginid.startsWith('VRTC')) {
+          demoLoginId = loginid;
           demoToken = tokenValue as string;
-        } else if (loginAndToken.startsWith('CR')) {
-          realLoginId = loginAndToken;
-          realToken = tokenValue as string;
+        } else if (loginid.startsWith('CR')) {
+          // Pode ter múltiplas contas CR, pegar a primeira USD (assumindo)
+          if (!realLoginId) {
+            realLoginId = loginid;
+            realToken = tokenValue as string;
+          }
         }
       }
 
-      this.logger.log(`[ResolveDeriv] 📊 Análise de Saldo: REAL=$${realBalance} | DEMO=$${demoBalance}`);
+      this.logger.log(`[ResolveDeriv] 📊 Saldos | REAL: $${realBalance} (${realLoginId}) | DEMO: $${demoBalance} (${demoLoginId})`);
 
-      // 3. HEURÍSTICA DE DECISÃO
-      // Se o usuário pediu PRA VALER (Real) mas está SEM SALDO (< $1), e tem DEMO com saldo...
-      // FORÇAR MUDANÇA PARA DEMO para evitar erro "Insufficient Balance"
-      if (requestedCurrency !== 'DEMO' && realBalance < 1.00 && demoBalance >= 1.00) {
+      // 3. LÓGICA DE DECISÃO BASEADA EM PREFERÊNCIA DO USUÁRIO
+      const wantsDemo = userPreferredCurrency === 'DEMO';
+
+      if (wantsDemo) {
+        // Usuário quer DEMO
         if (demoToken) {
-          this.logger.warn(`[ResolveDeriv] ⚠️ CONTA REAL INSUFICIENTE ($${realBalance}). Mudando automaticamente para DEMO ($${demoBalance}).`);
+          this.logger.log(`[ResolveDeriv] ✅ Usando DEMO conforme preferência do usuário | Saldo: $${demoBalance}`);
           return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
+        } else {
+          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Fallback para Real.`);
+          if (realToken) {
+            return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
+          }
+        }
+      } else {
+        // Usuário quer REAL (USD ou outra moeda)
+        // Verificar se Real tem saldo suficiente
+        if (realBalance >= 1.00) {
+          this.logger.log(`[ResolveDeriv] ✅ Usando REAL | Saldo: $${realBalance}`);
+          if (realToken) {
+            return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
+          }
+        } else {
+          // Real insuficiente, mudar para Demo
+          if (demoToken && demoBalance >= 1.00) {
+            this.logger.warn(`[ResolveDeriv] ⚠️ CONTA REAL INSUFICIENTE ($${realBalance}). Mudando automaticamente para DEMO ($${demoBalance}).`);
+            return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
+          } else {
+            this.logger.error(`[ResolveDeriv] ❌ Real insuficiente E Demo não disponível! Real: $${realBalance}, Demo: $${demoBalance}`);
+            // Retornar Real mesmo assim (vai dar erro, mas é melhor que falhar silenciosamente)
+            if (realToken) {
+              return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
+            }
+          }
         }
       }
 
-      // Se o usuário pediu DEMO, garantir que retorna o token DEMO correto
-      if (requestedCurrency === 'DEMO') {
-        if (demoToken) {
-          return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
-        }
-      }
-
-      // Caso padrão: Tentar usar o que foi pedido, mas validar token real
-      if (requestedCurrency !== 'DEMO' && realToken) {
-        // Se pediu Real e temos token Real, verificar se é o mesmo fornecido (opcional, mas seguro usar do banco)
-        // Vamos confiar no banco
-        return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
-      }
-
-      // Fallback final
+      // Fallback final: usar o que foi fornecido
+      this.logger.warn(`[ResolveDeriv] ⚠️ Nenhuma lógica aplicada, usando token fornecido.`);
       return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
 
     } catch (error) {
