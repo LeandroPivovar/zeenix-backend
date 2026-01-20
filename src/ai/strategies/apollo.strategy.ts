@@ -659,10 +659,7 @@ ${filtersText}
     // 1. PROFIT TARGET
     if (profit >= state.profitTarget) {
       this.saveLog(state.userId, 'resultado',
-        `🏆 [META APOLLO]\n` +
-        `• Status: ATINGIDA!\n` +
-        `• Lucro Total: $${profit.toFixed(2)}\n` +
-        `• Objetivo: $${state.profitTarget.toFixed(2)}`);
+        `🎯 META DE LUCRO ATINGIDA! Lucro: $${profit.toFixed(2)} | Meta: $${state.profitTarget.toFixed(2)} - IA DESATIVADA`);
       this.handleStopInternal(state, 'profit', profit);
       return false;
     }
@@ -670,10 +667,7 @@ ${filtersText}
     // 2. STOP LOSS NORMAL
     if (profit <= -state.stopLoss) {
       this.saveLog(state.userId, 'alerta',
-        `🛑 [STOP LOSS]\n` +
-        `• Status: LIMITE ATINGIDO\n` +
-        `• Perda Atual: $${Math.abs(profit).toFixed(2)}\n` +
-        `• Limite Máximo: $${Math.abs(state.stopLoss).toFixed(2)}`);
+        `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(profit).toFixed(2)} | Limite: $${state.stopLoss.toFixed(2)} - IA DESATIVADA`);
       this.handleStopInternal(state, 'loss', profit);
       return false;
     }
@@ -681,10 +675,7 @@ ${filtersText}
     // 3. STOP BLINDADO
     if (state.stopBlindadoActive && profit <= state.stopBlindadoFloor) {
       this.saveLog(state.userId, 'alerta',
-        `🛡️ [STOP BLINDADO]\n` +
-        `• Status: ATINGIDO\n` +
-        `• Lucro Preservado: $${profit.toFixed(2)}\n` +
-        `• Ação: Proteção de capital`);
+        `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${profit.toFixed(2)} - IA DESATIVADA`);
       this.handleStopInternal(state, 'blindado', state.stopBlindadoFloor);
       return false;
     }

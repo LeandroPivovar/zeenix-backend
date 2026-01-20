@@ -702,8 +702,8 @@ export class TitanStrategy implements IStrategy {
 
         if (stake <= 0) {
             const blindadoMsg = riskManager.blindadoActive
-                ? `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${riskManager.guaranteedProfit.toFixed(2)} para proteger o seu capital.`
-                : `🛑 [STOP LOSS ATINGIDO] Limite de perda atingido.\n• Sessão Encerrada para proteção do capital.`;
+                ? `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${riskManager.guaranteedProfit.toFixed(2)} - IA DESATIVADA`
+                : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} | Limite: $${riskManager.stopLossLimit.toFixed(2)} - IA DESATIVADA`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
 
@@ -826,7 +826,7 @@ export class TitanStrategy implements IStrategy {
                             );
 
                             this.saveTitanLog(state.userId, this.symbol, 'alerta',
-                                `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`);
+                                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`);
 
                             const deactivationReason =
                                 `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro ` +

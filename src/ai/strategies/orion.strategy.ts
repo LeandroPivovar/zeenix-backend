@@ -2121,7 +2121,7 @@ export class OrionStrategy implements IStrategy {
                 state.userId,
                 this.symbol,
                 'alerta',
-                `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroProtegido.toFixed(2)} para proteger o seu capital.`,
+                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
               );
 
               const deactivationReason =
@@ -3708,7 +3708,7 @@ export class OrionStrategy implements IStrategy {
           this.logger.log(
             `[ORION][${mode}][${state.userId}] 🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} >= Meta: $${profitTarget.toFixed(2)} - DESATIVANDO SESSÃO`,
           );
-          this.saveOrionLog(state.userId, this.symbol, 'info', `🏆 META DE LUCRO ATINGIDA!\n• Lucro Total: $${lucroAtual.toFixed(2)}\n• Ação: Parabéns! Encerrando operações por hoje.`);
+          this.saveOrionLog(state.userId, this.symbol, 'info', `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
 
           // Desativar a IA
           await this.dataSource.query(
@@ -3773,7 +3773,7 @@ export class OrionStrategy implements IStrategy {
               const lucroProtegido = capitalSessao - capitalInicial;
               // ... Log and Stop ...
               this.logger.warn(`[ORION] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
-              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Saldo protegido: $${lucroProtegido.toFixed(2)}`);
+              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`);
 
               const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
 

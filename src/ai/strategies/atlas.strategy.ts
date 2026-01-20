@@ -708,7 +708,7 @@ export class AtlasStrategy implements IStrategy {
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
             this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`
+              `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroFinal.toFixed(2)} - IA DESATIVADA`
             );
 
             await this.dataSource.query(
@@ -1381,7 +1381,7 @@ export class AtlasStrategy implements IStrategy {
         if (capitalSessao <= stopBlindado) {
           const lucroFinal = capitalSessao - capitalInicial;
           this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `💰✅Stoploss blindado atingido, o sistema parou as operações com um lucro de $${lucroFinal.toFixed(2)} para proteger o seu capital.`
+            `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroFinal.toFixed(2)} - IA DESATIVADA`
           );
 
           await this.dataSource.query(
