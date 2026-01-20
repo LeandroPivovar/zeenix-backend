@@ -1666,10 +1666,20 @@ export class DerivController {
       const preferredCurrency = await this.getPreferredCurrency(userId, 'BUY');
 
       this.logger.log(`[Trading] PreferredCurrency: ${preferredCurrency}`);
+
+      // Log detalhado das contas disponíveis
+      if (derivInfo?.raw?.accountsByCurrency) {
+        this.logger.log(`[Trading] 📋 Contas Disponíveis:`);
+        const allAccounts = Object.values(derivInfo.raw.accountsByCurrency).flat();
+        allAccounts.forEach((acc: any) => {
+          const token = derivInfo.raw.tokensByLoginId?.[acc.loginid] ? 'SIM' : 'NÃO';
+          this.logger.log(`[Trading]   - LoginID: ${acc.loginid}, Currency: ${acc.currency}, Balance: ${acc.value}, Type: ${acc.isDemo ? 'DEMO' : 'REAL'}, Token: ${token}`);
+        });
+      } else {
+        this.logger.warn(`[Trading] ⚠️ Sem informações detalhadas de contas (accountsByCurrency)`);
+      }
+
       this.logger.log(`[Trading] derivInfo.raw existe: ${!!derivInfo?.raw}`);
-      this.logger.log(`[Trading] accountsByCurrency existe: ${!!derivInfo?.raw?.accountsByCurrency}`);
-      this.logger.log(`[Trading] accountsByCurrency keys: ${derivInfo?.raw?.accountsByCurrency ? Object.keys(derivInfo?.raw?.accountsByCurrency).join(', ') : 'N/A'}`);
-      this.logger.log(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo?.raw?.tokensByLoginId).join(', ') : 'N/A'}`);
 
       // Determinar qual loginid usar
       // 1. Se loginid foi passado no corpo da requisição (prioridade máxima)

@@ -1414,13 +1414,27 @@ export class CopyTradingService {
           c.created_at,
           c.deriv_token,
           u.name as user_name,
+          c.deriv_token,
+          u.name as user_name,
           u.email as user_email,
           COALESCE((
             SELECT SUM(profit) 
             FROM copy_trading_operations 
             WHERE user_id = c.user_id 
             AND result IN ('win', 'loss')
-          ), 0) as total_profit
+          ), 0) as total_profit,
+          COALESCE((
+            SELECT SUM(profit) 
+            FROM copy_trading_operations 
+            WHERE user_id = c.user_id 
+            AND result IN ('win', 'loss')
+            AND DATE(executed_at) = CURDATE()
+          ), 0) as today_profit,
+          COALESCE((
+            SELECT SUM(stake) 
+            FROM copy_trading_operations 
+            WHERE user_id = c.user_id 
+          ), 0) as total_volume
         FROM copy_trading_config c
         INNER JOIN users u ON c.user_id = u.id
         WHERE c.trader_id IN (${traderIdsToSearch.map(() => '?').join(',')})
@@ -1468,7 +1482,19 @@ export class CopyTradingService {
             FROM copy_trading_operations 
             WHERE user_id = s.user_id 
             AND result IN ('win', 'loss')
-          ), 0) as total_profit
+          ), 0) as total_profit,
+          COALESCE((
+            SELECT SUM(profit) 
+            FROM copy_trading_operations 
+            WHERE user_id = s.user_id 
+            AND result IN ('win', 'loss')
+            AND DATE(executed_at) = CURDATE()
+          ), 0) as today_profit,
+          COALESCE((
+            SELECT SUM(stake) 
+            FROM copy_trading_operations 
+            WHERE user_id = s.user_id 
+          ), 0) as total_volume
         FROM copy_trading_sessions s
         INNER JOIN copy_trading_config c ON s.config_id = c.id
         INNER JOIN users u ON s.user_id = u.id

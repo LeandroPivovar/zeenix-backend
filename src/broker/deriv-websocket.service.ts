@@ -93,12 +93,27 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
         try {
           const msg = JSON.parse(data.toString());
           this.handleMessage(msg);
-          
+
           if (msg.msg_type === 'authorize' && !msg.error) {
             clearTimeout(timeout);
             if (!this.isAuthorized) {
               this.isAuthorized = true;
               this.reconnectAttempts = 0;
+              this.currentLoginid = msg.authorize.loginid;
+
+              const accountList = msg.authorize.account_list;
+              const balance = msg.authorize.balance;
+              const currency = msg.authorize.currency;
+
+              this.logger.log(`✅ Autorizado com sucesso! Conta: ${this.currentLoginid} (${currency}) | Saldo: ${balance}`);
+
+              if (accountList && Array.isArray(accountList)) {
+                this.logger.log(`📋 Contas disponíveis nesta conexão:`);
+                accountList.forEach((acc: any) => {
+                  this.logger.log(`  - LoginID: ${acc.loginid}, Currency: ${acc.currency}, Type: ${acc.is_virtual ? 'DEMO' : 'REAL'}, Disabled: ${acc.is_disabled ? 'SIM' : 'NÃO'}`);
+                });
+              }
+
               this.emit('authorized', msg.authorize);
               resolve();
             }
@@ -302,19 +317,19 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     // IMPORTANTE: Usar contractType da configuração pendente (o que foi solicitado) em vez do retornado pela API
     // Isso garante que o tipo correto seja usado mesmo se a API retornar algo diferente
     const contractType = this.pendingBuyConfig?.contractType || buy.contract_type || 'CALL';
-    
+
     this.logger.log(`[Buy] Processando compra: durationUnit=${durationUnit}, duration=${duration}, contractType=${contractType}, pendingConfig=${JSON.stringify(this.pendingBuyConfig)}`);
     this.logger.log(`[Buy] API retornou contract_type: ${buy.contract_type}, usando: ${contractType}`);
-    
+
     // Log completo da resposta da API para debug
     this.logger.log(`[Buy] Resposta completa da API: ${JSON.stringify(buy)}`);
-    
+
     // Limpar configuração pendente após usar
     this.pendingBuyConfig = null;
 
     // Tentar capturar entry_spot de diferentes campos possíveis
     let entrySpot = buy.entry_spot || buy.spot || buy.current_spot || buy.start_spot || null;
-    
+
     // Se não encontrou entry_spot na resposta, usar o último tick disponível
     if (entrySpot === null || entrySpot === undefined) {
       if (this.ticks && this.ticks.length > 0) {
@@ -325,9 +340,9 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
         this.logger.warn(`[Buy] EntrySpot não encontrado e nenhum tick disponível`);
       }
     }
-    
+
     const entryTime = buy.purchase_time || buy.start_time || Date.now() / 1000;
-    
+
     this.logger.log(`[Buy] EntrySpot final: ${entrySpot} (de entry_spot: ${buy.entry_spot}, spot: ${buy.spot}, current_spot: ${buy.current_spot}, start_spot: ${buy.start_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const tradeData: TradeData = {
@@ -357,7 +372,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     // Tentar capturar exit_spot de diferentes campos possíveis
     let exitSpot = sell.exit_spot || sell.spot || sell.current_spot || sell.exit_spot_price || null;
-    
+
     // Se não encontrou exit_spot na resposta, usar o último tick disponível
     if (exitSpot === null || exitSpot === undefined) {
       if (this.ticks && this.ticks.length > 0) {
@@ -368,7 +383,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
         this.logger.warn(`[Sell] ExitSpot não encontrado e nenhum tick disponível`);
       }
     }
-    
+
     this.logger.log(`[Sell] ExitSpot final: ${exitSpot} (de exit_spot: ${sell.exit_spot}, spot: ${sell.spot}, current_spot: ${sell.current_spot}, último tick: ${this.ticks.length > 0 ? this.ticks[this.ticks.length - 1].value : 'N/A'})`);
 
     const sellData = {
@@ -428,19 +443,19 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
   subscribeToSymbol(symbol: string): void {
     this.symbol = symbol;
-    
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isAuthorized) {
       this.logger.warn('WebSocket não está conectado/autorizado. Aguardando...');
       return;
     }
 
     this.logger.log(`Inscrevendo-se no símbolo: ${symbol}`);
-    
+
     // Para 10 minutos de histórico, calcular o start time como 10 minutos atrás
     // Isso garante que recebemos apenas ticks dos últimos 10 minutos
     const now = Math.floor(Date.now() / 1000);
     const tenMinutesAgo = now - (10 * 60); // 10 minutos em segundos
-    
+
     // Para 10 minutos de histórico, usar ~1000 ticks (assumindo ~1 tick por segundo)
     // Usar count: 1000 para garantir que temos ticks suficientes dos últimos 10 minutos
     this.send({
@@ -452,7 +467,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       subscribe: 1,
       style: 'ticks',
     });
-    
+
     this.logger.log(`Solicitando histórico de ${symbol} a partir de ${tenMinutesAgo} (10 minutos atrás)`);
   }
 
@@ -496,12 +511,12 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       symbol: config.symbol,
       subscribe: 1,
     };
-    
+
     // Adicionar barrier para contratos de dígitos
     if (config.barrier !== undefined && config.barrier !== null) {
       proposalRequest.barrier = String(config.barrier);
     }
-    
+
     // Adicionar multiplier para contratos MULTUP/MULTDOWN
     if (config.multiplier !== undefined && config.multiplier !== null) {
       proposalRequest.multiplier = config.multiplier;
@@ -518,8 +533,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     // Armazenar configuração da compra para preservar durationUnit e contractType originais
     if (durationUnit !== undefined || contractType !== undefined) {
-      this.pendingBuyConfig = { 
-        durationUnit, 
+      this.pendingBuyConfig = {
+        durationUnit,
         duration,
         contractType: contractType || undefined
       };
