@@ -63,6 +63,54 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
+   * Cria índices e adiciona coluna strategy para otimizar queries de estatísticas
+   */
+  private async createStatsIndexes(): Promise<void> {
+    try {
+      this.logger.log('[CreateStatsIndexes] Criando índices e coluna strategy...');
+
+      // 1. Adicionar coluna strategy se não existir
+      await this.dataSource.query(`
+        ALTER TABLE ai_trades 
+        ADD COLUMN IF NOT EXISTS strategy VARCHAR(50) DEFAULT NULL
+      `);
+      this.logger.log('[CreateStatsIndexes] ✅ Coluna strategy verificada');
+
+      // 2. Criar índices para otimização
+
+      // Índice para filtro por estratégia
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_strategy 
+        ON ai_trades(strategy, status, created_at)
+      `);
+
+      // Índice para ai_user_config (usado na contagem de usuários)
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_user_config_strategy 
+        ON ai_user_config(strategy)
+      `).catch(() => { });
+
+      // ÍNDICE COMPOSTO CRÍTICO para ai_trades (otimizado para a query de stats)
+      // Este índice cobre: user_id, status, created_at, profit_loss
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_stats_query 
+        ON ai_trades(user_id, status, created_at, profit_loss)
+      `).catch(() => { });
+
+      // Índice adicional para filtros de data
+      await this.dataSource.query(`
+        CREATE INDEX IF NOT EXISTS idx_ai_trades_created_status 
+        ON ai_trades(created_at, status)
+      `).catch(() => { });
+
+      this.logger.log('[CreateStatsIndexes] ✅ Todos os índices criados com sucesso');
+    } catch (error) {
+      this.logger.error('[CreateStatsIndexes] Erro ao criar índices:', error);
+      // Não lançar erro - o serviço pode funcionar sem os índices
+    }
+  }
+
+  /**
    * Inicializa conexão WebSocket com Deriv API
    */
   async initialize(): Promise<void> {
@@ -1391,36 +1439,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Cria índices para otimizar queries de estatísticas
    * Índices são mais leves que views e não causam locks
    */
-  private async createStatsIndexes(): Promise<void> {
-    try {
-      this.logger.log('[CreateStatsIndexes] Criando índices para otimização...');
 
-      // Índices para ai_user_config
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_user_config_strategy 
-        ON ai_user_config(strategy)
-      `).catch(() => { });
-
-      // ÍNDICE COMPOSTO CRÍTICO para ai_trades (otimizado para a query de stats)
-      // Este índice cobre: user_id, status, created_at, profit_loss
-      // Permite "covering index" - MySQL não precisa acessar a tabela
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_stats_query 
-        ON ai_trades(user_id, status, created_at, profit_loss)
-      `).catch(() => { });
-
-      // Índice adicional para filtros de data (caso a query mude)
-      await this.dataSource.query(`
-        CREATE INDEX IF NOT EXISTS idx_ai_trades_created_status 
-        ON ai_trades(created_at, status)
-      `).catch(() => { });
-
-      this.logger.log('[CreateStatsIndexes] ✅ Índices criados/verificados com sucesso');
-    } catch (error) {
-      this.logger.error('[CreateStatsIndexes] Erro ao criar índices:', error);
-      // Não lançar erro - o serviço pode funcionar sem os índices (só será mais lento)
-    }
-  }
 
   /**
    * Obtém estatísticas gerais de todas as IAs com filtro de data
@@ -1450,28 +1469,28 @@ export class AutonomousAgentService implements OnModuleInit {
         params.push(endDate);
       }
 
-      // A tabela ai_user_config JÁ TEM os dados agregados por estratégia!
-      // Cada linha representa as estatísticas de UM usuário para UMA estratégia específica
-      // Campos: total_trades, total_wins, total_losses, total_profit, total_loss
-      // Basta somar os valores agrupando por estratégia
+      // Agora que ai_trades tem coluna 'strategy', podemos buscar diretamente!
+      // Cada trade está marcado com a estratégia que o gerou
 
       const statsQuery = `
         SELECT 
           strategy,
           COUNT(DISTINCT user_id) as totalUsers,
-          COALESCE(SUM(total_trades), 0) as totalTrades,
-          COALESCE(SUM(total_wins), 0) as wins,
-          COALESCE(SUM(total_losses), 0) as losses,
-          COALESCE(SUM(total_profit), 0) as totalProfit,
-          COALESCE(SUM(total_loss), 0) as totalLoss,
-          COALESCE(SUM(total_profit) + SUM(total_loss), 0) as netProfit
-        FROM ai_user_config
+          COUNT(id) as totalTrades,
+          SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
+          SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
+          SUM(CASE WHEN status = 'WON' THEN profit_loss ELSE 0 END) as totalProfit,
+          SUM(CASE WHEN status = 'LOST' THEN profit_loss ELSE 0 END) as totalLoss,
+          SUM(profit_loss) as netProfit
+        FROM ai_trades
         WHERE strategy IN (?, ?, ?, ?, ?)
+          AND status IN ('WON', 'LOST')
+          ${dateFilter.replace(/t\./g, '')}
         GROUP BY strategy
       `;
 
       this.logger.log(`[GetGeneralStats] 🔍 Executando query de stats...`);
-      const stats = await this.dataSource.query(statsQuery, strategies);
+      const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
       this.logger.log(`[GetGeneralStats] 📊 Stats: ${JSON.stringify(stats)}`);
 
 

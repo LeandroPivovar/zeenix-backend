@@ -2750,8 +2750,8 @@ export class OrionStrategy implements IStrategy {
       insertResult = await this.dataSource.query(
         `INSERT INTO ai_trades 
          (user_id, gemini_signal, entry_price, stake_amount, status, 
-          gemini_duration, contract_type, created_at, analysis_data, symbol)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+          gemini_duration, contract_type, created_at, analysis_data, symbol, strategy)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, 'orion')`,
         [
           userId,
           operation,
@@ -2770,8 +2770,8 @@ export class OrionStrategy implements IStrategy {
         insertResult = await this.dataSource.query(
           `INSERT INTO ai_trades 
            (user_id, gemini_signal, entry_price, stake_amount, status, 
-            gemini_duration, contract_type, created_at, analysis_data)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+            gemini_duration, contract_type, created_at, analysis_data, strategy)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'orion')`,
           [
             userId,
             operation,

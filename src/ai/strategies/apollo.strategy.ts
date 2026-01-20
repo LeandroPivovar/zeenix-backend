@@ -757,8 +757,8 @@ ${filtersText}
 
     try {
       const result: any = await this.dataSource.query(
-        `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo V1 - ${direction}`, direction === 'CALL' ? 'CALL' : 'PUT', JSON.stringify(analysisData), state.symbol]
+        `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol, strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)`,
+        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo V1 - ${direction}`, direction === 'CALL' ? 'CALL' : 'PUT', JSON.stringify(analysisData), state.symbol, 'apollo']
       );
       const tradeId = result.insertId;
       return tradeId;

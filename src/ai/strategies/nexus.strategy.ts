@@ -793,8 +793,8 @@ export class NexusStrategy implements IStrategy {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction };
         const signalLabel = direction === 'PAR' ? 'CALL' : 'PUT';
         const r = await this.dataSource.query(
-            `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration)
-             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5)`,
+            `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration, strategy)
+             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5, 'nexus')`,
             [state.userId, signalLabel, entryPrice, stake, signalLabel.toUpperCase(), JSON.stringify(analysisData), this.symbol]
         );
         const tradeId = r.insertId || r[0]?.insertId;

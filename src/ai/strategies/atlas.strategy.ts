@@ -1591,8 +1591,8 @@ export class AtlasStrategy implements IStrategy {
         insertResult = await this.dataSource.query(
           `INSERT INTO ai_trades 
            (user_id, gemini_signal, entry_price, stake_amount, status, 
-            gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+            gemini_duration, contract_type, contract_id, created_at, analysis_data, symbol, strategy)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, 'atlas')`,
           [
             trade.userId,
             // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
@@ -1613,8 +1613,8 @@ export class AtlasStrategy implements IStrategy {
           insertResult = await this.dataSource.query(
             `INSERT INTO ai_trades 
              (user_id, gemini_signal, entry_price, stake_amount, status, 
-              gemini_duration, contract_type, contract_id, created_at, analysis_data)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+              gemini_duration, contract_type, contract_id, created_at, analysis_data, strategy)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'atlas')`,
             [
               trade.userId,
               // ✅ AJUSTE VISUAL: Mapear para 'Rise'/'Fall' para garantir seta correta no frontend
