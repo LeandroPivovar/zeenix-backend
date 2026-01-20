@@ -7,7 +7,9 @@ export class User {
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
     public readonly phone?: string | null,
-  ) {}
+    public readonly traderMestre: boolean = false,
+    public readonly derivBalance?: string | null,
+  ) { }
 
   static create(
     id: string,
@@ -17,7 +19,7 @@ export class User {
     phone?: string | null,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone);
+    return new User(id, name, email, password, now, now, phone, false, null);
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -29,6 +31,8 @@ export class User {
       this.createdAt,
       new Date(),
       phone ?? this.phone,
+      this.traderMestre,
+      this.derivBalance,
     );
   }
 
@@ -41,6 +45,8 @@ export class User {
       this.createdAt,
       new Date(),
       this.phone,
+      this.traderMestre,
+      this.derivBalance,
     );
   }
 }

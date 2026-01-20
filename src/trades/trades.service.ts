@@ -27,7 +27,7 @@ export class TradesService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => CopyTradingService))
     private readonly copyTradingService?: CopyTradingService,
-  ) {}
+  ) { }
 
   async createTrade(userId: string, dto: CreateTradeDto, ipAddress?: string, userAgent?: string) {
     const user = await this.userRepository.findById(userId);
@@ -60,6 +60,53 @@ export class TradesService {
     });
 
     const savedTrade = await this.tradeRepository.save(trade);
+
+    // Se for Trader Mestre, salvar na tabela de operações de mestre e replicar
+    if (user.traderMestre) {
+      try {
+        // Calcular porcentagem do saldo que está sendo usado
+        const userBalance = parseFloat(user.derivBalance || '0');
+        const percent = userBalance > 0 ? (dto.entryValue / userBalance) * 100 : 0;
+
+        await this.dataSource.query(
+          `INSERT INTO master_trader_operations 
+           (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            userId,
+            dto.contractType, // symbol (ex: R_100)
+            dto.tradeType,    // contract_type (ex: CALL/PUT)
+            dto.entryValue,
+            percent,
+            dto.multiplier,
+            parseInt(dto.duration.replace(/\D/g, '')), // extrair numero da duração
+            dto.duration.replace(/[0-9]/g, ''),        // extrair unidade da duração (m, s, t)
+            dto.tradeType, // trade_type
+            'pending'
+          ]
+        );
+
+        // Replicar imediatamente para os copiadores
+        if (this.copyTradingService) {
+          await this.copyTradingService.replicateManualOperation(
+            userId,
+            {
+              contractId: savedTrade.id,
+              contractType: dto.tradeType,
+              symbol: dto.contractType,
+              duration: parseInt(dto.duration.replace(/\D/g, '')),
+              durationUnit: dto.duration.replace(/[0-9]/g, ''),
+              stakeAmount: dto.entryValue,
+              percent: percent,
+              entrySpot: null,
+              entryTime: Math.floor(Date.now() / 1000),
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Erro ao salvar operação de trader mestre:', error);
+      }
+    }
 
     // Log da operação
     await this.settingsService.logActivity(
@@ -263,12 +310,12 @@ export class TradesService {
   async getMarkupData(startDate?: string, endDate?: string) {
     // Taxa de markup da plataforma (3%)
     const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835
-    
+
     let manualDateCondition = '';
     let aiDateCondition = '';
     const manualParams: any[] = [];
     const aiParams: any[] = [];
-    
+
     if (startDate && endDate) {
       manualDateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
       aiDateCondition = 'AND DATE(at.created_at) BETWEEN ? AND ?';

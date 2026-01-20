@@ -543,6 +543,7 @@ export class CopyTradingService {
       duration: number;
       durationUnit: string;
       stakeAmount: number;
+      percent: number; // Porcentagem do saldo que o trader usou
       entrySpot: number | null;
       entryTime: number;
     },
@@ -578,27 +579,32 @@ export class CopyTradingService {
             continue;
           }
 
-          // Calcular valor proporcional baseado na alocação
+          // Calcular valor baseado na configuração do copiador
           let followerStakeAmount = 0;
 
           if (copier.allocationType === 'fixed') {
-            // Alocação fixa: usar o valor definido
-            followerStakeAmount = copier.allocationValue || 0;
+            // Alocação fixa: usar o valor configurado pelo copiador * alavancagem
+            const leverageMultiplier = this.parseLeverage(copier.multiplier || '1x');
+            followerStakeAmount = (copier.allocationValue || 0) * leverageMultiplier;
           } else if (copier.allocationType === 'proportion') {
-            // Alocação proporcional: usar percentual do valor do expert
-            const percentage = copier.allocationPercentage || 0;
-            followerStakeAmount = (operationData.stakeAmount * percentage) / 100;
+            // Alocação proporcional: usar a mesma porcentagem do saldo do trader aplicada ao saldo do copiador
+            // Buscar saldo do copiador
+            const copierUser = await this.userRepository.findOne({ where: { id: copier.userId } });
+            const copierBalance = copierUser?.derivBalance ? parseFloat(copierUser.derivBalance) : 0;
+
+            if (copierBalance > 0) {
+              followerStakeAmount = (operationData.percent / 100) * copierBalance;
+            } else {
+              this.logger.warn(`[ReplicateManualOperation] Copiador ${copier.userId} não tem saldo disponível`);
+              continue;
+            }
           } else {
             // Fallback: usar o mesmo valor do expert
             followerStakeAmount = operationData.stakeAmount;
           }
 
-          // Aplicar leverage se necessário
-          const leverageMultiplier = this.parseLeverage(copier.multiplier || '1x');
-          followerStakeAmount = followerStakeAmount * leverageMultiplier;
-
           this.logger.log(
-            `[ReplicateManualOperation] Replicando para copiador ${copier.userId} - Stake original: $${operationData.stakeAmount.toFixed(2)}, Stake copiador: $${followerStakeAmount.toFixed(2)}`,
+            `[ReplicateManualOperation] Replicando para copiador ${copier.userId} (${copier.allocationType}) - Trader %: ${operationData.percent.toFixed(2)}%, Stake copiador: $${followerStakeAmount.toFixed(2)}`,
           );
 
           // Gravar operação na tabela copy_trading_operations
