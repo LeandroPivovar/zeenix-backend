@@ -1545,6 +1545,61 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       });
 
+      // ✅ ZENIX v2.0: Calcular Modo e Risco mais usados (Consulta em ai_user_config)
+      try {
+        // Obter contagem de modos por estratégia
+        const modeStats = await this.dataSource.query(`
+          SELECT strategy, mode, COUNT(*) as count 
+          FROM ai_user_config 
+          WHERE strategy IN (?, ?, ?, ?, ?)
+            AND mode IS NOT NULL
+          GROUP BY strategy, mode
+        `, strategies);
+
+        // Obter contagem de riscos por estratégia (tentando risk_profile ou modoMartingale)
+        // Nota: O nome da coluna pode variar, ajustando conforme padrão encontrado
+        // Vamos tentar 'risk_profile' que é o padrão do Zenix v2.0
+        const riskStats = await this.dataSource.query(`
+          SELECT strategy, risk_profile as risk, COUNT(*) as count 
+          FROM ai_user_config 
+          WHERE strategy IN (?, ?, ?, ?, ?)
+            AND risk_profile IS NOT NULL
+          GROUP BY strategy, risk_profile
+        `, strategies).catch(async () => {
+          // Fallback: tentar 'modo_martingale' se 'risk_profile' falhar
+          return await this.dataSource.query(`
+            SELECT strategy, modo_martingale as risk, COUNT(*) as count 
+            FROM ai_user_config 
+            WHERE strategy IN (?, ?, ?, ?, ?)
+              AND modo_martingale IS NOT NULL
+            GROUP BY strategy, modo_martingale
+          `, strategies).catch(() => []); // Retornar vazio se falhar ambos
+        });
+
+        // Atualizar strategyStats com os dados encontrados
+        strategyStats.forEach(stat => {
+          // 1. Encontrar modo mais usado
+          const modesForStrategy = modeStats.filter((m: any) => m.strategy === stat.strategy);
+          if (modesForStrategy.length > 0) {
+            // Ordenar por count decrescente
+            modesForStrategy.sort((a: any, b: any) => parseInt(b.count) - parseInt(a.count));
+            stat.tradeMode = modesForStrategy[0].mode ? modesForStrategy[0].mode.toUpperCase() : 'N/A';
+          }
+
+          // 2. Encontrar risco mais usado
+          const risksForStrategy = riskStats.filter((r: any) => r.strategy === stat.strategy);
+          if (risksForStrategy.length > 0) {
+            // Ordenar por count decrescente
+            risksForStrategy.sort((a: any, b: any) => parseInt(b.count) - parseInt(a.count));
+            stat.riskMode = risksForStrategy[0].risk ? risksForStrategy[0].risk.toUpperCase() : 'N/A';
+          }
+        });
+
+      } catch (error) {
+        this.logger.warn(`[GetGeneralStats] ⚠️ Não foi possível calcular estatísticas de Modo/Risco: ${error.message}`);
+        // Não falhar a request inteira, apenas deixar como N/A
+      }
+
 
       // Calcular totais
       const totalActiveIAs = 5; // ✅ Sempre 5 IAs ativas
