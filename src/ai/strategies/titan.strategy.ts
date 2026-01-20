@@ -552,6 +552,8 @@ export class TitanStrategy implements IStrategy {
 
         // Só executar operação se houver sinal
         if (signal) {
+            // Reset ticks counter after signal or if analysis window is consumed
+            state.ticksColetados = 0;
             await this.executeOperation(state, signal);
         }
     }
@@ -598,8 +600,21 @@ export class TitanStrategy implements IStrategy {
         else if (effectiveModeUser === 'NORMAL') analysisMode = 'NORMAL';
         else analysisMode = 'LENTO'; // PRECISO maps to LENTO
 
+        // ✅ 3. Verificar Janela de Dados (Wait for next X ticks)
+        const config = MODE_CONFIGS[analysisMode];
+        if (state.ticksColetados < config.windowSize) {
+            // Log de progresso da coleta (Feedback periódico)
+            if (state.ticksColetados % 2 === 0 || state.ticksColetados === 0) {
+                this.logDataCollection(state.userId, state.ticksColetados, config.windowSize);
+            }
+            return null;
+        }
+
         // Executar Análise Titan
         const result = analyzeTitan(this.ticks, analysisMode);
+
+        // ✅ Reset incremental para garantir que esperará novos dados após cada análise
+        state.ticksColetados = 0;
 
         // 🔍 DEBUG INTERNO
         // this.logger.debug(`[TITAN][ANALYSIS] ${state.userId} | Mode: ${analysisMode} | Result: ${result.hasSignal ? 'SIGNAL' : 'NO_SIGNAL'} (${result.reason})`);
@@ -620,10 +635,9 @@ export class TitanStrategy implements IStrategy {
                     this.logDataCollection(state.userId, parseInt(progressMatch[1]), parseInt(progressMatch[2]));
                 }
             } else {
-                // Log da análise sem sinal (Feedback periódico)
-                this.logAnalysisStarted(state.userId, analysisMode);
+                // Log da análise sem sinal (Se quiser reduzir spam, pode remover ou throtar)
+                // this.logAnalysisStarted(state.userId, analysisMode);
             }
-            return null;
             return null;
         }
 
@@ -1224,55 +1238,42 @@ export class TitanStrategy implements IStrategy {
     // ============================================
 
     private logInitialConfigV2(userId: string, mode: string, riskManager: RiskManager) {
-        const message =
-            `⚙️ CONFIGURAÇÕES INICIAIS
-• Estratégia: TITAN
-• Modo de Negociação: ${mode}
-• Gerenciamento de Risco: ${riskManager['riskMode']}
-• Meta de Lucro: $${riskManager['profitTarget'].toFixed(2)}
-• Stop Loss Normal: $${riskManager['stopLossLimit'].toFixed(2)}
-• Stop Loss Blindado: ${riskManager['useBlindado'] ? 'ATIVADO' : 'DESATIVADO'}`;
+        const message = `❄️ Zenix v2.0 | TITAN | ⚙️ Configurações Iniciais
+• Modo: ${mode}
+• Perfil: ${riskManager['riskMode']}
+• Meta: $${riskManager['profitTarget'].toFixed(2)}
+• Stop Loss: $${riskManager['stopLossLimit'].toFixed(2)}
+• Blindado: ${riskManager['useBlindado'] ? 'ATIVADO' : 'DESATIVADO'}`;
 
         this.saveTitanLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logSessionStart(userId: string, initialBalance: number, meta: number) {
-        const message =
-            `📡 INÍCIO DE SESSÃO DIÁRIA
+        const message = `❄️ Zenix v2.0 | TITAN | 📡 Início de Sessão
 • Saldo Inicial: $${initialBalance.toFixed(2)}
 • Meta do Dia: $${meta.toFixed(2)}
-• Status: Monitorando Volatility 100 Index (1s)
-• Conexão: ESTÁVEL (52ms)`;
+• Status: Monitorando Mercado`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logDataCollection(userId: string, current: number, target: number) {
-        const message =
-            `📡 COLETANDO DADOS...
-• META DE COLETA: ${target} TICKS
-• CONTAGEM: ${current}/${target}`;
-        // Usar tipo 'tick' para não poluir o log visual do usuário se não quiser, 
-        // ou 'info' se for importante. O template diz 'Plain Text', então 'info' ou 'analise'.
+        const message = `❄️ Zenix v2.0 | TITAN | 📡 Coletando dados... (${current}/${target})`;
+
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message =
-            `🧠 ANÁLISE INICIADA...
-• Verificando condições para o modo: ${mode}`;
+        const message = `❄️ Zenix v2.0 | TITAN | 🧠 Analisando Mercado (${mode})`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
-        const filtersText = filters.map((f, i) => `✅FILTRO ${i + 1}: ${f}`).join('\n');
-        const message =
-            `🔍ANÁLISE: MODO ${mode}
+        const filtersText = filters.map(f => `• ${f}`).join('\n');
+        const message = `❄️ Zenix v2.0 | TITAN | 🎯 Sinal Detectado: ${signal}
 ${filtersText}
-💪FORÇA DO SINAL: ${probability}%
-
-📊ENTRADA: ${signal}`;
+• Força: ${probability}%`;
 
         this.saveTitanLog(userId, this.symbol, 'sinal', message);
     }
@@ -1284,57 +1285,51 @@ ${filtersText}
         balance: number,
         contractInfo?: { exitDigit?: string }
     ) {
-        const icon = result === 'WIN' ? '🏁' : '🏁'; // Template usa bandeira quadriculada para ambos ou específico
-        // O template Orion usa: 🏁 RESULTADO DA ENTRADA \n • Status: WIN ...
-
-        const message =
-            `🏁 RESULTADO DA ENTRADA
-• Status: ${result}
-• Lucro/Prejuízo: ${profit >= 0 ? '+' : '-'}$${Math.abs(profit).toFixed(2)}
-• Saldo Atual: $${balance.toFixed(2)}`;
+        const emoji = result === 'WIN' ? '✅' : '❌';
+        const message = `❄️ Zenix v2.0 | TITAN | ${emoji} Resultado: ${result}
+• Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
+• Saldo: $${balance.toFixed(2)}`;
 
         this.saveTitanLog(userId, this.symbol, 'resultado', message, contractInfo);
     }
 
     private logMartingaleLevelV2(userId: string, level: number, stake: number) {
-        const message =
-            `🚑 INICIANDO RECUPERAÇÃO
-• Nível Martingale: ${level}
-• Nova Stake: $${stake.toFixed(2)}`;
+        const message = `❄️ Zenix v2.0 | TITAN | 🔄 Martingale Nível ${level}
+• Próxima Stake: $${stake.toFixed(2)}
+• Objetivo: Recuperação`;
+
         this.saveTitanLog(userId, this.symbol, 'alerta', message);
     }
 
     private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
-        const message =
-            `🚀 APLICANDO SOROS NÍVEL ${level}
+        const message = `❄️ Zenix v2.0 | TITAN | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
+
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logWinStreak(userId: string, count: number, profit: number) {
-        const message =
-            `🏆 SEQUÊNCIA DE VITÓRIAS
-• Vitórias Consecutivas: ${count}
+        const message = `❄️ Zenix v2.0 | TITAN | 🏆 Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
+
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
-        const message =
-            `✅ RECUPERAÇÃO BEM-SUCEDIDA
-• Prejuízo Recuperado: $${totalLoss.toFixed(2)}
-• Lucro da Operação: $${amountRecovered.toFixed(2)}
-• Saldo Atual: $${currentBalance.toFixed(2)}`;
+        const message = `❄️ Zenix v2.0 | TITAN | 🛡️ Recuperação Concluída
+• Recuperado: $${totalLoss.toFixed(2)}
+• Ação: Retornando à Stake Base`;
+
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
-        const message =
-            `🔄 TROCA DE CONTRATO ATIVADA
+        const message = `❄️ Zenix v2.0 | TITAN | 🔄 Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;
+
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 

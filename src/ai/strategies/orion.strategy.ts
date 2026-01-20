@@ -456,23 +456,13 @@ export class OrionStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    // ❄️ CONFIGURAÇÕES INICIAIS
-    // • Estratégia: {NOME_ESTRATEGIA}
-    // • Modo de Negociação: {MODO_OPERACAO}
-    // • Gerenciamento de Risco: {PERFIL_RISCO}
-    // • Meta de Lucro: ${META_LUCRO}
-    // • Stop Loss Normal: ${STOP_LOSS}
-    // • Stop Loss Blindado: {ATIVADO/DESATIVADO}
+    const message = `❄️ Zenix v2.0 | ORION | ⚙️ Configurações Iniciais
+• Modo: ${config.operationMode}
+• Perfil: ${config.riskProfile}
+• Meta: $${config.profitTarget.toFixed(2)}
+• Stop Loss: $${config.stopLoss.toFixed(2)}
+• Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
-    const message = `❄️ CONFIGURAÇÕES INICIAIS\n` +
-      `• Estratégia: ${config.strategyName}\n` +
-      `• Modo de Negociação: ${config.operationMode}\n` +
-      `• Gerenciamento de Risco: ${config.riskProfile}\n` +
-      `• Meta de Lucro: $${config.profitTarget.toFixed(2)}\n` +
-      `• Stop Loss Normal: $${config.stopLoss.toFixed(2)}\n` +
-      `• Stop Loss Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'config', message);
   }
 
@@ -484,23 +474,11 @@ export class OrionStrategy implements IStrategy {
     mode: string;
     strategyName: string;
   }) {
-    // 🌅 INÍCIO DE SESSÃO DIÁRIA
-    // • Data: {DATA}
-    // • Saldo Inicial: ${SALDO_INICIAL}
-    // • Meta de Lucro: ${META}
-    // • Stop Loss: ${STOP}
-    // • Modo: {MODO}
-    // • Estratégia: {NOME_ESTRATEGIA}
+    const message = `❄️ Zenix v2.0 | ORION | 📡 Início de Sessão
+• Saldo Inicial: $${session.initialBalance.toFixed(2)}
+• Meta do Dia: $${session.profitTarget.toFixed(2)}
+• Status: Monitorando Mercado`;
 
-    const message = `🌅 INÍCIO DE SESSÃO DIÁRIA\n` +
-      `• Data: ${session.date.toLocaleDateString('pt-BR')}\n` +
-      `• Saldo Inicial: $${session.initialBalance.toFixed(2)}\n` +
-      `• Meta de Lucro: $${session.profitTarget.toFixed(2)}\n` +
-      `• Stop Loss: $${session.stopLoss.toFixed(2)}\n` +
-      `• Modo: ${session.mode}\n` +
-      `• Estratégia: ${session.strategyName}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
@@ -511,31 +489,13 @@ export class OrionStrategy implements IStrategy {
     currentCount: number;
     mode?: string;
   }) {
-    // 📡 COLETANDO DADOS...
-    // • META DE COLETA: {QUANTIDADE} TICKS
-    // • CONTAGEM: {ATUAL}/{META}
-
-    const modeStr = data.mode ? ` (${data.mode})` : '';
-    const message = `📡 COLETANDO DADOS...\n` +
-      `• META DE COLETA: ${data.targetCount} TICKS${modeStr}\n` +
-      `• CONTAGEM: ${data.currentCount}/${data.targetCount}`;
-
-    // Não logar no console a cada sinal para não sujar, apenas debug se necessário
-    // this.logger.debug(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    const message = `❄️ Zenix v2.0 | ORION | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    // 🧠 ANÁLISE INICIADA...
-    // • Verificando condições para o modo: {MODO_ATUAL}
-
-    const message = `🧠 ANÁLISE INICIADA...\n` +
-      `• Verificando condições para o modo: ${mode}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
-    // saveOrionLog pode ser throttled fora daqui se necessário, mas seguindo o template:
-    // "Quando buffer de dados está completo"
-    // this.saveOrionLog(userId, this.symbol, 'analise', message);
+    const message = `❄️ Zenix v2.0 | ORION | 🧠 Analisando Mercado (${mode})`;
+    this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
   private logBlockedEntry(userId: string, blocked: {
@@ -581,25 +541,11 @@ export class OrionStrategy implements IStrategy {
     contractType: string;
     direction?: 'CALL' | 'PUT';
   }) {
-    // 🔍 ANÁLISE: MODO {MODO}
-    // ✅ FILTRO 1: ...
-    // ✅ GATILHO: ...
-    // ...
+    const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
+    const message = `❄️ Zenix v2.0 | ORION | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+${filtersText}
+• Força: ${signal.probability}%`;
 
-    let message = `🔍 ANÁLISE: MODO ${signal.mode}${signal.isRecovery ? ' (RECUPERAÇÃO)' : ''}\n`;
-    signal.filters.forEach((filter, index) => {
-      message += `✅ FILTRO ${index + 1}: ${filter}\n`;
-    });
-    message += `✅ GATILHO: ${signal.trigger}\n`;
-    message += `💪 FORÇA DO SINAL: ${signal.probability}%\n`;
-
-    if (signal.direction) {
-      message += `📊 ENTRADA: ${signal.contractType} ${signal.direction}`;
-    } else {
-      message += `📊 ENTRADA: ${signal.contractType}`;
-    }
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'sinal', message);
   }
 
@@ -611,18 +557,11 @@ export class OrionStrategy implements IStrategy {
     stake: number;
     balance: number;
   }) {
-    // 🎯 RESULTADO DA ENTRADA
-    // • Status: WIN / LOSS
-    // • Lucro/Prejuízo: +/- $X
-    // • Saldo Atual: $Y
+    const emoji = result.status === 'WIN' ? '✅' : '❌';
+    const message = `❄️ Zenix v2.0 | ORION | ${emoji} Resultado: ${result.status}
+• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
+• Saldo: $${result.balance.toFixed(2)}`;
 
-    const profitStr = result.status === 'WIN' ? `+$${result.profit.toFixed(2)}` : `-$${result.stake.toFixed(2)}`;
-    const message = `🎯 RESULTADO DA ENTRADA\n` +
-      `• Status: ${result.status}\n` +
-      `• Lucro/Prejuízo: ${profitStr}\n` +
-      `• Saldo Atual: $${result.balance.toFixed(2)}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }
 
@@ -631,17 +570,13 @@ export class OrionStrategy implements IStrategy {
     stakeBase: number;
     level?: number;
   }) {
-    // 🚀 APLICANDO SOROS NÍVEL 1
-    // • Lucro Anterior: ${LUCRO}
-    // • Nova Stake: ${NOVA_STAKE}
-
-    const newStake = soros.stakeBase + soros.previousProfit;
     const level = soros.level || 1;
-    const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
-      `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
-      `• Nova Stake: $${newStake.toFixed(2)}`;
+    const newStake = soros.stakeBase + soros.previousProfit;
 
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    const message = `❄️ Zenix v2.0 | ORION | 🚀 Soros Nível ${level}
+• Lucro Anterior: $${soros.previousProfit.toFixed(2)}
+• Nova Stake: $${newStake.toFixed(2)}`;
+
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
@@ -650,16 +585,9 @@ export class OrionStrategy implements IStrategy {
     accumulatedProfit: number;
     currentStake: number;
   }) {
-    // 🔥 SEQUÊNCIA DE VITÓRIAS!
-    // ...
+    const message = `❄️ Zenix v2.0 | ORION | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
-    const message = `🔥 SEQUÊNCIA DE VITÓRIAS!\n` +
-      `• Vitórias Consecutivas: ${streak.consecutiveWins}\n` +
-      `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
-      `• Stake Atual (com Soros): $${streak.currentStake.toFixed(2)}\n` +
-      `• Próxima Vitória: Reset para Stake Base`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
@@ -670,15 +598,11 @@ export class OrionStrategy implements IStrategy {
     newPayout: number;
     analysisDescription: string;
   }) {
-    // 🔄 MUDANÇA DE CONTRATO
-    // ...
+    const message = `❄️ Zenix v2.0 | ORION | 🔄 Ajuste de Operação
+• De: ${change.previousContract}
+• Para: ${change.newContract}
+• Motivo: ${change.consecutiveLosses} perdas consecutivas`;
 
-    const message = `🔄 MUDANÇA DE CONTRATO\n` +
-      `• Motivo: ${change.consecutiveLosses} perdas consecutivas em ${change.previousContract}\n` +
-      `• Ação: Mudando para ${change.newContract} (payout ${change.newPayout}%)\n` +
-      `• Próxima Análise: ${change.analysisDescription}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
@@ -692,17 +616,10 @@ export class OrionStrategy implements IStrategy {
     profitPercentage: number;
     contractType: string;
   }) {
-    // 📊 NÍVEL DE RECUPERAÇÃO
-    // ...
+    const message = `❄️ Zenix v2.0 | ORION | 🔄 Martingale Nível ${martingale.level}
+• Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
+• Objetivo: Recuperação`;
 
-    const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
-      `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
-      `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
-      `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
-      `• Objetivo: Recuperar + ${martingale.profitPercentage}%\n` +
-      `• Contrato: ${martingale.contractType}`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
 
@@ -735,29 +652,19 @@ export class OrionStrategy implements IStrategy {
     profitPercentage: number;
     stakeBase: number;
   }) {
-    // ✅ RECUPERAÇÃO BEM-SUCEDIDA!
-    // ...
+    const message = `❄️ Zenix v2.0 | ORION | 🛡️ Recuperação Concluída
+• Recuperado: $${recovery.recoveredLoss.toFixed(2)}
+• Ação: Retornando à Stake Base`;
 
-    const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
-      `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
-      `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage}%)\n` +
-      `• Ação: Resetando sistema e voltando à entrada principal\n` +
-      `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }
 
   private logConservativeReset(userId: string, reset: {
     stakeBase: number;
   }) {
-    // 🗑️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)
+    const message = `❄️ Zenix v2.0 | ORION | ⚠️ Limite de Recuperação (Conservador)
+• Ação: Resetando para Stake Base ($${reset.stakeBase.toFixed(2)})`;
 
-    const message = `🗑️ LIMITE DE RECUPERAÇÃO ATINGIDO (CONSERVADOR)\n` +
-      `• Ação: Aceitando perda e resetando stake.\n` +
-      `• Próxima Entrada: Valor Inicial ($${reset.stakeBase.toFixed(2)})`;
-
-    this.logger.log(`[ORION][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
 
@@ -4704,15 +4611,13 @@ export class OrionStrategy implements IStrategy {
 
   // ✅ [ZENIX v2.0] Log de Configuração Inicial (Fix DB Error)
   private logInitialConfigFixed(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
-    const blindadoStatus = blindado ? 'ATIVADO' : 'DESATIVADO';
-    this.logger.log(`⚙️ CONFIGURAÇÕES INICIAIS`);
-    this.logger.log(`• Estratégia: ORION`);
-    this.logger.log(`• Modo de Negociação: ${mode}`);
-    this.logger.log(`• Gerenciamento de Risco: ${riskMode.toUpperCase()}`);
-    this.logger.log(`• Meta de Lucro: $${profitTarget.toFixed(2)}`);
-    this.logger.log(`[ORION][${mode}] 📊 Stop Loss: $${stopLoss.toFixed(2)} | Stop Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'} | Meta: $${profitTarget.toFixed(2)}`);
+    const message = `❄️ Zenix v2.0 | ORION | ⚙️ Configurações Iniciais
+• Modo: ${mode}
+• Perfil: ${riskMode.toUpperCase()}
+• Meta: $${profitTarget.toFixed(2)}
+• Stop Loss: $${stopLoss.toFixed(2)}
+• Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`;
 
-    // ✅ FIX: Usar type 'info' para evitar WARN_DATA_TRUNCATED no banco
-    this.saveOrionLog(userId, this.symbol, 'info', `⚙️ CONFIGURAÇÕES INICIAIS\n• Estratégia: ORION\n• Modo de Negociação: ${mode}\n• Gerenciamento de Risco: ${riskMode.toUpperCase()}\n• Meta de Lucro: $${profitTarget.toFixed(2)}\n• Stop Loss Normal: $${stopLoss.toFixed(2)}\n• Stop Loss Blindado: ${blindado ? 'ATIVADO' : 'DESATIVADO'}`);
+    this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 }

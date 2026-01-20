@@ -1096,13 +1096,12 @@ export class NexusStrategy implements IStrategy {
         stopLoss: number;
         stopBlindadoEnabled: boolean;
     }) {
-        const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
-            `• Estratégia: ${config.strategyName}\n` +
-            `• Modo: ${config.operationMode}\n` +
-            `• Perfil: ${config.riskProfile}\n` +
-            `• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}\n` +
-            `• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}\n` +
-            `• Stop Blindado: ${config.stopBlindadoEnabled ? 'Ativado' : 'Desativado'}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | ⚙️ Configurações Iniciais
+• Modo: ${config.operationMode}
+• Perfil: ${config.riskProfile}
+• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
+• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}
+• Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1115,13 +1114,10 @@ export class NexusStrategy implements IStrategy {
         mode: string;
         strategyName: string;
     }) {
-        const message = `🚀 INÍCIO DE SESSÃO DIÁRIA\n` +
-            `• Data: ${session.date.toLocaleDateString('pt-BR')}\n` +
-            `• Banca Inicial: $${session.initialBalance.toFixed(2)}\n` +
-            `• Meta do Dia: $${session.profitTarget.toFixed(2)}\n` +
-            `• Stop Loss: $${session.stopLoss.toFixed(2)}\n` +
-            `• Modo: ${session.mode}\n` +
-            `• Estratégia: ${session.strategyName}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 📡 Início de Sessão
+• Saldo Inicial: $${session.initialBalance.toFixed(2)}
+• Meta do Dia: $${session.profitTarget.toFixed(2)}
+• Status: Monitorando Mercado`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1131,17 +1127,13 @@ export class NexusStrategy implements IStrategy {
         currentCount: number;
         mode?: string;
     }) {
-        const message = `📡 COLETA DE DADOS${data.mode ? ` (${data.mode})` : ''}\n` +
-            `• Coletados: ${data.currentCount}\n` +
-            `• Status: Aguardando dados suficientes...`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message = `🔍 ANÁLISE DE MERCADO EXECUTADA\n` +
-            `• Modo: ${mode}\n` +
-            `• Status: Buscando oportunidades...`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🧠 Analisando Mercado (${mode})`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
     }
@@ -1155,20 +1147,10 @@ export class NexusStrategy implements IStrategy {
         contractType: string;
         direction?: 'CALL' | 'PUT';
     }) {
-        const icon = signal.isRecovery ? '🛡️' : '⚡';
-        const title = signal.isRecovery ? `SINAL GERADO (RECUPERAÇÃO)` : `SINAL IDENTIFICADO`;
-        const modeLabel = signal.isRecovery ? `${signal.mode} (RECUPERAÇÃO)` : signal.mode;
-
-        let message = `${icon} ${title}\n` +
-            `• Modo: ${modeLabel}\n`;
-
-        signal.filters.forEach((filter, index) => {
-            message += `✅ Filtro ${index + 1}: ${filter}\n`;
-        });
-
-        message += `✅ Gatilho: ${signal.trigger}\n` +
-            `💪 Probabilidade: ${signal.probability}%\n` +
-            `🎯 Contrato: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}`;
+        const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
+        const message = `❄️ Zenix v2.0 | NEXUS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+${filtersText}
+• Força: ${signal.probability}%`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'sinal', message);
     }
@@ -1179,14 +1161,10 @@ export class NexusStrategy implements IStrategy {
         stake: number;
         balance: number;
     }) {
-        const isWin = result.status === 'WIN';
-        const icon = isWin ? '✅' : '❌';
-        const profitLabel = isWin ? 'Lucro' : 'Prejuízo';
-        const profitValue = isWin ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
-
-        const message = `🏁 TRADE FINALIZADO: ${result.status}\n` +
-            `${isWin ? '💰' : '📉'} ${profitLabel.toUpperCase()}: ${profitValue}\n` +
-            `📈 BANCA ATUAL: $${result.balance.toFixed(2)}`;
+        const emoji = result.status === 'WIN' ? '✅' : '❌';
+        const message = `❄️ Zenix v2.0 | NEXUS | ${emoji} Resultado: ${result.status}
+• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
+• Saldo: $${result.balance.toFixed(2)}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
     }
@@ -1199,12 +1177,9 @@ export class NexusStrategy implements IStrategy {
         profitPercentage: number;
         contractType: string;
     }) {
-        const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
-            `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
-            `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
-            `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
-            `• Objetivo: Recuperar + ${martingale.profitPercentage.toFixed(0)}%\n` +
-            `• Contrato: ${martingale.contractType}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🔄 Martingale Nível ${martingale.level}
+• Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
+• Objetivo: Recuperação`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'alerta', message);
     }
@@ -1217,9 +1192,9 @@ export class NexusStrategy implements IStrategy {
         const level = soros.level || 1;
         const newStake = soros.stakeBase + soros.previousProfit;
 
-        const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
-            `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
-            `• Nova Stake (Base + Lucro): $${newStake.toFixed(2)}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🚀 Soros Nível ${level}
+• Lucro Anterior: $${soros.previousProfit.toFixed(2)}
+• Nova Stake: $${newStake.toFixed(2)}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1229,9 +1204,8 @@ export class NexusStrategy implements IStrategy {
         accumulatedProfit: number;
         currentStake: number;
     }) {
-        const message = `🔥 WIN STREAK: ${streak.consecutiveWins} VITÓRIAS\n` +
-            `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
-            `• Stake Atual: $${streak.currentStake.toFixed(2)}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
     }
@@ -1242,11 +1216,9 @@ export class NexusStrategy implements IStrategy {
         profitPercentage: number;
         stakeBase: number;
     }) {
-        const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
-            `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
-            `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage.toFixed(2)}%)\n` +
-            `• Ação: Resetando sistema e voltando à entrada principal\n` +
-            `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🛡️ Recuperação Concluída
+• Recuperado: $${recovery.recoveredLoss.toFixed(2)}
+• Ação: Retornando à Stake Base`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
     }
@@ -1257,10 +1229,10 @@ export class NexusStrategy implements IStrategy {
         newContract: string;
         analysis: string;
     }) {
-        const message = `🔄 TROCA DE CONTRATO ATIVADA\n` +
-            `• Motivo: ${change.reason}\n` +
-            `• Ação: ${change.oldContract} ➡️ ${change.newContract}\n` +
-            `• Análise: ${change.analysis}`;
+        const message = `❄️ Zenix v2.0 | NEXUS | 🔄 Ajuste de Operação
+• De: ${change.oldContract}
+• Para: ${change.newContract}
+• Motivo: ${change.reason}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
