@@ -2110,7 +2110,22 @@ export class AtlasStrategy implements IStrategy {
 
           if (msg.error || (msg.authorize && msg.authorize.error)) {
             const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido';
-            this.logger.error(`[ATLAS][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`);
+            const isAppIdError = errorMsg.includes('app ID') || msg.error?.code === 'AppIdInvalid';
+
+            if (isAppIdError) {
+              this.logger.error(`[ATLAS][${symbol || 'POOL'}] ❌ Token Inválido: O token não pertence ao APP_ID atual.`);
+              if (userId) {
+                this.saveAtlasLog(
+                  userId,
+                  'SISTEMA',
+                  'erro',
+                  `❌ ERRO DE AUTENTICAÇÃO: Os tokens atuais não são válidos para o novo APP_ID configurado. Por favor, reconecte sua conta Deriv nas configurações para gerar novos tokens.`
+                );
+              }
+            } else {
+              this.logger.error(`[ATLAS][${symbol || 'POOL'}] ❌ Erro na autorização: ${errorMsg}`);
+            }
+
             socket.close();
             this.wsConnections.delete(token);
             if (authPromiseReject) {
