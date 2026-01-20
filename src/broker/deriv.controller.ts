@@ -1090,6 +1090,12 @@ export class DerivController {
           const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
           if (isMasterTrader) {
             this.logger.log(`[Trading] Usuário ${userId} é expert, replicando operação para copiadores...`);
+
+            // Buscar saldo do usuário para calcular porcentagem
+            const user = await this.userRepository.findById(userId);
+            const userBalance = user?.derivBalance ? parseFloat(user.derivBalance) : 0;
+            const percent = userBalance > 0 ? ((data.buyPrice || 0) / userBalance) * 100 : 0;
+
             await this.copyTradingService.replicateManualOperation(
               userId,
               {
@@ -1099,6 +1105,7 @@ export class DerivController {
                 duration: data.duration || 1,
                 durationUnit: data.durationUnit || 'm',
                 stakeAmount: data.buyPrice || 0,
+                percent: percent,
                 entrySpot: finalEntrySpot,
                 entryTime: data.entryTime || Math.floor(Date.now() / 1000),
               },
