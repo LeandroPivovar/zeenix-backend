@@ -1742,15 +1742,8 @@ export class DerivController {
           this.logger.log(`[Trading] Usando token explícito fornecido na requisição`);
         }
 
-        // 2. Se não veio no body, buscar do mapeamento no banco
-        if (!token) {
-          token = (targetLoginid && derivInfo?.raw?.tokensByLoginId?.[targetLoginid]) || null;
-        }
-
-        // 3. Fallback: buscar do storage antigo
-        if (!token) {
-          token = await this.getTokenFromStorage(userId, targetLoginid);
-        }
+        // REMOVIDO: Fallback para o banco de dados (evitar dados corrompidos)
+        // O token DEVE vir explícito na requisição (padrão IA)
 
         if (!token) {
           this.logger.error(`[Trading] Token não encontrado. userId: ${userId}, targetLoginid: ${targetLoginid}`);
