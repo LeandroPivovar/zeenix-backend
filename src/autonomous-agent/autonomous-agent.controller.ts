@@ -175,7 +175,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getTradeHistory(@Param('userId') userId: string, @Query('limit') limit?: string) {
     try {
-      const limitNum = limit ? parseInt(limit, 10) : 50;
+      const limitNum = limit ? parseInt(limit, 10) : 500;
       const history = await this.agentService.getTradeHistory(userId, limitNum);
 
       // Verificar se há trades com valores zerados no resultado
