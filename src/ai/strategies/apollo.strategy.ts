@@ -503,12 +503,13 @@ ${filtersText}
             // 1. Gravar na tabela master_trader_operations as OPEN
             await this.dataSource.query(
               `INSERT INTO master_trader_operations
-                   (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                   (trader_id, symbol, contract_type, barrier, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
               [
                 state.userId,
                 state.symbol,
                 direction, // 'CALL' | 'PUT'
+                null, // Apollo doesn't use barrier
                 stake,
                 percent,
                 0, // multiplier
@@ -532,7 +533,8 @@ ${filtersText}
                   stakeAmount: stake,
                   percent: percent,
                   entrySpot: entryPrice || 0,
-                  entryTime: unixTimestamp
+                  entryTime: unixTimestamp,
+                  barrier: undefined
                 },
               );
             }

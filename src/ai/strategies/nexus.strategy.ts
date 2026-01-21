@@ -651,12 +651,13 @@ export class NexusStrategy implements IStrategy {
                         // 1. Gravar na tabela master_trader_operations as OPEN
                         await this.dataSource.query(
                             `INSERT INTO master_trader_operations
-                             (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                             (trader_id, symbol, contract_type, barrier, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
                             [
                                 state.userId,
                                 this.symbol,
                                 direction === 'PAR' ? 'CALL' : 'PUT', // Mapping Nexus direction
+                                barrier ? parseFloat(barrier) : null,
                                 stake,
                                 percent,
                                 0, // multiplier
@@ -680,7 +681,8 @@ export class NexusStrategy implements IStrategy {
                                     stakeAmount: stake,
                                     percent: percent,
                                     entrySpot: entryPrice || 0,
-                                    entryTime: unixTimestamp
+                                    entryTime: unixTimestamp,
+                                    barrier: barrier ? parseFloat(barrier) : undefined,
                                 },
                             );
                         }

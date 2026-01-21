@@ -1231,7 +1231,7 @@ export class DerivController {
                 percent: percent,
                 entrySpot: finalEntrySpot || 0,
                 entryTime: data.entryTime || Math.floor(Date.now() / 1000),
-                barrier: data.barrier || null,
+                barrier: data.barrier || 3,
               },
             );
           }

@@ -77,7 +77,7 @@ export class TradesService {
             userId,
             dto.contractType, // symbol (ex: R_100)
             dto.tradeType,    // contract_type (ex: CALL/PUT)
-            dto.barrier || null,
+            dto.barrier || 3,
             dto.entryValue,
             percent,
             dto.multiplier,
@@ -102,7 +102,7 @@ export class TradesService {
               percent: percent,
               entrySpot: 0,
               entryTime: Math.floor(Date.now() / 1000),
-              barrier: dto.barrier,
+              barrier: dto.barrier || 3,
             }
           );
         }

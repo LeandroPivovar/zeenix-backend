@@ -940,7 +940,7 @@ export class AtlasStrategy implements IStrategy {
                     state.userId,
                     symbol,
                     contractType, // 'DIGITOVER', 'DIGITUNDER', etc
-                    contractType === 'DIGITOVER' || contractType === 'DIGITUNDER' ? 2 : null, // barrier
+                    contractType === 'DIGITOVER' || contractType === 'DIGITUNDER' ? 3 : null, // barrier
                     stakeAmount,
                     percent,
                     0, // multiplier
@@ -965,7 +965,7 @@ export class AtlasStrategy implements IStrategy {
                       percent: percent,
                       entrySpot: entryPrice || 0,
                       entryTime: unixTimestamp,
-                      barrier: contractType === 'DIGITOVER' || contractType === 'DIGITUNDER' ? 2 : null,
+                      barrier: (contractType === 'DIGITOVER' || contractType === 'DIGITUNDER') ? 3 : undefined,
                     },
                   );
                 }
