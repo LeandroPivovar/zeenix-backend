@@ -318,7 +318,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       durationUnit: config?.durationUnit || buy.duration_unit || 'm',
       entrySpot: Number(buy.entry_spot || buy.current_spot || 0),
       entryTime: Number(buy.purchase_time || buy.start_time) || Date.now() / 1000,
-      barrier: config?.barrier || Number(buy.barrier) || null,
+      barrier: (config?.barrier !== undefined && config?.barrier !== null) ? config.barrier : (buy.barrier !== undefined ? Number(buy.barrier) : null),
     };
 
     this.state.pendingBuyConfig = null;
@@ -395,7 +395,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       symbol: config.symbol,
       subscribe: 1,
     };
-    if (config.barrier) req.barrier = String(config.barrier);
+    if (config.barrier !== undefined && config.barrier !== null) req.barrier = String(config.barrier);
     if (config.multiplier) req.multiplier = config.multiplier;
 
     if (this.state.proposalSubscriptionId) {

@@ -617,7 +617,8 @@ export class CopyTradingService {
 
 
         // ✅ Barrier from operation
-        const barrier = operation.barrier || 3;
+        // Se barrier for 0, deve ser respeitado (não é falsy neste contexto)
+        const barrier = (operation.barrier !== undefined && operation.barrier !== null) ? operation.barrier : 3;
 
         // Executar trade do copiador (Fire and Forget para não travar loop do master)
         // Mas com callback para salvar no banco
