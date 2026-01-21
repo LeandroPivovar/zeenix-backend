@@ -545,10 +545,10 @@ export class CopyTradingService {
       duration: number;
       durationUnit: string;
       stakeAmount: number;
-      percent: number;
       entrySpot: number;
       entryTime: number;
       barrier?: number;
+      percent?: number;
     },
   ): Promise<void> {
     try {
@@ -556,7 +556,7 @@ export class CopyTradingService {
 
       // 1. Buscar copiadores ativos deste Master Trader E suas sessões ativas
       const copiers = await this.dataSource.query(
-        `SELECT c.*, u.token_demo, u.token_real, u.deriv_raw, s.trade_currency, css.id as session_id
+        `SELECT c.*, u.token_demo, u.token_real, u.deriv_raw, s.trade_currency, css.id as session_id, css.current_balance as session_balance
          FROM copy_trading_config c
          JOIN users u ON c.user_id = u.id
          LEFT JOIN user_settings s ON c.user_id = s.user_id
@@ -601,25 +601,25 @@ export class CopyTradingService {
         let copierStake = 0;
 
         if (copier.allocation_type === 'proportion') {
-          const masterPercent = operation.percent; // Ex: 1%
-          const multiplier = (copier.allocation_percentage || 100) / 100; // Ex: 1.0
+          // PROPORTION: Usar percentual do Mestre aplicado ao Saldo Disponível do Copiador
+          // Requisito: "pegue este valor (percent) aplique no saldo disponivel do usuário"
 
-          const bank = parseFloat(copier.allocation_value) || 0;
-          if (bank > 0) {
-            const targetPercent = masterPercent * multiplier;
-            copierStake = (bank * targetPercent) / 100;
+          const masterPercent = operation.percent || 0.35; // Fallback se não vier
+          const copierBalance = parseFloat(copier.session_balance) || 0;
+
+          if (copierBalance > 0) {
+            copierStake = (copierBalance * masterPercent) / 100;
+            this.logger.log(`[ReplicateManual] Proporcional: Balance $${copierBalance.toFixed(2)} * ${masterPercent.toFixed(2)}% = $${copierStake.toFixed(2)}`);
           } else {
-            // Se não tem banca definida, não podemos calcular proporção.
-            // Usuário pediu para REMOVER o padrão 0.35.
-            // Vamos logar aviso e pular ou usar 0 (que será barrado pelo mínimo depois?)
-            // Se for 0, não executa.
-            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} modo PROPORTION sem allocation_value (Banca). Ignorando operação.`);
+            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} Proporcional mas sem saldo na sessão (balance=0). Ignorando.`);
             continue;
           }
 
         } else {
-          // Fixed: Valor fixo por operação
-          copierStake = parseFloat(copier.allocation_value);
+          // FIXED: Espelho Fixo (Mesmo valor do mestre)
+          // Requisito: "pegue o mesmo valor (stake de master_trader_operations) e aplique para o copiador"
+          copierStake = operation.stakeAmount;
+          this.logger.log(`[ReplicateManual] Fixo (Espelho): Stake Mestre $${operation.stakeAmount} -> Copiador $${copierStake.toFixed(2)}`);
         }
 
         // Validar mínimo necessário da Deriv (0.35)
