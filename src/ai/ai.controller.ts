@@ -375,7 +375,7 @@ export class AiController {
       // Se não especificado ou vazio, usar padrão 100
       // Se for 'todos', passar undefined (sem limite)
       // Caso contrário, converter para número
-      let limitNum: number | undefined = 100; // Padrão: 100
+      let limitNum: number | undefined = 500; // Padrão: 500
       if (limit) {
         if (limit.toLowerCase() === 'todos') {
           limitNum = undefined; // Sem limite
