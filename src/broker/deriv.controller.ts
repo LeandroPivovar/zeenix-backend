@@ -11,6 +11,8 @@ import {
   Req,
   Res,
   UseGuards,
+  HttpException,
+  Param,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Inject } from '@nestjs/common';
@@ -1000,6 +1002,54 @@ export class DerivController {
     } catch (error) {
       this.logger.error(`[Trading] Erro ao conectar: ${error.message}`);
       throw new BadRequestException(error.message || 'Erro ao conectar com Deriv');
+    }
+  }
+
+  @Get('trading/token')
+  async getResolvedToken(@Req() req) {
+    const userId = req.user.id;
+    // ensure resolveTokenForUser is called correctly
+    const token = await this.resolveTokenForUser(userId);
+    return { token };
+  }
+
+  private async resolveTokenForUser(userId: string): Promise<string | null> {
+    try {
+      const settings = await this.settingsService.getSettings(userId);
+      const tradeCurrency = (settings.tradeCurrency || 'USD').toUpperCase();
+      const user = await this.userRepository.findById(userId);
+
+      if (!user) return null;
+
+      const wantDemo = tradeCurrency === 'DEMO';
+      let token = wantDemo ? user.tokenDemo : user.tokenReal;
+
+      if (!token) {
+        // Fallback to raw parsing if columns are empty
+        const derivRaw = user.derivRaw;
+        if (derivRaw) {
+          const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+          const tokens = raw.tokensByLoginId || {};
+
+          // Ambiguity check for USD preference but raw indicates different account type desire
+          // (Simplified logic: just look for VRTC if wantDemo)
+          if (wantDemo) {
+            const entry = Object.entries(tokens).find(([lid]) => (lid as string).startsWith('VRTC'));
+            if (entry) token = entry[1] as string;
+          } else {
+            const entry = Object.entries(tokens).find(([lid]) => !(lid as string).startsWith('VRTC'));
+            if (entry) token = entry[1] as string;
+          }
+        }
+      }
+
+      // Final fallback: Check for ambiguity if user wants USD but we only have VRTC token or vice versa?
+      // For now, trust the token we found.
+
+      return token || null;
+    } catch (error) {
+      this.logger.error(`Error resolving token for user ${userId}: ${error.message}`);
+      return null;
     }
   }
 

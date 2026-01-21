@@ -1344,6 +1344,10 @@ export class CopyTradingService {
           u.name as user_name,
           u.email as user_email,
           COALESCE(u.deriv_balance, 0) as deriv_balance,
+          u.token_demo,
+          u.token_real,
+          u.deriv_raw,
+          us.trade_currency,
           
           -- Dados da Sessão
           s.status as session_status,
@@ -1367,6 +1371,7 @@ export class CopyTradingService {
         FROM copy_trading_sessions s
         INNER JOIN copy_trading_config c ON s.config_id = c.id
         INNER JOIN users u ON s.user_id = u.id
+        LEFT JOIN user_settings us ON u.id = us.user_id
         WHERE s.trader_id IN (${traderIdsToSearch.map(() => '?').join(',')})
           AND s.status = 'active'
         ORDER BY s.started_at DESC
@@ -1389,7 +1394,7 @@ export class CopyTradingService {
         const isActive = true;
         const tag = 'Ativo';
 
-        return {
+        const result: any = {
           id: copier.id,
           userId: copier.user_id,
           name: copier.user_name || 'Usuário',
@@ -1410,6 +1415,54 @@ export class CopyTradingService {
           todayProfit: parseFloat(copier.today_profit || '0'),
           derivBalance: parseFloat(copier.deriv_balance || '0'),
         };
+
+        // ✅ Lógica de Resolução de Token (Igual ao AiService e DerivController)
+        const preferredCurrency = (copier.trade_currency || copier.currency || 'USD').toUpperCase();
+        let wantDemo = preferredCurrency === 'DEMO';
+        const dbTokenDemo = copier.token_demo;
+        const dbTokenReal = copier.token_real;
+        const derivRaw = copier.deriv_raw;
+
+        // Verificar ambiguidade USD no raw
+        if (preferredCurrency === 'USD' && derivRaw) {
+          try {
+            const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+            if (raw?.loginid?.startsWith('VRTC')) {
+              wantDemo = true;
+            }
+          } catch (e) { }
+        }
+
+        let resolvedToken = copier.deriv_token || ''; // Default: token da config
+
+        if (wantDemo) {
+          if (dbTokenDemo) {
+            resolvedToken = dbTokenDemo;
+          } else if (derivRaw) {
+            // Fallback raw
+            try {
+              const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+              const tokens = raw.tokensByLoginId || {};
+              const entry = Object.entries(tokens).find(([lid]) => (lid as string).startsWith('VRTC'));
+              if (entry) resolvedToken = entry[1] as string;
+            } catch (e) { }
+          }
+        } else {
+          if (dbTokenReal) {
+            resolvedToken = dbTokenReal;
+          } else if (derivRaw) {
+            // Fallback raw
+            try {
+              const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+              const tokens = raw.tokensByLoginId || {};
+              const entry = Object.entries(tokens).find(([lid]) => !(lid as string).startsWith('VRTC'));
+              if (entry) resolvedToken = entry[1] as string;
+            } catch (e) { }
+          }
+        }
+
+        result.derivToken = resolvedToken;
+        return result;
       });
 
     } catch (error) {

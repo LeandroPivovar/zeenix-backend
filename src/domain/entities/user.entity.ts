@@ -9,6 +9,9 @@ export class User {
     public readonly phone?: string | null,
     public readonly traderMestre: boolean = false,
     public readonly derivBalance?: string | null,
+    public readonly tokenDemo?: string | null,
+    public readonly tokenReal?: string | null,
+    public readonly derivRaw?: any | null,
   ) { }
 
   static create(
@@ -19,7 +22,7 @@ export class User {
     phone?: string | null,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, null);
+    return new User(id, name, email, password, now, now, phone, false, null, null, null, null);
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -33,6 +36,9 @@ export class User {
       phone ?? this.phone,
       this.traderMestre,
       this.derivBalance,
+      this.tokenDemo,
+      this.tokenReal,
+      this.derivRaw,
     );
   }
 
@@ -47,6 +53,9 @@ export class User {
       this.phone,
       this.traderMestre,
       this.derivBalance,
+      this.tokenDemo,
+      this.tokenReal,
+      this.derivRaw,
     );
   }
 }

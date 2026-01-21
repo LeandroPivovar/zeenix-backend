@@ -131,7 +131,10 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.updatedAt,
       entity.phone ?? null,
       entity.traderMestre,
-      entity.derivBalance ?? null,
+      entity.derivBalance,
+      entity.tokenDemo,
+      entity.tokenReal,
+      entity.derivRaw,
     );
   }
 
