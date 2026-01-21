@@ -538,6 +538,38 @@ export class AiService implements OnModuleInit {
 
   async onModuleInit() {
     this.logger.log('🚀 Inicializando AiService...');
+
+    // ✅ LIMPEZA DE ESTADO PÓS-RESTART
+    // Garante que o banco reflita que não há sessões ativas na memória (pois o processo reiniciou)
+    try {
+      this.logger.log('🧹 Realizando limpeza de cache e estados persistentes...');
+
+      // 1. Desativar IAs que estavam marcadas como ativas
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET is_active = 0, session_status = 'stopped_server_restart', deactivated_at = NOW(), deactivation_reason = 'Server Restart'
+         WHERE is_active = 1`
+      );
+
+      // 2. Marcar trades pendentes como erro (pois conexão websocket foi perdida)
+      await this.dataSource.query(
+        `UPDATE ai_trades 
+         SET status = 'ERROR', error_message = 'Server Restart - Connection Lost', closed_at = NOW() 
+         WHERE status = 'PENDING'`
+      );
+
+      // 3. Encerrar sessões de copy trading ativas
+      await this.dataSource.query(
+        `UPDATE copy_trading_sessions 
+         SET status = 'stopped', end_time = NOW()
+         WHERE status = 'active'`
+      );
+
+      this.logger.log('✅ Limpeza de estados concluída com sucesso.');
+    } catch (cleanupError) {
+      this.logger.error('❌ Erro na limpeza de inicialização:', cleanupError);
+    }
+
     try {
       // Inicializar tabelas da IA - REMOVIDO: Agora gerenciado pelo StrategyManager
       // await this.initializeTables();
