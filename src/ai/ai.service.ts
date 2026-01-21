@@ -3986,7 +3986,18 @@ export class AiService implements OnModuleInit {
       this.logger.log(`[ResolveDeriv]   - Conta DEMO: ${demoLoginId || 'NÃO ENCONTRADA'} | Saldo: $${demoBalance} | Token: ${demoToken ? demoToken.substring(0, 10) + '...' : 'N/A'}`);
 
       // 3. LÓGICA DE DECISÃO BASEADA EM PREFERÊNCIA DO USUÁRIO
-      const wantsDemo = userPreferredCurrency === 'DEMO';
+      let wantsDemo = userPreferredCurrency === 'DEMO';
+
+      // ✅ MELHORIA: Se a preferência for 'USD' (ambígua), usar o loginid do snapshot para decidir
+      // Isso corrige o caso onde o usuário salva em Demo (USD) mas a config grava apenas 'USD'
+      if (userPreferredCurrency === 'USD') {
+        const snapshotLoginId = derivRaw.loginid || '';
+        if (snapshotLoginId.toUpperCase().startsWith('VRTC')) {
+          this.logger.log(`[ResolveDeriv] ℹ️ Preferência é 'USD' (ambígua) mas snapshot é ${snapshotLoginId} (Demo). Assumindo DEMO.`);
+          wantsDemo = true;
+        }
+      }
+
       this.logger.log(`[ResolveDeriv] 🎯 Usuário quer DEMO? ${wantsDemo}`);
 
       if (wantsDemo) {
