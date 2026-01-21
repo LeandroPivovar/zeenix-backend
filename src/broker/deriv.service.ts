@@ -568,7 +568,7 @@ export class DerivService {
     // NOTA: O token do link (t=) não é o mesmo que affiliate_token da API
     // O affiliate_token deve ser obtido do painel de afiliados da Deriv
     // Por enquanto, vamos torná-lo opcional e usar apenas UTM para tracking
-    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || null; // Opcional - requer token válido do painel
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || 'E466vBzKT83ZDL7kFhQLFGNd7ZgqdRLk'; // Token de afiliado padrão
     const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
     const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
     const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
@@ -883,13 +883,28 @@ export class DerivService {
   }
 
   private generatePassword(): string {
-    const length = 12;
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    // Deriv requer: ^(?=.*[a-z])(?=.*[0-9])(?=.*[A-Z])[ -~]{8,25}$
+    // Garantir pelo menos: 1 minúscula, 1 número, 1 maiúscula, 1 caractere especial
+    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const numbers = '0123456789';
+    const special = '!@#$%^&*';
+    const allChars = lowercase + uppercase + numbers + special;
+
+    // Garantir pelo menos um de cada tipo (4 chars)
     let password = '';
-    for (let i = 0; i < length; i++) {
-      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+    password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+    password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    password += special.charAt(Math.floor(Math.random() * special.length));
+
+    // Preencher o restante até 12 caracteres
+    for (let i = 4; i < 12; i++) {
+      password += allChars.charAt(Math.floor(Math.random() * allChars.length));
     }
-    return password;
+
+    // Embaralhar para não ter padrão previsível
+    return password.split('').sort(() => Math.random() - 0.5).join('');
   }
 
   private generateVerificationCode(): string {
