@@ -1313,14 +1313,16 @@ export class CopyTradingService {
       traderIdsToSearch = [...new Set(traderIdsToSearch)];
       this.logger.log(`[GetCopiers] Trader IDs para busca: ${traderIdsToSearch.join(', ')}`);
 
-      // PASSO 2: Buscar copiadores usando LEFT JOIN com a sessão mais recente
-      // Priorizando dados da sessão (stats reais) mas mantendo config para quem nunca iniciou
+      // PASSO 2: Buscar APENAS copiadores com sessão ATIVA
+      // Alterado para buscar diretamente da tabela de sessões com status = 'active'
       const query = `
         SELECT 
-          c.id,
-          c.user_id,
-          c.trader_id,
-          c.trader_name,
+          s.id, -- ID da sessão
+          s.user_id,
+          s.trader_id,
+          s.trader_name,
+          
+          -- Dados da Config (Joining)
           c.allocation_type,
           c.allocation_value,
           c.allocation_percentage,
@@ -1328,38 +1330,44 @@ export class CopyTradingService {
           c.stop_loss,
           c.take_profit,
           c.blind_stop_loss,
-          c.is_active,
+          c.is_active, -- da config
           c.deriv_token,
-          c.created_at,
           
           -- Dados do Usuário
           u.name as user_name,
           u.email as user_email,
           COALESCE(u.deriv_balance, 0) as deriv_balance,
           
-          -- Dados da Sessão (Mais recente)
+          -- Dados da Sessão
           s.status as session_status,
           COALESCE(s.current_balance, 0) as session_balance,
           COALESCE(s.total_operations, 0) as total_operations,
           COALESCE(s.total_wins, 0) as total_wins,
           COALESCE(s.total_losses, 0) as total_losses,
           COALESCE(s.total_profit, 0) as total_profit,
-          s.started_at as activated_at
+          s.started_at as activated_at,
+          s.started_at as created_at, -- Para order by consistência
 
-        FROM copy_trading_config c
-        INNER JOIN users u ON c.user_id = u.id
-        LEFT JOIN copy_trading_sessions s ON s.config_id = c.id AND s.id = (
-            SELECT MAX(id) 
-            FROM copy_trading_sessions 
-            WHERE config_id = c.id
-        )
-        WHERE c.trader_id IN (${traderIdsToSearch.map(() => '?').join(',')})
-        ORDER BY c.created_at DESC
+          -- Lucro Hoje (Subquery)
+          COALESCE((
+            SELECT SUM(profit) 
+            FROM copy_trading_operations 
+            WHERE user_id = s.user_id 
+            AND result IN ('win', 'loss')
+            AND DATE(executed_at) = CURDATE()
+          ), 0) as today_profit
+
+        FROM copy_trading_sessions s
+        INNER JOIN copy_trading_config c ON s.config_id = c.id
+        INNER JOIN users u ON s.user_id = u.id
+        WHERE s.trader_id IN (${traderIdsToSearch.map(() => '?').join(',')})
+          AND s.status = 'active'
+        ORDER BY s.started_at DESC
       `;
 
       const copiers = await this.dataSource.query(query, traderIdsToSearch);
 
-      this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores.`);
+      this.logger.log(`[GetCopiers] Encontrados ${copiers.length} copiadores COM SESSÃO ATIVA.`);
 
       // Formatar dados para retorno
       return copiers.map((copier) => {
@@ -1370,10 +1378,9 @@ export class CopyTradingService {
         // PnL real da sessão
         const pnl = parseFloat(copier.total_profit || '0');
 
-        // Status: Ativo se config ativa E (sessão ativa ou sem sessão definida ainda mas config on)
-        // Simplificando: Se config.is_active ou session.status = active
-        const isActive = (copier.is_active === 1 || copier.is_active === true) || copier.session_status === 'active';
-        const tag = isActive ? 'Ativo' : 'Inativo';
+        // Status: Agora sempre será Ativo pois filtramos por sessão ativa
+        const isActive = true;
+        const tag = 'Ativo';
 
         return {
           id: copier.id,
