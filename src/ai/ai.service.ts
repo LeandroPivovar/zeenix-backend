@@ -3991,10 +3991,17 @@ export class AiService implements OnModuleInit {
       // ✅ MELHORIA: Se a preferência for 'USD' (ambígua), usar o loginid do snapshot para decidir
       // Isso corrige o caso onde o usuário salva em Demo (USD) mas a config grava apenas 'USD'
       if (userPreferredCurrency === 'USD') {
-        const snapshotLoginId = derivRaw.loginid || '';
-        if (snapshotLoginId.toUpperCase().startsWith('VRTC')) {
-          this.logger.log(`[ResolveDeriv] ℹ️ Preferência é 'USD' (ambígua) mas snapshot é ${snapshotLoginId} (Demo). Assumindo DEMO.`);
+        // Verificação ultra-segura do loginid
+        const rawLoginId = derivRaw.loginid;
+        const snapshotLoginId = (rawLoginId || '').toString().trim().toUpperCase();
+
+        this.logger.log(`[ResolveDeriv] ℹ️ Verificando ambiguidade USD. Preferência='${userPreferredCurrency}', SnapshotID='${snapshotLoginId}' (Raw: '${rawLoginId}')`);
+
+        if (snapshotLoginId.startsWith('VRTC')) {
+          this.logger.log(`[ResolveDeriv] ✅ DETECTADO CONTA DEMO (VRTC) no snapshot. Forçando wantsDemo=true.`);
           wantsDemo = true;
+        } else {
+          this.logger.log(`[ResolveDeriv] ℹ️ Snapshot não é VRTC. Mantendo decisão original (Real).`);
         }
       }
 
