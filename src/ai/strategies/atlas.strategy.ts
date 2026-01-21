@@ -1861,7 +1861,7 @@ export class AtlasStrategy implements IStrategy {
     currentCount: number;
     mode?: string;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+    const message = `ATLAS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
@@ -1882,7 +1882,7 @@ export class AtlasStrategy implements IStrategy {
     direction?: 'CALL' | 'PUT';
   }) {
     const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `❄️ Zenix v2.0 | ATLAS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+    const message = `ATLAS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
 • Força: ${signal.probability}%`;
 

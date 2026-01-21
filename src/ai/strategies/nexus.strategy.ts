@@ -1127,7 +1127,7 @@ export class NexusStrategy implements IStrategy {
         currentCount: number;
         mode?: string;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+        const message = `NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1148,7 +1148,7 @@ export class NexusStrategy implements IStrategy {
         direction?: 'CALL' | 'PUT';
     }) {
         const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-        const message = `❄️ Zenix v2.0 | NEXUS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+        const message = `NEXUS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
 • Força: ${signal.probability}%`;
 

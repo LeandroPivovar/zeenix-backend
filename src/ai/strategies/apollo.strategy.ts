@@ -85,7 +85,7 @@ export class ApolloStrategy implements IStrategy {
 
   private logInitialConfigV2(userId: string, mode: string, riskProfile: string, profitTarget: number, stopLoss: number, useBlindado: boolean) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | ⚙️ Configurações Iniciais
+      `APOLLO | ⚙️ Configurações Iniciais
 • Modo: ${mode}
 • Perfil: ${riskProfile}
 • Meta: $${profitTarget.toFixed(2)}
@@ -97,7 +97,7 @@ export class ApolloStrategy implements IStrategy {
 
   private logSessionStart(userId: string, initialBalance: number, meta: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 📡 Início de Sessão
+      `APOLLO | 📡 Início de Sessão
 • Saldo Inicial: $${initialBalance.toFixed(2)}
 • Meta do Dia: $${meta.toFixed(2)}
 • Status: Monitorando Mercado`;
@@ -107,20 +107,20 @@ export class ApolloStrategy implements IStrategy {
 
   private logDataCollection(userId: string, current: number, target: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 📡 Coletando dados... (${current}/${target})`;
+      `APOLLO | 📡 Coletando dados... (${current}/${target})`;
     this.saveLog(userId, 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🧠 Analisando Mercado (${mode})`;
+      `APOLLO | 🧠 Analisando Mercado (${mode})`;
     this.saveLog(userId, 'analise', message);
   }
 
   private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
     const filtersText = filters.map((f, i) => `• ${f}`).join('\n');
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🎯 Sinal Detectado: ${signal}
+      `APOLLO | 🎯 Sinal Detectado: ${signal}
 ${filtersText}
 • Força: ${probability}%`;
     this.saveLog(userId, 'sinal', message);
@@ -135,7 +135,7 @@ ${filtersText}
   ) {
     const emoji = result === 'WIN' ? '✅' : '❌';
     const message =
-      `❄️ Zenix v2.0 | APOLLO | ${emoji} Resultado: ${result}
+      `APOLLO | ${emoji} Resultado: ${result}
 • Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
 • Saldo: $${balance.toFixed(2)}`;
 
@@ -144,14 +144,14 @@ ${filtersText}
 
   private logMartingaleLevelV2(userId: string, level: number, stake: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🔄 Martingale Nível ${level}
+      `APOLLO | 🔄 Martingale Nível ${level}
 • Próxima Stake: $${stake.toFixed(2)}`;
     this.saveLog(userId, 'alerta', message);
   }
 
   private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🚀 Soros Nível ${level}
+      `APOLLO | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
@@ -159,14 +159,14 @@ ${filtersText}
 
   private logWinStreak(userId: string, count: number, profit: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🏆 Sequência: ${count} Vitórias
+      `APOLLO | 🏆 Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
   }
 
   private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🛡️ Recuperação Concluída
+      `APOLLO | 🛡️ Recuperação Concluída
 • Recuperado: $${totalLoss.toFixed(2)}
 • Saldo Atual: $${currentBalance.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
@@ -174,7 +174,7 @@ ${filtersText}
 
   private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
     const message =
-      `❄️ Zenix v2.0 | APOLLO | 🔄 Ajuste de Operação
+      `APOLLO | 🔄 Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;
