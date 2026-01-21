@@ -934,12 +934,13 @@ export class AtlasStrategy implements IStrategy {
                 // 1. Gravar na tabela master_trader_operations as OPEN
                 await this.dataSource.query(
                   `INSERT INTO master_trader_operations
-                       (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                       (trader_id, symbol, contract_type, barrier, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
                   [
                     state.userId,
                     symbol,
                     contractType, // 'DIGITOVER', 'DIGITUNDER', etc
+                    contractType === 'DIGITOVER' || contractType === 'DIGITUNDER' ? 2 : null, // barrier
                     stakeAmount,
                     percent,
                     0, // multiplier
@@ -963,7 +964,8 @@ export class AtlasStrategy implements IStrategy {
                       stakeAmount: stakeAmount,
                       percent: percent,
                       entrySpot: entryPrice || 0,
-                      entryTime: unixTimestamp
+                      entryTime: unixTimestamp,
+                      barrier: contractType === 'DIGITOVER' || contractType === 'DIGITUNDER' ? 2 : null,
                     },
                   );
                 }
