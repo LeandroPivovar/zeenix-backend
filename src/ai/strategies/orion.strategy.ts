@@ -475,7 +475,7 @@ export class OrionStrategy implements IStrategy {
     mode: string;
     strategyName: string;
   }) {
-    const message = `ORION | 📡 Início de Sessão
+    const message = `❄️ ORION | 📡 Início de Sessão
 • Saldo Inicial: $${session.initialBalance.toFixed(2)}
 • Meta do Dia: $${session.profitTarget.toFixed(2)}
 • Status: Monitorando Mercado`;
@@ -490,12 +490,12 @@ export class OrionStrategy implements IStrategy {
     currentCount: number;
     mode?: string;
   }) {
-    const message = `ORION | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+    const message = `❄️ ORION | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `ORION | 🧠 Analisando Mercado (${mode})`;
+    const message = `❄️ ORION | 🧠 Analisando Mercado (${mode})`;
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
@@ -543,7 +543,7 @@ export class OrionStrategy implements IStrategy {
     direction?: 'CALL' | 'PUT';
   }) {
     const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `ORION | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+    const message = `❄️ ORION | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
 • Força: ${signal.probability}%`;
 
@@ -559,7 +559,7 @@ ${filtersText}
     balance: number;
   }) {
     const emoji = result.status === 'WIN' ? '✅' : '❌';
-    const message = `ORION | ${emoji} Resultado: ${result.status}
+    const message = `❄️ ORION | ${emoji} Resultado: ${result.status}
 • Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
 • Saldo: $${result.balance.toFixed(2)}`;
 
@@ -574,7 +574,7 @@ ${filtersText}
     const level = soros.level || 1;
     const newStake = soros.stakeBase + soros.previousProfit;
 
-    const message = `ORION | 🚀 Soros Nível ${level}
+    const message = `❄️ ORION | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${soros.previousProfit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -586,7 +586,7 @@ ${filtersText}
     accumulatedProfit: number;
     currentStake: number;
   }) {
-    const message = `ORION | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+    const message = `❄️ ORION | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
 • Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
     this.saveOrionLog(userId, this.symbol, 'info', message);
@@ -599,7 +599,7 @@ ${filtersText}
     newPayout: number;
     analysisDescription: string;
   }) {
-    const message = `ORION | 🔄 Ajuste de Operação
+    const message = `❄️ ORION | 🔄 Ajuste de Operação
 • De: ${change.previousContract}
 • Para: ${change.newContract}
 • Motivo: ${change.consecutiveLosses} perdas consecutivas`;
@@ -617,7 +617,7 @@ ${filtersText}
     profitPercentage: number;
     contractType: string;
   }) {
-    const message = `ORION | 🔄 Martingale Nível ${martingale.level}
+    const message = `❄️ ORION | 🔄 Martingale Nível ${martingale.level}
 • Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
 • Objetivo: Recuperação`;
 
@@ -653,7 +653,7 @@ ${filtersText}
     profitPercentage: number;
     stakeBase: number;
   }) {
-    const message = `ORION | 🛡️ Recuperação Concluída
+    const message = `❄️ ORION | 🛡️ Recuperação Concluída
 • Recuperado: $${recovery.recoveredLoss.toFixed(2)}
 • Ação: Retornando à Stake Base`;
 
@@ -663,7 +663,7 @@ ${filtersText}
   private logConservativeReset(userId: string, reset: {
     stakeBase: number;
   }) {
-    const message = `ORION | ⚠️ Limite de Recuperação (Conservador)
+    const message = `❄️ ORION | ⚠️ Limite de Recuperação (Conservador)
 • Ação: Resetando para Stake Base ($${reset.stakeBase.toFixed(2)})`;
 
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
@@ -4666,7 +4666,7 @@ ${filtersText}
 
   // ✅ [ZENIX v2.0] Log de Configuração Inicial (Fix DB Error)
   private logInitialConfigFixed(userId: string, mode: string, riskMode: string, profitTarget: number, stopLoss: number, blindado: boolean) {
-    const message = `❄️ Zenix v2.0 | ORION | ⚙️ Configurações Iniciais
+    const message = `❄️ ORION | ⚙️ Configurações Iniciais
 • Modo: ${mode}
 • Perfil: ${riskMode.toUpperCase()}
 • Meta: $${profitTarget.toFixed(2)}

@@ -1830,7 +1830,7 @@ export class AtlasStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | ⚙️ Configurações Iniciais
+    const message = `❄️ ATLAS | ⚙️ Configurações Iniciais
 • Modo: ${config.operationMode}
 • Perfil: ${config.riskProfile}
 • Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
@@ -1848,7 +1848,7 @@ export class AtlasStrategy implements IStrategy {
     mode: string;
     strategyName: string;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 📡 Início de Sessão
+    const message = `❄️ ATLAS | 📡 Início de Sessão
 • Saldo Inicial: $${session.initialBalance.toFixed(2)}
 • Meta do Dia: $${session.profitTarget.toFixed(2)}
 • Status: Monitorando Mercado`;
@@ -1867,7 +1867,7 @@ export class AtlasStrategy implements IStrategy {
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 🧠 Analisando Mercado (${mode})`;
+    const message = `❄️ ATLAS | 🧠 Analisando Mercado (${mode})`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
@@ -1896,7 +1896,7 @@ ${filtersText}
     balance: number;
   }) {
     const emoji = result.status === 'WIN' ? '✅' : '❌';
-    const message = `❄️ Zenix v2.0 | ATLAS | ${emoji} Resultado: ${result.status}
+    const message = `❄️ ATLAS | ${emoji} Resultado: ${result.status}
 • Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
 • Saldo: $${result.balance.toFixed(2)}`;
 
@@ -1911,7 +1911,7 @@ ${filtersText}
     profitPercentage: number;
     contractType: string;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 🔄 Martingale Nível ${martingale.level}
+    const message = `❄️ ATLAS | 🔄 Martingale Nível ${martingale.level}
 • Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
 • Objetivo: Recuperação`;
 
@@ -1926,7 +1926,7 @@ ${filtersText}
     const level = soros.level || 1;
     const newStake = soros.stakeBase + soros.previousProfit;
 
-    const message = `❄️ Zenix v2.0 | ATLAS | 🚀 Soros Nível ${level}
+    const message = `❄️ ATLAS | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${soros.previousProfit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -1938,7 +1938,7 @@ ${filtersText}
     accumulatedProfit: number;
     currentStake: number;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+    const message = `❄️ ATLAS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
 • Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
@@ -1950,7 +1950,7 @@ ${filtersText}
     profitPercentage: number;
     stakeBase: number;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | 🛡️ Recuperação Concluída
+    const message = `❄️ ATLAS | 🛡️ Recuperação Concluída
 • Recuperado: $${recovery.recoveredLoss.toFixed(2)}
 • Ação: Retornando à Stake Base`;
 
@@ -1960,7 +1960,7 @@ ${filtersText}
   private logConservativeReset(userId: string, reset: {
     stakeBase: number;
   }) {
-    const message = `❄️ Zenix v2.0 | ATLAS | ⚠️ Limite de Recuperação (Conservador)
+    const message = `❄️ ATLAS | ⚠️ Limite de Recuperação (Conservador)
 • Ação: Resetando para Stake Base ($${reset.stakeBase.toFixed(2)})`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);

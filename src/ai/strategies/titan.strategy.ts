@@ -1238,7 +1238,7 @@ export class TitanStrategy implements IStrategy {
     // ============================================
 
     private logInitialConfigV2(userId: string, mode: string, riskManager: RiskManager) {
-        const message = `❄️ Zenix v2.0 | TITAN | ⚙️ Configurações Iniciais
+        const message = `❄️ TITAN | ⚙️ Configurações Iniciais
 • Modo: ${mode}
 • Perfil: ${riskManager['riskMode']}
 • Meta: $${riskManager['profitTarget'].toFixed(2)}
@@ -1249,7 +1249,7 @@ export class TitanStrategy implements IStrategy {
     }
 
     private logSessionStart(userId: string, initialBalance: number, meta: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 📡 Início de Sessão
+        const message = `❄️ TITAN | 📡 Início de Sessão
 • Saldo Inicial: $${initialBalance.toFixed(2)}
 • Meta do Dia: $${meta.toFixed(2)}
 • Status: Monitorando Mercado`;
@@ -1258,20 +1258,20 @@ export class TitanStrategy implements IStrategy {
     }
 
     private logDataCollection(userId: string, current: number, target: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 📡 Coletando dados... (${current}/${target})`;
+        const message = `❄️ TITAN | 📡 Coletando dados... (${current}/${target})`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🧠 Analisando Mercado (${mode})`;
+        const message = `❄️ TITAN | 🧠 Analisando Mercado (${mode})`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
         const filtersText = filters.map(f => `• ${f}`).join('\n');
-        const message = `❄️ Zenix v2.0 | TITAN | 🎯 Sinal Detectado: ${signal}
+        const message = `❄️ TITAN | 🎯 Sinal Detectado: ${signal}
 ${filtersText}
 • Força: ${probability}%`;
 
@@ -1286,7 +1286,7 @@ ${filtersText}
         contractInfo?: { exitDigit?: string }
     ) {
         const emoji = result === 'WIN' ? '✅' : '❌';
-        const message = `❄️ Zenix v2.0 | TITAN | ${emoji} Resultado: ${result}
+        const message = `❄️ TITAN | ${emoji} Resultado: ${result}
 • Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
 • Saldo: $${balance.toFixed(2)}`;
 
@@ -1294,7 +1294,7 @@ ${filtersText}
     }
 
     private logMartingaleLevelV2(userId: string, level: number, stake: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🔄 Martingale Nível ${level}
+        const message = `❄️ TITAN | 🔄 Martingale Nível ${level}
 • Próxima Stake: $${stake.toFixed(2)}
 • Objetivo: Recuperação`;
 
@@ -1302,7 +1302,7 @@ ${filtersText}
     }
 
     private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🚀 Soros Nível ${level}
+        const message = `❄️ TITAN | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -1310,14 +1310,14 @@ ${filtersText}
     }
 
     private logWinStreak(userId: string, count: number, profit: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🏆 Sequência: ${count} Vitórias
+        const message = `❄️ TITAN | 🏆 Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🛡️ Recuperação Concluída
+        const message = `❄️ TITAN | 🛡️ Recuperação Concluída
 • Recuperado: $${totalLoss.toFixed(2)}
 • Ação: Retornando à Stake Base`;
 
@@ -1325,7 +1325,7 @@ ${filtersText}
     }
 
     private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
-        const message = `❄️ Zenix v2.0 | TITAN | 🔄 Ajuste de Operação
+        const message = `❄️ TITAN | 🔄 Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;
