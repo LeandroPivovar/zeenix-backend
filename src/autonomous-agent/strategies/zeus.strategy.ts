@@ -22,25 +22,26 @@ import { LogQueueService } from '../../utils/log-queue.service';
  * - Proteção: Stop Blindado (40% meta ativa, proteção fixa de 50%).
  */
 
-const ZEUS_SETTINGS = {
-    NORMAL: {
-        windowSize: 7,
-        requiredMovements: 4,
-        totalMovements: 6,
-        minDelta: 0.5,
+/**
+ * ⚡ ZEUS Strategy Configuration
+ */
+const ZEUS_CORE_CONFIG = {
+    DIGIT: {
+        over: 3,         // Digit Over 3
+        limitValue: 3,   // Digits <= 3 are losers
+        consecutive: 5,  // Need 5 consecutive digits <= 3
+        payout: 0.70,    // 70% Payout for Over 3
     },
-    LENTO: {
-        windowSize: 8,
-        requiredMovements: 5,
-        totalMovements: 7,
-        minDelta: 0.7,
+    RECOVERY: {
+        minDelta: 0.7,   // Delta >= 0.7 for Rise/Fall
+        payout: 0.95,    // 95% Payout for Rise/Fall
     },
 };
 
-const ZEUS_RISK = {
-    CONSERVADOR: { profitFactor: 1.0, maxMartingale: 5 },
-    MODERADO: { profitFactor: 1.15, maxMartingale: -1 }, // Sem limite
-    AGRESSIVO: { profitFactor: 1.30, maxMartingale: -1 }, // Sem limite
+const ZEUS_RISK_PROFILES = {
+    CONSERVADOR: { profitFactor: 1.0 },
+    MODERADO: { profitFactor: 1.15 },
+    AGRESSIVO: { profitFactor: 1.30 },
 };
 @Injectable()
 export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -191,7 +192,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             consecutiveLosses: 0,
             consecutiveWins: 0,
             opsCount: 0,
-            mode: 'NORMAL',
+            mode: 'LENTO',
             stopBlindadoAtivo: false,
             pisoBlindado: 0,
             lastProfit: 0,
@@ -205,6 +206,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             isWaitingContract: false,
             lastContractType: undefined,
             ticksSinceLastAnalysis: 0,
+            consecutiveLosingDigits: 0,
+            lastDigits: [],
         };
 
         this.userStates.set(userId, state);
@@ -260,7 +263,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Obter modo do estado (inicializado como 'NORMAL')
         const state = this.userStates.get(userId);
-        const mode = state?.mode || 'NORMAL';
+        const mode = state?.mode || 'LENTO';
 
         // ✅ Log de ativação no padrão Orion
         this.logInitialConfigV2(userId, {
@@ -357,18 +360,46 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Incrementa contador de ticks sem análise
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
-        // Verificar se precisa avançar (skip) ticks
-        // Normal: Avanço de 2 ticks (só analisa no 3º)
-        // Lento: Avanço de 3 ticks (só analisa no 4º)
-        const requiredSkip = state.mode === 'NORMAL' ? 2 : 3;
+        // 1. Atualizar histórico de ticks e dígitos
+        userTicks.push(tick);
+        if (userTicks.length > this.maxTicks) {
+            userTicks.shift();
+        }
 
+        // ✅ Coletar o último dígito do tick (Price)
+        const priceStr = tick.value.toString();
+        const lastDigit = parseInt(priceStr[priceStr.length - 1]);
+        state.lastDigits.push(lastDigit);
+        if (state.lastDigits.length > 20) {
+            state.lastDigits.shift();
+        }
+
+        // ✅ Atualizar contador de dígitos perdedores (<= limitValue)
+        if (lastDigit <= ZEUS_CORE_CONFIG.DIGIT.limitValue) {
+            state.consecutiveLosingDigits++;
+        } else {
+            state.consecutiveLosingDigits = 0;
+        }
+
+        state.ticksSinceLastAnalysis++;
+
+        // Zeus opera exclusivamente em modo LENTO (avançado de 3 ticks)
+        const requiredSkip = 3;
         if (state.ticksSinceLastAnalysis <= requiredSkip) {
-            return; // Pular este tick
+            return;
+        }
+
+        // Resetar contador após passar o skip (para o próximo ciclo)
+        state.ticksSinceLastAnalysis = 0;
+
+        // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
+        if (state.isWaitingContract) {
+            return;
         }
 
         // Zeus 2.1 precisa de janelas maiores
-        const settings = state.mode === 'NORMAL' ? ZEUS_SETTINGS.NORMAL : ZEUS_SETTINGS.LENTO;
-        const requiredTicks = settings.windowSize;
+        const windowSize = 8; // Hardcoded for LENTO mode
+        const requiredTicks = windowSize;
 
         if (userTicks.length < requiredTicks) {
             if (userTicks.length % 2 === 0) {
@@ -388,6 +419,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Verificar novamente ANTES de fazer análise (evitar análise desnecessária)
         if (state.isWaitingContract) {
+            this.processingLocks.set(userId, false); // Liberar lock antes de retornar
             return;
         }
 
@@ -421,7 +453,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 const message = `📊 ANÁLISE COMPLETA\n` +
                     `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
                     `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'SEM PADRÃO CLARO ❌'}\n` +
-                    `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'NORMAL' ? 67 : 85}%)`;
+                    `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'LENTO' ? 85 : 85}%)`; // Zeus is permanently LENTO
 
                 this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
             }
@@ -461,76 +493,87 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const state = this.userStates.get(userId);
         if (!state) return null;
 
-        const settings = state.mode === 'NORMAL' ? ZEUS_SETTINGS.NORMAL : ZEUS_SETTINGS.LENTO;
-        const windowSize = settings.windowSize;
+        // ✅ LÓGICA ZEUS: HIBRIDISMO (DIGIT-OVER PARA M0/M1, RISE/FALL PARA M2+)
+        const isRecoveryActive = state.consecutiveLosses >= 2;
 
-        if (ticks.length < windowSize) return null;
+        if (!isRecoveryActive) {
+            // --- ENTRADA PRINCIPAL / M1: DIGIT OVER ---
+            const count = state.consecutiveLosingDigits;
+            const required = ZEUS_CORE_CONFIG.DIGIT.consecutive;
+            const limit = ZEUS_CORE_CONFIG.DIGIT.limitValue;
 
-        const recent = ticks.slice(-windowSize);
-        const recentValues = recent.map(t => t.value);
-
-        // 1. Calcular Movimentos
-        let ups = 0;
-        let downs = 0;
-        // O número total de movimentos em uma janela N é N-1.
-        // Ex: Window 7 -> 6 moves.
-        const lastMoves = recentValues.slice(-(settings.totalMovements + 1));
-        for (let i = 1; i < lastMoves.length; i++) {
-            if (lastMoves[i] > lastMoves[i - 1]) ups++;
-            if (lastMoves[i] < lastMoves[i - 1]) downs++;
-        }
-
-        // 2. Calcular Delta (Volatility)
-        const firstTick = recentValues[0];
-        const lastTick = recentValues[recentValues.length - 1];
-        const delta = Math.abs(lastTick - firstTick);
-
-        let signal: 'CALL' | 'PUT' | null = null;
-        let blockReason: string | null = null;
-
-        // 3. Verificar Filtros
-        const isUpSignal = ups >= settings.requiredMovements && delta >= settings.minDelta;
-        const isDownSignal = downs >= settings.requiredMovements && delta >= settings.minDelta;
-
-        if (isUpSignal) signal = 'CALL';
-        else if (isDownSignal) signal = 'PUT';
-        else {
-            // Registrar motivo do bloqueio para logs
-            if (delta < settings.minDelta) {
-                blockReason = `Delta insuficiente (${delta.toFixed(2)} < ${settings.minDelta})`;
-            } else {
-                const maxMoves = Math.max(ups, downs);
-                blockReason = `Movimentos insuficientes (${maxMoves}/${settings.totalMovements})`;
+            if (count >= required) {
+                return {
+                    signal: 'DIGIT',
+                    probability: 80, // Zeus estimate
+                    payout: ZEUS_CORE_CONFIG.DIGIT.payout,
+                    confidence: 0.8,
+                    details: {
+                        digitPattern: `${count} dígitos ≤ ${limit}`,
+                        currentPrice: ticks[ticks.length - 1].value,
+                        symbol: 'R_100',
+                        contractType: 'DIGITOVER',
+                        barrier: '3'
+                    }
+                };
             }
+            return null;
+        } else {
+            // --- RECUPERAÇÃO M2+: RISE/FALL (SENTINEL LENTO) ---
+            const windowSize = 8;
+            const totalMovements = 7;
+            const requiredMovements = 5;
+            const minDelta = ZEUS_CORE_CONFIG.RECOVERY.minDelta;
+
+            if (ticks.length < windowSize) return null;
+
+            const recentTicks = ticks.slice(-windowSize);
+            const recentValues = recentTicks.map(t => t.value);
+
+            // 1. Calcular Variação (Delta)
+            const first = recentValues[0];
+            const last = recentValues[recentValues.length - 1];
+            const delta = Math.abs((last - first) / first) * 100;
+
+            // 2. Calcular Direção (Momentum)
+            let ups = 0;
+            let downs = 0;
+            const lastMoves = recentValues.slice(-(totalMovements + 1));
+            for (let i = 1; i < lastMoves.length; i++) {
+                if (lastMoves[i] > lastMoves[i - 1]) ups++;
+                if (lastMoves[i] < lastMoves[i - 1]) downs++;
+            }
+
+            // 3. Verificar Filtros (LENTO FIXO)
+            const isUpSignal = ups >= requiredMovements && delta >= minDelta;
+            const isDownSignal = downs >= requiredMovements && delta >= minDelta;
+
+            let signal: 'CALL' | 'PUT' | null = null;
+            if (isUpSignal) signal = 'CALL';
+            else if (isDownSignal) signal = 'PUT';
+
+            if (signal) {
+                const moveScore = (Math.max(ups, downs) / totalMovements) * 50;
+                const deltaScore = Math.min((delta / minDelta) * 50, 50);
+                const probability = Math.round(moveScore + deltaScore);
+
+                return {
+                    signal: signal,
+                    probability: probability,
+                    payout: 0.92, // Default payout for Rise/Fall
+                    confidence: probability / 100,
+                    details: {
+                        trend: ups > downs ? 'UP' : 'DOWN',
+                        volatility: delta,
+                        ups,
+                        downs,
+                        delta,
+                        totalMoves: totalMovements
+                    },
+                };
+            }
+            return null;
         }
-
-        // 4. Calcular Probabilidade Baseada em Score
-        // Metade baseada em movimentos, metade em delta (normalizado)
-        const moveScore = (Math.max(ups, downs) / settings.totalMovements) * 50;
-        const deltaScore = Math.min((delta / settings.minDelta) * 50, 50);
-        const probability = Math.round(moveScore + deltaScore);
-
-        if (!signal) {
-            this.logBlockedEntry(userId, {
-                reason: delta < settings.minDelta ? 'delta' : 'filter',
-                details: blockReason || 'Filtros não atingidos'
-            });
-        }
-
-        return {
-            probability,
-            signal, // Pode ser null
-            payout: 0.92,
-            confidence: probability / 100,
-            details: {
-                trend: signal || 'NEUTRAL',
-                trendStrength: probability / 100,
-                ups,
-                downs,
-                delta,
-                totalMoves: settings.totalMovements
-            },
-        };
     }
 
     // Métodos antigos removidos (calculateVolatility, calculateEMA, analyzeDigits) pois não são usados na V2.0
@@ -557,10 +600,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // B. Filtro de Precisão baseado no Modo (v2.1 thresholds)
-        const settings = state.mode === 'NORMAL' ? ZEUS_SETTINGS.NORMAL : ZEUS_SETTINGS.LENTO;
+        const settings = ZEUS_CORE_CONFIG.RECOVERY; // Zeus is permanently LENTO
         // No guia 2.1, os thresholds são embutidos na análise (isUpSignal/isDownSignal)
         // Mas para manter compatibilidade com processAgent, usamos score de probabilidade
-        const requiredProb = state.mode === 'LENTO' ? 85 : 70; // 70% threshold for Normal in v2.1
+        const requiredProb = 85; // 85% threshold for LENTO in v2.1
 
         if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
             // ✅ Calcular stake (sem ajustes ainda)
@@ -570,46 +613,36 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 return { action: 'WAIT', reason: 'NO_STAKE' };
             }
 
-            // ✅ Verificar Stop Loss (Normal e Blindado) usando estrutura do Sentinel
+            // ✅ Verificar Stop Loss (Normal e Blindado)
             const stopLossCheck = await this.checkStopLoss(userId, stake);
             if (stopLossCheck.action === 'STOP') {
                 return stopLossCheck;
             }
 
-            // Usar stake ajustado se houver
+            // Usar stake ajustada se houver
             const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
-
-            // ✅ Log consolidado de decisão (formato igual ao SENTINEL)
-            const reasons: string[] = [];
-            if (marketAnalysis.details?.volatility) {
-                reasons.push(`Volatilidade: ${(marketAnalysis.details.volatility * 100).toFixed(2)}%`);
-            }
-            if (marketAnalysis.details?.trend) {
-                reasons.push(`Tendência: ${marketAnalysis.details.trend}`);
-            }
-            if (marketAnalysis.details?.digitPattern) {
-                reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
-            }
 
             // ✅ Log de sinal no padrão Orion v2.1
             this.logSignalGenerated(userId, {
                 mode: state.mode,
-                isRecovery: state.mode === 'LENTO',
-                filters: [
-                    `Janela: ${settings.windowSize} ticks (${settings.totalMovements} moves)`,
-                    `Delta: ${marketAnalysis.details?.delta?.toFixed(2)} (Min ${settings.minDelta})`,
-                    `Moves: ${Math.max(marketAnalysis.details?.ups || 0, marketAnalysis.details?.downs || 0)}/${settings.totalMovements}`
-                ],
-                trigger: 'Momentum Confirmado ⚡',
+                isRecovery: state.consecutiveLosses >= 2,
+                filters: marketAnalysis.signal === 'DIGIT'
+                    ? [marketAnalysis.details?.digitPattern]
+                    : [
+                        `Janela: 8 ticks (7 moves)`,
+                        `Delta: ${marketAnalysis.details?.delta?.toFixed(2)} (Min ${settings.minDelta})`,
+                        `Moves: ${Math.max(marketAnalysis.details?.ups || 0, marketAnalysis.details?.downs || 0)}/7`
+                    ],
+                trigger: marketAnalysis.signal === 'DIGIT' ? 'Dígitos Consecutivos ⚡' : 'Momentum Confirmado ⚡',
                 probability: marketAnalysis.probability,
-                contractType: 'RISE/FALL',
-                direction: marketAnalysis.signal as 'CALL' | 'PUT'
+                contractType: marketAnalysis.signal === 'DIGIT' ? 'DIGITOVER' : 'RISE/FALL',
+                direction: marketAnalysis.signal as 'CALL' | 'PUT' | 'DIGIT'
             });
 
             return {
                 action: 'BUY',
                 stake: finalStake,
-                contractType: marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT',
+                contractType: marketAnalysis.signal === 'DIGIT' ? 'DIGITOVER' : (marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT'),
                 mode: state.mode,
                 reason: 'HIGH_PROBABILITY',
             };
@@ -620,10 +653,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
                 : 'Sinal indefinido';
 
-            // ✅ THROTTLING: Só logar se:
-            // 1. Passou pelo menos 30 segundos desde o último log de compra negada OU
-            // 2. A probabilidade mudou significativamente (mais de 5%) OU
-            // 3. A direção mudou
             const now = Date.now();
             const lastLogTime = state.lastDeniedLogTime || 0;
             const timeSinceLastLog = now - lastLogTime;
@@ -675,13 +704,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // O Martingale é calculado para cobrir TUDO + lucro. Então um WIN no LENTO geralmente resolve.
 
                 // Vamos considerar que um WIN no Lento resolve e volta pro Normal
-                state.mode = 'NORMAL';
+                state.mode = 'LENTO'; // Zeus is permanently LENTO
                 const recoveredLoss = state.totalLossAccumulated;
                 state.totalLossAccumulated = 0; // Resetar acumulado
                 state.consecutiveWins = 0; // ✅ Resetar wins para evitar Soros na próxima (começar com stake base)
 
                 // ✅ DEBUG LOG (Requested Issue Investigation)
-                this.logger.debug(`[Zeus][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Resetando estado. Mode=NORMAL, Wins=0, AccumLoss=0. LastProfit=${state.lastProfit}`);
+                this.logger.debug(`[Zeus][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Resetando estado. Mode=LENTO, Wins=0, AccumLoss=0. LastProfit=${state.lastProfit}`);
 
                 this.logSuccessfulRecoveryV2(userId, {
                     recoveredLoss: recoveredLoss,
@@ -700,9 +729,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.consecutiveLosses++;
 
             // Se estava em NORMAL, vai para LENTO imediatamente
-            if (state.mode === 'NORMAL') {
+            if (state.mode === 'LENTO') { // Zeus is permanently LENTO
                 state.mode = 'LENTO';
-                this.logger.log(`[Zeus][${userId}] ⚠️ LOSS (Normal) -> Mudando para LENTO (Recuperação)`);
+                this.logger.log(`[Zeus][${userId}] ⚠️ LOSS (LENTO) -> Mantendo LENTO (Recuperação)`);
             }
 
             // Acumula perda para martingale (usado para calcular próxima stake)
@@ -740,9 +769,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // MODERADO: 1.15 (+15%)
             // AGRESSIVO: 1.30 (+30%)
 
-            const riskSettings = ZEUS_RISK[config.riskProfile as keyof typeof ZEUS_RISK] || ZEUS_RISK.MODERADO;
+            const riskSettings = ZEUS_RISK_PROFILES[config.riskProfile as keyof typeof ZEUS_RISK_PROFILES] || ZEUS_RISK_PROFILES.MODERADO;
             const profitFactor = riskSettings.profitFactor;
-
+            const isDigit = state.consecutiveLosses < 2; // Level 0/1 are Digits
+            const payout = isDigit ? ZEUS_CORE_CONFIG.DIGIT.payout : ZEUS_CORE_CONFIG.RECOVERY.payout;
             // Perda total a recuperar (absoluta)
             // state.totalLossAccumulated deve ser mantido atualizado
             // Se não, podemos tentar inferir pelo lucroAtual se estiver negativo.
@@ -754,27 +784,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // ✅ DEBUG LOG
             this.logger.debug(`[Zeus][${userId}] 🧮 CALC STAKE (LENTO): AccumLoss=${state.totalLossAccumulated}, LossToRecover=${lossToRecover}, Factor=${profitFactor}, Payout=${realPayout}`);
 
+            // Payout real considerando a comissão
+            const adjustedPayout = payout * (1 - this.comissaoPlataforma);
+
+            // Fórmula Zeus de Recuperação Cirúrgica
+            stake = (lossToRecover * profitFactor) / adjustedPayout;
+            stake = Math.round(stake * 100) / 100;
+
             if (lossToRecover > 0) {
-                // Fórmula Martingale: (Perda * Fator) / Payout
-                const targetAmount = lossToRecover * profitFactor;
-
-                // Se for Conservador (fator 1.0), targetAmount = lossToRecover. LucroLiq = 0.
-                // Se for Moderado (1.15), targetAmount = loss * 1.15. LucroLiq = 15%.
-
-                stake = targetAmount / realPayout;
-
-                // Limite por Perfil (v2.1)
-                // ✅ CORREÇÃO: Respeitar a flag -1 (Sem Limite)
-                const hasLimit = riskSettings.maxMartingale !== -1;
-                if (hasLimit && state.consecutiveLosses > riskSettings.maxMartingale) {
-                    this.logger.log(`[Zeus] ⚠️ Limite M${riskSettings.maxMartingale} atingido. Resetando para stake base.`);
-                    state.mode = 'NORMAL';
+                // Limite Fixo (Level 5 / 6ª perda)
+                const maxLevel = 5;
+                if (state.consecutiveLosses > maxLevel) {
+                    this.logger.log(`[Zeus] ⚠️ Limite M${maxLevel} atingido. Resetando para stake base.`);
+                    state.mode = 'LENTO';
                     state.totalLossAccumulated = 0;
                     state.consecutiveLosses = 0;
                     return config.initialStake;
                 }
-
-                stake = Math.round(stake * 100) / 100;
 
                 this.logMartingaleLevelV2(userId, {
                     level: state.consecutiveLosses,
@@ -782,17 +808,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     accumulatedLoss: lossToRecover,
                     calculatedStake: stake,
                     profitPercentage: Math.round((profitFactor - 1) * 100),
-                    maxLevel: riskSettings.maxMartingale,
-                    contractType: state.lastContractType || 'RISE/FALL'
+                    maxLevel: 5,
+                    contractType: state.lastContractType || (isDigit ? 'DIGITOVER' : 'RISE/FALL')
                 });
-
             } else {
-                // Se modo lento mas sem perda (ex: acabou de entrar, ou bug), usa base.
-                stake = config.initialStake;
+                // Zeus Lento principal (Level 0/1)
+                // Se não há perda a recuperar, usa stake inicial
+                state.mode = 'LENTO';
+                return config.initialStake;
             }
         }
         // Lógica para Modo NORMAL (Soros Nível 1)
-        else {
+        else { // This block will not be reached as Zeus is permanently LENTO
             // ✅ DEBUG LOG
             this.logger.debug(`[Zeus][${userId}] 🧮 CALC STAKE (NORMAL): Wins=${state.consecutiveWins}, LastProfit=${state.lastProfit}, Base=${config.initialStake}`);
 
@@ -888,7 +915,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     this.logger.log(`[Zeus][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
 
                     await this.saveLog(userId, 'WARN', 'RISK',
-                        `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.lucroAtual.toFixed(2)}. Encerrando operações do dia.`);
+                        `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`);
 
                     // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
                     // Mantém is_active = TRUE para permitir reset automático no dia seguinte
@@ -955,13 +982,25 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // ✅ Salvar tipo de contrato para usar no log de resultado
             state.lastContractType = contractType;
 
+            // ✅ Definir duration e barrier com base no contractType
+            let duration: number;
+            let barrier: string | undefined;
+
+            if (contractType === 'DIGITOVER') {
+                duration = 1;
+                barrier = '3'; // Exemplo de barreira para DIGITOVER
+            } else {
+                duration = 5;
+                barrier = undefined;
+            }
+
             // ✅ Criar registro de trade ANTES de executar - com preço atual como inicial
             const tradeId = await this.createTradeRecord(
                 userId,
                 {
                     contractType: contractType,
                     stakeAmount: decision.stake || config.initialStake,
-                    duration: 5,
+                    duration: duration,
                     marketAnalysis: marketAnalysis,
                     payout: zenixPayout,
                     entryPrice: currentPrice, // ✅ Usar preço atual instead of 0
@@ -975,7 +1014,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     contractType,
                     config.symbol,
                     decision.stake || config.initialStake,
-                    5, // duration em ticks
+                    duration,
+                    barrier, // Passar barrier
+                    2 // maxRetries
                 );
 
                 if (contractId) {
@@ -1081,6 +1122,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         symbol: string,
         stake: number,
         duration: number,
+        barrier?: string, // Adicionado barrier
         maxRetries = 2,
     ): Promise<string | null> {
         const roundedStake = Math.round(stake * 100) / 100;
@@ -1114,6 +1156,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                         duration: duration,
                         duration_unit: 't',
                         symbol: symbol,
+                        barrier: barrier,
                     },
                     60000, // timeout 60s (igual Orion)
                 );
@@ -1671,7 +1714,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.consecutiveLosses = 0;
             state.consecutiveWins = 0;
             state.opsCount = 0;
-            state.mode = 'NORMAL';
+            state.mode = 'LENTO';
             state.stopBlindadoAtivo = false;
             state.pisoBlindado = 0;
             state.lastProfit = 0;
@@ -2209,22 +2252,28 @@ interface ZeusUserState {
     consecutiveLosses: number;
     consecutiveWins: number;
     opsCount: number;
-    mode: 'NORMAL' | 'LENTO';
+    mode: 'LENTO'; // Zeus is permanently LENTO
     stopBlindadoAtivo: boolean;
     pisoBlindado: number;
     lastProfit: number;
     currentContractId: string | null;
     currentTradeId: number | null;
     isWaitingContract: boolean;
-    lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
-    // ✅ Campos adicionados para compatibilidade com Sentinel/Estrutura Padrão
+    lastContractType?: string;
+
+    // Digit-specific state
+    consecutiveLosingDigits: number;
+    lastDigits: number[];
+
+    // Recovery state
+    totalLossAccumulated: number;
     martingaleLevel: number;
     sorosLevel: number;
     totalLosses: number;
     recoveryAttempts: number;
-    totalLossAccumulated: number; // ✅ Novo: Acumulado para recuperação
-    ticksSinceLastAnalysis: number; // ✅ Novo: Avanço de Ticks
-    // ✅ Campos para throttling de logs de compra negada
+    ticksSinceLastAnalysis: number;
+
+    // Throttling
     lastDeniedLogTime?: number;
     lastDeniedLogData?: { probability: number; signal: string | null };
 }
