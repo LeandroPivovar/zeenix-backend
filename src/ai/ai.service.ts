@@ -2739,6 +2739,15 @@ export class AiService implements OnModuleInit {
         const finalToken = resolved.token;
         const finalCurrency = resolved.isVirtual ? 'USD' : (config.currency === 'DEMO' || !config.currency ? 'USD' : config.currency);
 
+        // ✅ ZENIX v2.1: Se o token mudou, atualizar no banco para persistir a correção
+        if (finalToken !== config.derivToken) {
+          this.logger.warn(`[SyncAtlas] 🔄 Atualizando token no banco para user ${config.userId} | Antigo: ${config.derivToken?.substring(0, 10)}... | Novo: ${finalToken?.substring(0, 10)}...`);
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET deriv_token = ? WHERE user_id = ? AND is_active = TRUE`,
+            [finalToken, config.userId]
+          );
+        }
+
         try {
           await this.strategyManager.activateUser(config.userId, 'atlas', {
             mode: config.mode || 'veloz',
