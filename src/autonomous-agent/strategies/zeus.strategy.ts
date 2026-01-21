@@ -734,8 +734,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const conn = this.wsConnections.get(token)!;
         return {
             ws: conn.ws,
-            sendRequest: (p, t) => this.sendRequestViaConnection(token, p, t || 60000),
-            subscribe: (p, c, s, t) => this.subscribeViaConnection(token, p, c, s, t || 90000),
+            sendRequest: (p, t?: number) => this.sendRequestViaConnection(token, p, t || 60000),
+            subscribe: (p, c, s, t?: number) => this.subscribeViaConnection(token, p, c, s, t || 90000),
             removeSubscription: (s) => this.removeSubscriptionFromConnection(token, s),
         };
     }
