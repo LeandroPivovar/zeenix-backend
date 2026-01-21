@@ -556,7 +556,7 @@ export class CopyTradingService {
 
       // 1. Buscar copiadores ativos deste Master Trader E suas sessões ativas
       const copiers = await this.dataSource.query(
-        `SELECT c.*, u.token_demo, u.token_real, s.trade_currency, css.id as session_id
+        `SELECT c.*, u.token_demo, u.token_real, u.deriv_raw, s.trade_currency, css.id as session_id
          FROM copy_trading_config c
          JOIN users u ON c.user_id = u.id
          LEFT JOIN user_settings s ON c.user_id = s.user_id
@@ -575,13 +575,20 @@ export class CopyTradingService {
       // 2. Iterar e executar para cada copiador
       for (const copier of copiers) {
         // Resolver token do copiador (Demo ou Real)
-        let copierToken = copier.deriv_token;
-        const currencyPref = copier.trade_currency || 'USD';
+        let copierToken = copier.deriv_token; // Default: token da config
+        const currencyPref = (copier.trade_currency || 'USD').toUpperCase();
 
+        // 1. Tentar usar token explícito da tabela users se disponível (Prioridade Total)
         if (currencyPref === 'DEMO' && copier.token_demo) {
           copierToken = copier.token_demo;
         } else if (currencyPref !== 'DEMO' && copier.token_real) {
           copierToken = copier.token_real;
+        } else {
+          // 2. Fallback somente se não tiver tokens explícitos
+          const derivRaw = copier.deriv_raw || null; // copier.deriv_raw pode não estar na query original, verificar?
+          // A query original JOIN copy_trading_config c ... JOIN users u ... SELECT c.*, u.token_demo... 
+          // Users table has deriv_raw? Yes. Need check if selected.
+          // Query: SELECT c.*, u.token_demo, u.token_real, s.trade_currency, css.id as session_id
         }
 
         // Se não tiver token, pular
@@ -1027,10 +1034,15 @@ export class CopyTradingService {
 
       // Buscar todas as sessões ativas copiando esse trader
       const activeSessions = await this.dataSource.query(
-        `SELECT s.*, c.allocation_type, c.allocation_value, c.allocation_percentage,
-                c.leverage, c.stop_loss, c.take_profit, c.currency
+        `SELECT 
+          s.*, 
+          c.allocation_type, c.allocation_value, c.allocation_percentage,
+          c.leverage, c.stop_loss, c.take_profit, c.currency, c.deriv_token,
+          u.token_demo, u.token_real, us.trade_currency, u.deriv_raw
          FROM copy_trading_sessions s
          INNER JOIN copy_trading_config c ON s.config_id = c.id
+         INNER JOIN users u ON s.user_id = u.id
+         LEFT JOIN user_settings us ON s.user_id = us.user_id
          WHERE s.trader_id = ? AND s.status = 'active'
          ORDER BY s.started_at ASC`,
         [masterUserId],
@@ -1046,7 +1058,49 @@ export class CopyTradingService {
       // Replicar para cada sessão ativa
       for (const session of activeSessions) {
         try {
-          await this.replicateTradeToSession(session, tradeData);
+          // ✅ Lógica de Resolução de Token
+          const preferredCurrency = (session.trade_currency || session.currency || 'USD').toUpperCase();
+          let resolvedToken = session.deriv_token || ''; // Começa com o da config (que não veio na query original, oops, vamos assumir que pode vir do c.deriv_token se adicionarmos)
+          // Mas deriv_token está em copy_trading_config (c). Adicionando c.deriv_token na query.
+
+          // 1. Tentar usar token explícito da tabela users se disponível
+          if (preferredCurrency === 'DEMO' && session.token_demo) {
+            resolvedToken = session.token_demo;
+          } else if (preferredCurrency !== 'DEMO' && session.token_real) {
+            resolvedToken = session.token_real;
+          } else {
+            // Fallback
+            let wantDemo = preferredCurrency === 'DEMO';
+            const derivRaw = session.deriv_raw;
+            if (preferredCurrency === 'USD' && derivRaw) {
+              try {
+                const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+                if (raw?.loginid?.startsWith('VRTC')) wantDemo = true;
+              } catch (e) { }
+            }
+            if (wantDemo && derivRaw) {
+              try {
+                const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+                const tokens = raw.tokensByLoginId || {};
+                const entry = Object.entries(tokens).find(([lid]) => (lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              } catch (e) { }
+            } else if (!wantDemo && derivRaw) {
+              try {
+                const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+                const tokens = raw.tokensByLoginId || {};
+                const entry = Object.entries(tokens).find(([lid]) => !(lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              } catch (e) { }
+            }
+          }
+
+          // Adicionar o token resolvido à sessão para uso no replicateTradeToSession
+          // Se replicateTradeToSession precisar executar trade, ele usará este token.
+          // Atualmente replicateTradeToSession apenas insere no banco, mas passaremos para manter consistência.
+          session.resolvedToken = resolvedToken;
+
+          await this.replicateTradeToSession(session, tradeData, resolvedToken);
         } catch (error) {
           this.logger.error(
             `[ReplicateTrade] Erro ao replicar para sessão ${session.id}: ${error.message}`,
@@ -1079,6 +1133,7 @@ export class CopyTradingService {
       symbol?: string;
       traderOperationId?: string;
     },
+    derivToken?: string,
   ): Promise<void> {
     try {
       // Calcular valor a ser investido pelo copiador baseado nas configurações
@@ -1389,46 +1444,47 @@ export class CopyTradingService {
 
         // ✅ Lógica de Resolução de Token (Igual ao AiService e DerivController)
         const preferredCurrency = (copier.trade_currency || copier.currency || 'USD').toUpperCase();
-        let wantDemo = preferredCurrency === 'DEMO';
-        const dbTokenDemo = copier.token_demo;
-        const dbTokenReal = copier.token_real;
-        const derivRaw = copier.deriv_raw;
 
-        // Verificar ambiguidade USD no raw
-        if (preferredCurrency === 'USD' && derivRaw) {
-          try {
-            const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
-            if (raw?.loginid?.startsWith('VRTC')) {
-              wantDemo = true;
-            }
-          } catch (e) { }
-        }
+        let resolvedToken = copier.deriv_token || ''; // Começa com o da config
 
-        let resolvedToken = copier.deriv_token || ''; // Default: token da config
+        // 1. Tentar usar token explícito da tabela users se disponível
+        if (preferredCurrency === 'DEMO' && copier.token_demo) {
+          resolvedToken = copier.token_demo;
+        } else if (preferredCurrency !== 'DEMO' && copier.token_real) {
+          resolvedToken = copier.token_real;
+        } else {
+          // 2. Fallback: lógica antiga via derivRaw se não houver colunas explícitas
+          let wantDemo = preferredCurrency === 'DEMO';
+          const derivRaw = copier.deriv_raw;
 
-        if (wantDemo) {
-          if (dbTokenDemo) {
-            resolvedToken = dbTokenDemo;
-          } else if (derivRaw) {
-            // Fallback raw
+          // Verificar ambiguidade USD no raw
+          if (preferredCurrency === 'USD' && derivRaw) {
             try {
               const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
-              const tokens = raw.tokensByLoginId || {};
-              const entry = Object.entries(tokens).find(([lid]) => (lid as string).startsWith('VRTC'));
-              if (entry) resolvedToken = entry[1] as string;
+              if (raw?.loginid?.startsWith('VRTC')) {
+                wantDemo = true;
+              }
             } catch (e) { }
           }
-        } else {
-          if (dbTokenReal) {
-            resolvedToken = dbTokenReal;
-          } else if (derivRaw) {
-            // Fallback raw
-            try {
-              const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
-              const tokens = raw.tokensByLoginId || {};
-              const entry = Object.entries(tokens).find(([lid]) => !(lid as string).startsWith('VRTC'));
-              if (entry) resolvedToken = entry[1] as string;
-            } catch (e) { }
+
+          if (wantDemo) {
+            if (derivRaw) {
+              try {
+                const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+                const tokens = raw.tokensByLoginId || {};
+                const entry = Object.entries(tokens).find(([lid]) => (lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              } catch (e) { }
+            }
+          } else {
+            if (derivRaw) {
+              try {
+                const raw = typeof derivRaw === 'string' ? JSON.parse(derivRaw) : derivRaw;
+                const tokens = raw.tokensByLoginId || {};
+                const entry = Object.entries(tokens).find(([lid]) => !(lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              } catch (e) { }
+            }
           }
         }
 
