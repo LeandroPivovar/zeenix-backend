@@ -565,10 +565,10 @@ export class DerivService {
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
     // Parâmetros de afiliado - valores padrão do link de afiliado
-    // NOTA: O token do link (t=) não é o mesmo que affiliate_token da API
-    // O affiliate_token deve ser obtido do painel de afiliados da Deriv
-    // Por enquanto, vamos torná-lo opcional e usar apenas UTM para tracking
-    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || 'E466vBzKT83ZDL7kFhQLFGNd7ZgqdRLk'; // Token de afiliado padrão
+    // NOTA IMPORTANTE: O token do link (t=E466vBzKT83ZDL7kFhQLFGNd7ZgqdRLk) NÃO é o affiliate_token da API
+    // O affiliate_token da API deve ser obtido do painel de afiliados da Deriv (é um token diferente)
+    // Por isso, vamos usar apenas UTM parameters que são válidos e suficientes para tracking de afiliados
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || null; // Opcional - deixar null se não tiver token válido do painel
     const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
     const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
     const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
