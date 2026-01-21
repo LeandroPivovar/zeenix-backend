@@ -1088,17 +1088,25 @@ export class DerivController {
 
     // Se não estiver conectado, conectar primeiro
     if (!service['isAuthorized']) {
-      // Buscar token Deriv do banco de dados
-      const derivInfo = await this.userRepository.getDerivInfo(userId);
-      const loginid = derivInfo?.loginId;
-      const finalDerivToken = (loginid && derivInfo?.raw?.tokensByLoginId?.[loginid]) ||
-        derivToken || // Token passado via query
-        null;
+      // 1. Resolver token internamente usando a preferência do usuário (Demo/Real)
+      const finalDerivToken = await this.resolveTokenForUser(userId);
 
       if (!finalDerivToken) {
-        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Token Deriv não encontrado' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Token Deriv não encontrado. Verifique se você tem uma conta conectada.' })}\n\n`);
         res.end();
         return;
+      }
+
+      // Buscar loginid apenas para referência/log (opcional, mas bom ter)
+      let loginid: string | undefined;
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      if (derivInfo?.raw?.tokensByLoginId) {
+        for (const [lid, tkn] of Object.entries(derivInfo.raw.tokensByLoginId)) {
+          if (tkn === finalDerivToken) {
+            loginid = lid;
+            break;
+          }
+        }
       }
 
       try {
@@ -1616,11 +1624,11 @@ export class DerivController {
 
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || await this.getTokenFromStorage(userId);
+        const token = await this.resolveTokenForUser(userId);
         if (!token) {
-          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+          throw new BadRequestException('Token não encontrado no backend. Verifique suas configurações.');
         }
-        await service.connect(token, body.loginid);
+        await service.connect(token);
       }
 
       service.subscribeToSymbol(body.symbol);
@@ -1642,7 +1650,7 @@ export class DerivController {
 
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = await this.getTokenFromStorage(userId);
+        const token = await this.resolveTokenForUser(userId);
         if (token) {
           await service.connect(token);
         }
@@ -1742,9 +1750,9 @@ export class DerivController {
 
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || await this.getTokenFromStorage(userId);
+        const token = await this.resolveTokenForUser(userId);
         if (!token) {
-          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+          throw new BadRequestException('Token não encontrado no backend.');
         }
         await service.connect(token);
       }
@@ -1821,76 +1829,24 @@ export class DerivController {
 
       this.logger.log(`[Trading] derivInfo.raw existe: ${!!derivInfo?.raw}`);
 
-      // Determinar qual loginid usar
-      // 1. Se loginid foi passado no corpo da requisição (prioridade máxima)
-      // 2. Senão, baseado na moeda preferida (lógica antiga)
-      let targetLoginid: string | undefined = (body as any).loginid;
-
-      if (targetLoginid) {
-        this.logger.log(`[Trading] LoginId fornecido explicitamente: ${targetLoginid}`);
-      } else if (preferredCurrency === 'DEMO') {
-        // Para DEMO, buscar conta demo (VRTC*)
-        // Tentar todas as moedas, priorizando USD
-        type AccountEntry = { value: number; loginid: string; isDemo?: boolean };
-        const allAccounts: AccountEntry[] = Object.values(derivInfo?.raw?.accountsByCurrency || {}).flat() as AccountEntry[];
-        const usdDemoAccounts: AccountEntry[] = ((derivInfo?.raw?.accountsByCurrency?.['USD'] || []) as AccountEntry[]).filter((acc) =>
-          acc.isDemo === true || (acc.loginid && acc.loginid.startsWith('VRTC'))
-        );
-
-        this.logger.log(`[Trading] Contas demo USD encontradas: ${usdDemoAccounts.length}`);
-        this.logger.log(`[Trading] Total de contas: ${allAccounts.length}`);
-
-        if (usdDemoAccounts.length > 0) {
-          targetLoginid = usdDemoAccounts[0].loginid;
-          this.logger.log(`[Trading] ✅ Usando conta demo USD: ${targetLoginid}`);
-        } else {
-          // Buscar qualquer conta demo
-          const demoAccounts: AccountEntry[] = allAccounts.filter((acc) =>
-            acc.isDemo === true || (acc.loginid && acc.loginid.startsWith('VRTC'))
-          );
-          if (demoAccounts.length > 0) {
-            targetLoginid = demoAccounts[0].loginid;
-            this.logger.log(`[Trading] ✅ Usando conta demo (qualquer moeda): ${targetLoginid}`);
-          } else {
-            this.logger.warn(`[Trading] ⚠️ Nenhuma conta demo encontrada, usando loginId padrão`);
-            targetLoginid = derivInfo?.loginId || undefined;
-          }
-        }
-      } else {
-        // Para moedas reais, usar o loginid da conta selecionada
-        targetLoginid = derivInfo?.loginId || undefined;
-        this.logger.log(`[Trading] Usando conta real: ${targetLoginid}`);
-      }
-
       // 1. Resolver token internamente (Backend resolution)
-      let token: string | undefined;
-
-      // Tentar encontrar token específico para o loginid no mapa persistido
-      if (derivInfo?.raw?.tokensByLoginId && targetLoginid && derivInfo.raw.tokensByLoginId[targetLoginid]) {
-        token = derivInfo.raw.tokensByLoginId[targetLoginid];
-        this.logger.log(`[Trading] Token encontrado no mapa para ${targetLoginid}`);
-      }
-
-      // 2. Se não encontrar, tentar verificar se há algum token principal no raw (estrutura antiga)
-      // ou se algum token do mapa serve (fallback genérico - risco de conflito, mas melhor que falhar)
-      if (!token && derivInfo?.raw?.tokensByLoginId) {
-        const firstKey = Object.keys(derivInfo.raw.tokensByLoginId)[0];
-        if (firstKey) {
-          token = derivInfo.raw.tokensByLoginId[firstKey];
-          this.logger.warn(`[Trading] Token específico não encontrado. Usando fallback (primeiro disponível): ${firstKey}`);
-        }
-      }
-
-      // 3. Fallback final: body.token (apenas debug/legacy se enviado)
-      if (!token && (body as any).token) {
-        token = (body as any).token;
-        this.logger.warn(`[Trading] Usando token do body como fallback.`);
-      }
+      const token = await this.resolveTokenForUser(userId);
 
       if (!token) {
-        this.logger.error(`[Trading] Token não encontrado. userId: ${userId}, targetLoginid: ${targetLoginid}`);
-        this.logger.error(`[Trading] tokensByLoginId keys: ${derivInfo?.raw?.tokensByLoginId ? Object.keys(derivInfo.raw.tokensByLoginId).join(', ') : 'N/A'}`);
-        throw new BadRequestException('Token não encontrado no backend. Conecte-se novamente.');
+        this.logger.error(`[Trading] Token não encontrado para userId: ${userId}`);
+        throw new BadRequestException('Token não encontrado no backend. Verifique suas configurações de conta.');
+      }
+
+      // Buscar loginid associado ao token para fins de log/conexão
+      let targetLoginid: string | undefined;
+      // derivInfo já carregado no início da função
+      if (derivInfo?.raw?.tokensByLoginId) {
+        for (const [lid, tkn] of Object.entries(derivInfo.raw.tokensByLoginId)) {
+          if (tkn === token) {
+            targetLoginid = lid;
+            break;
+          }
+        }
       }
 
       const currentLoginid = service['currentLoginid'];
@@ -1901,7 +1857,7 @@ export class DerivController {
 
       if (needsReconnect) {
         this.logger.log(`[Trading] Reconectando: isAuthorized=${service['isAuthorized']}, currentLoginid=${currentLoginid}, targetLoginid=${targetLoginid}`);
-        this.logger.log(`[Trading] Token resolvido para loginid ${targetLoginid || '?'}: ${token ? 'SIM' : 'NÃO'} (Prefix: ${token ? token.substring(0, 4) : 'N/A'})`);
+        this.logger.log(`[Trading] Token resolvido: ${token ? 'SIM' : 'NÃO'} (Prefix: ${token ? token.substring(0, 4) : 'N/A'})`);
 
         await service.connect(token, targetLoginid);
         this.logger.log(`[Trading] ✅ Conectado com loginid: ${targetLoginid}`);
@@ -2295,9 +2251,9 @@ export class DerivController {
 
       // Se não estiver conectado, conectar primeiro
       if (!service['isAuthorized']) {
-        const token = body.token || await this.getTokenFromStorage(userId);
+        const token = await this.resolveTokenForUser(userId);
         if (!token) {
-          throw new BadRequestException('Token não fornecido e não encontrado no storage');
+          throw new BadRequestException('Token não encontrado no backend.');
         }
         await service.connect(token);
       }
