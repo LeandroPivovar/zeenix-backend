@@ -4236,7 +4236,7 @@ export class AiService implements OnModuleInit {
           mode: mode || 'veloz',
           stakeAmount, // Capital total da conta
           entryValue: entryValue || 0.35, // ✅ Valor de entrada por operação (padrão: 0.35)
-          derivToken,
+          derivToken: finalToken, // ✅ USAR TOKEN RESOLVIDO (finalToken) e não o argumento (derivToken)
           currency: normalizedCurrency,
           modoMartingale: modoMartingale || 'conservador',
           profitTarget: profitTarget || null,
