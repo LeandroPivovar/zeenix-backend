@@ -894,27 +894,16 @@ export class AtlasStrategy implements IStrategy {
           mode: state.mode,
         });
 
-        // ✅ ATLAS v3.1: Resolver token dinamicamente antes de cada operação
-        const resolvedAccount = await this.resolveDerivToken(state.userId, state.derivToken);
-
-        if (!resolvedAccount) {
-          this.logger.warn(`[ATLAS][${symbol}] ❌ Operação cancelada: Conta não resolvida.`);
+        // ✅ ATLAS v3.2: Alinhamento com Orion - Usar token do estado (já resolvido pelo AiService)
+        // Isso remove a verificação redundante que estava bloqueando trades
+        if (!state.derivToken) {
+          this.logger.warn(`[ATLAS][${symbol}] ❌ Token não encontrado no estado. Abortando.`);
           state.isOperationActive = false;
           return;
         }
 
-        const effectiveToken = resolvedAccount.token;
-        const effectiveCurrency = resolvedAccount.currency;
-
-        if (effectiveToken !== state.derivToken) {
-          this.logger.log(`[ATLAS][${symbol}] 🔄 Token resolvido diferente do cache. Usando: ${effectiveToken.substring(0, 10)}... (${resolvedAccount.isVirtual ? 'DEMO' : 'REAL'})`);
-          state.derivToken = effectiveToken;
-        }
-
-        if (state.currency !== effectiveCurrency) {
-          this.logger.log(`[ATLAS][${symbol}] 🔄 Moeda ajustada: ${state.currency} -> ${effectiveCurrency}`);
-          state.currency = effectiveCurrency;
-        }
+        const effectiveToken = state.derivToken;
+        const effectiveCurrency = state.currency || 'USD';
 
         const result = await this.executeAtlasTradeDirect(
           state.userId,
