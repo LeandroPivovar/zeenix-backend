@@ -11,6 +11,7 @@ import { AutonomousAgentStrategyManagerService } from './strategies/autonomous-a
 import { OrionAutonomousStrategy } from './strategies/orion.strategy';
 import { SentinelStrategy } from './strategies/sentinel.strategy';
 import { FalconStrategy } from './strategies/falcon.strategy';
+import { ZeusStrategy } from './strategies/zeus.strategy';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { FalconStrategy } from './strategies/falcon.strategy';
     OrionAutonomousStrategy,
     SentinelStrategy,
     FalconStrategy,
+    ZeusStrategy,
   ],
   exports: [
     AutonomousAgentService,
@@ -37,5 +39,5 @@ import { FalconStrategy } from './strategies/falcon.strategy';
     AutonomousAgentStrategyManagerService,
   ],
 })
-export class AutonomousAgentModule {}
+export class AutonomousAgentModule { }
 

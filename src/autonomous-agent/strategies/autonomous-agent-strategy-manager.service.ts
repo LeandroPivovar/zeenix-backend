@@ -4,6 +4,7 @@ import { IAutonomousAgentStrategy } from './common.types';
 import { OrionAutonomousStrategy } from './orion.strategy';
 import { SentinelStrategy } from './sentinel.strategy';
 import { FalconStrategy } from './falcon.strategy';
+import { ZeusStrategy } from './zeus.strategy';
 
 /**
  * ✅ NOVO: StrategyManager para Agente Autônomo
@@ -25,18 +26,21 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
     private readonly orionStrategy: OrionAutonomousStrategy,
     private readonly sentinelStrategy: SentinelStrategy,
     private readonly falconStrategy: FalconStrategy,
-  ) {}
+    private readonly zeusStrategy: ZeusStrategy,
+  ) { }
 
   async onModuleInit() {
     // ✅ Registrar Orion, Sentinel e Falcon
     this.strategies.set('orion', this.orionStrategy);
     this.strategies.set('sentinel', this.sentinelStrategy);
     this.strategies.set('falcon', this.falconStrategy);
+    this.strategies.set('zeus', this.zeusStrategy);
 
     // Inicializar estratégias
     await this.orionStrategy.initialize();
     await this.sentinelStrategy.initialize();
     await this.falconStrategy.initialize();
+    await this.zeusStrategy.initialize();
 
     this.logger.log(
       `[AutonomousAgentStrategyManager] ✅ ${this.strategies.size} estratégia(s) registrada(s): ${Array.from(this.strategies.keys()).join(', ')}`,
@@ -85,6 +89,18 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
         promises.push(
           (falconStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
+          })
+        );
+      }
+    }
+
+    // ✅ ZEUS: Processa R_100
+    const zeusStrategy = this.strategies.get('zeus');
+    if (zeusStrategy && typeof (zeusStrategy as any).processTick === 'function') {
+      if (tickSymbol === 'R_100') {
+        promises.push(
+          (zeusStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
+            this.logger.error('[AutonomousAgentStrategyManager][Zeus] Erro:', error);
           })
         );
       }

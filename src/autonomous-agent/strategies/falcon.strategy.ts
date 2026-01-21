@@ -680,6 +680,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.totalLossAccumulated = 0; // Resetar acumulado
         state.consecutiveWins = 0; // ✅ Resetar wins para evitar Soros na próxima (começar com stake base)
 
+        // ✅ DEBUG LOG (Requested Issue Investigation)
+        this.logger.debug(`[Falcon][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Resetando estado. Mode=NORMAL, Wins=0, AccumLoss=0. LastProfit=${state.lastProfit}`);
+
         this.logSuccessfulRecoveryV2(userId, {
           recoveredLoss: recoveredLoss,
           additionalProfit: state.lastProfit,
@@ -748,6 +751,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // ✅ CORREÇÃO: Usar perda acumulada da sequência, não o lucro do dia
       const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
 
+      // ✅ DEBUG LOG
+      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE (LENTO): AccumLoss=${state.totalLossAccumulated}, LossToRecover=${lossToRecover}, Factor=${profitFactor}, Payout=${realPayout}`);
+
       if (lossToRecover > 0) {
         // Fórmula Martingale: (Perda * Fator) / Payout
         const targetAmount = lossToRecover * profitFactor;
@@ -787,6 +793,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
     // Lógica para Modo NORMAL (Soros Nível 1)
     else {
+      // ✅ DEBUG LOG
+      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE (NORMAL): Wins=${state.consecutiveWins}, LastProfit=${state.lastProfit}, Base=${config.initialStake}`);
+
       // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
       if (state.consecutiveWins === 1) { // Próximo é o trade #2 (consecutive será 1 ao entrar aqui)
         // Win1: A próxima aposta é Base + Lucro Anterior
