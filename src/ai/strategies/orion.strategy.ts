@@ -2308,6 +2308,7 @@ ${filtersText}
     }
 
     // ✅ [NOVO] VALIDAÇÃO UNIFICADA: Garantir que TODAS as entradas (Martingale, Soros, Normal) respeitam Stop Loss
+    let isMasterTraderFlag = false; // ✅ Moved variable declaration to outer scope
     try {
       const stopLossConfig = await this.dataSource.query(
         `SELECT 
@@ -2623,6 +2624,53 @@ ${filtersText}
         return;
       }
 
+      // ✅ [ORION] Master Trader Replication - IMMEDIATE (at entry)
+      try {
+        if (isMasterTraderFlag) {
+          const percent = state.capital > 0 ? (stakeAmount / state.capital) * 100 : 0;
+          const unixTimestamp = Math.floor(Date.now() / 1000);
+
+          // 1. Gravar na tabela master_trader_operations as PENDING
+          await this.dataSource.query(
+            `INSERT INTO master_trader_operations
+                 (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+              state.userId,
+              this.symbol,
+              operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'IMPAR' ? 'DIGITODD' : (operation === 'PAR' ? 'DIGITEVEN' : operation)),
+              stakeAmount,
+              percent,
+              0, // multiplier
+              1, // duration
+              't', // duration_unit
+              operation === 'DIGITOVER' ? 'CALL' : (operation === 'IMPAR' ? 'PUT' : (operation === 'PAR' ? 'CALL' : (operation === 'PUT' ? 'PUT' : 'CALL'))),
+              'OPEN',
+            ]
+          );
+
+          // 2. Chamar serviço de cópia para execução imediata
+          if (this.copyTradingService) {
+            await this.copyTradingService.replicateManualOperation(
+              state.userId,
+              {
+                contractId: result.contractId || '', // ID do contrato do mestre
+                contractType: operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'PAR' ? 'DIGITEVEN' : (operation === 'IMPAR' ? 'DIGITODD' : (typeof operation === 'string' ? operation : 'CALL'))),
+                symbol: this.symbol,
+                duration: 1,
+                durationUnit: 't',
+                stakeAmount: stakeAmount,
+                percent: percent,
+                entrySpot: result.entrySpot || 0,
+                entryTime: unixTimestamp
+              }
+            );
+          }
+        }
+      } catch (repError) {
+        this.logger.error(`[ORION] Erro na replicação Master Trader (Entry):`, repError);
+      }
+
       // ✅ Resultado já veio do mesmo WebSocket - processar diretamente
       const { contractId, profit, exitSpot, entrySpot } = result;
       const exitPrice = Number(exitSpot || 0);
@@ -2650,52 +2698,20 @@ ${filtersText}
 
       this.logger.log(`[ORION][${mode}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
 
-      // ✅ [ORION] Master Trader Replication
-      // Se configurado como Master Trader na tabela users, replicar operação para seguidores
+      // ✅ [ORION] Master Trader Result Update
       try {
-        if (isMasterTrader) {
-          const percent = state.capital > 0 ? (stakeAmount / state.capital) * 100 : 0;
-          const unixTimestamp = Math.floor(Date.now() / 1000);
-
-          // 1. Gravar na tabela master_trader_operations
-          await this.dataSource.query(
-            `INSERT INTO master_trader_operations
-                 (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [
-              state.userId,
-              this.symbol,
-              operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'IMPAR' ? 'DIGITODD' : (operation === 'PAR' ? 'DIGITEVEN' : operation)),
-              stakeAmount,
-              percent,
-              0, // multiplier
-              1, // duration
-              't', // duration_unit
-              operation === 'DIGITOVER' ? 'CALL' : (operation === 'IMPAR' ? 'PUT' : (operation === 'PAR' ? 'CALL' : (operation === 'PUT' ? 'PUT' : 'CALL'))),
-              'OPEN',
-            ]
+        if (isMasterTraderFlag && this.copyTradingService) {
+          const resMap = confirmedStatus === 'WON' ? 'win' : 'loss';
+          await this.copyTradingService.updateCopyTradingOperationsResult(
+            state.userId,
+            contractId,
+            resMap,
+            profit,
+            stakeAmount
           );
-
-          // 2. Chamar serviço de cópia
-          if (this.copyTradingService) {
-            await this.copyTradingService.replicateManualOperation(
-              state.userId,
-              {
-                contractId: contractId || '',
-                contractType: operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'PAR' ? 'DIGITEVEN' : (operation === 'IMPAR' ? 'DIGITODD' : (typeof operation === 'string' ? operation : 'CALL'))),
-                symbol: this.symbol,
-                duration: 1,
-                durationUnit: 't',
-                stakeAmount: stakeAmount,
-                percent: percent,
-                entrySpot: entryPrice,
-                entryTime: unixTimestamp
-              }
-            );
-          }
         }
-      } catch (repError) {
-        this.logger.error(`[ORION] Erro na replicação Master Trader:`, repError);
+      } catch (resError) {
+        this.logger.error(`[ORION] Erro ao atualizar resultados do Copy Trading:`, resError);
       }
 
       // ✅ Processar resultado (Soros/Martingale)

@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 import { TradeEventsService } from '../trade-events.service';
 
 
@@ -229,6 +230,7 @@ export class NexusStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
+        private readonly copyTradingService: CopyTradingService,
     ) {
         this.appId = (process as any).env.DERIV_APP_ID || '111346';
     }
@@ -636,7 +638,57 @@ export class NexusStrategy implements IStrategy {
                 amount: stake,
                 currency: state.currency,
                 barrier: barrier
-            }, state.userId);
+            }, state.userId, async (contractId, entryPrice) => {
+                // ✅ [NEXUS] Master Trader Replication - IMMEDIATE (at entry)
+                try {
+                    const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+                    const isMasterTraderFlag = userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1;
+
+                    if (isMasterTraderFlag) {
+                        const percent = state.capital > 0 ? (stake / state.capital) * 100 : 0;
+                        const unixTimestamp = Math.floor(Date.now() / 1000);
+
+                        // 1. Gravar na tabela master_trader_operations as OPEN
+                        await this.dataSource.query(
+                            `INSERT INTO master_trader_operations
+                             (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                            [
+                                state.userId,
+                                this.symbol,
+                                direction === 'PAR' ? 'CALL' : 'PUT', // Mapping Nexus direction
+                                stake,
+                                percent,
+                                0, // multiplier
+                                5, // duration (Nexus uses 5 ticks)
+                                't', // duration_unit
+                                direction === 'PAR' ? 'CALL' : 'PUT',
+                                'OPEN',
+                            ]
+                        );
+
+                        // 2. Chamar serviço de cópia para execução imediata
+                        if (this.copyTradingService) {
+                            await this.copyTradingService.replicateManualOperation(
+                                state.userId,
+                                {
+                                    contractId: contractId || '',
+                                    contractType: direction === 'PAR' ? 'CALL' : 'PUT',
+                                    symbol: this.symbol,
+                                    duration: 5,
+                                    durationUnit: 't',
+                                    stakeAmount: stake,
+                                    percent: percent,
+                                    entrySpot: entryPrice || 0,
+                                    entryTime: unixTimestamp
+                                },
+                            );
+                        }
+                    }
+                } catch (repError) {
+                    this.logger.error(`[NEXUS] Erro na replicação Master Trader (Entry):`, repError);
+                }
+            });
 
             if (result) {
                 const wasRecovery = riskManager.consecutiveLosses > 0;
@@ -715,6 +767,24 @@ export class NexusStrategy implements IStrategy {
 
 
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
+
+                // ✅ [NEXUS] Master Trader Result Update
+                try {
+                    const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+                    if (userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1 && this.copyTradingService) {
+                        const resMap = result.profit >= 0 ? 'win' : 'loss';
+                        await this.copyTradingService.updateCopyTradingOperationsResult(
+                            state.userId,
+                            result.contractId,
+                            resMap,
+                            result.profit,
+                            stake
+                        );
+                    }
+                } catch (resError) {
+                    this.logger.error(`[NEXUS] Erro ao atualizar resultados do Copy Trading:`, resError);
+                }
+
 
                 if (state.ultimoLucro > 0 && (state.capital - riskManager.getInitialBalance()) >= riskManager.getProfitTarget()) {
                     await this.stopUser(state, 'stopped_profit');
@@ -804,7 +874,12 @@ export class NexusStrategy implements IStrategy {
         return tradeId;
     }
 
-    private async executeTradeViaWebSocket(token: string, params: any, userId: string): Promise<any> {
+    private async executeTradeViaWebSocket(
+        token: string,
+        params: any,
+        userId: string,
+        onBuy?: (contractId: string, entryPrice: number) => Promise<void>
+    ): Promise<{ contractId: string, profit: number, exitSpot: any } | null> {
         try {
             const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
@@ -845,6 +920,13 @@ export class NexusStrategy implements IStrategy {
 
             const contractId = buyResponse.buy?.contract_id;
             if (!contractId) return null;
+
+            // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
+            if (onBuy) {
+                onBuy(contractId, buyResponse.buy.entry_tick || buyResponse.buy.price).catch(err => {
+                    this.logger.error(`[NEXUS] Erro no callback onBuy: ${err.message}`);
+                });
+            }
 
             return new Promise((resolve) => {
                 let hasResolved = false;

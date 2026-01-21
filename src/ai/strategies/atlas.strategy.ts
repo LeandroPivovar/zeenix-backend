@@ -5,6 +5,7 @@ import { Tick, DigitParity, CONFIGS_MARTINGALE } from '../ai.service';
 import { TradeEventsService } from '../trade-events.service';
 
 import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
 // Atualizado: Payout ajustado para 0.92 (95% - 3% markup = 92%)
@@ -139,6 +140,7 @@ export class AtlasStrategy implements IStrategy {
   constructor(
     private readonly dataSource: DataSource,
     private readonly tradeEvents: TradeEventsService,
+    private readonly copyTradingService: CopyTradingService,
 
   ) {
     this.appId = Number(process.env.DERIV_APP_ID || 1089);
@@ -919,6 +921,57 @@ export class AtlasStrategy implements IStrategy {
             duration: 1,
             duration_unit: 't',
           },
+          async (contractId, entryPrice) => {
+            // ✅ [ATLAS] Master Trader Replication - IMMEDIATE (at entry)
+            try {
+              const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+              const isMasterTraderFlag = userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1;
+
+              if (isMasterTraderFlag) {
+                const percent = state.capital > 0 ? (stakeAmount / state.capital) * 100 : 0;
+                const unixTimestamp = Math.floor(Date.now() / 1000);
+
+                // 1. Gravar na tabela master_trader_operations as OPEN
+                await this.dataSource.query(
+                  `INSERT INTO master_trader_operations
+                       (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                  [
+                    state.userId,
+                    symbol,
+                    contractType, // 'DIGITOVER', 'DIGITUNDER', etc
+                    stakeAmount,
+                    percent,
+                    0, // multiplier
+                    1, // duration
+                    't', // duration_unit
+                    operation === 'OVER' ? 'CALL' : (operation === 'UNDER' ? 'PUT' : 'CALL'), // Mapper simples
+                    'OPEN',
+                  ]
+                );
+
+                // 2. Chamar serviço de cópia para execução imediata
+                if (this.copyTradingService) {
+                  await this.copyTradingService.replicateManualOperation(
+                    state.userId,
+                    {
+                      contractId: contractId || '',
+                      contractType: contractType,
+                      symbol: symbol,
+                      duration: 1,
+                      durationUnit: 't',
+                      stakeAmount: stakeAmount,
+                      percent: percent,
+                      entrySpot: entryPrice || 0,
+                      entryTime: unixTimestamp
+                    },
+                  );
+                }
+              }
+            } catch (repError) {
+              this.logger.error(`[ATLAS] Erro na replicação Master Trader (Entry):`, repError);
+            }
+          }
         );
 
         if (!result) {
@@ -943,6 +996,26 @@ export class AtlasStrategy implements IStrategy {
 
         await this.processAtlasResult(state, symbol, confirmedStatus === 'WON', stakeAmount, operation, profit, exitPrice, tradeId);
 
+        if (confirmedStatus === 'WON') {
+          // ✅ [ATLAS] Master Trader Result Update
+          try {
+            const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+            if (userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1 && this.copyTradingService) {
+              const resMap = confirmedStatus === 'WON' ? 'win' : 'loss';
+              await this.copyTradingService.updateCopyTradingOperationsResult(
+                state.userId,
+                contractId,
+                resMap,
+                profit,
+                stakeAmount
+              );
+            }
+          } catch (resError) {
+            this.logger.error(`[ATLAS] Erro ao atualizar resultados do Copy Trading:`, resError);
+          }
+        }
+
+
       } catch (error) {
         this.logger.error(`[ATLAS][${symbol}] Erro ao executar operação (Interno):`, error);
         state.isOperationActive = false;
@@ -962,6 +1035,7 @@ export class AtlasStrategy implements IStrategy {
     symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     token: string,
     contractParams: any,
+    onBuy?: (contractId: string, entryPrice: number) => Promise<void>
   ): Promise<{ contractId: string; profit: number; exitSpot: any } | null> {
     try {
       const connection = await this.getOrCreateWebSocketConnection(token, userId, symbol);
@@ -1074,6 +1148,13 @@ export class AtlasStrategy implements IStrategy {
         `• ID: ${contractId}\n` +
         `• Latência Proposta: ${proposalDuration}ms\n` +
         `• Latência Compra: ${buyDuration}ms`);
+
+      // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
+      if (onBuy) {
+        onBuy(contractId, buyResponse.buy.entry_tick || buyResponse.buy.price).catch(err => {
+          this.logger.error(`[ATLAS] Erro no callback onBuy: ${err.message}`);
+        });
+      }
 
       // Monitorar contrato
       return await new Promise((resolve) => {

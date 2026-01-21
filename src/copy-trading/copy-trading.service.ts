@@ -534,181 +534,144 @@ export class CopyTradingService {
   }
 
   /**
-   * Replica uma operação manual do expert para todos os copiadores ativos
+   * Replica operação manual de um Master Trader para seus copiadores
    */
   async replicateManualOperation(
-    masterUserId: string,
-    operationData: {
+    masterTraderId: string,
+    operation: {
       contractId: string;
       contractType: string;
       symbol: string;
       duration: number;
       durationUnit: string;
       stakeAmount: number;
-      percent: number; // Porcentagem do saldo que o trader usou
-      entrySpot: number | null;
+      percent: number;
+      entrySpot: number;
       entryTime: number;
     },
   ): Promise<void> {
     try {
-      this.logger.log(`[ReplicateManualOperation] ========== INÍCIO REPLICAÇÃO OPERAÇÃO MANUAL ==========`);
-      this.logger.log(`[ReplicateManualOperation] Master trader: ${masterUserId}`);
-      this.logger.log(`[ReplicateManualOperation] Operação: ${JSON.stringify(operationData)}`);
+      this.logger.log(`[ReplicateManual] Replicando operação do Master ${masterTraderId} (${operation.symbol} ${operation.contractType})`);
 
-      // Buscar todos os copiadores ativos do master trader
-      const copiers = await this.getCopiers(masterUserId);
+      // 1. Buscar copiadores ativos deste Master Trader E suas sessões ativas
+      const copiers = await this.dataSource.query(
+        `SELECT c.*, u.token_demo, u.token_real, s.trade_currency, css.id as session_id
+         FROM copy_trading_config c
+         JOIN users u ON c.user_id = u.id
+         LEFT JOIN user_settings s ON c.user_id = s.user_id
+         JOIN copy_trading_sessions css ON css.user_id = c.user_id AND css.status = 'active'
+         WHERE c.trader_id = ? AND c.is_active = 1 AND c.session_status = 'active'`,
+        [masterTraderId],
+      );
 
-      if (copiers.length === 0) {
-        this.logger.log(`[ReplicateManualOperation] Nenhum copiador ativo encontrado para o master trader ${masterUserId}`);
+      if (!copiers || copiers.length === 0) {
+        this.logger.log(`[ReplicateManual] Nenhum copiador ativo encontrado para Master ${masterTraderId}`);
         return;
       }
 
-      this.logger.log(`[ReplicateManualOperation] Encontrados ${copiers.length} copiadores ativos`);
+      this.logger.log(`[ReplicateManual] Encontrados ${copiers.length} copiadores para replicar`);
 
-      // Para cada copiador, replicar a operação
+      // 2. Iterar e executar para cada copiador
       for (const copier of copiers) {
-        if (!copier.isActive) {
-          this.logger.log(`[ReplicateManualOperation] Pulando copiador ${copier.userId} - não está ativo`);
+        // Resolver token do copiador (Demo ou Real)
+        let copierToken = copier.deriv_token;
+        const currencyPref = copier.trade_currency || 'USD';
+
+        if (currencyPref === 'DEMO' && copier.token_demo) {
+          copierToken = copier.token_demo;
+        } else if (currencyPref !== 'DEMO' && copier.token_real) {
+          copierToken = copier.token_real;
+        }
+
+        // Se não tiver token, pular
+        if (!copierToken) {
+          this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} sem token válido. Ignorando.`);
           continue;
         }
 
-        try {
-          // Buscar sessão ativa do copiador
-          const activeSession = await this.getActiveSession(copier.userId);
+        // Calcular Stake do Copiador
+        let copierStake = 0;
 
-          if (!activeSession) {
-            this.logger.warn(`[ReplicateManualOperation] Nenhuma sessão ativa encontrada para copiador ${copier.userId}`);
-            continue;
-          }
+        if (copier.allocation_type === 'proportion') {
+          const masterPercent = operation.percent; // Ex: 1%
+          const multiplier = (copier.allocation_percentage || 100) / 100; // Ex: 1.0
 
-          // Calcular valor baseado na configuração do copiador
-          let followerStakeAmount = 0;
-
-          if (copier.allocationType === 'fixed') {
-            // Alocação fixa: usar o valor configurado pelo copiador * alavancagem
-            const leverageMultiplier = this.parseLeverage(copier.multiplier || '1x');
-            followerStakeAmount = (copier.allocationValue || 0) * leverageMultiplier;
-          } else if (copier.allocationType === 'proportion') {
-            // Alocação proporcional: usar a mesma porcentagem do saldo do trader aplicada ao saldo do copiador
-            // Buscar saldo do copiador
-            const copierUser = await this.userRepository.findOne({ where: { id: copier.userId } });
-            const copierBalance = copierUser?.derivBalance ? parseFloat(copierUser.derivBalance) : 0;
-
-            if (copierBalance > 0) {
-              followerStakeAmount = (operationData.percent / 100) * copierBalance;
-            } else {
-              this.logger.warn(`[ReplicateManualOperation] Copiador ${copier.userId} não tem saldo disponível`);
-              continue;
-            }
+          const bank = parseFloat(copier.allocation_value) || 0;
+          if (bank > 0) {
+            const targetPercent = masterPercent * multiplier;
+            copierStake = (bank * targetPercent) / 100;
           } else {
-            // Fallback: usar o mesmo valor do expert
-            followerStakeAmount = operationData.stakeAmount;
+            copierStake = 0.35;
+            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} modo PROPORTION mas sem allocation_value (Banca). Usando mínimo $0.35.`);
           }
 
-          this.logger.log(
-            `[ReplicateManualOperation] Replicando para copiador ${copier.userId} (${copier.allocationType}) - Trader %: ${operationData.percent.toFixed(2)}%, Stake copiador: $${followerStakeAmount.toFixed(2)}`,
-          );
-
-          // Gravar operação na tabela copy_trading_operations
-          await this.dataSource.query(
-            `INSERT INTO copy_trading_operations 
-             (session_id, user_id, trader_operation_id, operation_type, symbol, duration,
-              stake_amount, result, profit, leverage, allocation_type, allocation_value,
-              executed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
-            [
-              activeSession.id,
-              copier.userId,
-              operationData.contractId,
-              operationData.contractType,
-              operationData.symbol || null,
-              operationData.duration || null,
-              followerStakeAmount,
-              'pending', // Resultado será atualizado quando o contrato for fechado
-              0, // Profit será atualizado quando o contrato for fechado
-              copier.multiplier || '1x',
-              copier.allocationType,
-              copier.allocationValue,
-              operationData.entryTime,
-            ],
-          );
-
-          // Atualizar estatísticas da sessão
-          const newTotalOperations = (activeSession.totalOperations || 0) + 1;
-          const currentBalance = (activeSession.currentBalance || 0) - followerStakeAmount;
-
-          // Se for a primeira operação, definir saldo inicial
-          const initialBalance = activeSession.totalOperations === 0
-            ? (activeSession.currentBalance || 0)
-            : activeSession.initialBalance;
-
-          await this.dataSource.query(
-            `UPDATE copy_trading_sessions 
-             SET total_operations = ?,
-                 current_balance = ?,
-                 initial_balance = ?,
-                 last_operation_at = NOW()
-             WHERE id = ?`,
-            [newTotalOperations, currentBalance, initialBalance, activeSession.id],
-          );
-
-          this.logger.log(
-            `[ReplicateManualOperation] ✅ Operação replicada para copiador ${copier.userId} - Session: ${activeSession.id}, Stake: $${followerStakeAmount.toFixed(2)}`,
-          );
-
-          // Execute trade on Deriv API
-          try {
-            const derivContractId = await this.executeCopierTrade(copier.userId, {
-              symbol: operationData.symbol,
-              contractType: operationData.contractType,
-              duration: operationData.duration,
-              durationUnit: operationData.durationUnit,
-              stakeAmount: followerStakeAmount,
-              derivToken: copier.derivToken,
-            });
-
-            if (derivContractId) {
-              // Update operation with real Deriv contract ID
-              await this.dataSource.query(
-                `UPDATE copy_trading_operations 
-                 SET trader_operation_id = ?
-                 WHERE session_id = ? AND user_id = ? 
-                 ORDER BY executed_at DESC LIMIT 1`,
-                [derivContractId, activeSession.id, copier.userId],
-              );
-
-              this.logger.log(
-                `[ReplicateManualOperation] ✅ Trade executado na Deriv para ${copier.userId}: ${derivContractId}`,
-              );
-            } else {
-              this.logger.warn(
-                `[ReplicateManualOperation] ⚠️ Falha ao executar trade na Deriv para ${copier.userId} - operação salva apenas no banco`,
-              );
-            }
-          } catch (derivError) {
-            this.logger.error(
-              `[ReplicateManualOperation] Erro ao executar trade na Deriv para ${copier.userId}: ${derivError.message}`,
-            );
-            // Continue with other copiers even if Deriv execution fails
-          }
-        } catch (error) {
-          this.logger.error(
-            `[ReplicateManualOperation] Erro ao replicar para copiador ${copier.userId}: ${error.message}`,
-            error.stack,
-          );
-          // Continuar com os próximos copiadores mesmo se houver erro
+        } else {
+          // Fixed: Valor fixo por operação
+          copierStake = parseFloat(copier.allocation_value);
         }
+
+        // Validar mínimo e arredondamento
+        if (copierStake < 0.35) copierStake = 0.35;
+        copierStake = Math.round(copierStake * 100) / 100;
+
+        // Executar trade do copiador (Fire and Forget para não travar loop do master)
+        // Mas com callback para salvar no banco
+        this.executeCopierTrade(copier.user_id, {
+          symbol: operation.symbol,
+          contractType: operation.contractType,
+          duration: operation.duration,
+          durationUnit: operation.durationUnit,
+          stakeAmount: copierStake,
+          derivToken: copierToken
+        }).then(async (copierContractId) => {
+          if (copierContractId) {
+            try {
+              // Salvar operação no banco
+              await this.dataSource.query(
+                `INSERT INTO copy_trading_operations 
+                   (session_id, user_id, trader_operation_id, operation_type, symbol, duration,
+                    stake_amount, result, profit, leverage, allocation_type, allocation_value,
+                    executed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
+                [
+                  copier.session_id,
+                  copier.user_id,
+                  copierContractId, // ID do contrato do copiador
+                  operation.contractType,
+                  operation.symbol,
+                  operation.duration,
+                  copierStake,
+                  'pending',
+                  0,
+                  '1x',
+                  copier.allocation_type,
+                  copier.allocation_value,
+                  operation.entryTime
+                ]
+              );
+
+              // Atualizar estatísticas da sessão
+              await this.dataSource.query(
+                `UPDATE copy_trading_sessions 
+                   SET total_operations = total_operations + 1,
+                       last_operation_at = NOW()
+                   WHERE id = ?`,
+                [copier.session_id]
+              );
+            } catch (dbError) {
+              this.logger.error(`[ReplicateManual] Erro ao salvar operação DB para copiador ${copier.user_id}: ${dbError.message}`);
+            }
+          }
+        }).catch(err => {
+          this.logger.error(`[ReplicateManual] Falha na execução para copiador ${copier.user_id}: ${err.message}`);
+        });
       }
 
-      this.logger.log(`[ReplicateManualOperation] ========== FIM REPLICAÇÃO OPERAÇÃO MANUAL ==========`);
     } catch (error) {
-      this.logger.error(
-        `[ReplicateManualOperation] Erro ao replicar operação manual: ${error.message}`,
-        error.stack,
-      );
-      throw error;
+      this.logger.error(`[ReplicateManual] Erro geral ao replicar operações: ${error.message}`, error.stack);
     }
   }
+
 
   /**
    * Replica uma operação de IA do trader mestre para todos os copiadores ativos
@@ -1589,7 +1552,7 @@ export class CopyTradingService {
           });
         });
 
-        wsService.once('error', (error: any) => {
+        (wsService as any).once('error', (error: any) => {
           clearTimeout(proposalTimeout);
           this.logger.error(`[ExecuteCopierTrade] Erro na proposta para ${userId}: ${error.message || JSON.stringify(error)}`);
           resolve(null);

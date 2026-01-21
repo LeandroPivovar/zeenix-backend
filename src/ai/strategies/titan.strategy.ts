@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 import { TradeEventsService } from '../trade-events.service';
 
 
@@ -498,6 +499,7 @@ export class TitanStrategy implements IStrategy {
     constructor(
         private dataSource: DataSource,
         private tradeEvents: TradeEventsService,
+        private readonly copyTradingService: CopyTradingService,
 
     ) {
         this.appId = process.env.DERIV_APP_ID || '111346';
@@ -895,13 +897,81 @@ export class TitanStrategy implements IStrategy {
                 contract_type: direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
                 amount: stake,
                 currency: state.currency,
-            }, state.userId);
+            }, state.userId, async (contractId, entryPrice) => {
+                // ✅ [TITAN] Master Trader Replication - IMMEDIATE (at entry)
+                try {
+                    const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+                    const isMasterTraderFlag = userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1;
+
+                    if (isMasterTraderFlag) {
+                        const percent = state.capital > 0 ? (stake / state.capital) * 100 : 0;
+                        const unixTimestamp = Math.floor(Date.now() / 1000);
+
+                        // 1. Gravar na tabela master_trader_operations as OPEN
+                        await this.dataSource.query(
+                            `INSERT INTO master_trader_operations
+                             (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                            [
+                                state.userId,
+                                this.symbol,
+                                direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+                                stake,
+                                percent,
+                                0, // multiplier
+                                5, // duration (Titan uses 5 ticks)
+                                't', // duration_unit
+                                direction === 'PAR' ? 'CALL' : 'PUT', // trade_type
+                                'OPEN',
+                            ]
+                        );
+
+                        // 2. Chamar serviço de cópia para execução imediata
+                        if (this.copyTradingService) {
+                            await this.copyTradingService.replicateManualOperation(
+                                state.userId,
+                                {
+                                    contractId: contractId || '',
+                                    contractType: direction === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+                                    symbol: this.symbol,
+                                    duration: 5,
+                                    durationUnit: 't',
+                                    stakeAmount: stake,
+                                    percent: percent,
+                                    entrySpot: entryPrice || 0,
+                                    entryTime: unixTimestamp
+                                },
+                            );
+                        }
+                    }
+                } catch (repError) {
+                    this.logger.error(`[TITAN] Erro na replicação Master Trader (Entry):`, repError);
+                }
+            });
 
             if (result) {
                 const previousConsecutiveLosses = riskManager.consecutiveLosses;
                 riskManager.updateResult(result.profit, stake);
                 state.capital += result.profit;
                 state.ultimoLucro = result.profit;
+
+                // ✅ [TITAN] Master Trader Result Update
+                try {
+                    const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
+                    if (userMaster && userMaster.length > 0 && userMaster[0].trader_mestre === 1 && this.copyTradingService) {
+                        const resMap = result.profit >= 0 ? 'win' : 'loss';
+                        await this.copyTradingService.updateCopyTradingOperationsResult(
+                            state.userId,
+                            result.contractId,
+                            resMap,
+                            result.profit,
+                            stake
+                        );
+                    }
+                } catch (resError) {
+                    this.logger.error(`[TITAN] Erro ao atualizar resultados do Copy Trading:`, resError);
+                }
+
 
                 // ✅ Atualizar session_balance no banco de dados para sincronia com o frontend e RiskManager
                 const lucroSessao = state.capital - state.capitalInicial;
@@ -997,7 +1067,12 @@ export class TitanStrategy implements IStrategy {
         return tradeId;
     }
 
-    private async _executeTradeViaWebSocket(token: string, params: { contract_type: string; amount: number; currency: string }, userId: string): Promise<{ contractId: string; profit: number; exitSpot: number; entrySpot: number } | null> {
+    private async _executeTradeViaWebSocket(
+        token: string,
+        params: { contract_type: string; amount: number; currency: string },
+        userId: string,
+        onBuy?: (contractId: string, entryPrice: number) => Promise<void>
+    ): Promise<{ contractId: string; profit: number; exitSpot: number; entrySpot: number } | null> {
         return new Promise(async (resolve, reject) => {
             try {
                 const conn = await this.getOrCreateWebSocketConnection(token, userId);
@@ -1027,6 +1102,14 @@ export class TitanStrategy implements IStrategy {
                 }
 
                 const contractId = buyRes.buy.contract_id;
+
+                // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
+                if (onBuy) {
+                    onBuy(contractId, buyRes.buy.entry_tick || buyRes.buy.price).catch(err => {
+                        this.logger.error(`[TITAN] Erro no callback onBuy: ${err.message}`);
+                    });
+                }
+
                 const longcode = buyRes.buy.longcode;
                 this.logger.log(`[TITAN] ✅ Contrato Criado: ${contractId} | ${longcode}`);
 
