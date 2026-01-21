@@ -1034,10 +1034,27 @@ export class AtlasStrategy implements IStrategy {
         const errorCode = buyErrorObj?.code || '';
         const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
         this.logger.error(`[ATLAS][${symbol}] ❌ Erro ao comprar contrato: ${errorMessage} | Código: ${errorCode} | ProposalId: ${proposalId}`);
-        this.saveAtlasLog(userId, symbol, 'erro',
-          `❌ ERRO AO COMPRAR\n` +
-          `• Código: ${errorCode}\n` +
-          `• Mensagem: ${errorMessage}`);
+
+        // ✅ ATLAS v3.1: Detectar token mismatch - quando DEMO é resolvido mas balance mostra valor baixo da conta Real
+        const isInsufficientBalance = errorMessage.toLowerCase().includes('insufficient balance') || errorCode === 'InsufficientBalance';
+        const reportedBalance = errorMessage.match(/balance \(([0-9.]+)/)?.[1];
+        const reportedBalanceValue = reportedBalance ? parseFloat(reportedBalance) : null;
+
+        // Se o erro é de saldo insuficiente e o saldo reportado é muito baixo (< $1), 
+        // provavelmente o token está apontando para a conta errada (Real vs Demo)
+        if (isInsufficientBalance && reportedBalanceValue !== null && reportedBalanceValue < 1.00) {
+          this.logger.error(`[ATLAS][${symbol}] ⚠️ POSSÍVEL TOKEN MISMATCH: Esperava conta com saldo alto, mas API reportou $${reportedBalanceValue}`);
+          this.saveAtlasLog(userId, symbol, 'erro',
+            `⚠️ ERRO DE CONFIGURAÇÃO DE CONTA\n` +
+            `• O token salvo pode estar incorreto.\n` +
+            `• Saldo reportado: $${reportedBalanceValue}\n` +
+            `• SOLUÇÃO: Reconecte sua conta Deriv nas Configurações.`);
+        } else {
+          this.saveAtlasLog(userId, symbol, 'erro',
+            `❌ ERRO AO COMPRAR\n` +
+            `• Código: ${errorCode}\n` +
+            `• Mensagem: ${errorMessage}`);
+        }
         return null;
       }
 
