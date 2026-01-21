@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModeConfig, VELOZ_CONFIG, MODERADO_CONFIG, PRECISO_CONFIG, LENTA_CONFIG, ModoMartingale } from './common.types';
 import { TradeEventsService } from '../trade-events.service';
+import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 
 import { gerarSinalZenix } from './signal-generator';
 // ✅ REMOVIDO: DerivWebSocketPoolService - usando WebSocket direto conforme documentação Deriv
@@ -753,6 +754,7 @@ ${filtersText}
   constructor(
     private dataSource: DataSource,
     private tradeEvents: TradeEventsService,
+    private copyTradingService: CopyTradingService,
 
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
@@ -1870,18 +1872,21 @@ ${filtersText}
     // ✅ Declarar tradeId no escopo da função para ser acessível no catch
     let tradeId: number | null = null;
     let forcedStake: number | null = null; // ✅ Variável para forçar limite de stake (stop loss)
+    let isMasterTrader = false; // ✅ [NOVO] Flag para Master Trader
     try {
       const stopLossConfig = await this.dataSource.query(
         `SELECT 
-          COALESCE(loss_limit, 0) as lossLimit,
-          COALESCE(profit_target, 0) as profitTarget,
-          COALESCE(session_balance, 0) as sessionBalance,
-          COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(profit_peak, 0) as profitPeak,
-          stop_blindado_percent as stopBlindadoPercent,
-          is_active
-         FROM ai_user_config 
-         WHERE user_id = ? AND is_active = 1
+          COALESCE(ac.loss_limit, 0) as lossLimit,
+          COALESCE(ac.profit_target, 0) as profitTarget,
+          COALESCE(ac.session_balance, 0) as sessionBalance,
+          COALESCE(ac.stake_amount, 0) as capitalInicial,
+          COALESCE(ac.profit_peak, 0) as profitPeak,
+          ac.stop_blindado_percent as stopBlindadoPercent,
+          ac.is_active,
+          u.trader_mestre as isMasterTrader
+         FROM ai_user_config ac
+         JOIN users u ON u.id = ac.user_id
+         WHERE ac.user_id = ? AND ac.is_active = 1
          LIMIT 1`,
         [state.userId],
       );
@@ -2306,13 +2311,15 @@ ${filtersText}
     try {
       const stopLossConfig = await this.dataSource.query(
         `SELECT 
-          COALESCE(loss_limit, 0) as lossLimit,
-          COALESCE(profit_target, 0) as profitTarget,
-          COALESCE(stake_amount, 0) as capitalInicial,
-          COALESCE(profit_peak, 0) as profitPeak,
-          stop_blindado_percent as stopBlindadoPercent
-         FROM ai_user_config 
-         WHERE user_id = ? AND is_active = 1
+          COALESCE(ac.loss_limit, 0) as lossLimit,
+          COALESCE(ac.profit_target, 0) as profitTarget,
+          COALESCE(ac.stake_amount, 0) as capitalInicial,
+          COALESCE(ac.profit_peak, 0) as profitPeak,
+          ac.stop_blindado_percent as stopBlindadoPercent,
+          u.trader_mestre as isMasterTrader
+         FROM ai_user_config ac
+         JOIN users u ON u.id = ac.user_id
+         WHERE ac.user_id = ? AND ac.is_active = 1
          LIMIT 1`,
         [state.userId],
       );
@@ -2642,6 +2649,54 @@ ${filtersText}
       });
 
       this.logger.log(`[ORION][${mode}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+
+      // ✅ [ORION] Master Trader Replication
+      // Se configurado como Master Trader na tabela users, replicar operação para seguidores
+      try {
+        if (isMasterTrader) {
+          const percent = state.capital > 0 ? (stakeAmount / state.capital) * 100 : 0;
+          const unixTimestamp = Math.floor(Date.now() / 1000);
+
+          // 1. Gravar na tabela master_trader_operations
+          await this.dataSource.query(
+            `INSERT INTO master_trader_operations
+                 (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+              state.userId,
+              this.symbol,
+              operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'IMPAR' ? 'DIGITODD' : (operation === 'PAR' ? 'DIGITEVEN' : operation)),
+              stakeAmount,
+              percent,
+              0, // multiplier
+              1, // duration
+              't', // duration_unit
+              operation === 'DIGITOVER' ? 'CALL' : (operation === 'IMPAR' ? 'PUT' : (operation === 'PAR' ? 'CALL' : (operation === 'PUT' ? 'PUT' : 'CALL'))),
+              'OPEN',
+            ]
+          );
+
+          // 2. Chamar serviço de cópia
+          if (this.copyTradingService) {
+            await this.copyTradingService.replicateManualOperation(
+              state.userId,
+              {
+                contractId: contractId || '',
+                contractType: operation === 'DIGITOVER' ? 'DIGITOVER' : (operation === 'PAR' ? 'DIGITEVEN' : (operation === 'IMPAR' ? 'DIGITODD' : (typeof operation === 'string' ? operation : 'CALL'))),
+                symbol: this.symbol,
+                duration: 1,
+                durationUnit: 't',
+                stakeAmount: stakeAmount,
+                percent: percent,
+                entrySpot: entryPrice,
+                entryTime: unixTimestamp
+              }
+            );
+          }
+        }
+      } catch (repError) {
+        this.logger.error(`[ORION] Erro na replicação Master Trader:`, repError);
+      }
 
       // ✅ Processar resultado (Soros/Martingale)
       await this.processOrionResult(state, stakeAmount, operation, profit, mode);
