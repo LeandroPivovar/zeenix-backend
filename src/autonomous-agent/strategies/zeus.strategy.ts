@@ -518,7 +518,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     }
                 };
             }
-            return null;
+
+            // ✅ RETORNO "FRACO" PARA LOGS (Heartbeat)
+            // Mesmo sem sinal, retornar estado para que o sistema logue "Aguardando"
+            return {
+                signal: null,
+                probability: Math.min(Math.round((count / required) * 50), 49), // Max 49% sem sinal
+                payout: 0,
+                confidence: 0,
+                details: {
+                    digitPattern: `${count}/${required} dígitos ≤ ${limit}`,
+                    currentPrice: ticks[ticks.length - 1].value,
+                    info: 'Aguardando padrão de dígitos'
+                }
+            };
+
         } else {
             // --- RECUPERAÇÃO M2+ (LENTO): RISE/FALL (SENTINEL LENTO) ---
             const windowSize = 8;
@@ -526,7 +540,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const requiredMovements = 5;
             const minDelta = ZEUS_CORE_CONFIG.RECOVERY.minDelta;
 
-            if (ticks.length < windowSize) return null;
+            if (ticks.length < windowSize) {
+                // Retornar null (ou estado de coleta) se não tem dados suficientes
+                // processTick já loga "COLETANDO DADOS", então aqui ok retornar null ou objeto vazio
+                return null;
+            }
 
             const recentTicks = ticks.slice(-windowSize);
             const recentValues = recentTicks.map(t => t.value);
@@ -553,11 +571,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             if (isUpSignal) signal = 'CALL';
             else if (isDownSignal) signal = 'PUT';
 
-            if (signal) {
-                const moveScore = (Math.max(ups, downs) / totalMovements) * 50;
-                const deltaScore = Math.min((delta / minDelta) * 50, 50);
-                const probability = Math.round(moveScore + deltaScore);
+            // Calcular probabilidade mesmo sem sinal forte
+            const moveScore = (Math.max(ups, downs) / totalMovements) * 50;
+            const deltaScore = Math.min((delta / minDelta) * 50, 50);
+            const probability = Math.round(moveScore + deltaScore);
 
+            if (signal) {
                 return {
                     signal: signal,
                     probability: probability,
@@ -573,7 +592,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     },
                 };
             }
-            return null;
+
+            // ✅ RETORNO "FRACO" PARA LOGS (Heartbeat)
+            return {
+                signal: null,
+                probability: probability, // Probabilidade real calculada (pode ser baixa)
+                payout: 0,
+                confidence: probability / 100,
+                details: {
+                    trend: ups > downs ? 'UP' : (downs > ups ? 'DOWN' : 'NEUTRAL'),
+                    volatility: delta,
+                    ups,
+                    downs,
+                    info: 'Aguardando confirmação de tendência'
+                }
+            };
         }
     }
 
