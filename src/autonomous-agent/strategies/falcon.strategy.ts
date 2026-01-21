@@ -72,22 +72,74 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   private async syncActiveUsersFromDb(): Promise<void> {
     try {
       const activeUsers = await this.dataSource.query(
-        `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
-                initial_balance, deriv_token, currency, symbol, agent_type
-         FROM autonomous_agent_config 
-         WHERE is_active = TRUE 
-           AND agent_type = 'falcon'
-           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
+        `SELECT 
+            c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
+            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type,
+            u.token_demo, u.token_real, u.deriv_raw,
+            s.trade_currency
+         FROM autonomous_agent_config c
+         JOIN users u ON c.user_id = u.id
+         LEFT JOIN user_settings s ON c.user_id = s.user_id
+         WHERE c.is_active = TRUE 
+           AND c.agent_type = 'falcon'
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
         const userId = user.user_id.toString();
+
+        // ✅ [RESOLUÇÃO DE TOKEN CENTRALIZADA]
+        // Prioridade: 1. Preferência (user_settings) -> 2. Colunas Específicas (users) -> 3. Parsing Raw -> 4. Config Antiga
+        let resolvedToken = user.config_token;
+        const wantDemo = user.trade_currency === 'DEMO';
+
+        if (wantDemo) {
+          if (user.token_demo) {
+            resolvedToken = user.token_demo;
+          } else if (user.deriv_raw) {
+            // Fallback: Tentar extrair token VRTC do JSON raw
+            try {
+              const raw = typeof user.deriv_raw === 'string' ? JSON.parse(user.deriv_raw) : user.deriv_raw;
+              if (raw.tokensByLoginId) {
+                const entry = Object.entries(raw.tokensByLoginId).find(([lid]) => (lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              }
+            } catch (e) {
+              this.logger.warn(`[Falcon][${userId}] Erro ao fazer parsing do deriv_raw para fallback de token: ${e.message}`);
+            }
+          }
+        } else {
+          // Real Account
+          if (user.token_real) {
+            resolvedToken = user.token_real;
+          } else if (user.deriv_raw) {
+            // Fallback: Tentar extrair token Real (não-VRTC) do JSON raw
+            try {
+              const raw = typeof user.deriv_raw === 'string' ? JSON.parse(user.deriv_raw) : user.deriv_raw;
+              if (raw.tokensByLoginId) {
+                const entry = Object.entries(raw.tokensByLoginId).find(([lid]) => !(lid as string).startsWith('VRTC'));
+                if (entry) resolvedToken = entry[1] as string;
+              }
+            } catch (e) {
+              this.logger.warn(`[Falcon][${userId}] Erro ao fazer parsing do deriv_raw para fallback de token (Real): ${e.message}`);
+            }
+          }
+        }
+
+        // Log para debug da resolução
+        if (resolvedToken !== user.config_token) {
+          this.logger.log(`[Falcon][ResolucaoToken] User ${userId}: Token atualizado dinamicamente. Modo=${wantDemo ? 'DEMO' : 'REAL'}.`);
+        } else {
+          // Se for igual, ainda assim pode ser que o config_token esteja certo, mas bom logar se estivermos inconsistentes
+          // Mas para não floodar, deixamos quieto se não houve mudança.
+        }
+
         const config: FalconUserConfig = {
           userId: userId,
           initialStake: parseFloat(user.initial_stake),
           dailyProfitTarget: parseFloat(user.daily_profit_target),
           dailyLossLimit: parseFloat(user.daily_loss_limit),
-          derivToken: user.deriv_token,
+          derivToken: resolvedToken, // ✅ Usa o token resolvido
           currency: user.currency,
           symbol: 'R_100',
           initialBalance: parseFloat(user.initial_balance) || 0,
