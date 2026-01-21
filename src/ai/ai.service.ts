@@ -3995,37 +3995,23 @@ export class AiService implements OnModuleInit {
           this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando DEMO conforme preferência | LoginID: ${demoLoginId} | Saldo: $${demoBalance}`);
           return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
         } else {
-          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Fallback para Real.`);
-          if (realToken) {
-            return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
-          }
+          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Encerrando.`);
+          // Não fazer fallback para Real. Retornar dados "vazios" ou da conta pedida mas sem token válido se quiser falhar na ponta.
+          // Melhor retornar o que temos (providedToken) e deixar estourar erro de Auth se não for válido, 
+          // mas sem trocar para Real silenciosamente.
+          return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
         }
       } else {
         // Usuário quer REAL (USD ou outra moeda)
-        // Verificar se Real tem saldo suficiente
-        if (realBalance >= 1.00) {
+        if (realToken) {
           this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando REAL | LoginID: ${realLoginId} | Saldo: $${realBalance}`);
-          if (realToken) {
-            return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
-          }
+          return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
         } else {
-          // Real insuficiente, mudar para Demo
-          if (demoToken && demoBalance >= 1.00) {
-            this.logger.warn(`[ResolveDeriv] ⚠️ CONTA REAL INSUFICIENTE ($${realBalance}). Mudando automaticamente para DEMO ($${demoBalance}).`);
-            return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
-          } else {
-            this.logger.error(`[ResolveDeriv] ❌ Real insuficiente E Demo não disponível! Real: $${realBalance}, Demo: $${demoBalance}`);
-            // Retornar Real mesmo assim (vai dar erro, mas é melhor que falhar silenciosamente)
-            if (realToken) {
-              return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
-            }
-          }
+          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer REAL mas token não encontrado.`);
+          // Não fazer fallback para Demo.
+          return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
         }
       }
-
-      // Fallback final: usar o que foi fornecido
-      this.logger.warn(`[ResolveDeriv] ⚠️ Nenhuma lógica aplicada, usando token fornecido.`);
-      return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
 
     } catch (error) {
       this.logger.error(`[ResolveDeriv] ❌ Erro crítico na resolução:`, error);
