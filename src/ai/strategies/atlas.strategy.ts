@@ -894,10 +894,20 @@ export class AtlasStrategy implements IStrategy {
           mode: state.mode,
         });
 
+        // ✅ ATLAS v3.1: Resolver token dinamicamente antes de cada operação
+        const resolvedAccount = await this.resolveDerivToken(state.userId, state.derivToken);
+        const effectiveToken = resolvedAccount.token;
+
+        if (effectiveToken !== state.derivToken) {
+          this.logger.log(`[ATLAS][${symbol}] 🔄 Token resolvido diferente do cache. Usando: ${effectiveToken.substring(0, 10)}... (${resolvedAccount.isVirtual ? 'DEMO' : 'REAL'})`);
+          // Atualizar o estado para refletir o token correto
+          state.derivToken = effectiveToken;
+        }
+
         const result = await this.executeAtlasTradeDirect(
           state.userId,
           symbol,
-          state.derivToken,
+          effectiveToken,
           {
             symbol,
             contract_type: contractType,
@@ -2271,5 +2281,101 @@ ${filtersText}
 
   getActiveUsers(): AtlasUserState[] {
     return Array.from(this.atlasUsers.values()).filter((u) => !u.isStopped);
+  }
+
+  /**
+   * ✅ ATLAS v3.1: Resolve token correto dinamicamente antes de cada operação
+   * Similar ao AiService.resolveDerivAccount, mas sem cache interno
+   */
+  private async resolveDerivToken(userId: string, fallbackToken: string): Promise<{ token: string; currency: string; isVirtual: boolean }> {
+    try {
+      // 1. Buscar configurações do usuário e dados raw
+      const userResult = await this.dataSource.query(
+        `SELECT u.deriv_raw, s.trade_currency 
+         FROM users u
+         LEFT JOIN user_settings s ON u.id = s.user_id
+         WHERE u.id = ?`,
+        [userId]
+      );
+
+      if (!userResult || userResult.length === 0) {
+        this.logger.warn(`[ATLAS][ResolveToken] Usuário não encontrado: ${userId}`);
+        return { token: fallbackToken, currency: 'USD', isVirtual: false };
+      }
+
+      const row = userResult[0];
+
+      if (!row.deriv_raw) {
+        this.logger.warn(`[ATLAS][ResolveToken] deriv_raw não encontrado para user ${userId}`);
+        return { token: fallbackToken, currency: 'USD', isVirtual: false };
+      }
+
+      const userPreferredCurrency = (row.trade_currency || 'USD').toUpperCase();
+
+      let derivRaw: any;
+      try {
+        derivRaw = typeof row.deriv_raw === 'string'
+          ? JSON.parse(row.deriv_raw)
+          : row.deriv_raw;
+      } catch (e) {
+        this.logger.error(`[ATLAS][ResolveToken] Erro ao parsear deriv_raw`, e);
+        return { token: fallbackToken, currency: 'USD', isVirtual: false };
+      }
+
+      // Se não tiver tokensByLoginId ou balances, usar fallback
+      if (!derivRaw.tokensByLoginId || !derivRaw.balancesByCurrencyReal || !derivRaw.balancesByCurrencyDemo) {
+        return { token: fallbackToken, currency: 'USD', isVirtual: false };
+      }
+
+      // Identificar saldos
+      const realBalance = derivRaw.balancesByCurrencyReal['USD'] || 0;
+      const demoBalance = derivRaw.balancesByCurrencyDemo['USD'] || 0;
+
+      // Buscar Tokens por loginid
+      const tokens = derivRaw.tokensByLoginId || {};
+      let realToken = '';
+      let demoToken = '';
+
+      for (const [loginid, tokenValue] of Object.entries(tokens)) {
+        const tokenStr = tokenValue as string;
+
+        if (loginid.startsWith('VRTC')) {
+          demoToken = tokenStr;
+        } else if (loginid.startsWith('CR') && !realToken) {
+          realToken = tokenStr;
+        }
+      }
+
+      // Lógica de decisão baseada em preferência do usuário
+      const wantsDemo = userPreferredCurrency === 'DEMO';
+
+      if (wantsDemo) {
+        if (demoToken) {
+          this.logger.debug(`[ATLAS][ResolveToken] ✅ Usando DEMO | Saldo: $${demoBalance}`);
+          return { token: demoToken, currency: 'USD', isVirtual: true };
+        } else if (realToken) {
+          this.logger.warn(`[ATLAS][ResolveToken] ⚠️ Usuário quer DEMO mas token não encontrado. Fallback para Real.`);
+          return { token: realToken, currency: 'USD', isVirtual: false };
+        }
+      } else {
+        // Usuário quer REAL
+        if (realBalance >= 1.00 && realToken) {
+          this.logger.debug(`[ATLAS][ResolveToken] ✅ Usando REAL | Saldo: $${realBalance}`);
+          return { token: realToken, currency: 'USD', isVirtual: false };
+        } else if (demoToken && demoBalance >= 1.00) {
+          this.logger.warn(`[ATLAS][ResolveToken] ⚠️ REAL insuficiente ($${realBalance}), mudando para DEMO ($${demoBalance})`);
+          return { token: demoToken, currency: 'USD', isVirtual: true };
+        } else if (realToken) {
+          return { token: realToken, currency: 'USD', isVirtual: false };
+        }
+      }
+
+      // Fallback final
+      return { token: fallbackToken, currency: 'USD', isVirtual: false };
+
+    } catch (error) {
+      this.logger.error(`[ATLAS][ResolveToken] ❌ Erro na resolução:`, error);
+      return { token: fallbackToken, currency: 'USD', isVirtual: false };
+    }
   }
 }
