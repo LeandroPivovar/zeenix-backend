@@ -98,7 +98,7 @@ export class TradesService {
               durationUnit: dto.duration.replace(/[0-9]/g, ''),
               stakeAmount: dto.entryValue,
               percent: percent,
-              entrySpot: null,
+              entrySpot: 0,
               entryTime: Math.floor(Date.now() / 1000),
             }
           );

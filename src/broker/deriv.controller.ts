@@ -1229,7 +1229,7 @@ export class DerivController {
                 durationUnit: data.durationUnit || 'm',
                 stakeAmount: data.buyPrice || 0,
                 percent: percent,
-                entrySpot: finalEntrySpot,
+                entrySpot: finalEntrySpot || 0,
                 entryTime: data.entryTime || Math.floor(Date.now() / 1000),
               },
             );
