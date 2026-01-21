@@ -1096,7 +1096,7 @@ export class NexusStrategy implements IStrategy {
         stopLoss: number;
         stopBlindadoEnabled: boolean;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | ⚙️ Configurações Iniciais
+        const message = `❄️ NEXUS | ⚙️ Configurações Iniciais
 • Modo: ${config.operationMode}
 • Perfil: ${config.riskProfile}
 • Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
@@ -1114,7 +1114,7 @@ export class NexusStrategy implements IStrategy {
         mode: string;
         strategyName: string;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 📡 Início de Sessão
+        const message = `❄️ NEXUS | 📡 Início de Sessão
 • Saldo Inicial: $${session.initialBalance.toFixed(2)}
 • Meta do Dia: $${session.profitTarget.toFixed(2)}
 • Status: Monitorando Mercado`;
@@ -1127,13 +1127,13 @@ export class NexusStrategy implements IStrategy {
         currentCount: number;
         mode?: string;
     }) {
-        const message = `NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+        const message = `❄️ NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 🧠 Analisando Mercado (${mode})`;
+        const message = `❄️  NEXUS | 🧠 Analisando Mercado (${mode})`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
     }
@@ -1162,7 +1162,7 @@ ${filtersText}
         balance: number;
     }) {
         const emoji = result.status === 'WIN' ? '✅' : '❌';
-        const message = `❄️ Zenix v2.0 | NEXUS | ${emoji} Resultado: ${result.status}
+        const message = `❄️ NEXUS | ${emoji} Resultado: ${result.status}
 • Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
 • Saldo: $${result.balance.toFixed(2)}`;
 
@@ -1177,7 +1177,7 @@ ${filtersText}
         profitPercentage: number;
         contractType: string;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 🔄 Martingale Nível ${martingale.level}
+        const message = `❄️ NEXUS | 🔄 Martingale Nível ${martingale.level}
 • Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
 • Objetivo: Recuperação`;
 
@@ -1192,7 +1192,7 @@ ${filtersText}
         const level = soros.level || 1;
         const newStake = soros.stakeBase + soros.previousProfit;
 
-        const message = `❄️ Zenix v2.0 | NEXUS | 🚀 Soros Nível ${level}
+        const message = `❄️ NEXUS | 🚀 Soros Nível ${level}
 • Lucro Anterior: $${soros.previousProfit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -1204,7 +1204,7 @@ ${filtersText}
         accumulatedProfit: number;
         currentStake: number;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+        const message = `❄️ NEXUS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
 • Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
@@ -1216,7 +1216,7 @@ ${filtersText}
         profitPercentage: number;
         stakeBase: number;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 🛡️ Recuperação Concluída
+        const message = `❄️ NEXUS | 🛡️ Recuperação Concluída
 • Recuperado: $${recovery.recoveredLoss.toFixed(2)}
 • Ação: Retornando à Stake Base`;
 
@@ -1229,7 +1229,7 @@ ${filtersText}
         newContract: string;
         analysis: string;
     }) {
-        const message = `❄️ Zenix v2.0 | NEXUS | 🔄 Ajuste de Operação
+        const message = `❄️ NEXUS | 🔄 Ajuste de Operação
 • De: ${change.oldContract}
 • Para: ${change.newContract}
 • Motivo: ${change.reason}`;
