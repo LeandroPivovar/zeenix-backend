@@ -369,9 +369,12 @@ export class CopyTradingController {
 
       // Calcular estatísticas agregadas
       const totalCopiers = copiers.length;
-      const managedBalance = copiers.reduce((sum, c) => sum + c.balance, 0);
-      const todayProfit = copiers.reduce((sum, c) => sum + c.pnl, 0);
-      const totalVolume = copiers.reduce((sum, c) => sum + c.balance, 0); // Volume = saldo gerenciado
+      // Managed Balance = soma de deriv_balance dos usuários
+      const managedBalance = copiers.reduce((sum, c) => sum + (c.derivBalance || 0), 0);
+      // Today Profit = soma de todayProfit
+      const todayProfit = copiers.reduce((sum, c) => sum + (c.todayProfit || 0), 0);
+      // Volume = soma de todos os total profit (conforme solicitado pelo usuário)
+      const totalVolume = copiers.reduce((sum, c) => sum + (c.pnl || 0), 0);
 
       return {
         success: true,

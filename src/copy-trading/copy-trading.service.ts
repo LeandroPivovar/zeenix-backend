@@ -1335,6 +1335,7 @@ export class CopyTradingService {
           -- Dados do Usuário
           u.name as user_name,
           u.email as user_email,
+          COALESCE(u.deriv_balance, 0) as deriv_balance,
           
           -- Dados da Sessão (Mais recente)
           s.status as session_status,
@@ -1391,7 +1392,9 @@ export class CopyTradingService {
           allocationPercentage: copier.allocation_percentage ? parseFloat(copier.allocation_percentage) : null,
           derivToken: copier.deriv_token || '',
           totalOperations: parseInt(copier.total_operations || '0', 10),
-          sessionStatus: copier.session_status
+          sessionStatus: copier.session_status,
+          todayProfit: parseFloat(copier.today_profit || '0'),
+          derivBalance: parseFloat(copier.deriv_balance || '0'),
         };
       });
 
