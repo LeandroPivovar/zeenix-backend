@@ -3897,9 +3897,9 @@ export class AiService implements OnModuleInit {
     this.logger.log(`[ResolveDeriv] 📥 Parâmetros: userId=${userId}, providedToken=${providedToken.substring(0, 10)}..., requestedCurrency=${requestedCurrency}`);
 
     try {
-      // 1. Buscar configurações do usuário (trade_currency) E dados raw
+      // 1. Buscar configurações do usuário (trade_currency) E dados raw E tokens dedicados
       const userResult = await this.dataSource.query(
-        `SELECT u.deriv_raw, s.trade_currency 
+        `SELECT u.deriv_raw, u.token_demo, u.token_real, s.trade_currency 
          FROM users u
          LEFT JOIN user_settings s ON u.id = s.user_id
          WHERE u.id = ?`,
@@ -3914,136 +3914,79 @@ export class AiService implements OnModuleInit {
       }
 
       const row = userResult[0];
-      this.logger.log(`[ResolveDeriv] 📊 trade_currency do banco: "${row.trade_currency}" (tipo: ${typeof row.trade_currency})`);
-      this.logger.log(`[ResolveDeriv] 📊 deriv_raw existe: ${!!row.deriv_raw} (tipo: ${typeof row.deriv_raw})`);
-
-      if (!row.deriv_raw) {
-        this.logger.warn(`[ResolveDeriv] ⚠️ deriv_raw não encontrado para user ${userId}. Usando token fornecido.`);
-        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
-      }
-
       const userPreferredCurrency = (row.trade_currency || 'USD').toUpperCase();
-      this.logger.log(`[ResolveDeriv] 👤 Preferência do usuário (trade_currency): "${userPreferredCurrency}"`);
+      const dbTokenDemo = row.token_demo;
+      const dbTokenReal = row.token_real;
 
-      let derivRaw: any;
-      try {
-        derivRaw = typeof row.deriv_raw === 'string'
-          ? JSON.parse(row.deriv_raw)
-          : row.deriv_raw;
-      } catch (e) {
-        this.logger.error(`[ResolveDeriv] ❌ Erro ao parsear deriv_raw`, e);
-        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
-      }
+      this.logger.log(`[ResolveDeriv] 📊 trade_currency: "${userPreferredCurrency}"`);
+      this.logger.log(`[ResolveDeriv] 📊 Tokens DB: Demo=${!!dbTokenDemo}, Real=${!!dbTokenReal}`);
 
-      // Log do raw completo para debug
-      this.logger.log(`[ResolveDeriv] 📊 deriv_raw.loginid: ${derivRaw.loginid}`);
-      this.logger.log(`[ResolveDeriv] 📊 deriv_raw.tokensByLoginId chaves: ${Object.keys(derivRaw.tokensByLoginId || {}).join(', ')}`);
-
-      // Se não tiver balancesByCurrency, não podemos decidir
-      if (!derivRaw.balancesByCurrencyReal || !derivRaw.balancesByCurrencyDemo) {
-        this.logger.warn(`[ResolveDeriv] ⚠️ Estrutura balancesByCurrency incompleta.`);
-        this.logger.log(`[ResolveDeriv] 📊 balancesByCurrencyReal: ${JSON.stringify(derivRaw.balancesByCurrencyReal)}`);
-        this.logger.log(`[ResolveDeriv] 📊 balancesByCurrencyDemo: ${JSON.stringify(derivRaw.balancesByCurrencyDemo)}`);
-        return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
-      }
-
-      // 2. Verificar saldo da conta Real (USD)
-      const realBalance = derivRaw.balancesByCurrencyReal['USD'] || 0;
-      const demoBalance = derivRaw.balancesByCurrencyDemo['USD'] || 0;
-
-      // Buscar Tokens por loginid
-      const tokens = derivRaw.tokensByLoginId || {};
-      let realToken = '';
-      let demoToken = '';
-      let realLoginId = '';
-      let demoLoginId = '';
-
-      // Identificar contas (VRTC = Demo, CR = Real)
-      this.logger.log(`[ResolveDeriv] 🔍 Analisando ${Object.keys(tokens).length} tokens no tokensByLoginId...`);
-      for (const [loginid, tokenValue] of Object.entries(tokens)) {
-        const tokenStr = tokenValue as string;
-        this.logger.log(`[ResolveDeriv]   - ${loginid}: ${tokenStr.substring(0, 10)}...`);
-
-        if (loginid.startsWith('VRTC')) {
-          demoLoginId = loginid;
-          demoToken = tokenStr;
-          this.logger.log(`[ResolveDeriv]     ✅ Identificado como DEMO`);
-        } else if (loginid.startsWith('CR')) {
-          // Pode ter múltiplas contas CR, pegar a primeira
-          if (!realLoginId) {
-            realLoginId = loginid;
-            realToken = tokenStr;
-            this.logger.log(`[ResolveDeriv]     ✅ Identificado como REAL (primeira conta CR)`);
-          } else {
-            this.logger.log(`[ResolveDeriv]     ⏭️ Ignorado (já temos conta REAL: ${realLoginId})`);
-          }
-        }
-      }
-
-      this.logger.log(`[ResolveDeriv] 📊 RESUMO:`);
-      this.logger.log(`[ResolveDeriv]   - Preferência usuário: ${userPreferredCurrency}`);
-      this.logger.log(`[ResolveDeriv]   - Conta REAL: ${realLoginId || 'NÃO ENCONTRADA'} | Saldo: $${realBalance} | Token: ${realToken ? realToken.substring(0, 10) + '...' : 'N/A'}`);
-      this.logger.log(`[ResolveDeriv]   - Conta DEMO: ${demoLoginId || 'NÃO ENCONTRADA'} | Saldo: $${demoBalance} | Token: ${demoToken ? demoToken.substring(0, 10) + '...' : 'N/A'}`);
-
-      // 3. LÓGICA DE DECISÃO BASEADA EM PREFERÊNCIA DO USUÁRIO
+      // 🚨 FEATURE REQUEST: Priorizar tokens das colunas dedicadas
       let wantsDemo = userPreferredCurrency === 'DEMO';
 
-      // ✅ MELHORIA: Se a preferência for 'USD' (ambígua), usar o loginid do snapshot para decidir
-      // Isso corrige o caso onde o usuário salva em Demo (USD) mas a config grava apenas 'USD'
-      if (userPreferredCurrency === 'USD') {
-        // Verificação ultra-segura do loginid
-        const rawLoginId = derivRaw.loginid;
-        const snapshotLoginId = (rawLoginId || '').toString().trim().toUpperCase();
-
-        this.logger.log(`[ResolveDeriv] ℹ️ Verificando ambiguidade USD. Preferência='${userPreferredCurrency}', SnapshotID='${snapshotLoginId}' (Raw: '${rawLoginId}')`);
-
-        if (snapshotLoginId.startsWith('VRTC')) {
-          this.logger.log(`[ResolveDeriv] ✅ DETECTADO CONTA DEMO (VRTC) no snapshot. Forçando wantsDemo=true.`);
-          wantsDemo = true;
-        } else {
-          this.logger.log(`[ResolveDeriv] ℹ️ Snapshot não é VRTC. Mantendo decisão original (Real).`);
+      // Verificação ambiguidade USD (se o snapshot for demo, mas config diz USD)
+      if (row.deriv_raw) {
+        let derivRaw: any;
+        try {
+          derivRaw = typeof row.deriv_raw === 'string' ? JSON.parse(row.deriv_raw) : row.deriv_raw;
+          const snapshotLoginId = (derivRaw.loginid || '').toString().trim().toUpperCase();
+          if (userPreferredCurrency === 'USD' && snapshotLoginId.startsWith('VRTC')) {
+            this.logger.log(`[ResolveDeriv] ✅ DETECTADO CONTA DEMO (VRTC) no deriv_raw com preferência USD. Forçando Demo.`);
+            wantsDemo = true;
+          }
+        } catch (e) {
+          this.logger.warn(`[ResolveDeriv] ⚠️ Erro ao verificar raw para ambiguidade USD:`, e);
         }
       }
 
       this.logger.log(`[ResolveDeriv] 🎯 Usuário quer DEMO? ${wantsDemo}`);
 
       if (wantsDemo) {
-        // Usuário quer DEMO
-        if (demoToken) {
-          // Determinar moeda da conta Demo
-          const demoBalances = derivRaw.balancesByCurrencyDemo || {};
-          const demoCurrencies = Object.keys(demoBalances);
-          const demoCurrency = demoCurrencies.length > 0 ? demoCurrencies[0] : 'USD';
-          const balance = demoBalances[demoCurrency] || 0;
-
-          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando DEMO conforme preferência | LoginID: ${demoLoginId} | Moeda: ${demoCurrency} | Saldo: $${balance}`);
-          return { token: demoToken, currency: demoCurrency, loginid: demoLoginId, isVirtual: true };
-        } else {
-          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Encerrando.`);
-          return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
+        // --- MODO DEMO ---
+        if (dbTokenDemo) {
+          this.logger.log(`[ResolveDeriv] ✅ Usando TOKEN DEMO da coluna dedicada (users.token_demo)`);
+          // Tentar descobrir loginid/currency do raw se possível, senão usar default
+          return { token: dbTokenDemo, currency: 'USD', loginid: 'DEMO_USER', isVirtual: true };
         }
-      } else {
-        // Usuário quer REAL (USD ou outra moeda)
-        if (realToken) {
-          // Determinar moeda da conta Real
-          const realBalances = derivRaw.balancesByCurrencyReal || {};
-          const realCurrencies = Object.keys(realBalances);
-          let realCurrency = 'USD';
 
-          if (userPreferredCurrency !== 'DEMO' && realCurrencies.includes(userPreferredCurrency)) {
-            realCurrency = userPreferredCurrency;
-          } else if (realCurrencies.length > 0) {
-            realCurrency = realCurrencies[0];
+        // Fallback para raw...
+        if (row.deriv_raw) {
+          // ... (lógica existente para extrair do raw) ...
+          const derivRaw = typeof row.deriv_raw === 'string' ? JSON.parse(row.deriv_raw) : row.deriv_raw;
+          const tokens = derivRaw.tokensByLoginId || {};
+          for (const [loginid, tokenValue] of Object.entries(tokens)) {
+            if (loginid.startsWith('VRTC')) {
+              const tokenStr = tokenValue as string;
+              this.logger.log(`[ResolveDeriv] ✅ Usando TOKEN DEMO do deriv_raw`);
+              return { token: tokenStr, currency: 'USD', loginid, isVirtual: true };
+            }
           }
-          const balance = realBalances[realCurrency] || 0;
-
-          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando REAL | LoginID: ${realLoginId} | Moeda: ${realCurrency} | Saldo: $${balance}`);
-          return { token: realToken, currency: realCurrency, loginid: realLoginId, isVirtual: false };
-        } else {
-          this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer REAL mas token não encontrado.`);
-          return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
         }
+
+        this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Usando fornecido.`);
+      } else {
+        // --- MODO REAL ---
+        if (dbTokenReal) {
+          this.logger.log(`[ResolveDeriv] ✅ Usando TOKEN REAL da coluna dedicada (users.token_real)`);
+          return { token: dbTokenReal, currency: userPreferredCurrency, loginid: 'REAL_USER', isVirtual: false };
+        }
+
+        // Fallback para raw...
+        if (row.deriv_raw) {
+          const derivRaw = typeof row.deriv_raw === 'string' ? JSON.parse(row.deriv_raw) : row.deriv_raw;
+          const tokens = derivRaw.tokensByLoginId || {};
+          for (const [loginid, tokenValue] of Object.entries(tokens)) {
+            if (loginid.startsWith('CR')) { // ou outra prefixo real
+              const tokenStr = tokenValue as string;
+              this.logger.log(`[ResolveDeriv] ✅ Usando TOKEN REAL do deriv_raw`);
+              return { token: tokenStr, currency: userPreferredCurrency, loginid, isVirtual: false };
+            }
+          }
+        }
+        this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer REAL mas token não encontrado. Usando fornecido.`);
       }
+
+      return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
 
     } catch (error) {
       this.logger.error(`[ResolveDeriv] ❌ Erro crítico na resolução:`, error);

@@ -537,6 +537,51 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async activateAgent(userId: string, config: any): Promise<void> {
     try {
+      // ✅ [ORION] Resolução de Token Baseada em Preferência (Feature Solicitada)
+      // Buscar configurações de moeda e tokens salvos
+      this.logger.log(`[ActivateAgent] 🔍 Resolvendo token para Agente Autônomo (User: ${userId})`);
+
+      const userSettings = await this.dataSource.query(
+        `SELECT s.trade_currency, u.token_demo, u.token_real 
+         FROM users u
+         LEFT JOIN user_settings s ON u.id = s.user_id
+         WHERE u.id = ?`,
+        [userId]
+      );
+
+      let resolvedToken = config.derivToken;
+      let resolvedCurrency = config.currency || 'USD';
+
+      if (userSettings && userSettings.length > 0) {
+        const { trade_currency, token_demo, token_real } = userSettings[0];
+        const preferredCurrency = (trade_currency || 'USD').toUpperCase();
+
+        resolvedCurrency = preferredCurrency;
+
+        if (preferredCurrency === 'DEMO') {
+          if (token_demo) {
+            resolvedToken = token_demo;
+            this.logger.log(`[ActivateAgent] ✅ Modo: DEMO | Moeda: ${preferredCurrency} | Token: ${resolvedToken.substring(0, 8)}... (Usando token_demo do banco)`);
+          } else {
+            this.logger.warn(`[ActivateAgent] ⚠️ Modo DEMO solicitado, mas 'token_demo' não encontrado no banco. Usando token fornecido: ${resolvedToken ? resolvedToken.substring(0, 8) + '...' : 'N/A'}`);
+          }
+        } else {
+          // USD ou outra moeda Real
+          if (token_real) {
+            resolvedToken = token_real;
+            this.logger.log(`[ActivateAgent] ✅ Modo: REAL | Moeda: ${preferredCurrency} | Token: ${resolvedToken.substring(0, 8)}... (Usando token_real do banco)`);
+          } else {
+            this.logger.warn(`[ActivateAgent] ⚠️ Modo REAL (${preferredCurrency}) solicitado, mas 'token_real' não encontrado no banco. Usando token fornecido: ${resolvedToken ? resolvedToken.substring(0, 8) + '...' : 'N/A'}`);
+          }
+        }
+      } else {
+        this.logger.warn(`[ActivateAgent] ⚠️ Configurações de usuário não encontradas. Usando dados fornecidos no payload.`);
+      }
+
+      // Atualizar config com os valores resolvidos para garantir consistência
+      config.derivToken = resolvedToken;
+      config.currency = resolvedCurrency;
+
       // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
       // (mantém apenas as transações/trades)
       try {
