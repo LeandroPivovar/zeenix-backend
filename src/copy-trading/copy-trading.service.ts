@@ -1278,9 +1278,9 @@ export class CopyTradingService {
       // (Incluindo o próprio ID e IDs de Experts associados)
       let traderIdsToSearch: string[] = [masterUserId];
 
-      // Buscar se há expert associado
+      // Buscar se há expert associado (remover is_active para garantir que encontramos histórico)
       const expertResult = await this.dataSource.query(
-        `SELECT id FROM experts WHERE user_id = ? AND is_active = 1 LIMIT 1`,
+        `SELECT id FROM experts WHERE user_id = ? LIMIT 1`,
         [masterUserId],
       );
 
@@ -1303,15 +1303,22 @@ export class CopyTradingService {
             `SELECT id FROM experts WHERE id = ? AND user_id = ?`,
             [traderId, masterUserId],
           );
+
           if (expertCheck && expertCheck.length > 0) {
+            this.logger.log(`[GetCopiers] Trader ID ${traderId} verificado como Expert do usuário.`);
             traderIdsToSearch.push(traderId);
           }
         }
       }
 
-      // Remover duplicatas
-      traderIdsToSearch = [...new Set(traderIdsToSearch)];
-      this.logger.log(`[GetCopiers] Trader IDs para busca: ${traderIdsToSearch.join(', ')}`);
+      // Remover duplicatas e garantir que não tenha null/undefined
+      traderIdsToSearch = [...new Set(traderIdsToSearch)].filter(id => !!id);
+      this.logger.log(`[GetCopiers] Trader IDs FINAIS para busca: ${traderIdsToSearch.join(', ')}`);
+
+      if (traderIdsToSearch.length === 0) {
+        this.logger.warn(`[GetCopiers] Nenhum Trader ID encontrado para busca.`);
+        return [];
+      }
 
       // PASSO 2: Buscar APENAS copiadores com sessão ATIVA
       // Alterado para buscar diretamente da tabela de sessões com status = 'active'
