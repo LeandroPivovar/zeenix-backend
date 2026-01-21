@@ -1,0 +1,3 @@
+ALTER TABLE users 
+ADD COLUMN token_demo VARCHAR(255) NULL,
+ADD COLUMN token_real VARCHAR(255) NULL;

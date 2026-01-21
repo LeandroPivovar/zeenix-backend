@@ -353,13 +353,24 @@ export class DerivController {
       hasTokensByLoginId: !!accountForCurrency?.tokensByLoginId
     })}`);
     this.derivService.setSession(userId, sessionPayload);
+    // Identificar tipo de token para salvar (VRTC = Demo)
+    const isDemo = preciseAccount.loginid?.startsWith('VRTC');
+    const tokenUpdates: { tokenDemo?: string; tokenReal?: string } = {};
+
+    if (isDemo) {
+      tokenUpdates.tokenDemo = token;
+    } else {
+      tokenUpdates.tokenReal = token;
+    }
+
     await this.userRepository.updateDerivInfo(userId, {
       loginId: sessionPayload.loginid ?? accountForCurrency.loginid ?? userId,
       currency: sessionPayload.currency ?? accountForCurrency.currency,
       balance: sessionPayload.balance?.value ?? undefined,
       raw: accountForCurrency,
+      ...tokenUpdates
     });
-    this.logger.log(`[${source}] Dados iniciais salvos no banco de dados para usuário ${userId}`);
+    this.logger.log(`[${source}] Dados iniciais salvos no banco para usuário ${userId}. Tokens salvos: ${JSON.stringify(Object.keys(tokenUpdates))}`);
 
     this.logger.log(
       `[${source}] Fazendo nova consulta à API Deriv para buscar saldo atualizado para usuário ${userId}...`,
@@ -407,6 +418,7 @@ export class DerivController {
           refreshedRaw.balance?.value ??
           undefined,
         raw: refreshedRaw,
+        // Não precisamos atualizar tokens aqui pois já foram salvos ou mantidos
       });
       this.derivService.setSession(userId, refreshedSessionPayload);
       this.logger.log(
@@ -558,15 +570,31 @@ export class DerivController {
         }
       });
 
-      // Atualizar o raw com os tokens
+      // Atualizar o raw e os tokens
       const derivInfo = await this.userRepository.getDerivInfo(userId);
+
+      let tokenDemo: string | undefined;
+      let tokenReal: string | undefined;
+
+      // Iterar sobre accounts para extrair tokens demo e real
+      normalizedAccounts.forEach(account => {
+        if (account.loginid?.startsWith('VRTC')) {
+          tokenDemo = account.token;
+        } else {
+          // Assumindo que qualquer outro é Real (CR, etc)
+          tokenReal = account.token;
+        }
+      });
+
       if (derivInfo?.raw) {
         derivInfo.raw.tokensByLoginId = tokensByLoginId;
         await this.userRepository.updateDerivInfo(userId, {
           loginId: derivInfo.loginId || result.loginid || selectedAccount.loginid,
           raw: derivInfo.raw,
+          tokenDemo,
+          tokenReal
         });
-        this.logger.log(`[CONNECT-OAUTH] Tokens armazenados para ${Object.keys(tokensByLoginId).length} contas`);
+        this.logger.log(`[CONNECT-OAUTH] Tokens armazenados para ${Object.keys(tokensByLoginId).length} contas. Demo: ${!!tokenDemo}, Real: ${!!tokenReal}`);
       }
 
       return {

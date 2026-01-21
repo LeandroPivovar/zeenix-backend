@@ -64,7 +64,7 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.delete(id);
   }
 
-  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any }): Promise<void> {
+  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string }): Promise<void> {
     const updateData: any = {
       derivLoginId: info.loginId,
     };
@@ -82,6 +82,16 @@ export class TypeOrmUserRepository implements UserRepository {
     // Só atualizar raw se foi fornecido explicitamente
     if (info.raw !== undefined) {
       updateData.derivRaw = info.raw;
+    }
+
+    // Atualizar tokenDemo se fornecido
+    if (info.tokenDemo !== undefined) {
+      updateData.tokenDemo = info.tokenDemo;
+    }
+
+    // Atualizar tokenReal se fornecido
+    if (info.tokenReal !== undefined) {
+      updateData.tokenReal = info.tokenReal;
     }
 
     await this.userRepository.update(userId, updateData);
