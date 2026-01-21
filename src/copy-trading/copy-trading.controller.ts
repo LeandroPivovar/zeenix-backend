@@ -367,33 +367,18 @@ export class CopyTradingController {
       const copiers = await this.copyTradingService.getCopiers(masterUserId);
       this.logger.log(`[GetCopiers] Retornando ${copiers.length} copiadores`);
 
-      const mappedCopiers = copiers.map((c: any) => ({
-        id: c.id,
-        userId: c.user_id,
-        name: c.user_name || 'Usuário',
-        email: c.user_email || '',
-        tag: (Boolean(c.is_active) === true || c.session_status === 'active') ? 'Ativo' : 'Inativo',
-        multiplier: c.leverage ? `${c.leverage}x` : '1x',
-        profitTarget: parseFloat(c.take_profit) || 0,
-        lossLimit: parseFloat(c.stop_loss) || 0,
-        balance: parseFloat(c.session_balance) || 0,
-        pnl: parseFloat(c.total_profit) || 0,
-        isActive: Boolean(c.is_active) === true || c.session_status === 'active',
-        allocationType: c.allocation_type,
-        allocationValue: parseFloat(c.allocation_value) || 0,
-        totalOperations: parseInt(c.total_operations) || 0,
-        // formattedDate: c.created_at || c.activated_at 
-      }));
-
       // Calcular estatísticas agregadas
-      const totalCopiers = mappedCopiers.length;
-      const managedBalance = mappedCopiers.reduce((sum, c) => sum + c.balance, 0);
-      const todayProfit = mappedCopiers.reduce((sum, c) => sum + c.pnl, 0);
-      const totalVolume = mappedCopiers.reduce((sum, c) => sum + c.balance, 0); // Volume = saldo gerenciado
+      const totalCopiers = copiers.length;
+      // Managed Balance = soma de deriv_balance dos usuários
+      const managedBalance = copiers.reduce((sum, c) => sum + (c.derivBalance || 0), 0);
+      // Today Profit = soma de todayProfit
+      const todayProfit = copiers.reduce((sum, c) => sum + (c.todayProfit || 0), 0);
+      // Volume = soma de todos os total profit (conforme solicitado pelo usuário)
+      const totalVolume = copiers.reduce((sum, c) => sum + (c.pnl || 0), 0);
 
       return {
         success: true,
-        data: mappedCopiers,
+        data: copiers,
         summary: {
           totalCopiers,
           managedBalance,
