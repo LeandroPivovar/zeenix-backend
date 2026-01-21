@@ -90,7 +90,7 @@ export const ATLAS_VELOZ_CONFIG: ModeConfig = {
   desequilibrioMin: 0.0,
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70, // ~70% Win rate para Over 2
-  payout: 0.40, // Payout para Digit Over 2
+  payout: 0.35, // Payout para Digit Over 2
   minStake: 0.35,
   betPercent: 0.005,
 };
@@ -102,7 +102,7 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
   desequilibrioMin: 1.0, // Gatilho: 3/3 <= 2
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
-  payout: 0.40,
+  payout: 0.35,
   minStake: 0.35,
   betPercent: 0.0075,
 };
@@ -114,7 +114,7 @@ export const ATLAS_LENTO_CONFIG: ModeConfig = {
   desequilibrioMin: 1.0, // Gatilho: 5/5 <= 2
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
-  payout: 0.40,
+  payout: 0.35,
   minStake: 0.35,
   betPercent: 0.01,
 };

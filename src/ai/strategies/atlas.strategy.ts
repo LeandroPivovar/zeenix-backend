@@ -12,7 +12,7 @@ import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
-  payoutCliente: number = 0.92,
+  payoutCliente: number = 0.35,
 ): number {
   let aposta = 0;
 
@@ -776,7 +776,7 @@ export class AtlasStrategy implements IStrategy {
         // DIGITOVER/UNDER tem payout ~40% (alta probabilidade ~70%)
         // CALL/PUT (Rise/Fall) tem payout ~92% (95% - 3% markup)
         const isPriceAction = (operation === 'CALL' || operation === 'PUT') && state.martingaleStep >= 2;
-        const payout = isPriceAction ? 0.92 : 0.40;
+        const payout = isPriceAction ? 0.92 : 0.35;
 
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
@@ -1363,20 +1363,20 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
-      // ✅ ATLAS: Defesa Automática (Switch to Lento após 4 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 4 && state.mode !== 'lento') {
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 6 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 6 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 4 Perdas Consecutivas.\n` +
+          `• Motivo: 6 Perdas Consecutivas.\n` +
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
-      // ✅ ATLAS: Reset após M5 (6ª perda) - Apenas modo CONSERVADOR
-      if (state.isInRecovery && state.martingaleStep > 5 && state.modoMartingale === 'conservador') {
+      // ✅ ATLAS: Reset após 6 perdas (7ª entrada) - Apenas modo CONSERVADOR
+      if (state.isInRecovery && state.martingaleStep > 6 && state.modoMartingale === 'conservador') {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO\n` +
-          `• Motivo: 6 Perdas Consecutivas (M5).\n` +
+          `• Motivo: 7 Perdas Consecutivas.\n` +
           `• Ação: Resetando ciclo de martingale.\n` +
           `• Perda Total: $${state.perdaAcumulada.toFixed(2)}`);
 
