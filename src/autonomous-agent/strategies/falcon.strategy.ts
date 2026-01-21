@@ -39,8 +39,8 @@ const FALCON_V21_SETTINGS = {
 
 const FALCON_V21_RISK = {
   CONSERVADOR: { profitFactor: 1.0, maxMartingale: 5 },
-  MODERADO: { profitFactor: 1.15, maxMartingale: 7 },
-  AGRESSIVO: { profitFactor: 1.30, maxMartingale: 10 },
+  MODERADO: { profitFactor: 1.15, maxMartingale: -1 }, // Sem limite
+  AGRESSIVO: { profitFactor: 1.30, maxMartingale: -1 }, // Sem limite
 };
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -683,7 +683,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // Acumula perda para martingale (usado para calcular próxima stake)
       // OBS: Isso deve ser feito APÓS o update do lucroAtual, que já deve ter subtraído o stake perdido.
       // O valor da perda no último trade pode ser obtido via cálculo ou state.
-      // Como updateMode é chamado no onContractFinish, state.lucroAtual já foi atualizado.
+      // Acumula perda para martingale (usado para calcular próxima stake)
+      // ✅ CORREÇÃO: Acumular perda exata do último trade
+      if (state.lastProfit < 0) {
+        state.totalLossAccumulated += Math.abs(state.lastProfit);
+      }
     }
   }
 
@@ -718,7 +722,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // state.totalLossAccumulated deve ser mantido atualizado
       // Se não, podemos tentar inferir pelo lucroAtual se estiver negativo.
       // Mas o correto é usar accumulated. Vamos assumir que logicamente precisamos recuperar o prejuízo atual.
-      const lossToRecover = Math.abs(Math.min(0, state.lucroAtual));
+      // Perda total a recuperar (absoluta)
+      // ✅ CORREÇÃO: Usar perda acumulada da sequência, não o lucro do dia
+      const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
 
       if (lossToRecover > 0) {
         // Fórmula Martingale: (Perda * Fator) / Payout
