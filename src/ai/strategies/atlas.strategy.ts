@@ -904,11 +904,16 @@ export class AtlasStrategy implements IStrategy {
         }
 
         const effectiveToken = resolvedAccount.token;
+        const effectiveCurrency = resolvedAccount.currency;
 
         if (effectiveToken !== state.derivToken) {
           this.logger.log(`[ATLAS][${symbol}] 🔄 Token resolvido diferente do cache. Usando: ${effectiveToken.substring(0, 10)}... (${resolvedAccount.isVirtual ? 'DEMO' : 'REAL'})`);
-          // Atualizar o estado para refletir o token correto
           state.derivToken = effectiveToken;
+        }
+
+        if (state.currency !== effectiveCurrency) {
+          this.logger.log(`[ATLAS][${symbol}] 🔄 Moeda ajustada: ${state.currency} -> ${effectiveCurrency}`);
+          state.currency = effectiveCurrency;
         }
 
         const result = await this.executeAtlasTradeDirect(
@@ -919,7 +924,7 @@ export class AtlasStrategy implements IStrategy {
             symbol,
             contract_type: contractType,
             amount: stakeAmount,
-            currency: state.currency,
+            currency: effectiveCurrency,
             duration: 1,
             duration_unit: 't',
           },
@@ -2371,12 +2376,32 @@ ${filtersText}
       }
 
       if (targetToken) {
-        const balance = isVirtual
-          ? (derivRaw.balancesByCurrencyDemo?.['USD'] || 0)
-          : (derivRaw.balancesByCurrencyReal?.['USD'] || 0);
+        let resolvedCurrency = 'USD';
+        let balance = 0;
 
-        this.logger.debug(`[ATLAS][ResolveToken] ✅ Conta Resolvida: ${foundLoginId} (${isVirtual ? 'DEMO' : 'REAL'}) | Saldo Cache: $${balance}`);
-        return { token: targetToken, currency: 'USD', isVirtual };
+        if (isVirtual) {
+          const demoBalances = derivRaw.balancesByCurrencyDemo || {};
+          const demoCurrencies = Object.keys(demoBalances);
+          if (demoCurrencies.length > 0) {
+            resolvedCurrency = demoCurrencies[0]; // Pega a primeira moeda encontrada (ex: 'USD', 'EUR', 'GBP')
+          }
+          balance = demoBalances[resolvedCurrency] || 0;
+        } else {
+          // Para conta Real, tentamos usar a preferência do usuário se for uma moeda válida
+          // Se userPreferredCurrency for 'DEMO' (impossível aqui) ou inválido, tentamos pegar do saldo
+          const realBalances = derivRaw.balancesByCurrencyReal || {};
+          const realCurrencies = Object.keys(realBalances);
+
+          if (userPreferredCurrency !== 'DEMO' && realCurrencies.includes(userPreferredCurrency)) {
+            resolvedCurrency = userPreferredCurrency;
+          } else if (realCurrencies.length > 0) {
+            resolvedCurrency = realCurrencies[0];
+          }
+          balance = realBalances[resolvedCurrency] || 0;
+        }
+
+        this.logger.debug(`[ATLAS][ResolveToken] ✅ Conta Resolvida: ${foundLoginId} (${isVirtual ? 'DEMO' : 'REAL'}) | Moeda: ${resolvedCurrency} | Saldo Cache: $${balance}`);
+        return { token: targetToken, currency: resolvedCurrency, isVirtual };
       }
 
       // ❌ Se chegou aqui, não existe token para o tipo de conta desejado

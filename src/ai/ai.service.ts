@@ -3992,23 +3992,37 @@ export class AiService implements OnModuleInit {
       if (wantsDemo) {
         // Usuário quer DEMO
         if (demoToken) {
-          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando DEMO conforme preferência | LoginID: ${demoLoginId} | Saldo: $${demoBalance}`);
-          return { token: demoToken, currency: 'USD', loginid: demoLoginId, isVirtual: true };
+          // Determinar moeda da conta Demo
+          const demoBalances = derivRaw.balancesByCurrencyDemo || {};
+          const demoCurrencies = Object.keys(demoBalances);
+          const demoCurrency = demoCurrencies.length > 0 ? demoCurrencies[0] : 'USD';
+          const balance = demoBalances[demoCurrency] || 0;
+
+          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando DEMO conforme preferência | LoginID: ${demoLoginId} | Moeda: ${demoCurrency} | Saldo: $${balance}`);
+          return { token: demoToken, currency: demoCurrency, loginid: demoLoginId, isVirtual: true };
         } else {
           this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer DEMO mas token não encontrado. Encerrando.`);
-          // Não fazer fallback para Real. Retornar dados "vazios" ou da conta pedida mas sem token válido se quiser falhar na ponta.
-          // Melhor retornar o que temos (providedToken) e deixar estourar erro de Auth se não for válido, 
-          // mas sem trocar para Real silenciosamente.
           return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
         }
       } else {
         // Usuário quer REAL (USD ou outra moeda)
         if (realToken) {
-          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando REAL | LoginID: ${realLoginId} | Saldo: $${realBalance}`);
-          return { token: realToken, currency: 'USD', loginid: realLoginId, isVirtual: false };
+          // Determinar moeda da conta Real
+          const realBalances = derivRaw.balancesByCurrencyReal || {};
+          const realCurrencies = Object.keys(realBalances);
+          let realCurrency = 'USD';
+
+          if (userPreferredCurrency !== 'DEMO' && realCurrencies.includes(userPreferredCurrency)) {
+            realCurrency = userPreferredCurrency;
+          } else if (realCurrencies.length > 0) {
+            realCurrency = realCurrencies[0];
+          }
+          const balance = realBalances[realCurrency] || 0;
+
+          this.logger.log(`[ResolveDeriv] ✅ DECISÃO: Usando REAL | LoginID: ${realLoginId} | Moeda: ${realCurrency} | Saldo: $${balance}`);
+          return { token: realToken, currency: realCurrency, loginid: realLoginId, isVirtual: false };
         } else {
           this.logger.warn(`[ResolveDeriv] ⚠️ Usuário quer REAL mas token não encontrado.`);
-          // Não fazer fallback para Demo.
           return { token: providedToken, currency: requestedCurrency, loginid: 'UNKNOWN', isVirtual: false };
         }
       }
