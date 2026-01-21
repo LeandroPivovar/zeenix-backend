@@ -25,6 +25,7 @@ interface TradeData {
   durationUnit: string;
   entrySpot?: number | null;
   entryTime?: number | null;
+  barrier?: number | null;
 }
 
 /**
@@ -43,7 +44,7 @@ interface ConnectionState {
   tickSubscriptionId: string | null;
   proposalSubscriptionId: string | null;
   openContractSubscriptionId: string | null;
-  pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string } | null;
+  pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string; barrier?: number } | null;
 }
 
 @Injectable()
@@ -317,6 +318,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       durationUnit: config?.durationUnit || buy.duration_unit || 'm',
       entrySpot: Number(buy.entry_spot || buy.current_spot || 0),
       entryTime: Number(buy.purchase_time || buy.start_time) || Date.now() / 1000,
+      barrier: config?.barrier || Number(buy.barrier) || null,
     };
 
     this.state.pendingBuyConfig = null;
@@ -372,9 +374,9 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   }
 
   buyContract(buyConfig: any): void {
-    const { proposalId, price, duration, durationUnit, contractType } = buyConfig;
+    const { proposalId, price, duration, durationUnit, contractType, barrier } = buyConfig;
 
-    this.state.pendingBuyConfig = { durationUnit, duration, contractType };
+    this.state.pendingBuyConfig = { durationUnit, duration, contractType, barrier };
 
     if (proposalId) {
       this.send({ buy: proposalId, price: Number(price) });

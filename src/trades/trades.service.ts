@@ -15,6 +15,7 @@ export interface CreateTradeDto {
   multiplier: number;
   entryValue: number;
   tradeType: TradeType;
+  barrier?: number;
 }
 
 @Injectable()
@@ -70,12 +71,13 @@ export class TradesService {
 
         await this.dataSource.query(
           `INSERT INTO master_trader_operations 
-           (trader_id, symbol, contract_type, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+           (trader_id, symbol, contract_type, barrier, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             userId,
             dto.contractType, // symbol (ex: R_100)
             dto.tradeType,    // contract_type (ex: CALL/PUT)
+            dto.barrier || null,
             dto.entryValue,
             percent,
             dto.multiplier,
@@ -100,6 +102,7 @@ export class TradesService {
               percent: percent,
               entrySpot: 0,
               entryTime: Math.floor(Date.now() / 1000),
+              barrier: dto.barrier,
             }
           );
         }

@@ -548,6 +548,7 @@ export class CopyTradingService {
       percent: number;
       entrySpot: number;
       entryTime: number;
+      barrier?: number;
     },
   ): Promise<void> {
     try {
@@ -614,6 +615,10 @@ export class CopyTradingService {
         if (copierStake < 0.35) copierStake = 0.35;
         copierStake = Math.round(copierStake * 100) / 100;
 
+
+        // ✅ Barrier from operation
+        const barrier = operation.barrier;
+
         // Executar trade do copiador (Fire and Forget para não travar loop do master)
         // Mas com callback para salvar no banco
         this.executeCopierTrade(copier.user_id, {
@@ -622,22 +627,24 @@ export class CopyTradingService {
           duration: operation.duration,
           durationUnit: operation.durationUnit,
           stakeAmount: copierStake,
-          derivToken: copierToken
+          derivToken: copierToken,
+          barrier: barrier
         }).then(async (copierContractId) => {
           if (copierContractId) {
             try {
               // Salvar operação no banco
               await this.dataSource.query(
                 `INSERT INTO copy_trading_operations 
-                   (session_id, user_id, trader_operation_id, operation_type, symbol, duration,
+                   (session_id, user_id, trader_operation_id, operation_type, barrier, symbol, duration,
                     stake_amount, result, profit, leverage, allocation_type, allocation_value,
                     executed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
                 [
                   copier.session_id,
                   copier.user_id,
                   copierContractId, // ID do contrato do copiador
                   operation.contractType,
+                  barrier,
                   operation.symbol,
                   operation.duration,
                   copierStake,
@@ -1477,6 +1484,7 @@ export class CopyTradingService {
       durationUnit: string;
       stakeAmount: number;
       derivToken: string;
+      barrier?: number;
     },
   ): Promise<string | null> {
     return new Promise(async (resolve, reject) => {
@@ -1507,6 +1515,7 @@ export class CopyTradingService {
           duration: tradeConfig.duration,
           durationUnit: tradeConfig.durationUnit,
           amount: tradeConfig.stakeAmount,
+          barrier: tradeConfig.barrier
         });
 
         // Wait for proposal and buy

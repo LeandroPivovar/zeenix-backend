@@ -1231,6 +1231,7 @@ export class DerivController {
                 percent: percent,
                 entrySpot: finalEntrySpot || 0,
                 entryTime: data.entryTime || Math.floor(Date.now() / 1000),
+                barrier: data.barrier || null,
               },
             );
           }
@@ -1929,7 +1930,7 @@ export class DerivController {
         duration: body.duration,
         contractType: body.contractType,
         token: token, // Token resolvido
-
+        barrier: body.barrier, // Adicionado barrier
         loginid: targetLoginid      // Login ID alvo
       });
 
