@@ -758,7 +758,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         stake = targetAmount / realPayout;
 
         // Limite por Perfil (v2.1)
-        if (state.consecutiveLosses > riskSettings.maxMartingale) {
+        // ✅ CORREÇÃO: Respeitar a flag -1 (Sem Limite)
+        const hasLimit = riskSettings.maxMartingale !== -1;
+        if (hasLimit && state.consecutiveLosses > riskSettings.maxMartingale) {
           this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido. Resetando para stake base.`);
           state.mode = 'NORMAL';
           state.totalLossAccumulated = 0;
