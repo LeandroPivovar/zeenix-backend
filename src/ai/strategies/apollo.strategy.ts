@@ -581,25 +581,30 @@ ${filtersText}
 
   private calculateStake(state: ApolloUserState): number {
     if (state.consecutiveLosses > 0) {
-      // Martingale Inteligente
-      let multiplier = 1.0;
-      const profile = state.riskProfile;
-
-      if (profile === 'agressivo') multiplier = 1.5;
-      else if (profile === 'moderado') multiplier = 1.25;
-      else multiplier = 1.0;
-
-      if (profile === 'conservador' && state.consecutiveLosses > 5) {
-        this.saveLog(state.userId, 'alerta', `♻️ [CONSERVADOR] Limite de recuperação atingido. Resetando stake.`);
+      // Modo Conservador: Até M5 (5 perdas), depois reseta
+      if (state.riskProfile === 'conservador' && state.consecutiveLosses > 5) {
+        this.saveLog(state.userId, 'alerta', `♻️ [CONSERVADOR] Limite de recuperação atingido (M5). Resetando stake.`);
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
         return state.apostaInicial;
       }
 
-      const PAYOUT_RATE = 0.92;
+      const PAYOUT_RATE = 0.92; // 95% - 3% markup = 92%
       const lossToRecover = state.totalLossAccumulated || state.apostaInicial;
+      let neededStake = 0;
 
-      const neededStake = (lossToRecover * multiplier) / PAYOUT_RATE;
+      // Cálculo por perfil de risco
+      if (state.riskProfile === 'conservador') {
+        // Recupera apenas o valor da perda (break-even)
+        neededStake = lossToRecover / PAYOUT_RATE;
+      } else if (state.riskProfile === 'moderado') {
+        // Recupera 100% + 15% de lucro
+        neededStake = (lossToRecover * 1.15) / PAYOUT_RATE;
+      } else if (state.riskProfile === 'agressivo') {
+        // Recupera 100% + 30% de lucro
+        neededStake = (lossToRecover * 1.30) / PAYOUT_RATE;
+      }
+
       return Number(neededStake.toFixed(2));
     } else {
       if (state.sorosLevel === 1 && state.lastResultWin && state.lastProfit > 0) {

@@ -151,13 +151,16 @@ function calcularApostaComSoros(
  * Calcula a próxima aposta baseado no modo de martingale - ZENIX v2.0
  * Conforme documentação completa da estratégia ZENIX v2.0
  * 
- * CONSERVADOR: Próxima Aposta = Perda Acumulada (apenas recuperar, sem lucro)
+ * CONSERVADOR: Próxima Aposta = Perda Acumulada / payout (apenas recuperar, sem lucro)
  * MODERADO:    Próxima Aposta = (Perda Acumulada × 1.15) / payout (recuperar 100% das perdas + 15% de lucro)
  * AGRESSIVO:   Próxima Aposta = (Perda Acumulada × 1.30) / payout (recuperar 100% das perdas + 30% de lucro)
  * 
+ * Payout após 3% markup: 0.92 (95% - 3% = 92%)
+ * 
  * @param perdasTotais - Total de perdas acumuladas no martingale
  * @param modo - Modo de martingale (conservador/moderado/agressivo)
- * @param payoutCliente - Payout do cliente (0.95 = 95% ou 92 = 92%)
+ * @param payoutCliente - Payout do cliente (0.92 = 92% ou 92 = 92%)
+ * @param baseStake - Valor base da aposta (não usado mais, mantido para compatibilidade)
  * @param ultimaAposta - Última aposta feita (não usado mais, mantido para compatibilidade)
  * @returns Valor da próxima aposta calculada
  */
@@ -170,7 +173,7 @@ function calcularProximaAposta(
 ): number {
   const PAYOUT = typeof payoutCliente === 'number' && payoutCliente > 1
     ? payoutCliente / 100  // Se for 92, converter para 0.92
-    : payoutCliente;       // Se já for 0.95, usar direto
+    : payoutCliente;       // Se já for 0.92, usar direto
 
   let aposta = 0;
 
@@ -267,11 +270,8 @@ class RiskManager {
     }
 
     let nextStake = baseStake;
-    // Payout dinâmico: M1 (Over 3) ~ 63%, M2+ (Rise/Fall) ~ 95%
-    const PAYOUT_OVER3 = 0.63;
-    const PAYOUT_PA = 0.95;
-    const currentPayout = this.consecutiveLosses === 1 ? PAYOUT_OVER3 : PAYOUT_PA;
-    const PAYOUT_RATE = currentPayout; // Usar o payout dinâmico para os cálculos de limite abaixo
+    // ✅ Payout fixo de 0.92 (95% - 3% markup)
+    const PAYOUT_RATE = 0.92;
 
     // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
     if (this.consecutiveLosses > 0) {
@@ -279,10 +279,10 @@ class RiskManager {
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
           // Meta: recuperar apenas o valor da perda (break-even)
-          nextStake = this.totalLossAccumulated / currentPayout;
+          nextStake = this.totalLossAccumulated / PAYOUT_RATE;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
+            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 92%)`);
           }
           if (saveLog) {
             saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $0.00`);
@@ -301,27 +301,27 @@ class RiskManager {
       }
       // 2. MODERADO: Infinito + 15% de Lucro sobre a perda
       else if (this.riskMode === 'MODERADO') {
-        const targetProfit = this.totalLossAccumulated * 0.15;
-        const targetRecovery = this.totalLossAccumulated + targetProfit; // Recupera + 15%
-        nextStake = targetRecovery / currentPayout;
+        const targetRecovery = this.totalLossAccumulated * 1.15; // Recupera + 15%
+        nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
+          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: 92%)`);
         }
         if (saveLog) {
+          const targetProfit = this.totalLossAccumulated * 0.15;
           saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }
       // 3. AGRESSIVO: Infinito + 30% de Lucro sobre a perda
       else if (this.riskMode === 'AGRESSIVO') {
-        const targetProfit = this.totalLossAccumulated * 0.30;
-        const targetRecovery = this.totalLossAccumulated + targetProfit; // Recupera + 30%
-        nextStake = targetRecovery / currentPayout;
+        const targetRecovery = this.totalLossAccumulated * 1.30; // Recupera + 30%
+        nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: ${Math.round(currentPayout * 100)}%)`);
+          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: 92%)`);
         }
         if (saveLog) {
+          const targetProfit = this.totalLossAccumulated * 0.30;
           saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }

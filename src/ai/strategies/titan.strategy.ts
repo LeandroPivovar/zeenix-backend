@@ -365,22 +365,25 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.95;
+        const PAYOUT_RATE = 0.92; // 95% - 3% markup = 92%
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    nextStake = this.totalLossAccumulated / 0.92;
+                    // Recupera apenas o valor da perda (break-even)
+                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
                 } else {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;
                     nextStake = baseStake;
                 }
             } else if (this.riskMode === 'MODERADO') {
-                const targetRecovery = this.totalLossAccumulated * 1.25;
+                // Recupera 100% + 15% de lucro
+                const targetRecovery = this.totalLossAccumulated * 1.15;
                 nextStake = targetRecovery / PAYOUT_RATE;
             } else if (this.riskMode === 'AGRESSIVO') {
-                const targetRecovery = this.totalLossAccumulated * 1.50;
+                // Recupera 100% + 30% de lucro
+                const targetRecovery = this.totalLossAccumulated * 1.30;
                 nextStake = targetRecovery / PAYOUT_RATE;
             }
         } else if (this.lastResultWasWin && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 1) {

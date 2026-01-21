@@ -7,19 +7,20 @@ import { TradeEventsService } from '../trade-events.service';
 import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
+// Atualizado: Payout ajustado para 0.92 (95% - 3% markup = 92%)
 function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
-  payoutCliente: number = 0.63,
+  payoutCliente: number = 0.92,
 ): number {
   let aposta = 0;
 
-  // Ajuste do payout se vier como porcentagem (ex: 95)
+  // Ajuste do payout se vier como porcentagem (ex: 92)
   const payout = payoutCliente > 1 ? payoutCliente / 100 : payoutCliente;
 
   switch (modo) {
     case 'conservador':
-      // Recupera 100% da perda (Zero a Zero)
+      // Recupera 100% da perda (Zero a Zero) - sem lucro adicional
       aposta = perdasTotais / payout;
       break;
     case 'moderado':
