@@ -453,7 +453,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 const message = `📊 ANÁLISE COMPLETA\n` +
                     `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
                     `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'SEM PADRÃO CLARO ❌'}\n` +
-                    `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'LENTO' ? 85 : 85}%)`; // Zeus is permanently LENTO
+                    `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'LENTO' ? 80 : 80}%)`; // Zeus is permanently LENTO
 
                 this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
             }
@@ -603,7 +603,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const settings = ZEUS_CORE_CONFIG.RECOVERY; // Zeus is permanently LENTO
         // No guia 2.1, os thresholds são embutidos na análise (isUpSignal/isDownSignal)
         // Mas para manter compatibilidade com processAgent, usamos score de probabilidade
-        const requiredProb = 85; // 85% threshold for LENTO in v2.1
+        // ✅ CORREÇÃO: Reduzido para 80% para aceitar sinais Digit-Over (que geram 80%)
+        const requiredProb = 80; // 80% threshold for LENTO (Digit-Over produces 80%)
 
         if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
             // ✅ Calcular stake (sem ajustes ainda)
