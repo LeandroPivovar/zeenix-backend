@@ -445,13 +445,40 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async syncActiveAgentsFromDb(): Promise<void> {
     try {
+      // ✅ BUSCAR TODOS OS AGENTES ATIVOS QUE NÃO ESTÃO PARADOS
       const activeAgents = await this.dataSource.query(
-        `SELECT user_id, agent_type, symbol
-         FROM autonomous_agent_config 
-         WHERE is_active = TRUE AND agent_type = 'orion'`,
+        `SELECT c.*
+         FROM autonomous_agent_config c
+         WHERE c.is_active = TRUE 
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
-      this.logger.log(`[SyncActiveAgents] Sincronizados ${activeAgents.length} agentes ativos`);
+      this.logger.log(`[SyncActiveAgents] Sincronizando ${activeAgents.length} agentes ativos`);
+
+      for (const agent of activeAgents) {
+        try {
+          const strategyName = agent.agent_type || 'orion';
+          const userId = agent.user_id.toString();
+
+          await this.strategyManager.activateUser(strategyName, userId, {
+            userId: userId,
+            initialStake: parseFloat(agent.initial_stake),
+            dailyProfitTarget: parseFloat(agent.daily_profit_target),
+            dailyLossLimit: parseFloat(agent.daily_loss_limit),
+            derivToken: agent.deriv_token,
+            currency: agent.currency,
+            symbol: agent.symbol || 'R_100',
+            tradingMode: agent.trading_mode || 'normal',
+            initialBalance: parseFloat(agent.initial_balance) || 0,
+            // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
+            stopLossType: agent.stop_loss_type,
+            riskProfile: agent.risk_profile,
+            agentType: agent.agent_type
+          });
+        } catch (err) {
+          this.logger.error(`[SyncActiveAgents] Erro ao ativar usuário ${agent.user_id}: ${err.message}`);
+        }
+      }
 
       // Verificar se há agentes que precisam ser resetados (mudança de dia)
       await this.checkAndResetDailySessions();
@@ -471,11 +498,11 @@ export class AutonomousAgentService implements OnModuleInit {
       const todayStr = today.toISOString().split('T')[0];
 
       // Buscar agentes que pararam no dia anterior
+      // ✅ CORREÇÃO: Remover filtro de agent_type = 'orion' para suportar todos (Falcon, Sentinel, etc)
       const agentsToReset = await this.dataSource.query(
         `SELECT user_id, session_status, session_date
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND agent_type = 'orion'
            AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
            AND (session_date IS NULL OR DATE(session_date) < ?)`,
         [todayStr],
@@ -497,10 +524,11 @@ export class AutonomousAgentService implements OnModuleInit {
           [agent.user_id],
         );
 
-        // Reativar agente na estratégia Orion
+        // Reativar agente na estratégia correta
         const config = await this.dataSource.query(
           `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
-                  deriv_token, currency, symbol, trading_mode, initial_balance
+                  deriv_token, currency, symbol, trading_mode, initial_balance, agent_type,
+                  stop_loss_type, risk_profile
            FROM autonomous_agent_config 
            WHERE user_id = ? AND is_active = TRUE
            LIMIT 1`,
@@ -510,7 +538,13 @@ export class AutonomousAgentService implements OnModuleInit {
         if (config && config.length > 0) {
           const agentConfig = config[0];
           const userId = agent.user_id.toString();
-          await this.strategyManager.activateUser('orion', userId, {
+          // ✅ Usar agent_type do banco ou default 'orion'
+          const strategyName = agentConfig.agent_type || 'orion';
+
+          // ✅ Forçar Desativação ANTES de ativar para garantir RESET DE ESTADO (já que é novo dia)
+          await this.strategyManager.deactivateUser(userId);
+
+          await this.strategyManager.activateUser(strategyName, userId, {
             userId: userId,
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
@@ -520,6 +554,9 @@ export class AutonomousAgentService implements OnModuleInit {
             symbol: agentConfig.symbol || 'R_100',
             tradingMode: agentConfig.trading_mode || 'normal',
             initialBalance: parseFloat(agentConfig.initial_balance) || 0,
+            stopLossType: agentConfig.stop_loss_type,
+            riskProfile: agentConfig.risk_profile,
+            agentType: agentConfig.agent_type
           });
         }
       }

@@ -225,6 +225,27 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       riskProfile: (config as any).riskProfile || 'MODERADO',
     };
 
+    // ✅ Proteção contra reset de estado pelo Sync (5min)
+    if (this.userConfigs.has(userId)) {
+      this.logger.log(`[Falcon][${userId}] 🔄 Atualizando configuração (Usuário já ativo).`);
+      this.userConfigs.set(userId, falconConfig);
+
+      // Apenas garantir que está ativo (se não estiver pausado por stop)
+      // Mas se estiver pausado na memória, não deveríamos reativar?
+      // O syncActiveUsersFromDb FILTRA os stopped. Se chegou aqui, é porque deve estar ativo.
+      // E se foi um "Start" manual? Deve resetar?
+      // Se for start manual, o controller provavelmente chamou deactivate antes? Não.
+      // Vamos assumir que se chamou activateUser, é para estar ativo.
+      const state = this.userStates.get(userId);
+      if (state && !state.isActive) {
+        // Se estava inativo em memória, reativar flag (ex: reinício de servidor após pausa?)
+        // Mas cuidado com o stop do dia. 
+        // Se o sync chamou, o status não é stopped. Então pode reativar.
+        state.isActive = true;
+      }
+      return;
+    }
+
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
 
@@ -1383,10 +1404,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     await this.saveLog(userId, 'WARN', 'RISK', message);
 
-    // Desativar agente
+    // Desativar agente (apenas em memória para parar hoje)
+    // ✅ MANTER NO BANCO COMO ATIVO (is_active = TRUE) para que o scheduler reinicie amanhã
     state.isActive = false;
     await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = ?, is_active = FALSE WHERE user_id = ?`,
+      `UPDATE autonomous_agent_config SET session_status = ?, is_active = TRUE WHERE user_id = ?`,
       [status, userId],
     );
 
