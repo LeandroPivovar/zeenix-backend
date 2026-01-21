@@ -770,8 +770,11 @@ export class AtlasStrategy implements IStrategy {
 
       // Martingale ou Soros
       if (state.isInRecovery && state.martingaleStep > 0) {
-        // ✅ [ZENIX v3.3] Payout fixo de 0.92 (95% - 3% markup)
-        const payout = 0.92;
+        // ✅ [ZENIX v3.3] Payout dinâmico para Martingale
+        // DIGITOVER/UNDER tem payout ~40% (alta probabilidade ~70%)
+        // CALL/PUT (Rise/Fall) tem payout ~92% (95% - 3% markup)
+        const isPriceAction = (operation === 'CALL' || operation === 'PUT') && state.martingaleStep >= 2;
+        const payout = isPriceAction ? 0.92 : 0.40;
 
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
