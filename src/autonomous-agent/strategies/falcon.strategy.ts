@@ -13,14 +13,35 @@ import { Tick, DigitParity } from '../../ai/ai.service';
 import { LogQueueService } from '../../utils/log-queue.service';
 
 /**
- * 🦅 FALCON Strategy para Agente Autônomo
+ * 🦅 FALCON Strategy para Agente Autônomo - Versão 2.1
  * 
- * Implementação completa do Agente Falcon conforme documentação V2.0:
- * - Modo NORMAL: Opera com 5 ticks, win rate ~73%. Avanço de 2 ticks.
- * - Modo LENTO (Recuperação): Opera com 7 ticks, win rate ~95%. Avanço de 3 ticks.
- * - Perfis de Risco: Conservador (1.0x), Moderado (1.15x), Agressivo (1.30x).
- * - Soros Nível 1: No modo Normal.
+ * CORE: Price Action (Trend + Volatility/Delta)
+ * - MODO NORMAL: Janela 7 ticks, 4/6 moves, delta >= 0.5. WR esperado ~76%.
+ * - MODO LENTO: Janela 8 ticks, 5/7 moves, delta >= 0.7. WR esperado ~90%.
+ * - Gestão: Soros Nível 1 no Normal, Smart Martingale no Lento.
+ * - Proteção: Stop Blindado (40% meta ativa, proteção fixa de 50%).
  */
+
+const FALCON_V21_SETTINGS = {
+  NORMAL: {
+    windowSize: 7,
+    requiredMovements: 4,
+    totalMovements: 6,
+    minDelta: 0.5,
+  },
+  LENTO: {
+    windowSize: 8,
+    requiredMovements: 5,
+    totalMovements: 7,
+    minDelta: 0.7,
+  },
+};
+
+const FALCON_V21_RISK = {
+  CONSERVADOR: { profitFactor: 1.0, maxMartingale: 5 },
+  MODERADO: { profitFactor: 1.15, maxMartingale: 7 },
+  AGRESSIVO: { profitFactor: 1.30, maxMartingale: 10 },
+};
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   name = 'falcon';
@@ -324,8 +345,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return; // Pular este tick
     }
 
-    // FALCON precisa de 5 ou 7 ticks para análise
-    const requiredTicks = state.mode === 'NORMAL' ? 5 : 7;
+    // FALCON 2.1 precisa de janelas maiores
+    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
+    const requiredTicks = settings.windowSize;
+
     if (userTicks.length < requiredTicks) {
       if (userTicks.length % 2 === 0) {
         this.logDataCollection(userId, {
@@ -411,56 +434,68 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Análise de mercado simplificada baseada na documentação V2.0
-   * Normal: 5 ticks, 3/4 movimentos na mesma direção (67%)
-   * Lento: 7 ticks, 5/6 movimentos na mesma direção (85%)
+   * Análise de mercado FALCON v2.1
    */
   private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
     const state = this.userStates.get(userId);
     if (!state) return null;
 
-    const isNormal = state.mode === 'NORMAL';
-    const windowSize = isNormal ? 5 : 7;
+    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
+    const windowSize = settings.windowSize;
 
     if (ticks.length < windowSize) return null;
 
     const recent = ticks.slice(-windowSize);
     const recentValues = recent.map(t => t.value);
 
-    // Conta movimentos direcionais
-    // Loop de 1 até fim. Ex: 5 ticks => índices 0,1,2,3,4. Compara (1>0), (2>1), (3>2), (4>3). Total 4 movimentos.
+    // 1. Calcular Movimentos
     let ups = 0;
     let downs = 0;
-
-    for (let i = 1; i < recentValues.length; i++) {
-      if (recentValues[i] > recentValues[i - 1]) ups++;
-      if (recentValues[i] < recentValues[i - 1]) downs++;
+    // O número total de movimentos em uma janela N é N-1.
+    // Ex: Window 7 -> 6 moves.
+    const lastMoves = recentValues.slice(-(settings.totalMovements + 1));
+    for (let i = 1; i < lastMoves.length; i++) {
+      if (lastMoves[i] > lastMoves[i - 1]) ups++;
+      if (lastMoves[i] < lastMoves[i - 1]) downs++;
     }
+
+    // 2. Calcular Delta (Volatility)
+    const firstTick = recentValues[0];
+    const lastTick = recentValues[recentValues.length - 1];
+    const delta = Math.abs(lastTick - firstTick);
 
     let signal: 'CALL' | 'PUT' | null = null;
-    let probability = 50;
+    let blockReason: string | null = null;
 
-    if (isNormal) {
-      // Filtro Normal: >= 3 de 4 movimentos
-      if (ups >= 3) {
-        signal = 'CALL';
-        probability = 67;
-      } else if (downs >= 3) {
-        signal = 'PUT';
-        probability = 67;
-      }
-    } else {
-      // Filtro Lento: >= 5 de 6 movimentos
-      if (ups >= 5) {
-        signal = 'CALL';
-        probability = 85;
-      } else if (downs >= 5) {
-        signal = 'PUT';
-        probability = 85;
+    // 3. Verificar Filtros
+    const isUpSignal = ups >= settings.requiredMovements && delta >= settings.minDelta;
+    const isDownSignal = downs >= settings.requiredMovements && delta >= settings.minDelta;
+
+    if (isUpSignal) signal = 'CALL';
+    else if (isDownSignal) signal = 'PUT';
+    else {
+      // Registrar motivo do bloqueio para logs
+      if (delta < settings.minDelta) {
+        blockReason = `Delta insuficiente (${delta.toFixed(2)} < ${settings.minDelta})`;
+      } else {
+        const maxMoves = Math.max(ups, downs);
+        blockReason = `Movimentos insuficientes (${maxMoves}/${settings.totalMovements})`;
       }
     }
 
-    // ✅ Retornar objeto de análise mesmo sem sinal forte, para logs
+    // 4. Calcular Probabilidade Baseada em Score
+    // Metade baseada em movimentos, metade em delta (normalizado)
+    const moveScore = (Math.max(ups, downs) / settings.totalMovements) * 50;
+    const deltaScore = Math.min((delta / settings.minDelta) * 50, 50);
+    const probability = Math.round(moveScore + deltaScore);
+
+    if (!signal) {
+      this.logBlockedEntry(userId, {
+        reason: delta < settings.minDelta ? 'delta' : 'filter',
+        details: blockReason || 'Filtros não atingidos'
+      });
+    }
+
     return {
       probability,
       signal, // Pode ser null
@@ -469,10 +504,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       details: {
         trend: signal || 'NEUTRAL',
         trendStrength: probability / 100,
-        // Metadata adicional para debug
         ups,
         downs,
-        totalMoves: recentValues.length - 1
+        delta,
+        totalMoves: settings.totalMovements
       },
     };
   }
@@ -500,10 +535,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return { action: 'STOP', reason: 'TAKE_PROFIT' };
     }
 
-    // B. Filtro de Precisão baseado no Modo
-    // Normal: 67% (já vem da análise)
-    // Lento: 85% (já vem da análise)
-    const requiredProb = state.mode === 'LENTO' ? 85 : 67;
+    // B. Filtro de Precisão baseado no Modo (v2.1 thresholds)
+    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
+    // No guia 2.1, os thresholds são embutidos na análise (isUpSignal/isDownSignal)
+    // Mas para manter compatibilidade com processAgent, usamos score de probabilidade
+    const requiredProb = state.mode === 'LENTO' ? 85 : 70; // 70% threshold for Normal in v2.1
 
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
       // ✅ Calcular stake (sem ajustes ainda)
@@ -534,15 +570,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
       }
 
-      // ✅ Log de sinal no padrão Orion
+      // ✅ Log de sinal no padrão Orion v2.1
       this.logSignalGenerated(userId, {
         mode: state.mode,
         isRecovery: state.mode === 'LENTO',
-        filters: [`Janela ${state.mode === 'NORMAL' ? '5' : '7'} ticks`, 'Consistência Direcional'],
-        trigger: 'Padrão Identificado',
+        filters: [
+          `Janela: ${settings.windowSize} ticks (${settings.totalMovements} moves)`,
+          `Delta: ${marketAnalysis.details?.delta?.toFixed(2)} (Min ${settings.minDelta})`,
+          `Moves: ${Math.max(marketAnalysis.details?.ups || 0, marketAnalysis.details?.downs || 0)}/${settings.totalMovements}`
+        ],
+        trigger: 'Momentum Confirmado 🦅',
         probability: marketAnalysis.probability,
         contractType: 'RISE/FALL',
-        direction: marketAnalysis.signal
+        direction: marketAnalysis.signal as 'CALL' | 'PUT'
       });
 
       return {
@@ -671,12 +711,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // MODERADO: 1.15 (+15%)
       // AGRESSIVO: 1.30 (+30%)
 
-      const riskProfile = config.riskProfile || 'MODERADO';
-
-      let profitFactor = 0.0;
-      if (riskProfile === 'CONSERVADOR') profitFactor = 1.0;
-      else if (riskProfile === 'MODERADO') profitFactor = 1.15;
-      else if (riskProfile === 'AGRESSIVO') profitFactor = 1.30;
+      const riskSettings = FALCON_V21_RISK[config.riskProfile as keyof typeof FALCON_V21_RISK] || FALCON_V21_RISK.MODERADO;
+      const profitFactor = riskSettings.profitFactor;
 
       // Perda total a recuperar (absoluta)
       // state.totalLossAccumulated deve ser mantido atualizado
@@ -693,9 +729,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         stake = targetAmount / realPayout;
 
-        // Limite Conservador: Se passar de 6 tentativas (M6), aceita perda e reseta
-        if (riskProfile === 'CONSERVADOR' && state.consecutiveLosses > 5) {
-          this.logger.log(`[Falcon] ⚠️ Limite Conservador M5 atingido. Resetando para stake base.`);
+        // Limite por Perfil (v2.1)
+        if (state.consecutiveLosses > riskSettings.maxMartingale) {
+          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido. Resetando para stake base.`);
           state.mode = 'NORMAL';
           state.totalLossAccumulated = 0;
           state.consecutiveLosses = 0;
@@ -709,7 +745,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           lossNumber: state.consecutiveLosses,
           accumulatedLoss: lossToRecover,
           calculatedStake: stake,
-          profitPercentage: riskProfile === 'CONSERVADOR' ? 0 : (riskProfile === 'MODERADO' ? 15 : 30),
+          profitPercentage: Math.round((profitFactor - 1) * 100),
+          maxLevel: riskSettings.maxMartingale,
           contractType: state.lastContractType || 'RISE/FALL'
         });
 
@@ -2057,6 +2094,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     accumulatedLoss: number;
     calculatedStake: number;
     profitPercentage: number;
+    maxLevel: number; // ✅ Adicionado em 2.1
     contractType: string;
   }) {
     const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
@@ -2064,6 +2102,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
       `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
       `• Objetivo: Recuperar + ${martingale.profitPercentage}%\n` +
+      `• Limite Máximo: M${martingale.maxLevel}\n` +
       `• Contrato: ${martingale.contractType}`;
 
     this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
