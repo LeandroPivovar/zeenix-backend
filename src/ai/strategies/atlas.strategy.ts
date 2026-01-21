@@ -998,7 +998,7 @@ export class AtlasStrategy implements IStrategy {
 
         await this.processAtlasResult(state, symbol, confirmedStatus === 'WON', stakeAmount, operation, profit, exitPrice, tradeId);
 
-        if (confirmedStatus === 'WON') {
+        if (confirmedStatus === 'WON' || confirmedStatus === 'LOST') {
           // ✅ [ATLAS] Master Trader Result Update
           try {
             const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);

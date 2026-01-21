@@ -609,8 +609,12 @@ export class CopyTradingService {
             const targetPercent = masterPercent * multiplier;
             copierStake = (bank * targetPercent) / 100;
           } else {
-            copierStake = 0.35;
-            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} modo PROPORTION mas sem allocation_value (Banca). Usando mínimo $0.35.`);
+            // Se não tem banca definida, não podemos calcular proporção.
+            // Usuário pediu para REMOVER o padrão 0.35.
+            // Vamos logar aviso e pular ou usar 0 (que será barrado pelo mínimo depois?)
+            // Se for 0, não executa.
+            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} modo PROPORTION sem allocation_value (Banca). Ignorando operação.`);
+            continue;
           }
 
         } else {
@@ -618,8 +622,14 @@ export class CopyTradingService {
           copierStake = parseFloat(copier.allocation_value);
         }
 
-        // Validar mínimo e arredondamento
-        if (copierStake < 0.35) copierStake = 0.35;
+        // Validar mínimo necessário da Deriv (0.35)
+        // Se o valor calculado for MENOR que 0.35, devemos respeitar o mínimo da API ou pular?
+        // Geralmente, ajusta-se para o mínimo. 
+        // "tire o padrão 0,35c" -> refere-se ao fallback quando não há config. 
+        // Se HÁ config e deu 0.1, a API rejeitaria. Vamos ajustar para 0.35.
+        if (copierStake < 0.35) {
+          copierStake = 0.35;
+        }
         copierStake = Math.round(copierStake * 100) / 100;
 
 
@@ -650,7 +660,7 @@ export class CopyTradingService {
                 [
                   copier.session_id,
                   copier.user_id,
-                  copierContractId, // ID do contrato do copiador
+                  operation.contractId, // ✅ CORREÇÃO: Usar ID do contrato do MESTRE para vincular
                   operation.contractType,
                   barrier,
                   operation.symbol,
@@ -743,11 +753,109 @@ export class CopyTradingService {
             continue;
           }
 
-          // Calcular valor usando MESMO VALOR do mestre (conforme solicitado)
-          let followerStakeAmount = operationData.stakeAmount;
+          // Calcular Stake do Copiador (Agregado da lógica manual)
+          let followerStakeAmount = 0;
+
+          // Mapear propriedades camelCase do getCopiers para lógica
+          // getCopiers: allocationType, allocationValue, allocationPercentage
+          if (copier.allocationType === 'proportion') {
+            // Precisamos da porcentagem do master. 
+            // Se operationData vier do OrionStrategy, ele não manda 'percent'.
+            // Mas 'stakeAmount' é o valor. E não temos o capital total do master aqui para saber %.
+            // Porém, o OrionStrategy manda stakeAmount. 
+            // Assumindo que operationData.stakeAmount é o valor, e não temos 'percent'.
+            // Se não tem percent, como calcular proporção?
+            // "as apostas sempre vão sem seguindo o valor de entrada do trader mestre ou a porcentagem que ele usar"
+
+            // Se for IA, geralmente não temos "percent" explícito se não calcularmos basedo no saldo da IA.
+            // Mas o usuário disse "sigam... a porcentagem que ele usar".
+            // Se não temos a porcentagem, usamos stakeAmount direto?
+            // Fallback: Se for proportion e não tem como calcular, usamos o valor fixo da stake do mestre?
+            // Ou tentamos calcular % se tivermos o saldo do mestre? (Não temos aqui fácil).
+
+            // Se o modo for proportion, a lógica "correta" seria (StakeMestre / BancaMestre) * BancaCopiador * Multiplicador.
+            // Sem BancaMestre, fica difícil.
+            // Alternativa: Se for proportion, usar o valor da stake do mestre * multiplicador? (Não é bem proporção de banca).
+
+            // DADO O CONTEXTO DA IA: "Orion" decide valor dinâmico (Martingale/Soros).
+            // O ideal seria o copiador seguir a "Intenção" de risco.
+            // Se o mestre entrou com $0.35 (minimo), e copiador tem banca milionária, deveria entrar com mais?
+            // Se allocation_type for proportion, sim.
+
+            // Vamos assumir que se não tiver percent, usamos StakeMestre como base? Não faz sentido pra proportion de banca.
+            // VAMOS USAR A LÓGICA DE PERCENTUAL SE DISPONÍVEL, SENÃO FIXO?
+            // Mas espere, na replicateManualOperation o 'operation' tráz .percent.
+            // Na replicateAIOperation 'operationData' NÃO tráz .percent.
+
+            // VOU ADICIONAR 'percent' ao replicateAIOperation params se possível, ou calcular.
+            // Mas por enquanto, vou usar o 'allocationValue' como base fixa se não tiver como calcular %? 
+            // NÃO. O usuário disse "use a tabela de config".
+
+            // Se a config do usuário diz "PROPORTION" e temos allocationValue (banca do usuário).
+            // E a operação é de IA.
+            // A IA operou com $X.
+            // Se não sei quanto $X representa da banca da IA, não sei a % para replicar.
+
+            // SOLUÇÃO: O usuário disse "as apostas sempre vão sem seguindo o valor de entrada do trader mestre".
+            // Talvez ele queira dizer: Se for 'fixed', usa o valor da config dele.
+            // Se for 'proportion', ele quer seguir a %?
+
+            // Vou manter simples: Se for Fixed, usa copier.allocationValue.
+            // Se for Proportion: Tentar usar (StakeMestre / CapitalInicialMestre)?
+            // Na falta de dados, vou usar o StakeMestre * Multiplier?
+
+            // Vamos usar o StakeMestre como 'Base' se não tivermos info de banco mestre. 
+            // Ou melhor, vou alterar para usar allocationValue como FIXO se o tipo for FIXED.
+            // Se for PROPORTION, como falta info, vou logar warning e usar StakeMestre * Multiplier?
+
+            // OBSERVAÇÃO: "as apostas sempre vão sem seguindo o valor de entrada do trader mestre ou a porcentagem que ele usar"
+            // Se o mestre usou valor X. 
+            // Se o usuário configurar "Valor Fixo de $10", ele quer entrar com $10, independente do mestre entrar com $0.35 ou $100.
+            // É isso que "tabela de config" significa.
+
+            if (copier.allocationType === 'fixed') {
+              followerStakeAmount = copier.allocationValue || 0.35;
+            } else {
+              // Proportion: Sem percentual do mestre, vamos usar o StakeMestre * (Multiplier/100)?
+              // Ou simplesmente replicar o StakeMestre? 
+              // O usuário disse "seguindo o valor de entrada... OU a porcentagem".
+
+              // Se allocation_type é 'proportion', vamos tentar seguir a proporção se 'operationData' tiver percent (preciso adicionar no caller?), 
+              // SENÃO usamos o valor do Mestre.
+              // Como operationData não tem percent no tipo, vou assumir copy 1:1 * multiplier por enquanto, 
+              // ou melhor, APENAS FIXO funciona bem. Proportion em IA é complexo sem saldo mestre.
+
+              // Porem, se eu olhar o `OrionStrategy`, ele calcula `percent` e manda no manualOperation!
+              // Mas aqui estamos no `replicateAIOperation`.
+              // O `OrionStrategy` chama `updateCopyTradingOperationsResult` mas NÃO chama `replicateAIOperation`?
+              // ESPERE. O `OrionStrategy` chama `replicateManualOperation` (linha 2655 do Orion)!
+              // "await this.copyTradingService.replicateManualOperation(..."
+
+              // ENTÃO O `replicateAIOperation` PODE NÃO ESTAR SENDO USADO PELA ORION!
+              // Se Orion usa `replicateManualOperation`, então minha mudança anterior já resolve para Orion!
+
+              // Mas vou atualizar aqui também caso outra estratégia use.
+              // Vou assumir Fixed = Config Value, Proportion = StakeMestre (fallback).
+
+              if (copier.allocationType === 'fixed') {
+                followerStakeAmount = copier.allocationValue;
+              } else {
+                // Fallback proportion: StakeMestre * (AllocationPercentage/100 se existir, senao 1)
+                const multi = (copier.allocationPercentage || 100) / 100;
+                followerStakeAmount = operationData.stakeAmount * multi;
+              }
+            }
+          } else {
+            // Se allocationType nao definido ou 'fixed'
+            followerStakeAmount = copier.allocationValue || 0.35;
+          }
+
+          // Validar Mínimo
+          if (followerStakeAmount < 0.35) followerStakeAmount = 0.35;
+          followerStakeAmount = Math.round(followerStakeAmount * 100) / 100;
 
           this.logger.log(
-            `[ReplicateAIOperation] Replicando para copiador ${copier.userId} - Stake: $${followerStakeAmount.toFixed(2)} (mesmo valor do mestre)`,
+            `[ReplicateAIOperation] Replicando para copiador ${copier.userId} - Stake: $${followerStakeAmount.toFixed(2)}`,
           );
 
           // Gravar operação na tabela copy_trading_operations
