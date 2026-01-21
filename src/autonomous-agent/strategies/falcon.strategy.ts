@@ -657,6 +657,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.mode = 'NORMAL';
         const recoveredLoss = state.totalLossAccumulated;
         state.totalLossAccumulated = 0; // Resetar acumulado
+        state.consecutiveWins = 0; // ✅ Resetar wins para evitar Soros na próxima (começar com stake base)
 
         this.logSuccessfulRecoveryV2(userId, {
           recoveredLoss: recoveredLoss,
