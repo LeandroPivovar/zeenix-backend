@@ -1,0 +1,4 @@
+ALTER TABLE user_settings
+ADD COLUMN fictitious_balance DECIMAL(20, 2) DEFAULT 10000.00 NOT NULL,
+ADD COLUMN is_fictitious_balance_active BOOLEAN DEFAULT FALSE NOT NULL,
+ADD COLUMN show_dollar_sign BOOLEAN DEFAULT FALSE NOT NULL;

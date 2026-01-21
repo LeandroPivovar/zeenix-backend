@@ -30,6 +30,15 @@ export class UserSettingsEntity {
   @Column({ type: 'varchar', length: 10, default: 'USD', name: 'trade_currency' })
   tradeCurrency: string;
 
+  @Column({ type: 'decimal', precision: 20, scale: 2, default: 10000.00, name: 'fictitious_balance' })
+  fictitiousBalance: number;
+
+  @Column({ type: 'boolean', default: false, name: 'is_fictitious_balance_active' })
+  isFictitiousBalanceActive: boolean;
+
+  @Column({ type: 'boolean', default: false, name: 'show_dollar_sign' })
+  showDollarSign: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

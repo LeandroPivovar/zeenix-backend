@@ -3,7 +3,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsOptional, IsBoolean, IsEmail, MinLength, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsEmail, MinLength, IsEnum, IsNumber } from 'class-validator';
 import { SettingsService } from './settings.service';
 
 enum TradeCurrency {
@@ -52,12 +52,24 @@ class UpdateSettingsDto {
   @IsOptional()
   @IsEnum(TradeCurrency)
   tradeCurrency?: TradeCurrency;
+
+  @IsOptional()
+  @IsNumber()
+  fictitiousBalance?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isFictitiousBalanceActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showDollarSign?: boolean;
 }
 
 @Controller('settings')
 @UseGuards(AuthGuard('jwt'))
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(private readonly settingsService: SettingsService) { }
 
   @Get()
   async getSettings(@Req() req: any) {
@@ -84,10 +96,10 @@ export class SettingsController {
   }
 
   private getIpAddress(req: any): string {
-    return req.ip || 
-           (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
-           req.connection?.remoteAddress || 
-           'unknown';
+    return req.ip ||
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.connection?.remoteAddress ||
+      'unknown';
   }
 
   private getUserAgent(req: any): string {
@@ -98,9 +110,9 @@ export class SettingsController {
   async updateName(@Req() req: any, @Body() body: UpdateNameDto) {
     const userId = req.user.userId;
     return await this.settingsService.updateName(
-      userId, 
-      body.name, 
-      this.getIpAddress(req), 
+      userId,
+      body.name,
+      this.getIpAddress(req),
       this.getUserAgent(req)
     );
   }
@@ -109,9 +121,9 @@ export class SettingsController {
   async updateEmail(@Req() req: any, @Body() body: UpdateEmailDto) {
     const userId = req.user.userId;
     return await this.settingsService.updateEmail(
-      userId, 
-      body.email, 
-      this.getIpAddress(req), 
+      userId,
+      body.email,
+      this.getIpAddress(req),
       this.getUserAgent(req)
     );
   }
@@ -179,9 +191,9 @@ export class SettingsController {
   async updateSettings(@Req() req: any, @Body() body: UpdateSettingsDto) {
     const userId = req.user.userId;
     return await this.settingsService.updateSettings(
-      userId, 
-      body, 
-      this.getIpAddress(req), 
+      userId,
+      body,
+      this.getIpAddress(req),
       this.getUserAgent(req)
     );
   }
@@ -203,9 +215,9 @@ export class SettingsController {
     const userId = req.user.userId;
     const token = req.headers.authorization?.replace('Bearer ', '');
     return await this.settingsService.endAllSessions(
-      userId, 
-      token, 
-      this.getIpAddress(req), 
+      userId,
+      token,
+      this.getIpAddress(req),
       this.getUserAgent(req)
     );
   }
@@ -216,7 +228,7 @@ export class SettingsController {
     // Retorna informações básicas sobre conexões de email
     const userId = req.user.userId;
     const settings = await this.settingsService.getSettings(userId);
-    
+
     return {
       email: settings.email,
       emailNotifications: settings.emailNotifications,

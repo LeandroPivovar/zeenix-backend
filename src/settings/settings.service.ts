@@ -58,6 +58,10 @@ export class SettingsService {
       tradeCurrency: settings.tradeCurrency ?? 'USD',
       emailNotifications: settings.emailNotifications,
       twoFactorEnabled: settings.twoFactorEnabled,
+      traderMestre: user.traderMestre, // Expor se é trader mestre
+      fictitiousBalance: settings.fictitiousBalance,
+      isFictitiousBalanceActive: settings.isFictitiousBalanceActive,
+      showDollarSign: settings.showDollarSign,
     };
   }
 
@@ -128,6 +132,9 @@ export class SettingsService {
       timezone?: string;
       tradeCurrency?: TradeCurrency;
       emailNotifications?: boolean;
+      fictitiousBalance?: number;
+      isFictitiousBalanceActive?: boolean;
+      showDollarSign?: boolean;
     },
     ipAddress?: string,
     userAgent?: string,
