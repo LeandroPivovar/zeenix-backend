@@ -2325,7 +2325,9 @@ ${filtersText}
       const userPreferredCurrency = (row.trade_currency || 'USD').toUpperCase();
       const wantsDemo = userPreferredCurrency === 'DEMO';
 
-      if (!row.deriv_raw) {
+      // Normalizar leitura de deriv_raw (pode estar como deriv_raw ou derivRaw dependendo da query/migração)
+      const rawField = row.deriv_raw ?? row.derivRaw ?? null;
+      if (!rawField) {
         this.logger.warn(`[ATLAS][ResolveToken] deriv_raw não encontrado para user ${userId}`);
         // Se não temos dados para validar, não arriscamos usar token antigo cego.
         return null;
@@ -2333,9 +2335,7 @@ ${filtersText}
 
       let derivRaw: any;
       try {
-        derivRaw = typeof row.deriv_raw === 'string'
-          ? JSON.parse(row.deriv_raw)
-          : row.deriv_raw;
+        derivRaw = typeof rawField === 'string' ? JSON.parse(rawField) : rawField;
       } catch (e) {
         this.logger.error(`[ATLAS][ResolveToken] Erro ao parsear deriv_raw`, e);
         return null;

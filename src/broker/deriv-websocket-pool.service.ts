@@ -229,6 +229,14 @@ export class DerivWebSocketPoolService {
               req.reject(new Error(`Authorize error: ${msg.authorize.error.message}`));
             }
           }
+          // Fechar e remover a conexão do pool para forçar re-criação/reauth
+          try {
+            this.logger.warn('[POOL] 🔒 Fechando conexão inválida e removendo do pool (authorize error)');
+            conn.ws.close();
+          } catch (e) {
+            this.logger.debug('[POOL] Erro ao fechar ws após authorize error', e as any);
+          }
+          this.connections.delete(token);
           return;
         }
 
