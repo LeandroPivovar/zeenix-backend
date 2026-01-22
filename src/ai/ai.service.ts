@@ -3305,6 +3305,9 @@ export class AiService implements OnModuleInit {
       windowParities: windowTicks.map((t) => t.parity),
       dvx,
       proposal,
+      sinal: proposal,
+      confianca: proposal ? 85 : 0,
+      entry_time_seconds: proposal ? 10 : 0,
       lossVirtual: userState
         ? {
           active: userState.lossVirtualActive,

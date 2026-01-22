@@ -9,6 +9,7 @@ export class GeminiService {
     action: 'CALL' | 'PUT';
     confidence: number;
     reasoning?: string;
+    entry_time?: number; // em segundos a partir de agora
   }> {
     try {
       const ticksData = ticks.map(t => ({
@@ -25,6 +26,7 @@ Nos dê um retorno no formato JSON com a seguinte estrutura:
 {
   "action": "CALL" ou "PUT",
   "confidence": número de 0 a 100 (porcentagem de confiabilidade),
+  "entry_time_seconds": número (em quantos segundos a partir de agora o usuário deve entrar na operação, ex: 5, 10, 30),
   "reasoning": "breve explicação do motivo da recomendação"
 }
 
@@ -68,15 +70,17 @@ Analise a tendência dos preços e forneça uma recomendação baseada em análi
       // Validar e normalizar a resposta
       const action = recommendation.action?.toUpperCase() === 'PUT' ? 'PUT' : 'CALL';
       const confidence = Math.max(0, Math.min(100, Number(recommendation.confidence) || 50));
+      const entryTime = Math.max(0, Number(recommendation.entry_time_seconds) || 0);
 
       return {
         action,
         confidence,
+        entry_time: entryTime,
         reasoning: recommendation.reasoning || 'Análise baseada nos últimos 10 ticks'
       };
     } catch (error) {
       console.error('[GeminiService] Erro ao obter recomendação:', error);
-      
+
       // Retornar recomendação padrão em caso de erro
       return {
         action: 'CALL',
