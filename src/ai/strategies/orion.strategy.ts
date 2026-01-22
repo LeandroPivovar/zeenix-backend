@@ -1009,11 +1009,14 @@ ${filtersText}
     if ((phase === 'DEFESA' || consecutiveLosses > 1) && consecutiveLosses < 4) {
       // Executar lógica de Recuperação Leve por Modo (Unified Delta Logic)
       if (currentMode === 'veloz') {
-        // Veloz: 2 ticks + delta 0.3
-        return this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
+        // Veloz: 2 ticks + delta 0.2
+        return this.checkMomentumAndStrength(state, 2, 0.2, 'VELOZ');
+      } else if (currentMode === 'moderado' || (currentMode as any) === 'normal') {
+        // Normal: 2 ticks + delta 0.5
+        return this.checkMomentumAndStrength(state, 2, 0.5, 'NORMAL');
       } else {
-        // Normal/Lento/Preciso: 3 ticks + delta 0.5
-        return this.checkMomentumAndStrength(state, 3, 0.5, currentMode.toUpperCase());
+        // Lento/Preciso: 2 ticks + delta 0.7
+        return this.checkMomentumAndStrength(state, 2, 0.7, currentMode.toUpperCase());
       }
     }
 
@@ -1024,46 +1027,20 @@ ${filtersText}
       const now = Date.now();
       if (now - ((state as any).lastModeChangeLog || 0) > 5000) {
         (state as any).lastModeChangeLog = now;
-        this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Alternando para Modo PRECISO (Momentum 3 ticks + Delta 0.5)`);
+        this.logger.debug(`[ORION] 🛡️ Defesa Ativada (>=4 Losses): Recuperação Lenta (2 ticks + Delta 0.7)`);
       }
 
-      // ✅ Executar lógica de Recuperação PRECISO (3 ticks + Delta 0.5)
-      // Não cai mais (fallthrough) para a fase de ataque
-      // Retorna CALL ou PUT se encontrar sinal, ou null se não.
-      return this.checkMomentumAndStrength(state, 3, 0.5, 'PRECISO');
+      // ✅ Executar lógica de Recuperação LENTA/ESTRITA (2 ticks + Delta 0.7)
+      return this.checkMomentumAndStrength(state, 2, 0.7, 'DEFESA_TOTAL');
     }
 
     // --- 2. FASE DE ATAQUE (Digit Over 3) ---
     // Busca falhas na sequência de dígitos baixos (< 4)
 
-    // ✅ MODO VELOZ: SEM FILTRO (Compra em todos os ticks)
-    if (currentMode === 'veloz') {
-      // Log simplificado para não spammar
-      // const now = Date.now();
-      // if (now - ((state as any).lastVelozLog || 0) > 1000) {
-      //   (state as any).lastVelozLog = now;
-      //   this.logger.log(`[ORION][VELOZ] 🚀 Modo Veloz: Entrada Direta (Sem Filtro)`);
-      // }
-
-      // Salvar log para frontend (Rate limited pelo próprio RiskManager/UI se necessário, mas aqui enviamos o sinal)
-      // Salvar log para frontend
-      this.logSignalGenerated(state.userId, {
-        mode: 'VELOZ',
-        isRecovery: false,
-        filters: ['Sem filtros - Modo Alta Frequência'],
-        trigger: 'Entrada Direta',
-        probability: 99,
-        contractType: 'DIGITOVER',
-        direction: undefined
-      });
-
-      return 'DIGITOVER';
-    }
-
     // ✅ stateless implementation aligned with reference
     let requiredLosses = 3;
-    // if (currentMode === 'veloz') requiredLosses = 0; // REMOVIDO: Veloz agora é tratado acima
-    if (currentMode === 'moderado') requiredLosses = 3; // 'normal' in reference
+    if (currentMode === 'veloz') requiredLosses = 1; // VELOZ: Espera 1 dígito perdedor
+    else if (currentMode === 'moderado') requiredLosses = 3;
     else if (currentMode === 'lenta') requiredLosses = 5;
     else if (currentMode === 'preciso') requiredLosses = 5;
 
@@ -1307,20 +1284,26 @@ ${filtersText}
       if (state.perdaAcumulada > 0) {
         const entryNumber = (state.martingaleStep || 0) + 1;
 
-        // M1: Continua em Over 3 (mesmo contrato da entrada)
+        // M1: Continua em Over 3 (Aguardando sinal: 1 dígito perdedor)
         if (consecutiveLosses === 1) {
-          // Usa a mesma lógica de entrada (sem filtro para VELOZ)
-          const sinal = 'DIGITOVER';
+          const riskManager = this.riskManagers.get(userId);
+          const sinal = this.check_signal(state, 'veloz', riskManager);
+
+          if (!sinal) {
+            // Aguardando sinal para M1
+            continue;
+          }
+
           state.ultimaDirecaoMartingale = sinal;
 
-          this.logger.log(`[ORION][Veloz][${userId}] 🔄 M1 - Continuando em Over 3 | Entrada: ${entryNumber} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
-          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M1 - Continuando em Over 3 (mesmo contrato)`);
+          this.logger.log(`[ORION][Veloz][${userId}] 🔄 M1 - Continuando em Over 3 (Aguardando sinal) | Entrada: ${entryNumber} | Perda acumulada: $${state.perdaAcumulada.toFixed(2)}`);
+          this.saveOrionLog(userId, this.symbol, 'operacao', `🔄 M1 - Continuando em Over 3 (Aguardando sinal de 1 dígito perdedor)`);
 
           await this.executeOrionOperation(state, sinal, 'veloz', entryNumber);
           continue;
         }
 
-        // M2-M3: Rise/Fall VELOZ (2 ticks + delta 0.3)
+        // M2-M3: Rise/Fall VELOZ (2 ticks + delta 0.2)
         if (consecutiveLosses >= 2 && consecutiveLosses <= 3) {
           // ✅ THRESHOLD: Aguardar pelo menos 5 segundos entre recuperações rápidas
           const now = Date.now();
@@ -1333,12 +1316,12 @@ ${filtersText}
             continue;
           }
 
-          const nexusSignal = this.checkMomentumAndStrength(state, 2, 0.3, 'VELOZ');
+          const nexusSignal = this.checkMomentumAndStrength(state, 2, 0.2, 'VELOZ');
 
           if (!nexusSignal) {
             if (now - (state.lastRecoveryLog || 0) > 4000) {
               state.lastRecoveryLog = now;
-              this.logger.debug(`[ORION][Veloz] ⏳ M${entryNumber} - Aguardando Momentum (2 Ticks) + Delta >= 0.3...`);
+              this.logger.debug(`[ORION][Veloz] ⏳ M${entryNumber} - Aguardando Momentum (2 Ticks) + Delta >= 0.2...`);
             }
             continue;
           }
