@@ -234,18 +234,31 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.userConfigs.set(userId, ZeusConfig);
 
             // Apenas garantir que está ativo (se não estiver pausado por stop)
-            // Mas se estiver pausado na memória, não deveríamos reativar?
-            // O syncActiveUsersFromDb FILTRA os stopped. Se chegou aqui, é porque deve estar ativo.
-            // E se foi um "Start" manual? Deve resetar?
-            // Se for start manual, o controller provavelmente chamou deactivate antes? Não.
-            // Vamos assumir que se chamou activateUser, é para estar ativo.
             const state = this.userStates.get(userId);
             if (state && !state.isActive) {
-                // Se estava inativo em memória, reativar flag (ex: reinício de servidor após pausa?)
-                // Mas cuidado com o stop do dia. 
-                // Se o sync chamou, o status não é stopped. Então pode reativar.
                 state.isActive = true;
             }
+
+            // ✅ Log de reativação com configs atualizadas
+            const mode = state?.mode || 'NORMAL';
+            this.logInitialConfigV2(userId, {
+                agentName: 'Zeus',
+                operationMode: mode,
+                riskProfile: ZeusConfig.riskProfile || 'MODERADO',
+                profitTarget: ZeusConfig.dailyProfitTarget,
+                stopLoss: ZeusConfig.dailyLossLimit,
+                stopBlindadoEnabled: ZeusConfig.stopLossType === 'blindado'
+            });
+
+            this.logSessionStart(userId, {
+                date: new Date(),
+                initialBalance: ZeusConfig.initialBalance,
+                profitTarget: ZeusConfig.dailyProfitTarget,
+                stopLoss: ZeusConfig.dailyLossLimit,
+                mode: mode,
+                agentName: 'Zeus'
+            });
+
             return;
         }
 
