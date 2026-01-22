@@ -418,15 +418,20 @@ export class NexusStrategy implements IStrategy {
             let modeInfo: string;
 
             if (state.mode === 'VELOZ') {
-                // VELOZ: 2 ticks + delta 0.3
+                // VELOZ: 2 ticks consecutivos na mesma direção + delta >= 0.2
                 requiredTicks = 2;
-                minDelta = 0.3;
-                modeInfo = '2 ticks + delta 0.3';
-            } else {
-                // NORMAL/LENTO: 3 ticks + delta 0.5
+                minDelta = 0.2;
+                modeInfo = '2 ticks + delta >= 0.2';
+            } else if (state.mode === 'NORMAL') {
+                // NORMAL: 3 ticks consecutivos na mesma direção + delta >= 0.5
                 requiredTicks = 3;
                 minDelta = 0.5;
-                modeInfo = '3 ticks + delta 0.5';
+                modeInfo = '3 ticks + delta >= 0.5';
+            } else {
+                // LENTO / PRECISO: 3 ticks consecutivos na mesma direção + delta >= 0.7
+                requiredTicks = 3;
+                minDelta = 0.7;
+                modeInfo = '3 ticks + delta >= 0.7';
             }
 
             if (this.ticks.length < requiredTicks + 1) return null;
@@ -443,12 +448,12 @@ export class NexusStrategy implements IStrategy {
             }
             const deltaUp = prices[prices.length - 1] - prices[0];
 
-            if (upMomentum && deltaUp > minDelta) {
+            if (upMomentum && deltaUp >= minDelta) {
                 // ✅ LOG PADRONIZADO V2: Sinal Recuperação
                 this.logSignalGenerated(state.userId, {
                     mode: state.mode,
                     isRecovery: true,
-                    filters: [modeInfo, `Delta: ${deltaUp.toFixed(2)} (> ${minDelta})`],
+                    filters: [modeInfo, `Delta: ${deltaUp.toFixed(2)} (>= ${minDelta})`],
                     trigger: 'Recuperação Alta',
                     probability: 80,
                     contractType: 'RISE/FALL',
@@ -467,12 +472,12 @@ export class NexusStrategy implements IStrategy {
             }
             const deltaDown = prices[0] - prices[prices.length - 1];
 
-            if (downMomentum && deltaDown > minDelta) {
+            if (downMomentum && deltaDown >= minDelta) {
                 // ✅ LOG PADRONIZADO V2: Sinal Recuperação
                 this.logSignalGenerated(state.userId, {
                     mode: state.mode,
                     isRecovery: true,
-                    filters: [modeInfo, `Delta: ${deltaDown.toFixed(2)} (> ${minDelta})`],
+                    filters: [modeInfo, `Delta: ${deltaDown.toFixed(2)} (>= ${minDelta})`],
                     trigger: 'Recuperação Baixa',
                     probability: 80,
                     contractType: 'RISE/FALL',
