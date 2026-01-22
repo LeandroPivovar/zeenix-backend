@@ -1417,10 +1417,17 @@ export class AutonomousAgentService implements OnModuleInit {
       const block = Math.floor(h / 6) * 6;
       d.setHours(block, 0, 0, 0);
       currentBucketTime = d.getTime();
-    } // ... and so on. But startDate logic already does some of this? 
-    // Actually, startDate is midnight (unless sessionDate overrides).
-    // If sessionDate overrides, we probably want to start exactly there or align back?
-    // Let's assume aligning to the grid is safer for the "chart divisions".
+    } else if (days <= 3) {
+      const d = new Date(currentBucketTime);
+      const h = d.getHours();
+      const block = Math.floor(h / 12) * 12;
+      d.setHours(block, 0, 0, 0);
+      currentBucketTime = d.getTime();
+    } else {
+      const d = new Date(currentBucketTime);
+      d.setHours(0, 0, 0, 0);
+      currentBucketTime = d.getTime();
+    }
 
     while (currentBucketTime <= endTime) {
       // Add profit from this bucket if any
@@ -1447,6 +1454,29 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     return dataPoints;
+  }
+
+  async getSessionEvolution(userId: string): Promise<any[]> {
+    const config = await this.getAgentConfig(userId);
+    if (!config || !config.session_date) {
+      return [];
+    }
+
+    const sessionDate = new Date(config.session_date);
+    const now = new Date();
+    const diffMs = now.getTime() - sessionDate.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    const diffDays = diffHours / 24;
+
+    // Determinar lógica de agrupamento baseada na duração da sessão
+    let daysForLogic = 1;
+    if (diffDays <= 1) daysForLogic = 1;
+    else if (diffDays <= 2) daysForLogic = 2;
+    else if (diffDays <= 3) daysForLogic = 3;
+    else daysForLogic = 4;
+
+    // Reutilizar lógica de buckets com o número de dias calculado
+    return this.getProfitEvolution(userId, daysForLogic);
   }
 
   /**

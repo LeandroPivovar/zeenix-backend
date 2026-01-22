@@ -281,6 +281,29 @@ export class AutonomousAgentController {
     }
   }
 
+  @Get('session-evolution/:userId')
+  @UseGuards(AuthGuard('jwt'))
+  async getSessionEvolution(@Param('userId') userId: string) {
+    try {
+      const evolution = await this.agentService.getSessionEvolution(userId);
+
+      return {
+        success: true,
+        data: evolution,
+      };
+    } catch (error) {
+      this.logger.error(`[GetSessionEvolution] Erro:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar evolução da sessão',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('session-stats/:userId')
   @UseGuards(AuthGuard('jwt'))
   async getSessionStats(@Param('userId') userId: string) {
