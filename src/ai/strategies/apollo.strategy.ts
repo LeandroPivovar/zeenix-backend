@@ -660,7 +660,7 @@ ${filtersText}
         return state.apostaInicial;
       }
 
-      const PAYOUT_RATE = 0.92; // 95% - 3% markup = 92%
+      const PAYOUT_RATE = 0.84; // Atualizado: Payout real da Deriv está entre 84% e 85%
       const lossToRecover = state.totalLossAccumulated || state.apostaInicial;
       let neededStake = 0;
 
