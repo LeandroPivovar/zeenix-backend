@@ -23,13 +23,13 @@ export class EmailService {
   }
 
   async sendPasswordResetEmail(email: string, resetToken: string, resetUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: 'Recuperação de Senha - ULTRA Academy',
+      subject: 'Recuperação de Senha - ZENIX Academy',
       html: `
         <!DOCTYPE html>
         <html>
@@ -61,7 +61,7 @@ export class EmailService {
               <div class="token">${resetUrl}</div>
               <p><strong>Este link expira em 1 hora.</strong></p>
               <p>Se você não solicitou esta recuperação de senha, ignore este e-mail.</p>
-              <p>Atenciosamente,<br>Equipe ULTRA Academy</p>
+              <p>Atenciosamente,<br>Equipe ZENIX Academy</p>
             </div>
             <div class="footer">
               <p>Este é um e-mail automático, por favor não responda.</p>
@@ -71,7 +71,7 @@ export class EmailService {
         </html>
       `,
       text: `
-        Recuperação de Senha - ULTRA Academy
+        Recuperação de Senha - ZENIX Academy
         
         Olá,
         
@@ -85,7 +85,7 @@ export class EmailService {
         Se você não solicitou esta recuperação de senha, ignore este e-mail.
         
         Atenciosamente,
-        Equipe ULTRA Academy
+        Equipe ZENIX Academy
       `,
     };
 
@@ -99,13 +99,13 @@ export class EmailService {
   }
 
   async sendAccountActivationEmail(email: string, name: string, resetToken: string, resetUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ULTRA Academy',
+      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ZENIX Academy',
       html: `
         <!DOCTYPE html>
         <html>
@@ -127,7 +127,7 @@ export class EmailService {
         <body>
           <div class="container">
             <div class="header">
-              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ULTRA Academy!</h1>
+              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX Academy!</h1>
               <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.95;">Sua jornada como Expert começa agora</p>
             </div>
             <div class="content">
@@ -135,12 +135,12 @@ export class EmailService {
               
               <div class="welcome-box">
                 <p style="margin: 0; font-size: 16px; color: #2E7D32;">
-                  <strong>É um prazer tê-lo conosco!</strong> Sua conta de <span class="highlight">Expert</span> foi criada com sucesso na plataforma ULTRA Academy.
+                  <strong>É um prazer tê-lo conosco!</strong> Sua conta de <span class="highlight">Expert</span> foi criada com sucesso na plataforma ZENIX Academy.
                 </p>
               </div>
-
+ 
               <p>Estamos muito felizes em tê-lo como parte da nossa comunidade de traders especializados. Como Expert, você terá acesso a recursos exclusivos para compartilhar suas estratégias e ajudar outros traders a alcançarem seus objetivos.</p>
-
+ 
               <p><strong>O que você pode fazer como Expert:</strong></p>
               <ul style="line-height: 2;">
                 <li>📊 Compartilhar suas estratégias de trading</li>
@@ -149,25 +149,25 @@ export class EmailService {
                 <li>💼 Gerenciar seu perfil e especialidades</li>
                 <li>🎯 Aumentar sua visibilidade e reputação</li>
               </ul>
-
+ 
               <p style="margin-top: 30px;"><strong>Para começar, você precisa definir uma senha para sua conta:</strong></p>
               
               <p style="text-align: center;">
                 <a href="${resetUrl}" class="button">🔐 Definir Minha Senha</a>
               </p>
-
+ 
               <p style="text-align: center; color: #666; font-size: 14px;">Ou copie e cole o link abaixo no seu navegador:</p>
               <div class="token">${resetUrl}</div>
               
               <p style="background-color: #FFF3CD; padding: 15px; border-radius: 5px; border-left: 4px solid #FFC107;">
                 <strong>⏰ Importante:</strong> Este link expira em <strong>1 hora</strong>. Após definir sua senha, você poderá fazer login e começar a usar a plataforma imediatamente.
               </p>
-
+ 
               <p style="margin-top: 30px;">Estamos ansiosos para ver suas contribuições na comunidade!</p>
-
+ 
               <p style="margin-top: 30px;">
                 Bem-vindo e sucesso em sua jornada!<br>
-                <strong>Equipe ULTRA Academy</strong>
+                <strong>Equipe ZENIX Academy</strong>
               </p>
             </div>
             <div class="footer">
@@ -179,11 +179,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        🎉 Bem-vindo à ULTRA Academy!
+        🎉 Bem-vindo à ZENIX Academy!
         
         Olá ${name},
         
-        É um prazer tê-lo conosco! Sua conta de Expert foi criada com sucesso na plataforma ULTRA Academy.
+        É um prazer tê-lo conosco! Sua conta de Expert foi criada com sucesso na plataforma ZENIX Academy.
         
         Estamos muito felizes em tê-lo como parte da nossa comunidade de traders especializados. Como Expert, você terá acesso a recursos exclusivos para compartilhar suas estratégias e ajudar outros traders a alcançarem seus objetivos.
         
@@ -202,7 +202,7 @@ export class EmailService {
         Estamos ansiosos para ver suas contribuições na comunidade!
         
         Bem-vindo e sucesso em sua jornada!
-        Equipe ULTRA Academy
+        Equipe ZENIX Academy
         
         ---
         Este é um e-mail automático, por favor não responda.
@@ -223,15 +223,15 @@ export class EmailService {
     this.logger.log(`[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`);
     this.logger.log(`[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`);
 
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
 
     this.logger.log(`[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`);
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: '🎉 Bem-vindo à ULTRA Academy!',
+      subject: '🎉 Bem-vindo à ZENIX Academy!',
       html: `
         <!DOCTYPE html>
         <html>
@@ -254,7 +254,7 @@ export class EmailService {
         <body>
           <div class="container">
             <div class="header">
-              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ULTRA Academy!</h1>
+              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX Academy!</h1>
               <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.95;">Sua conta foi criada com sucesso</p>
             </div>
             <div class="content">
@@ -262,23 +262,23 @@ export class EmailService {
               
               <div class="welcome-box">
                 <p style="margin: 0; font-size: 16px; color: #2E7D32;">
-                  <strong>É um prazer tê-lo conosco!</strong> Sua conta foi criada com sucesso na plataforma ULTRA Academy.
+                  <strong>É um prazer tê-lo conosco!</strong> Sua conta foi criada com sucesso na plataforma ZENIX Academy.
                 </p>
               </div>
-
-              <p>Estamos muito felizes em tê-lo como parte da nossa comunidade. Agora você tem acesso completo à plataforma e pode começar a usar todos os recursos disponíveis.</p>
-
+ 
+              <p>Estamos muito felizes em tê-lo como parte da nossa comunidade. Agora você have acesso completo à plataforma e pode começar a usar todos os recursos disponíveis.</p>
+ 
               <p><strong>Para acessar sua conta, utilize as seguintes credenciais:</strong></p>
               
               <p style="text-align: center; margin: 10px 0;"><strong>Email:</strong> ${email}</p>
               
               <p style="text-align: center; margin: 10px 0;"><strong>Sua senha temporária:</strong></p>
               <div class="password-box">${password}</div>
-
+ 
               <p style="text-align: center; margin-top: 30px;">
                 <a href="${platformUrl}" class="button">🚀 Acessar Plataforma</a>
               </p>
-
+ 
               <p style="text-align: center; color: #666; font-size: 14px;">Ou copie e cole o link abaixo no seu navegador:</p>
               <div style="background-color: #fff; padding: 15px; border-radius: 5px; margin: 20px 0; font-family: monospace; word-break: break-all; border: 1px solid #E5E5E5; text-align: center;">${platformUrl}</div>
               
@@ -287,12 +287,12 @@ export class EmailService {
                   <strong>🔒 Importante:</strong> Em seu primeiro acesso, você deverá aceitar nossos Termos de Uso e <strong>alterar obrigatoriamente</strong> sua senha por motivos de segurança.
                 </p>
               </div>
-
+ 
               <p style="margin-top: 30px;">Estamos ansiosos para ver você usando a plataforma!</p>
-
+ 
               <p style="margin-top: 30px;">
                 Bem-vindo e sucesso em sua jornada!<br>
-                <strong>Equipe ULTRA Academy</strong>
+                <strong>Equipe ZENIX Academy</strong>
               </p>
             </div>
             <div class="footer">
@@ -304,11 +304,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        🎉 Bem-vindo à ULTRA Academy!
+        🎉 Bem-vindo à ZENIX Academy!
         
         Olá ${name},
         
-        É um prazer tê-lo conosco! Sua conta foi criada com sucesso na plataforma ULTRA Academy.
+        É um prazer tê-lo conosco! Sua conta foi criada com sucesso na plataforma ZENIX Academy.
         
         Estamos muito felizes em tê-lo como parte da nossa comunidade. Agora você tem acesso completo à plataforma e pode começar a usar todos os recursos disponíveis.
         
@@ -324,7 +324,7 @@ export class EmailService {
         Estamos ansiosos para ver você usando a plataforma!
         
         Bem-vindo e sucesso em sua jornada!
-        Equipe ULTRA Academy
+        Equipe ZENIX Academy
         
         ---
         Este é um e-mail automático, por favor não responda.
@@ -349,13 +349,13 @@ export class EmailService {
   }
 
   async sendConfirmationEmail(email: string, name: string, confirmationToken: string, confirmationUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: 'Confirme sua conta - ULTRA Academy',
+      subject: 'Confirme sua conta - ZENIX Academy',
       html: `
         <!DOCTYPE html>
         <html>
@@ -378,7 +378,7 @@ export class EmailService {
             </div>
             <div class="content">
               <p>Olá ${name},</p>
-              <p>Obrigado por se cadastrar na plataforma ULTRA Academy!</p>
+              <p>Obrigado por se cadastrar na plataforma ZENIX Academy!</p>
               <p>Para ativar sua conta, clique no botão abaixo:</p>
               <p style="text-align: center;">
                 <a href="${confirmationUrl}" class="button">Confirmar Conta</a>
@@ -387,7 +387,7 @@ export class EmailService {
               <div class="token">${confirmationUrl}</div>
               <p><strong>Este link expira em 24 horas.</strong></p>
               <p>Se você não se cadastrou nesta plataforma, ignore este e-mail.</p>
-              <p>Atenciosamente,<br>Equipe ULTRA Academy</p>
+              <p>Atenciosamente,<br>Equipe ZENIX Academy</p>
             </div>
             <div class="footer">
               <p>Este é um e-mail automático, por favor não responda.</p>
@@ -397,11 +397,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        Confirme sua conta - ULTRA Academy
+        Confirme sua conta - ZENIX Academy
         
         Olá ${name},
         
-        Obrigado por se cadastrar na plataforma ULTRA Academy!
+        Obrigado por se cadastrar na plataforma ZENIX Academy!
         
         Para ativar sua conta, acesse o link abaixo:
         ${confirmationUrl}
@@ -411,7 +411,7 @@ export class EmailService {
         Se você não se cadastrou nesta plataforma, ignore este e-mail.
         
         Atenciosamente,
-        Equipe ULTRA Academy
+        Equipe ZENIX Academy
       `,
     };
 
