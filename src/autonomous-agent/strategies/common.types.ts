@@ -28,7 +28,7 @@ export interface AutonomousAgentState {
 
 export interface MarketAnalysis {
   probability: number;
-  signal: 'CALL' | 'PUT' | 'DIGIT' | null;
+  signal: 'CALL' | 'PUT' | 'DIGIT' | 'MATCH' | null;
   payout: number;
   confidence: number;
   details?: any;
@@ -47,7 +47,7 @@ export interface IAutonomousAgentStrategy {
   name: string;
   displayName: string;
   description: string;
-  
+
   initialize(): Promise<void>;
   activateUser(userId: string, config: AutonomousAgentConfig): Promise<void>;
   deactivateUser(userId: string): Promise<void>;

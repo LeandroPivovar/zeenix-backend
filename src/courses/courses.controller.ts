@@ -69,7 +69,7 @@ export class CoursesController {
   constructor(
     private readonly coursesService: CoursesService,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   @Post('upload/cover')
   @UseInterceptors(FileInterceptor('file', createImageUploadOptions('covers')))
@@ -140,7 +140,7 @@ export class CoursesController {
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() req: any) {
     const course = await this.coursesService.findOne(id);
-    
+
     // Se houver token no header, tentar extrair userId e buscar progresso
     try {
       const authHeader = req.headers?.authorization;
@@ -165,7 +165,7 @@ export class CoursesController {
       // Se houver erro na autenticação, continua sem progresso
       console.warn('Erro ao buscar progresso:', err);
     }
-    
+
     return course;
   }
 

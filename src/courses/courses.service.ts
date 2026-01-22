@@ -34,7 +34,7 @@ export class CoursesService {
     private readonly lessonEntityRepository: Repository<LessonEntity>,
     @InjectRepository(MaterialEntity)
     private readonly materialRepository: Repository<MaterialEntity>,
-  ) {}
+  ) { }
 
   private normalizeMediaPath(path?: string | null): string | null {
     if (!path) {
@@ -129,7 +129,7 @@ export class CoursesService {
   async findOne(id: string) {
     const course = await this.courseEntityRepository.findOne({ where: { id } });
     if (!course) throw new NotFoundException('Curso não encontrado');
-    
+
     const modules = await this.moduleRepository.find({
       where: { courseId: id },
       order: { orderIndex: 'ASC' },
@@ -141,12 +141,12 @@ export class CoursesService {
     });
 
     const modulesWithLessons = modules.map(m => ({
-        id: m.id,
+      id: m.id,
       courseId: m.courseId,
-        title: m.title,
+      title: m.title,
       shortDescription: m.shortDescription,
       status: m.status,
-        orderIndex: m.orderIndex,
+      orderIndex: m.orderIndex,
       lessons: lessons
         .filter(l => l.moduleId === m.id)
         .map(l => ({
