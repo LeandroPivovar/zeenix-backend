@@ -865,7 +865,15 @@ export class NexusStrategy implements IStrategy {
 
     private async createTradeRecord(state: NexusUserState, direction: DigitParity, stake: number, entryPrice: number, barrier?: string): Promise<number> {
         const analysisData = { strategy: 'nexus', mode: state.mode, direction };
-        const signalLabel = direction === 'PAR' ? 'CALL' : 'PUT';
+
+        let signalLabel = direction === 'PAR' ? 'CALL' : 'PUT';
+
+        // ✅ [NEXUS] Nomenclatura Personalizada para Histórico
+        // Se não tiver barreira (Recuperação), exibe RISE/FALL
+        if (!barrier) {
+            signalLabel = direction === 'PAR' ? 'RISE' : 'FALL';
+        }
+
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration, strategy)
              VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5, 'nexus')`,
