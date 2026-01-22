@@ -288,44 +288,38 @@ export class NexusStrategy implements IStrategy {
             // ═══════════════════════════════════════════════════════════════
 
             if (state.mode === 'VELOZ') {
-                // VELOZ: 1 tick a favor da direção
+                // VELOZ: 1 tick consecutivo na mesma direção + delta >= 0.1
                 const lastTwo = this.ticks.slice(-2);
-                if (lastTwo[1].value > lastTwo[0].value) {
+                const delta = Math.abs(lastTwo[1].value - lastTwo[0].value);
+
+                if (lastTwo[1].value > lastTwo[0].value && delta >= 0.1) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['1 tick favorável'],
+                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
                         trigger: 'Tendência Imediata (Veloz)',
                         probability: 60,
                         contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
-                } else if (lastTwo[1].value < lastTwo[0].value) {
+                } else if (lastTwo[1].value < lastTwo[0].value && delta >= 0.1) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['1 tick favorável'],
+                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
                         trigger: 'Tendência Imediata (Veloz)',
                         probability: 60,
                         contractType: 'LOWER',
                         direction: 'PUT'
                     });
                     return 'IMPAR';
-                } else {
-                    // ❌ Log de análise rejeitada
-                    // this.saveNexusLog(state.userId, this.symbol, 'analise',
-                    //    `❌ ANÁLISE REJEITADA (VELOZ)\n` +
-                    //    `• Motivo: Movimento contrário detectado\n` +
-                    //    `• Preços: ${lastTwo[0].value.toFixed(2)} → ${lastTwo[1].value.toFixed(2)}\n` +
-                    //    `• Aguardando: 1 tick de alta`
-                    // );
                 }
 
             } else if (state.mode === 'NORMAL') {
-                // NORMAL: 3 ticks consecutivos + delta > 0.3
+                // NORMAL: 3 ticks consecutivos na mesma direção + delta >= 0.3
                 if (this.ticks.length < 4) return null;
 
                 const last4 = this.ticks.slice(-4);
@@ -343,24 +337,24 @@ export class NexusStrategy implements IStrategy {
 
                 const delta = prices[3] - prices[0];
 
-                if (upMomentum && delta > 0.3) {
+                if (upMomentum && delta >= 0.3) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['3 ticks consecutivos', 'Delta > 0.3'],
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.3)`],
                         trigger: 'Momentum de Alta',
                         probability: 75,
                         contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
-                } else if (downMomentum && delta < -0.3) {
+                } else if (downMomentum && delta <= -0.3) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['3 ticks consecutivos', 'Delta < -0.3'],
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.3)`],
                         trigger: 'Momentum de Baixa',
                         probability: 75,
                         contractType: 'LOWER',
@@ -370,46 +364,42 @@ export class NexusStrategy implements IStrategy {
                 }
 
             } else if (state.mode === 'LENTO') {
-                // LENTO: 5 ticks consecutivos + delta > 0.5
-                if (this.ticks.length < 6) return null;
+                // LENTO / PRECISO: 3 ticks consecutivos na mesma direção + delta >= 0.5
+                if (this.ticks.length < 4) return null;
 
-                const last6 = this.ticks.slice(-6);
-                const prices = last6.map(t => t.value);
+                const last4 = this.ticks.slice(-4);
+                const prices = last4.map(t => t.value);
 
-                // Verifica momentum de alta (5 ticks consecutivos)
+                // Verifica momentum de alta (3 ticks consecutivos)
                 const upMomentum = prices[1] > prices[0] &&
                     prices[2] > prices[1] &&
-                    prices[3] > prices[2] &&
-                    prices[4] > prices[3] &&
-                    prices[5] > prices[4];
+                    prices[3] > prices[2];
 
-                // Verifica momentum de baixa (5 ticks consecutivos)
+                // Verifica momentum de baixa (3 ticks consecutivos)
                 const downMomentum = prices[1] < prices[0] &&
                     prices[2] < prices[1] &&
-                    prices[3] < prices[2] &&
-                    prices[4] < prices[3] &&
-                    prices[5] < prices[4];
+                    prices[3] < prices[2];
 
-                const delta = prices[5] - prices[0];
+                const delta = prices[3] - prices[0];
 
-                if (upMomentum && delta > 0.5) {
+                if (upMomentum && delta >= 0.5) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['5 ticks consecutivos', 'Delta > 0.5'],
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.5)`],
                         trigger: 'Momentum Forte (Alta)',
                         probability: 85,
                         contractType: 'HIGHER',
                         direction: 'CALL'
                     });
                     return 'PAR';
-                } else if (downMomentum && delta < -0.5) {
+                } else if (downMomentum && delta <= -0.5) {
                     // ✅ LOG PADRONIZADO V2: Sinal Gerado
                     this.logSignalGenerated(state.userId, {
                         mode: state.mode,
                         isRecovery: false,
-                        filters: ['5 ticks consecutivos', 'Delta < -0.5'],
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.5)`],
                         trigger: 'Momentum Forte (Baixa)',
                         probability: 85,
                         contractType: 'LOWER',
@@ -458,7 +448,7 @@ export class NexusStrategy implements IStrategy {
                 this.logSignalGenerated(state.userId, {
                     mode: state.mode,
                     isRecovery: true,
-                    filters: [modeInfo],
+                    filters: [modeInfo, `Delta: ${deltaUp.toFixed(2)} (> ${minDelta})`],
                     trigger: 'Recuperação Alta',
                     probability: 80,
                     contractType: 'RISE/FALL',
@@ -482,7 +472,7 @@ export class NexusStrategy implements IStrategy {
                 this.logSignalGenerated(state.userId, {
                     mode: state.mode,
                     isRecovery: true,
-                    filters: [modeInfo],
+                    filters: [modeInfo, `Delta: ${deltaDown.toFixed(2)} (> ${minDelta})`],
                     trigger: 'Recuperação Baixa',
                     probability: 80,
                     contractType: 'RISE/FALL',
