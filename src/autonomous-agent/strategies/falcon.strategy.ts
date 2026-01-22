@@ -22,18 +22,36 @@ import { LogQueueService } from '../../utils/log-queue.service';
  * - Proteção: Stop Blindado (40% meta ativa, proteção fixa de 50%).
  */
 
-const FALCON_V21_SETTINGS = {
-  NORMAL: {
-    windowSize: 7,
-    requiredMovements: 4,
-    totalMovements: 6,
-    minDelta: 0.5,
-  },
-  LENTO: {
-    windowSize: 8,
-    requiredMovements: 5,
-    totalMovements: 7,
+const FALCON_MODES = {
+  PRECISO: {
+    name: 'PRECISO',
+    windowSize: 9,
+    requiredMovements: 6,
+    totalMovements: 8,
     minDelta: 0.7,
+    lastTicks: 3,
+    minStrength: 0.0065, // 0.65%
+    maxVolatility: 0.15,
+  },
+  ULTRA: {
+    name: 'ULTRA PRECISO',
+    windowSize: 10,
+    requiredMovements: 7,
+    totalMovements: 9,
+    minDelta: 0.8,
+    lastTicks: 4,
+    minStrength: 0.007,
+    maxVolatility: 0.15,
+  },
+  HIPER: {
+    name: 'HIPER PRECISO',
+    windowSize: 11,
+    requiredMovements: 8,
+    totalMovements: 10,
+    minDelta: 0.9,
+    lastTicks: 5,
+    minStrength: 0.0075,
+    maxVolatility: 0.15,
   },
 };
 
@@ -191,7 +209,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       consecutiveLosses: 0,
       consecutiveWins: 0,
       opsCount: 0,
-      mode: 'NORMAL',
+      mode: 'PRECISO',
       stopBlindadoAtivo: false,
       pisoBlindado: 0,
       lastProfit: 0,
@@ -205,6 +223,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       isWaitingContract: false,
       lastContractType: undefined,
       ticksSinceLastAnalysis: 0,
+      lastSignals: [],
+      consecutiveLossesSinceModeChange: 0,
     };
 
     this.userStates.set(userId, state);
@@ -360,22 +380,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Verificar se precisa avançar (skip) ticks
     // Normal: Avanço de 2 ticks (só analisa no 3º)
     // Lento: Avanço de 3 ticks (só analisa no 4º)
-    const requiredSkip = state.mode === 'NORMAL' ? 2 : 3;
+    const requiredSkip = state.mode === 'PRECISO' ? 2 : 3;
 
     if (state.ticksSinceLastAnalysis <= requiredSkip) {
       return; // Pular este tick
     }
 
-    // FALCON 2.1 precisa de janelas maiores
-    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
+    // FALCON 2.2 PRECISO Settings
+    const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
     const requiredTicks = settings.windowSize;
 
     if (userTicks.length < requiredTicks) {
-      if (userTicks.length % 2 === 0) {
+      if (userTicks.length % 5 === 0) {
         this.logDataCollection(userId, {
           targetCount: requiredTicks,
           currentCount: userTicks.length,
-          mode: state.mode
+          mode: settings.name
         });
       }
       return;
@@ -418,10 +438,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}, moves=${ups}^/${downs}v`);
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
+        const cutoff = state.mode === 'PRECISO' ? 70 : (state.mode === 'ULTRA' ? 80 : 90);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'SEM PADRÃO CLARO ❌'}\n` +
-          `• Probabilidade: ${probability}% (Cutoff: ${state.mode === 'NORMAL' ? 67 : 85}%)`;
+          `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
         this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
       }
@@ -455,13 +476,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Análise de mercado FALCON v2.1
+   * Análise de mercado FALCON v2.2 (8 Filtros)
    */
   private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
     const state = this.userStates.get(userId);
     if (!state) return null;
 
-    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
+    const currentMode = state.mode as keyof typeof FALCON_MODES;
+    const settings = FALCON_MODES[currentMode];
     const windowSize = settings.windowSize;
 
     if (ticks.length < windowSize) return null;
@@ -469,71 +491,199 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const recent = ticks.slice(-windowSize);
     const recentValues = recent.map(t => t.value);
 
-    // 1. Calcular Movimentos
-    let ups = 0;
-    let downs = 0;
-    // O número total de movimentos em uma janela N é N-1.
-    // Ex: Window 7 -> 6 moves.
-    const lastMoves = recentValues.slice(-(settings.totalMovements + 1));
-    for (let i = 1; i < lastMoves.length; i++) {
-      if (lastMoves[i] > lastMoves[i - 1]) ups++;
-      if (lastMoves[i] < lastMoves[i - 1]) downs++;
+    // FILTRO 6: Horário de Operação
+    if (!this.isValidTradingHour()) {
+      this.logBlockedEntry(userId, { reason: 'Horário', details: 'Aguardando horário operacional estável' });
+      return null;
     }
 
-    // 2. Calcular Delta (Volatility)
-    const firstTick = recentValues[0];
-    const lastTick = recentValues[recentValues.length - 1];
-    const delta = Math.abs(lastTick - firstTick);
+    // FILTRO 1: Contagem de Movimentos (Base)
+    let ups = 0;
+    let downs = 0;
+    const totalPossibleMoves = settings.totalMovements;
+    const windowData = recentValues.slice(-(totalPossibleMoves + 1));
 
+    for (let i = 1; i < windowData.length; i++) {
+      if (windowData[i] > windowData[i - 1]) ups++;
+      else if (windowData[i] < windowData[i - 1]) downs++;
+    }
+
+    const totalMoves = ups + downs;
+    const maxMoves = Math.max(ups, downs);
     let signal: 'CALL' | 'PUT' | null = null;
-    let blockReason: string | null = null;
 
-    // 3. Verificar Filtros
-    const isUpSignal = ups >= settings.requiredMovements && delta >= settings.minDelta;
-    const isDownSignal = downs >= settings.requiredMovements && delta >= settings.minDelta;
+    if (maxMoves >= settings.requiredMovements && totalMoves >= settings.totalMovements) {
+      signal = ups > downs ? 'CALL' : 'PUT';
+    } else {
+      this.logBlockedEntry(userId, {
+        reason: 'Filtro Base',
+        details: `Movimentos insuficientes (${maxMoves}/${settings.requiredMovements} de ${totalMoves}/${settings.totalMovements})`
+      });
+      return null;
+    }
 
-    if (isUpSignal) signal = 'CALL';
-    else if (isDownSignal) signal = 'PUT';
-    else {
-      // Registrar motivo do bloqueio para logs
-      if (delta < settings.minDelta) {
-        blockReason = `Delta insuficiente (${delta.toFixed(2)} < ${settings.minDelta})`;
-      } else {
-        const maxMoves = Math.max(ups, downs);
-        blockReason = `Movimentos insuficientes (${maxMoves}/${settings.totalMovements})`;
+    // FILTRO 2: Delta (Força da Tendência) + FILTRO 8: Ajuste por Histórico
+    const firstTick = windowData[0];
+    const lastTick = windowData[windowData.length - 1];
+    const calculatedDelta = Math.abs(lastTick - firstTick);
+
+    let requiredDelta = settings.minDelta;
+    // Ajuste por histórico recente (se teve 2+ perdas consecutivas no modo atual)
+    if (state.consecutiveLossesSinceModeChange >= 2) {
+      requiredDelta += 0.15;
+      this.logger.log(`[Falcon][${userId}] 📊 Rigor Delta aumentado (+0.15) devido a ${state.consecutiveLossesSinceModeChange} perdas recentes.`);
+    }
+
+    if (calculatedDelta < requiredDelta) {
+      this.logBlockedEntry(userId, { reason: 'Delta', details: `Delta baixo: ${calculatedDelta.toFixed(2)} < ${requiredDelta.toFixed(2)}` });
+      return null;
+    }
+
+    // FILTRO 3: Confirmação Momentum (Últimos Ticks)
+    const lastTicks = recentValues.slice(-settings.lastTicks);
+    let momentumConfirmed = true;
+    for (let i = 1; i < lastTicks.length; i++) {
+      const movement = lastTicks[i] > lastTicks[i - 1] ? 'CALL' : (lastTicks[i] < lastTicks[i - 1] ? 'PUT' : null);
+      if (movement !== signal) {
+        momentumConfirmed = false;
+        break;
       }
     }
 
-    // 4. Calcular Probabilidade Baseada em Score
-    // Metade baseada em movimentos, metade em delta (normalizado)
-    const moveScore = (Math.max(ups, downs) / settings.totalMovements) * 50;
-    const deltaScore = Math.min((delta / settings.minDelta) * 50, 50);
-    const probability = Math.round(moveScore + deltaScore);
-
-    if (!signal) {
-      this.logBlockedEntry(userId, {
-        reason: delta < settings.minDelta ? 'delta' : 'filter',
-        details: blockReason || 'Filtros não atingidos'
-      });
+    if (!momentumConfirmed) {
+      this.logBlockedEntry(userId, { reason: 'Momentum', details: `Momentum divergiu nos últimos ${settings.lastTicks} ticks` });
+      return null;
     }
+
+    // FILTRO 4: Força do Movimento (Strength)
+    const strength = this.calculateStrength(recentValues);
+    if (strength < settings.minStrength) {
+      this.logBlockedEntry(userId, { reason: 'Força', details: `Mercado lento: ${(strength * 100).toFixed(4)}% < ${(settings.minStrength * 100).toFixed(2)}%` });
+      return null;
+    }
+
+    // FILTRO 5: Volatilidade
+    const volatility = this.calculateVolatility(recentValues);
+    if (volatility > settings.maxVolatility) {
+      this.logBlockedEntry(userId, { reason: 'Volatilidade', details: `Mercado caótico: ${(volatility * 100).toFixed(2)}% > ${(settings.maxVolatility * 100).toFixed(2)}%` });
+      return null;
+    }
+
+    // FILTRO 7: Confirmação Dupla
+    if (!this.checkDoubleConfirmation(userId, signal)) {
+      this.logBlockedEntry(userId, { reason: 'Confirmação Dupla', details: 'Sinal aguardando persistência em janela consecutiva' });
+      return null;
+    }
+
+    // Se todos os filtros passaram, calcular Score final (0-100)
+    // 50% Movimentos, 30% Strength, 20% Volatilidade (inverso)
+    const moveScore = (maxMoves / totalPossibleMoves) * 50;
+    const strengthScore = Math.min((strength / 0.01) * 30, 30);
+    const volScore = Math.max(0, (1 - volatility / (settings.maxVolatility * 2)) * 20);
+    const probability = Math.round(moveScore + strengthScore + volScore);
 
     return {
       probability,
-      signal, // Pode ser null
+      signal,
       payout: 0.92,
       confidence: probability / 100,
       details: {
-        trend: signal || 'NEUTRAL',
+        trend: signal,
         trendStrength: probability / 100,
         ups,
         downs,
-        delta,
-        totalMoves: settings.totalMovements
+        delta: calculatedDelta,
+        totalMoves: totalPossibleMoves,
+        volatility,
+        strength
       },
     };
   }
 
   // Métodos antigos removidos (calculateVolatility, calculateEMA, analyzeDigits) pois não são usados na V2.0
+
+  /**
+   * FILTRO 4: Calcula força do movimento
+   */
+  private calculateStrength(window: number[]): number {
+    let totalChange = 0;
+    for (let i = 1; i < window.length; i++) {
+      totalChange += Math.abs(window[i] - window[i - 1]);
+    }
+    const avgChange = totalChange / (window.length - 1);
+    const strength = avgChange / window[0];
+    return strength;
+  }
+
+  /**
+   * FILTRO 5: Calcula volatilidade
+   */
+  private calculateVolatility(window: number[]): number {
+    const mean = window.reduce((sum, price) => sum + price, 0) / window.length;
+    const variance = window.reduce((sum, price) => {
+      return sum + Math.pow(price - mean, 2);
+    }, 0) / window.length;
+    const stdDev = Math.sqrt(variance);
+    const volatility = stdDev / mean;
+    return volatility;
+  }
+
+  /**
+   * FILTRO 6: Verifica se horário é válido
+   */
+  private isValidTradingHour(): boolean {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const time = hour + (minute / 60);
+
+    // Bloqueia primeiros 30min (09:00 - 09:30)
+    if (time < 9.5 && hour >= 9) {
+      return false;
+    }
+    // Bloqueia últimos 30min (17:30 - 18:00)
+    if (time >= 17.5 && hour <= 18) {
+      return false;
+    }
+
+    // Horário operacional total (ex: 7h às 18h)
+    if (hour < 7 || hour >= 18) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * FILTRO 7: Confirmação dupla
+   */
+  private checkDoubleConfirmation(userId: string, currentDirection: string): boolean {
+    const state = this.userStates.get(userId);
+    if (!state) return false;
+
+    // Adiciona o sinal atual ao histórico
+    const now = Date.now();
+    state.lastSignals.push({ direction: currentDirection, timestamp: now });
+
+    // Mantém apenas os últimos 5 sinais
+    if (state.lastSignals.length > 5) {
+      state.lastSignals.shift();
+    }
+
+    // Se é o primeiro sinal, não tem como confirmar
+    if (state.lastSignals.length < 2) {
+      return false;
+    }
+
+    // Verifica se o sinal anterior é na mesma direção e recente (últimos 5 segundos)
+    const lastSignal = state.lastSignals[state.lastSignals.length - 1];
+    const prevSignal = state.lastSignals[state.lastSignals.length - 2];
+
+    const isSameDirection = lastSignal.direction === prevSignal.direction;
+    const isRecent = (lastSignal.timestamp - prevSignal.timestamp) <= 5000;
+
+    return isSameDirection && isRecent;
+  }
 
   /**
    * Processa agente (chamado via interface)
@@ -556,11 +706,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return { action: 'STOP', reason: 'TAKE_PROFIT' };
     }
 
-    // B. Filtro de Precisão baseado no Modo (v2.1 thresholds)
-    const settings = state.mode === 'NORMAL' ? FALCON_V21_SETTINGS.NORMAL : FALCON_V21_SETTINGS.LENTO;
-    // No guia 2.1, os thresholds são embutidos na análise (isUpSignal/isDownSignal)
-    // Mas para manter compatibilidade com processAgent, usamos score de probabilidade
-    const requiredProb = state.mode === 'LENTO' ? 85 : 70; // 70% threshold for Normal in v2.1
+    // B. Filtro de Precisão baseado no Modo (v2.2 thresholds)
+    const currentMode = state.mode as keyof typeof FALCON_MODES;
+    const settings = FALCON_MODES[currentMode];
+    const requiredProb = currentMode === 'PRECISO' ? 70 : (currentMode === 'ULTRA' ? 80 : 90);
+
+    // Calcular requiredDelta com base no histórico
+    let requiredDelta = settings.minDelta;
+    if (state.consecutiveLossesSinceModeChange >= 2) {
+      requiredDelta += 0.15;
+    }
 
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
       // ✅ Calcular stake (sem ajustes ainda)
@@ -570,7 +725,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
 
-      // ✅ Verificar Stop Loss (Normal e Blindado) usando estrutura do Sentinel
+      // ✅ Verificar Stop Loss (Normal e Blindado)
       const stopLossCheck = await this.checkStopLoss(userId, stake);
       if (stopLossCheck.action === 'STOP') {
         return stopLossCheck;
@@ -579,26 +734,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // Usar stake ajustado se houver
       const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
 
-      // ✅ Log consolidado de decisão (formato igual ao SENTINEL)
-      const reasons: string[] = [];
-      if (marketAnalysis.details?.volatility) {
-        reasons.push(`Volatilidade: ${(marketAnalysis.details.volatility * 100).toFixed(2)}%`);
-      }
-      if (marketAnalysis.details?.trend) {
-        reasons.push(`Tendência: ${marketAnalysis.details.trend}`);
-      }
-      if (marketAnalysis.details?.digitPattern) {
-        reasons.push(`Padrão: ${marketAnalysis.details.digitPattern}`);
-      }
-
-      // ✅ Log de sinal no padrão Orion v2.1
+      // ✅ Log de sinal no padrão Orion v2.2
       this.logSignalGenerated(userId, {
-        mode: state.mode,
-        isRecovery: state.mode === 'LENTO',
+        mode: settings.name,
+        isRecovery: state.mode !== 'PRECISO',
         filters: [
           `Janela: ${settings.windowSize} ticks (${settings.totalMovements} moves)`,
-          `Delta: ${marketAnalysis.details?.delta?.toFixed(2)} (Min ${settings.minDelta})`,
-          `Moves: ${Math.max(marketAnalysis.details?.ups || 0, marketAnalysis.details?.downs || 0)}/${settings.totalMovements}`
+          `Delta: ${marketAnalysis.details?.delta?.toFixed(2)} (Min ${requiredDelta.toFixed(2)})`,
+          `Moves: ${Math.max(marketAnalysis.details?.ups || 0, marketAnalysis.details?.downs || 0)}/${settings.totalMovements}`,
+          `Volatilidade: ${(marketAnalysis.details?.volatility * 100).toFixed(2)}%`,
+          `Força: ${(marketAnalysis.details?.strength * 100).toFixed(4)}%`
         ],
         trigger: 'Momentum Confirmado 🦅',
         probability: marketAnalysis.probability,
@@ -667,38 +812,45 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (win) {
       state.consecutiveWins++;
       state.consecutiveLosses = 0;
+      state.consecutiveLossesSinceModeChange = 0;
 
-      // Se estava em LENTO, verificar recuperação
-      if (state.mode === 'LENTO') {
-        // ... (lógica de recuperação)
-        state.mode = 'NORMAL';
+      // Se estava em modo de recuperação, volta para PRECISO
+      if (state.mode !== 'PRECISO') {
         const recoveredLoss = state.totalLossAccumulated;
-        state.totalLossAccumulated = 0; // Resetar acumulado
-        // ✅ NÃO resetar wins - permitir Soros após recuperação
 
-        // ... (logs)
+        this.logSuccessfulRecoveryV2(userId, {
+          recoveredLoss: recoveredLoss,
+          additionalProfit: state.lastProfit - recoveredLoss,
+          profitPercentage: 0, // Not easily calculated here without more context
+          stakeBase: config.initialStake
+        });
+
+        state.mode = 'PRECISO';
+        state.totalLossAccumulated = 0; // Resetar acumulado
+        state.martingaleLevel = 0;
       }
 
       // Soros Nível 1: Resetar após trade de Soros ganhar (quando consecutiveWins = 2)
-      // Ciclo: Win1 (Base) -> Win2 (Soros) -> Reset -> Win3 (Base) -> Win4 (Soros)
       if (state.consecutiveWins >= 2) {
         state.consecutiveWins = 0;
       }
     } else {
       state.consecutiveWins = 0;
       state.consecutiveLosses++;
+      state.consecutiveLossesSinceModeChange++;
 
-      // Se estava em NORMAL, vai para LENTO imediatamente
-      if (state.mode === 'NORMAL') {
-        state.mode = 'LENTO';
-        this.logger.log(`[Falcon][${userId}] ⚠️ LOSS (Normal) -> Mudando para LENTO (Recuperação)`);
+      // Progressão de Modos: PRECISO -> ULTRA -> HIPER
+      if (state.mode === 'PRECISO') {
+        state.mode = 'ULTRA';
+        this.logger.log(`[Falcon][${userId}] ⚠️ LOSS (PRECISO) -> Mudando para ULTRA (Recuperação M1)`);
+      } else if (state.mode === 'ULTRA') {
+        state.mode = 'HIPER';
+        this.logger.log(`[Falcon][${userId}] ⚠️ LOSS (ULTRA) -> Mudando para HIPER (Recuperação M2+)`);
       }
 
-      // Acumula perda para martingale (usado para calcular próxima stake)
-      // OBS: Isso deve ser feito APÓS o update do lucroAtual, que já deve ter subtraído o stake perdido.
-      // O valor da perda no último trade pode ser obtido via cálculo ou state.
-      // Acumula perda para martingale (usado para calcular próxima stake)
-      // ✅ CORREÇÃO: Acumular perda exata do último trade
+      state.martingaleLevel = state.consecutiveLosses;
+
+      // Acumula perda para martingale
       if (state.lastProfit < 0) {
         state.totalLossAccumulated += Math.abs(state.lastProfit);
       }
@@ -722,44 +874,26 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     let stake = config.initialStake;
     const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma);
 
-    // Lógica para Modo LENTO (Recuperação - Smart Martingale)
-    if (state.mode === 'LENTO') {
-      // Martingale Inteligente por Perfil de Risco
-      // CONSERVADOR: 1.0 (Zero a Zero)
-      // MODERADO: 1.15 (+15%)
-      // AGRESSIVO: 1.30 (+30%)
-
+    // Lógica para Modos de Recuperação (ULTRA/HIPER - Smart Martingale)
+    if (state.mode !== 'PRECISO') {
       const riskSettings = FALCON_V21_RISK[config.riskProfile as keyof typeof FALCON_V21_RISK] || FALCON_V21_RISK.MODERADO;
       const profitFactor = riskSettings.profitFactor;
 
-      // Perda total a recuperar (absoluta)
-      // state.totalLossAccumulated deve ser mantido atualizado
-      // Se não, podemos tentar inferir pelo lucroAtual se estiver negativo.
-      // Mas o correto é usar accumulated. Vamos assumir que logicamente precisamos recuperar o prejuízo atual.
-      // Perda total a recuperar (absoluta)
-      // ✅ CORREÇÃO: Usar perda acumulada da sequência, não o lucro do dia
       const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
 
-      // ✅ DEBUG LOG
-      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE (LENTO): AccumLoss=${state.totalLossAccumulated}, LossToRecover=${lossToRecover}, Factor=${profitFactor}, Payout=${realPayout}`);
+      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE (${state.mode}): AccumLoss=${state.totalLossAccumulated}, LossToRecover=${lossToRecover}, Factor=${profitFactor}, Payout=${realPayout}`);
 
       if (lossToRecover > 0) {
-        // Fórmula Martingale: (Perda * Fator) / Payout
         const targetAmount = lossToRecover * profitFactor;
-
-        // Se for Conservador (fator 1.0), targetAmount = lossToRecover. LucroLiq = 0.
-        // Se for Moderado (1.15), targetAmount = loss * 1.15. LucroLiq = 15%.
-
         stake = targetAmount / realPayout;
 
-        // Limite por Perfil (v2.1)
-        // ✅ CORREÇÃO: Respeitar a flag -1 (Sem Limite)
         const hasLimit = riskSettings.maxMartingale !== -1;
         if (hasLimit && state.consecutiveLosses > riskSettings.maxMartingale) {
-          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido. Resetando para stake base.`);
-          state.mode = 'NORMAL';
+          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido. Resetando para modo PRECISO.`);
+          state.mode = 'PRECISO';
           state.totalLossAccumulated = 0;
           state.consecutiveLosses = 0;
+          state.consecutiveLossesSinceModeChange = 0;
           return config.initialStake;
         }
 
@@ -774,9 +908,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           maxLevel: riskSettings.maxMartingale,
           contractType: state.lastContractType || 'RISE/FALL'
         });
-
       } else {
-        // Se modo lento mas sem perda (ex: acabou de entrar, ou bug), usa base.
         stake = config.initialStake;
       }
     }
@@ -1468,7 +1600,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           trade.duration,
           trade.entryPrice,
           trade.stakeAmount,
-          state.mode === 'LENTO' ? 'M1' : 'M0',
+          state.mode !== 'PRECISO' ? `M${state.martingaleLevel}` : 'M0',
           trade.payout * 100, // Converter para percentual
           config.symbol,
         ],
@@ -1660,10 +1792,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses = 0;
       state.consecutiveWins = 0;
       state.opsCount = 0;
-      state.mode = 'NORMAL';
+      state.mode = 'PRECISO';
       state.stopBlindadoAtivo = false;
       state.pisoBlindado = 0;
       state.lastProfit = 0;
+      state.lastSignals = [];
+      state.consecutiveLossesSinceModeChange = 0;
     }
   }
 
@@ -2198,7 +2332,7 @@ interface FalconUserState {
   consecutiveLosses: number;
   consecutiveWins: number;
   opsCount: number;
-  mode: 'NORMAL' | 'LENTO';
+  mode: 'PRECISO' | 'ULTRA' | 'HIPER';
   stopBlindadoAtivo: boolean;
   pisoBlindado: number;
   lastProfit: number;
@@ -2216,4 +2350,7 @@ interface FalconUserState {
   // ✅ Campos para throttling de logs de compra negada
   lastDeniedLogTime?: number;
   lastDeniedLogData?: { probability: number; signal: string | null };
+  // ✅ Novos campos para Análise FALCON 2.2
+  lastSignals: Array<{ direction: string; timestamp: number }>; // Para confirmação dupla
+  consecutiveLossesSinceModeChange: number; // Para ajuste de rigor por histórico
 }
