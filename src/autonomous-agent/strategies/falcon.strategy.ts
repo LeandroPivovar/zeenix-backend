@@ -632,26 +632,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    * FILTRO 6: Verifica se horário é válido
    */
   private isValidTradingHour(): boolean {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const time = hour + (minute / 60);
-
-    // Bloqueia primeiros 30min (09:00 - 09:30)
-    if (time < 9.5 && hour >= 9) {
-      return false;
-    }
-    // Bloqueia últimos 30min (17:30 - 18:00)
-    if (time >= 17.5 && hour <= 18) {
-      return false;
-    }
-
-    // Horário operacional total (ex: 7h às 18h)
-    if (hour < 7 || hour >= 18) {
-      return false;
-    }
-
-    return true;
+    return true; // 24/7 Operations enabled by user request
   }
 
   /**
