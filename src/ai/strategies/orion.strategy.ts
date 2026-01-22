@@ -270,8 +270,8 @@ class RiskManager {
     }
 
     let nextStake = baseStake;
-    // ✅ Payout fixo de 0.92 (95% - 3% markup)
-    const PAYOUT_RATE = 0.92;
+    // ✅ Payout fixo de 0.825 (ajustado conforme solicitação do usuário)
+    const PAYOUT_RATE = 0.825;
 
     // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
     if (this.consecutiveLosses > 0) {
@@ -282,7 +282,7 @@ class RiskManager {
           nextStake = (this.totalLossAccumulated * 1.02) / PAYOUT_RATE;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 92%)`);
+            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
           }
           if (saveLog) {
             const targetProfit = this.totalLossAccumulated * 0.02;
@@ -306,7 +306,7 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: 92%)`);
+          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
         }
         if (saveLog) {
           const targetProfit = this.totalLossAccumulated * 0.15;
@@ -319,7 +319,7 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: 92%)`);
+          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
         }
         if (saveLog) {
           const targetProfit = this.totalLossAccumulated * 0.30;
@@ -1157,7 +1157,7 @@ ${filtersText}
         `• O preço ${directionStr} ${ticksCount} vezes seguidas.\n` +
         `• Delta: ${lastDelta.toFixed(3)} (Mínimo: ${minDelta})\n` +
         `• Direção: ${direction}\n` +
-        `• Payout: 95%\n` +
+        `• Payout: 82.5%\n` +
         `• Mercado com força para continuar ${allPositive ? 'SUBINDO' : 'CAINDO'}.`;
 
       // Logar
@@ -2255,7 +2255,7 @@ ${filtersText}
         forcedStake = baseStake; // ✅ FORÇAR que este valor seja respeitado mesmo com RiskManager
       } else {
         const PAYOUT_OVER3 = 0.56;
-        const PAYOUT_PA = 0.95;
+        const PAYOUT_PA = 0.825;
         const currentPayout = entry === 2 ? PAYOUT_OVER3 : PAYOUT_PA;
         stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, currentPayout, baseStake);
       }
@@ -2540,8 +2540,8 @@ ${filtersText}
 
     // ✅ Log: Entrada Executada (Formato Solicitado)
     const formattedDirection = operation;
-    // Payout dinâmico para o log: Over 3 (~56%), PA (~95%)
-    const payoutPercent = operation === 'DIGITOVER' ? 56 : 95;
+    // Payout dinâmico para o log: Over 3 (~56%), PA (~82,5%)
+    const payoutPercent = operation === 'DIGITOVER' ? 56 : 82.5;
 
     this.logger.log(`📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
     this.saveOrionLog(state.userId, this.symbol, 'operacao', `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
