@@ -22,45 +22,53 @@ export class WebhookController {
     this.logger.log('=== INÍCIO DO PROCESSAMENTO DO WEBHOOK ===');
     this.logger.log(`Tipo do payload: ${typeof payload}`);
     this.logger.log(`Payload é array: ${Array.isArray(payload)}`);
-    this.logger.log(`Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`);
 
-    const maskedPayload = this.maskSensitiveData(payload);
+    let actualPayload = payload;
+    if (Array.isArray(payload)) {
+      this.logger.log('📦 Webhook recebido como Array. Extraindo o primeiro elemento...');
+      actualPayload = payload[0];
+      this.logger.log(`Payload extraído (primeiros 500 chars): ${JSON.stringify(actualPayload).substring(0, 500)}`);
+    } else {
+      this.logger.log(`Payload bruto (primeiros 500 chars): ${JSON.stringify(payload).substring(0, 500)}`);
+    }
+
+    const maskedPayload = this.maskSensitiveData(actualPayload);
     this.logger.log(`Webhook recebido (mascarado): ${JSON.stringify(maskedPayload)}`);
 
     // Log dos campos importantes para debug
-    this.logger.log(`webhook_event_type: ${payload?.webhook_event_type || 'UNDEFINED'}`);
-    this.logger.log(`order_status: ${payload?.order_status || 'UNDEFINED'}`);
-    this.logger.log(`Customer existe: ${!!payload?.Customer}`);
-    this.logger.log(`Customer.email: ${payload?.Customer?.email || 'N/A'}`);
+    this.logger.log(`webhook_event_type: ${actualPayload?.webhook_event_type || 'UNDEFINED'}`);
+    this.logger.log(`order_status: ${actualPayload?.order_status || 'UNDEFINED'}`);
+    this.logger.log(`Customer existe: ${!!actualPayload?.Customer}`);
+    this.logger.log(`Customer.email: ${actualPayload?.Customer?.email || 'N/A'}`);
 
     // Verificar se o payload tem a estrutura esperada
-    if (!payload || typeof payload !== 'object') {
+    if (!actualPayload || typeof actualPayload !== 'object') {
       this.logger.error('❌ Payload inválido ou não é um objeto');
       return { success: false, error: 'Invalid payload' };
     }
 
     // Verificar se é um webhook de pedido aprovado e pago
-    const isOrderApproved = payload.webhook_event_type === 'order_approved';
-    const isPaid = payload.order_status === 'paid';
-    const hasCustomerEmail = !!payload.Customer?.email;
+    const isOrderApproved = actualPayload.webhook_event_type === 'order_approved';
+    const isPaid = actualPayload.order_status === 'paid';
+    const hasCustomerEmail = !!actualPayload.Customer?.email;
 
     this.logger.log(`Verificações: isOrderApproved=${isOrderApproved}, isPaid=${isPaid}, hasCustomerEmail=${hasCustomerEmail}`);
 
     if (isOrderApproved && isPaid && hasCustomerEmail) {
       this.logger.log('✅ Condições atendidas! Processando pedido aprovado...');
-      await this.handleOrderApproved(payload as KiwifyWebhookDto);
+      await this.handleOrderApproved(actualPayload as KiwifyWebhookDto);
     } else {
       this.logger.warn('⚠️ Condições não atendidas. Webhook não será processado para criação de usuário.');
       if (!isOrderApproved) {
-        this.logger.warn(`  - webhook_event_type não é 'order_approved': ${payload.webhook_event_type}`);
+        this.logger.warn(`  - webhook_event_type não é 'order_approved': ${actualPayload.webhook_event_type}`);
       }
       if (!isPaid) {
-        this.logger.warn(`  - order_status não é 'paid': ${payload.order_status}`);
+        this.logger.warn(`  - order_status não é 'paid': ${actualPayload.order_status}`);
       }
       if (!hasCustomerEmail) {
         this.logger.warn(`  - Customer.email não existe ou está vazio`);
-        if (payload.Customer) {
-          this.logger.warn(`  - Customer object: ${JSON.stringify(payload.Customer)}`);
+        if (actualPayload.Customer) {
+          this.logger.warn(`  - Customer object: ${JSON.stringify(actualPayload.Customer)}`);
         }
       }
     }
