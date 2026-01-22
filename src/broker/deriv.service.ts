@@ -564,18 +564,15 @@ export class DerivService {
     const appId = Number(process.env.DERIV_APP_ID || 1089);
     const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
-    // Parâmetros de afiliado - valores padrão do link de afiliado
-    // NOTA IMPORTANTE: O token do link (t=E466vBzKT83ZDL7kFhQLFGNd7ZgqdRLk) NÃO é o affiliate_token da API
-    // O affiliate_token da API deve ser obtido do painel de afiliados da Deriv (é um token diferente)
-    // Por isso, vamos usar apenas UTM parameters que são válidos e suficientes para tracking de afiliados
-    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || null; // Opcional - deixar null se não tiver token válido do painel
-    const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'MyAffiliates';
+    // Parâmetros de afiliado - utilizando o código fornecido pelo usuário
+    const AFFILIATE_TOKEN = process.env.DERIV_AFFILIATE_TOKEN || '_FhZ1bYVH34z1k0YPxVS0A2Nd7ZgqdRLk/1/';
+    const UTM_CAMPAIGN = process.env.DERIV_UTM_CAMPAIGN || 'zeenix_affiliate';
     const UTM_MEDIUM = process.env.DERIV_UTM_MEDIUM || 'affiliate';
-    const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'affiliate_169687';
+    const UTM_SOURCE = process.env.DERIV_UTM_SOURCE || 'FhZ1bYVH34z1k0YPxVS0A2Nd7ZgqdRLk';
 
     if (AFFILIATE_TOKEN) {
       this.logger.log(
-        `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN.substring(0, 10)}...`,
+        `[CreateAccount] Usando token de afiliado: ${AFFILIATE_TOKEN}`,
       );
     } else {
       this.logger.warn(
