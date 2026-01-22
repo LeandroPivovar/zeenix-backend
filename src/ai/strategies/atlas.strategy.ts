@@ -1310,9 +1310,7 @@ export class AtlasStrategy implements IStrategy {
           state.isInSoros = true;
           state.ultimoLucro = lucro;
         } else if (state.vitoriasConsecutivas === 1) {
-          state.vitoriasConsecutivas = 2;
-          state.ultimoLucro = lucro;
-        } else if (state.vitoriasConsecutivas === 2) {
+          // ✅ ATLAS: No Exemplo 2, o Soros reseta após o Nível 1 (2ª vitória)
           state.vitoriasConsecutivas = 0;
           state.isInSoros = false;
           state.ultimoLucro = 0;
