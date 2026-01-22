@@ -96,10 +96,9 @@ export class WebhookController {
       }
       this.logger.log(`✅ Usuário não existe, prosseguindo com criação...`);
 
-      // Gerar senha pré-configurada aleatória
-      this.logger.log('Gerando senha temporária...');
-      const temporaryPassword = this.generateTemporaryPassword();
-      this.logger.log(`Senha temporária gerada (não logar em produção): ${temporaryPassword.substring(0, 3)}***`);
+      // Senha padrão conforme solicitado
+      this.logger.log('Usando senha padrão zeenix2025...');
+      const temporaryPassword = 'zeenix2025';
 
       // Hash da senha
       this.logger.log('Fazendo hash da senha...');

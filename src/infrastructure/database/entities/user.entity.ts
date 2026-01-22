@@ -27,6 +27,9 @@ export class UserEntity {
   @Column({ type: 'boolean', default: false, name: 'trader_mestre' })
   traderMestre: boolean;
 
+  @Column({ type: 'boolean', default: true, name: 'first_access' })
+  firstAccess: boolean;
+
   @Column({ type: 'datetime', nullable: true, name: 'last_login_at' })
   lastLoginAt?: Date | null;
 

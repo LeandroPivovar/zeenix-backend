@@ -131,6 +131,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.updatedAt,
       entity.phone ?? null,
       entity.traderMestre,
+      entity.firstAccess,
       entity.derivBalance,
       entity.tokenDemo,
       entity.tokenReal,
@@ -146,6 +147,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.password = domain.password;
     entity.phone = domain.phone ?? null;
     entity.traderMestre = domain.traderMestre;
+    entity.firstAccess = domain.firstAccess;
     entity.role = 'user'; // Definir role como 'user' por padrão para novos usuários
     entity.createdAt = domain.createdAt;
     entity.updatedAt = domain.updatedAt;

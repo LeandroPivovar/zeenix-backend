@@ -8,6 +8,7 @@ export class User {
     public readonly updatedAt: Date,
     public readonly phone?: string | null,
     public readonly traderMestre: boolean = false,
+    public readonly firstAccess: boolean = true,
     public readonly derivBalance?: string | null,
     public readonly tokenDemo?: string | null,
     public readonly tokenReal?: string | null,
@@ -22,7 +23,7 @@ export class User {
     phone?: string | null,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, null, null, null, null);
+    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null);
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -35,6 +36,7 @@ export class User {
       new Date(),
       phone ?? this.phone,
       this.traderMestre,
+      this.firstAccess,
       this.derivBalance,
       this.tokenDemo,
       this.tokenReal,
@@ -52,6 +54,7 @@ export class User {
       new Date(),
       this.phone,
       this.traderMestre,
+      false, // Set firstAccess to false when password is changed
       this.derivBalance,
       this.tokenDemo,
       this.tokenReal,

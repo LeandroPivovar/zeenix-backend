@@ -10,7 +10,7 @@ export class EmailService {
     // Configuração SMTP do Gmail
     const smtpSecure = process.env.SMTP_SECURE || 'tls';
     const smtpPort = parseInt(process.env.SMTP_PORT || '587');
-    
+
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: smtpPort,
@@ -222,10 +222,10 @@ export class EmailService {
   async sendWelcomeEmail(email: string, name: string, password: string, platformUrl: string): Promise<void> {
     this.logger.log(`[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`);
     this.logger.log(`[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`);
-    
+
     const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.ultra.academy@gmail.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ULTRA Academy';
-    
+
     this.logger.log(`[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`);
 
     const mailOptions = {
@@ -284,7 +284,7 @@ export class EmailService {
               
               <div class="warning-box">
                 <p style="margin: 0;">
-                  <strong>🔒 Importante:</strong> Por segurança, recomendamos que você altere sua senha após o primeiro acesso. Mantenha suas credenciais em local seguro e não compartilhe com terceiros.
+                  <strong>🔒 Importante:</strong> Em seu primeiro acesso, você deverá aceitar nossos Termos de Uso e <strong>alterar obrigatoriamente</strong> sua senha por motivos de segurança.
                 </p>
               </div>
 
@@ -336,7 +336,7 @@ export class EmailService {
       this.logger.log(`[sendWelcomeEmail] Preparando para enviar email via SMTP...`);
       this.logger.log(`[sendWelcomeEmail] Destinatário: ${email}`);
       this.logger.log(`[sendWelcomeEmail] Assunto: ${mailOptions.subject}`);
-      
+
       await this.transporter.sendMail(mailOptions);
       this.logger.log(`✅ [sendWelcomeEmail] Email de boas-vindas enviado com sucesso para ${email}`);
     } catch (error) {
@@ -419,7 +419,7 @@ export class EmailService {
       this.logger.log(`[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`);
       this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`);
       this.logger.log(`[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`);
-      
+
       await this.transporter.sendMail(mailOptions);
       this.logger.log(`✅ [sendConfirmationEmail] Email de confirmação enviado com sucesso para ${email}`);
     } catch (error) {

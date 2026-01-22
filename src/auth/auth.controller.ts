@@ -112,7 +112,8 @@ export class AuthController {
     return {
       id: user.id,
       name: user.name,
-      email: user.email
+      email: user.email,
+      firstAccess: user.firstAccess
     };
   }
 }

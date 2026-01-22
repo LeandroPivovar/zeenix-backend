@@ -979,6 +979,9 @@ export class AutonomousAgentService implements OnModuleInit {
     // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
     const initialBalance = parseFloat(configData.initial_balance) || parseFloat(configData.totalCapital) || 0;
 
+    // ✅ Obter evolução da sessão para o gráfico
+    const evolution = await this.getSessionEvolution(userId);
+
     // ✅ Retornar dados no formato esperado pelo frontend (garantir que todos sejam números)
     return {
       daily_profit: Number(dailyProfitFromTrades.toFixed(2)),
@@ -995,6 +998,7 @@ export class AutonomousAgentService implements OnModuleInit {
       operationsToday: totalTradesToday,
       session_status: configData.session_status || 'active',
       session_date: configData.session_date || null,
+      evolution: evolution, // ✅ Adicionado para o gráfico
     };
   }
 
@@ -1351,6 +1355,36 @@ export class AutonomousAgentService implements OnModuleInit {
        ORDER BY created_at ASC`,
       [userId, startDate.toISOString()]
     );
+
+    // ✅ NOVO: Se days <= 1 (Sessão de hoje), retornar evolução POR TRADE para melhor visualização
+    if (days <= 1) {
+      const dataPoints: { time: number, value: number }[] = [];
+      let cumulativeProfit = 0;
+
+      // Adicionar ponto inicial (zero) no início da sessão ou hoje
+      dataPoints.push({
+        time: startDate.getTime() / 1000,
+        value: 0
+      });
+
+      for (const trade of trades) {
+        cumulativeProfit += parseFloat(trade.profit_loss) || 0;
+        dataPoints.push({
+          time: new Date(trade.created_at).getTime() / 1000,
+          value: Number(cumulativeProfit.toFixed(2))
+        });
+      }
+
+      // Adicionar ponto final (agora) para manter a linha até o presente
+      if (dataPoints.length > 0) {
+        dataPoints.push({
+          time: Date.now() / 1000,
+          value: Number(cumulativeProfit.toFixed(2))
+        });
+      }
+
+      return dataPoints;
+    }
 
     // Map trades to their bucket timestamps
     const tradesMap = new Map<number, number>(); // timestamp (ms) -> profit sum
