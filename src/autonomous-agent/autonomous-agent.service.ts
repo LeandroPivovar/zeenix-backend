@@ -726,9 +726,9 @@ export class AutonomousAgentService implements OnModuleInit {
         strategy = 'orion';
       }
 
-      // ✅ Suportar Orion, Sentinel e Falcon
-      if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon') {
-        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel' e 'falcon' estão disponíveis. Usando 'orion'.`);
+      // ✅ Suportar Orion, Sentinel, Falcon e Zeus
+      if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon' && strategy !== 'zeus') {
+        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel', 'falcon' e 'zeus' estão disponíveis. Usando 'orion'.`);
         strategy = 'orion';
       }
 

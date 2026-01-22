@@ -263,7 +263,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Obter modo do estado (inicializado como 'NORMAL')
         const state = this.userStates.get(userId);
-        const mode = state?.mode || 'LENTO';
+        const mode = state?.mode || 'NORMAL';
 
         // ✅ Log de ativação no padrão Orion
         this.logInitialConfigV2(userId, {
@@ -742,10 +742,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.mode = 'NORMAL';
                 const recoveredLoss = state.totalLossAccumulated;
                 state.totalLossAccumulated = 0; // Resetar acumulado
-                state.consecutiveWins = 0; // ✅ Resetar wins para evitar Soros na próxima (começar com stake base)
+                // ✅ NÃO resetar wins - permitir Soros após recuperação
 
                 // ✅ DEBUG LOG
-                this.logger.debug(`[Zeus][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Resetando estado. Mode=NORMAL, Wins=0, AccumLoss=0. LastProfit=${state.lastProfit}`);
+                this.logger.debug(`[Zeus][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Mode=NORMAL, Wins=${state.consecutiveWins}, AccumLoss=0. LastProfit=${state.lastProfit}`);
 
                 this.logSuccessfulRecoveryV2(userId, {
                     recoveredLoss: recoveredLoss,
@@ -797,8 +797,28 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let stake = config.initialStake;
         const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma);
 
+        // ✅ Lógica para Modo NORMAL (Soros Nível 1) - EXECUTAR PRIMEIRO
+        if (state.mode === 'NORMAL') {
+            // ✅ DEBUG LOG
+            this.logger.debug(`[Zeus][${userId}] 🧮 CALC STAKE (NORMAL): Wins=${state.consecutiveWins}, LastProfit=${state.lastProfit}, Base=${config.initialStake}`);
+
+            // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
+            if (state.consecutiveWins === 1) { // Próximo é o trade #2 (consecutive será 1 ao entrar aqui)
+                // Win1: A próxima aposta é Base + Lucro Anterior
+                stake = config.initialStake + state.lastProfit;
+                stake = Math.round(stake * 100) / 100;
+                this.logSorosActivation(userId, {
+                    previousProfit: state.lastProfit,
+                    stakeBase: config.initialStake,
+                    level: 1
+                });
+            } else {
+                // Win0 (início), Win2 (já fez soros, ganhou, vai resetar), etc.
+                stake = Math.round(config.initialStake * 100) / 100;
+            }
+        }
         // Lógica para Modo LENTO (Recuperação - Smart Martingale)
-        if (state.mode === 'LENTO') {
+        else if (state.mode === 'LENTO') {
             // Martingale Inteligente por Perfil de Risco
             // CONSERVADOR: 1.0 (Zero a Zero)
             // MODERADO: 1.15 (+15%)
@@ -851,26 +871,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // Se não há perda a recuperar, usa stake inicial
                 state.mode = 'LENTO';
                 return config.initialStake;
-            }
-        }
-        // Lógica para Modo NORMAL (Soros Nível 1)
-        else { // This block will not be reached as Zeus is permanently LENTO
-            // ✅ DEBUG LOG
-            this.logger.debug(`[Zeus][${userId}] 🧮 CALC STAKE (NORMAL): Wins=${state.consecutiveWins}, LastProfit=${state.lastProfit}, Base=${config.initialStake}`);
-
-            // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
-            if (state.consecutiveWins === 1) { // Próximo é o trade #2 (consecutive será 1 ao entrar aqui)
-                // Win1: A próxima aposta é Base + Lucro Anterior
-                stake = config.initialStake + state.lastProfit;
-                stake = Math.round(stake * 100) / 100;
-                this.logSorosActivation(userId, {
-                    previousProfit: state.lastProfit,
-                    stakeBase: config.initialStake,
-                    level: 1
-                });
-            } else {
-                // Win0 (início), Win2 (já fez soros, ganhou, vai resetar), etc.
-                stake = Math.round(config.initialStake * 100) / 100;
             }
         }
 
