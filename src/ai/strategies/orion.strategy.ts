@@ -270,8 +270,8 @@ class RiskManager {
     }
 
     let nextStake = baseStake;
-    // ✅ Payout fixo de 0.92 (95% - 3% markup)
-    const PAYOUT_RATE = 0.92;
+    // ✅ Payout fixo de 0.85 (Ajustado para garantir recuperação correta)
+    const PAYOUT_RATE = 0.85; // Ajustado de 0.92 para garantir recuperação correta (102%/115%/130%)
 
     // --- LÓGICA DE RECUPERAÇÃO (MARTINGALE) ---
     if (this.consecutiveLosses > 0) {
