@@ -366,7 +366,7 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        const PAYOUT_RATE = 0.92; // 95% - 3% markup = 92%
+        const PAYOUT_RATE = 0.85; // Ajustado de 0.92 para garantir recuperação correta (102%/115%/130%)
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
