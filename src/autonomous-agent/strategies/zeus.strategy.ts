@@ -768,8 +768,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 });
             }
 
-            // Soros: Resetar após Win3 (quando consecutiveWins = 3)
-            if (state.consecutiveWins >= 3) {
+            // Soros Nível 1: Resetar após trade de Soros ganhar (quando consecutiveWins = 2)
+            // Ciclo: Win1 (Base) -> Win2 (Soros) -> Reset -> Win3 (Base) -> Win4 (Soros)
+            if (state.consecutiveWins >= 2) {
                 state.consecutiveWins = 0;
             }
         } else {

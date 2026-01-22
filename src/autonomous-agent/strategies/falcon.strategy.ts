@@ -670,29 +670,18 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // Se estava em LENTO, verificar recuperação
       if (state.mode === 'LENTO') {
-        // Recuperação: Saldo atual >= Saldo no início do drawdown + 25% da perda
-        // Simplificado: Se a perda acumulada (totalLossAccumulated) for zerada pelo lucro, volta.
-        // O Martingale é calculado para cobrir TUDO + lucro. Então um WIN no LENTO geralmente resolve.
-
-        // Vamos considerar que um WIN no Lento resolve e volta pro Normal
+        // ... (lógica de recuperação)
         state.mode = 'NORMAL';
         const recoveredLoss = state.totalLossAccumulated;
         state.totalLossAccumulated = 0; // Resetar acumulado
-        state.consecutiveWins = 0; // ✅ Resetar wins para evitar Soros na próxima (começar com stake base)
+        // ✅ NÃO resetar wins - permitir Soros após recuperação
 
-        // ✅ DEBUG LOG (Requested Issue Investigation)
-        this.logger.debug(`[Falcon][${userId}] 🔄 RECUPERAÇÃO DETECTADA! Resetando estado. Mode=NORMAL, Wins=0, AccumLoss=0. LastProfit=${state.lastProfit}`);
-
-        this.logSuccessfulRecoveryV2(userId, {
-          recoveredLoss: recoveredLoss,
-          additionalProfit: state.lastProfit,
-          profitPercentage: 0,
-          stakeBase: config.initialStake
-        });
+        // ... (logs)
       }
 
-      // Soros: Resetar após Win3 (quando consecutiveWins = 3)
-      if (state.consecutiveWins >= 3) {
+      // Soros Nível 1: Resetar após trade de Soros ganhar (quando consecutiveWins = 2)
+      // Ciclo: Win1 (Base) -> Win2 (Soros) -> Reset -> Win3 (Base) -> Win4 (Soros)
+      if (state.consecutiveWins >= 2) {
         state.consecutiveWins = 0;
       }
     } else {
