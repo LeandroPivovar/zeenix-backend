@@ -111,8 +111,10 @@ class RiskManager {
         }
 
         let nextStake = baseStake;
-        // ✅ [ZENIX PRO] Payout fixo de 0.92 (95% - 3% markup)
-        const PAYOUT_RATE = 0.56; // Atualizado: Payout real com barreira está em aprox. 56%
+        // ✅ [ZENIX PRO] Payout Dinâmico
+        // < 2 perdas: Barrier (Payout ~56%)
+        // >= 2 perdas: Rise/Fall (Payout ~85%) - Solicitado pelo usuário
+        const PAYOUT_RATE = this.consecutiveLosses >= 2 ? 0.85 : 0.56;
 
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
