@@ -53,7 +53,7 @@ export class AuthService {
 
     const hashed = await bcrypt.hash(payload.password, 10);
     const userId = uuidv4();
-    const user = User.create(userId, payload.name, payload.email, hashed, payload.phone);
+    const user = User.create(userId, payload.name, payload.email, hashed, payload.phone, false);
     await this.userRepository.create(user);
 
     // Salvar usuário como inativo (status = 0)

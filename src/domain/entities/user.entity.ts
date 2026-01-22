@@ -13,6 +13,7 @@ export class User {
     public readonly tokenDemo?: string | null,
     public readonly tokenReal?: string | null,
     public readonly derivRaw?: any | null,
+    public readonly role: string = 'user',
   ) { }
 
   static create(
@@ -21,9 +22,10 @@ export class User {
     email: string,
     password: string,
     phone?: string | null,
+    firstAccess: boolean = true,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null);
+    return new User(id, name, email, password, now, now, phone, false, firstAccess, null, null, null, null, 'user');
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -41,6 +43,7 @@ export class User {
       this.tokenDemo,
       this.tokenReal,
       this.derivRaw,
+      this.role,
     );
   }
 
@@ -59,6 +62,7 @@ export class User {
       this.tokenDemo,
       this.tokenReal,
       this.derivRaw,
+      this.role,
     );
   }
 }
