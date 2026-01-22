@@ -1074,7 +1074,7 @@ ${filtersText}
     const lastTicks = this.ticks.slice(-requiredLosses);
     const lastDigits = lastTicks.map(t => this.extractLastDigit(t.value));
 
-    // Verificar se TODOS são < 4 (Dígitos Perdedores)
+    // Verificar se TODOS são < 4 (Dígitos Perdedores para Barreira 3)
     const analysisResults = lastDigits.map((d, i) => ({
       digit: d,
       value: lastTicks[i].value,
@@ -2271,7 +2271,7 @@ ${filtersText}
         stakeAmount = baseStake;
         forcedStake = baseStake; // ✅ FORÇAR que este valor seja respeitado mesmo com RiskManager
       } else {
-        const PAYOUT_OVER3 = 0.63;
+        const PAYOUT_OVER3 = 0.56;
         const PAYOUT_PA = 0.95;
         const currentPayout = entry === 2 ? PAYOUT_OVER3 : PAYOUT_PA;
         stakeAmount = calcularProximaAposta(state.perdaAcumulada, state.modoMartingale, currentPayout, baseStake);
@@ -2557,8 +2557,8 @@ ${filtersText}
 
     // ✅ Log: Entrada Executada (Formato Solicitado)
     const formattedDirection = operation;
-    // Payout dinâmico para o log: Over 3 (~63%), PA (~95%)
-    const payoutPercent = operation === 'DIGITOVER' ? 63 : 95;
+    // Payout dinâmico para o log: Over 3 (~56%), PA (~95%)
+    const payoutPercent = operation === 'DIGITOVER' ? 56 : 95;
 
     this.logger.log(`📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
     this.saveOrionLog(state.userId, this.symbol, 'operacao', `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
@@ -2585,7 +2585,7 @@ ${filtersText}
 
       if (operation === 'DIGITOVER') {
         contractParams.contract_type = 'DIGITOVER';
-        contractParams.barrier = 3; // ✅ Over 3 (número ao invés de string)
+        contractParams.barrier = 3; // ✅ Over 3 corrigido
         contractParams.duration = 1;
         contractParams.duration_unit = 't';
       } else if (operation === 'CALL') {
