@@ -1136,6 +1136,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Buscar config para obter DATA DA SESSÃO e filtrar
     const config = await this.getAgentConfig(userId);
+    const initialBalance = parseFloat(config?.initial_balance) || 0;
     const sessionDate = config?.session_date ? new Date(config.session_date) : null;
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
@@ -1150,16 +1151,19 @@ export class AutonomousAgentService implements OnModuleInit {
          SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as profit,
          SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as loss,
          COUNT(*) as ops,
-         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins
+         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
+         MIN(created_at) as first_op,
+         MAX(created_at) as last_op
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
          AND created_at >= ?
          AND status IN ('WON', 'LOST')
        GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '-03:00'))
-       ORDER BY date DESC`,
+       ORDER BY date ASC`, // ASC para calcular acumulado corretamente
       [userId, effectiveStartDate.toISOString()]
     );
 
+    let cumulativeProfit = 0;
     const dailyData = trades.map((day: any) => {
       const profit = parseFloat(day.profit) || 0;
       const loss = parseFloat(day.loss) || 0;
@@ -1168,21 +1172,30 @@ export class AutonomousAgentService implements OnModuleInit {
       const wins = parseInt(day.wins) || 0;
       const winRate = ops > 0 ? (wins / ops) * 100 : 0;
 
+      cumulativeProfit += netProfit;
+
+      // Calculate average interval
+      let avgTime = '--';
+      if (ops > 1 && day.first_op && day.last_op) {
+        const first = new Date(day.first_op).getTime();
+        const last = new Date(day.last_op).getTime();
+        const diffMin = Math.round((last - first) / (60000 * (ops - 1)));
+        avgTime = diffMin >= 60 ? `${Math.floor(diffMin / 60)}h ${diffMin % 60}m` : `${diffMin}min`;
+      }
+
       return {
         date: new Date(day.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-        fullDate: new Date(day.date).toISOString().split('T')[0], // YYYY-MM-DD for querying
+        fullDate: new Date(day.date).toISOString().split('T')[0],
         profit: Number(netProfit.toFixed(2)),
         ops,
         winRate: Number(winRate.toFixed(2)),
-        // Assuming capital is not tracked historically daily here, would need separate tracking or estimation
-        // For now, returning structure compatible with frontend
-        capital: 0,
-        avgTime: '24min', // Placeholder
+        capital: Number((initialBalance + cumulativeProfit).toFixed(2)),
+        avgTime,
         badge: ''
       };
     });
 
-    return dailyData;
+    return dailyData.reverse(); // Volta para DESC para o frontend
   }
 
   async getWeeklyStats(userId: string, weeks: number = 10): Promise<any[]> {
@@ -1505,6 +1518,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       return trades.map((t: any) => ({
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
+        createdAt: t.created_at,
         market: t.symbol,
         contract: t.contract_type,
         stake: parseFloat(t.stake) || 0,
