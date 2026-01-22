@@ -179,9 +179,9 @@ function calcularProximaAposta(
 
   switch (modo) {
     case 'conservador':
-      // Meta: recuperar apenas o valor da perda (break-even)
-      // Fórmula: entrada_próxima = perdas_totais / payout
-      aposta = perdasTotais / PAYOUT;
+      // Meta: recuperar 100% das perdas + 2% de lucro
+      // Fórmula: entrada_próxima = (perdas_totais * 1.02) / payout
+      aposta = (perdasTotais * 1.02) / PAYOUT;
       break;
     case 'moderado':
       // Meta: recuperar 100% das perdas + 15% de lucro
@@ -278,14 +278,15 @@ class RiskManager {
       // 1. CONSERVADOR: Tenta até Nível 5. Se falhar, aceita e volta pra base.
       if (this.riskMode === 'CONSERVADOR') {
         if (this.consecutiveLosses <= 5) {
-          // Meta: recuperar apenas o valor da perda (break-even)
-          nextStake = this.totalLossAccumulated / PAYOUT_RATE;
+          // Meta: recuperar 100% das perdas + 2% de lucro
+          nextStake = (this.totalLossAccumulated * 1.02) / PAYOUT_RATE;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
             logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 92%)`);
           }
           if (saveLog) {
-            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $0.00`);
+            const targetProfit = this.totalLossAccumulated * 0.02;
+            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta

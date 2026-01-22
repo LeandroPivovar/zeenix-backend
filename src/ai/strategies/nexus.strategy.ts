@@ -117,8 +117,8 @@ class RiskManager {
         if (this.consecutiveLosses > 0) {
             if (this.riskMode === 'CONSERVADOR') {
                 if (this.consecutiveLosses <= 5) {
-                    // Recupera apenas o valor da perda (break-even)
-                    nextStake = this.totalLossAccumulated / PAYOUT_RATE;
+                    // Recupera 100% da perda + 2% de lucro
+                    nextStake = (this.totalLossAccumulated * 1.02) / PAYOUT_RATE;
                 } else {
                     this.consecutiveLosses = 0;
                     this.totalLossAccumulated = 0.0;

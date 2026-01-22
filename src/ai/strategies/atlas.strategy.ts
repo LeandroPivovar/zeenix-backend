@@ -21,8 +21,8 @@ function calcularProximaApostaAtlas(
 
   switch (modo) {
     case 'conservador':
-      // Recupera 100% da perda (Zero a Zero) - sem lucro adicional
-      aposta = perdasTotais / payout;
+      // Recupera 100% da perda + 2% de lucro
+      aposta = (perdasTotais * 1.02) / payout;
       break;
     case 'moderado':
       // Recupera 100% da perda + 15% de lucro

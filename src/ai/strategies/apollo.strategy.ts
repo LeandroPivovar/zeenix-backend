@@ -666,8 +666,8 @@ ${filtersText}
 
       // Cálculo por perfil de risco
       if (state.riskProfile === 'conservador') {
-        // Recupera apenas o valor da perda (break-even)
-        neededStake = lossToRecover / PAYOUT_RATE;
+        // Recupera 100% da perda + 2% de lucro
+        neededStake = (lossToRecover * 1.02) / PAYOUT_RATE;
       } else if (state.riskProfile === 'moderado') {
         // Recupera 100% + 15% de lucro
         neededStake = (lossToRecover * 1.15) / PAYOUT_RATE;
