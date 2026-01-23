@@ -373,11 +373,24 @@ export class DerivController {
       tokenUpdates.tokenDemo = token;
       tokenUpdates.tokenDemoCurrency = preciseAccount.currency;
 
-      // Se tivermos as contas reais no raw, tentar achar a moeda real
+      // Se tivermos as contas reais no raw, priorizar a que tiver o maior saldo
       if (account?.balancesByCurrencyReal) {
-        const realCurrencies = Object.keys(account.balancesByCurrencyReal);
+        const realBalances = account.balancesByCurrencyReal;
+        const realCurrencies = Object.keys(realBalances);
         if (realCurrencies.length > 0) {
-          tokenUpdates.tokenRealCurrency = realCurrencies[0];
+          // Encontrar a moeda com o maior saldo real
+          let bestCurrency = realCurrencies[0];
+          let maxBalance = realBalances[bestCurrency] || 0;
+
+          for (const curr of realCurrencies) {
+            const bal = realBalances[curr] || 0;
+            if (bal > maxBalance) {
+              maxBalance = bal;
+              bestCurrency = curr;
+            }
+          }
+          tokenUpdates.tokenRealCurrency = bestCurrency;
+          this.logger.log(`[${source}] Moeda real prioritária selecionada por saldo: ${bestCurrency} (${maxBalance})`);
         }
       }
     } else {
@@ -629,16 +642,27 @@ export class DerivController {
       let tokenRealCurrency: string | undefined;
 
       // Iterar sobre accounts para extrair tokens e moedas demo e real
+      // Priorizando a conta Real que tem saldo (usando os dados retornados no result)
+      const realBalances = result.balancesByCurrencyReal || {};
+
       normalizedAccounts.forEach(account => {
         if (account.loginid?.startsWith('VRTC')) {
           tokenDemo = account.token;
           tokenDemoCurrency = account.currency;
         } else {
-          // Assumindo que qualquer outro é Real (CR, etc)
-          tokenReal = account.token;
-          tokenRealCurrency = account.currency;
+          // Se for conta Real, verificar se ela tem o maior saldo entre as reais já processadas
+          const currentBal = realBalances[account.currency] || 0;
+          const bestRealBalSoFar = (tokenRealCurrency && realBalances[tokenRealCurrency]) || -1;
+
+          if (!tokenReal || currentBal > bestRealBalSoFar) {
+            tokenReal = account.token;
+            tokenRealCurrency = account.currency;
+            this.logger.log(`[CONNECT-OAUTH] Selecionando ${account.loginid} (${account.currency}) como token Real principal (Saldo: ${currentBal})`);
+          }
         }
       });
+
+      this.logger.log(`[CONNECT-OAUTH] Resultado final da seleção - Real: ${tokenRealCurrency}, Demo: ${tokenDemoCurrency}`);
 
       if (derivInfo?.raw) {
         derivInfo.raw.tokensByLoginId = tokensByLoginId;
