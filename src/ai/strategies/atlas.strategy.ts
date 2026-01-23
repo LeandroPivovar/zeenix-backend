@@ -131,7 +131,7 @@ export class AtlasStrategy implements IStrategy {
       authorizedCurrency: string | null;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
-      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      pendingRequests: Map<number, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
       subscriptions: Map<string, (msg: any) => void>;
       lastLatency: number; // ✅ ATLAS: Rastrear latência
     }
@@ -2244,11 +2244,12 @@ ${filtersText}
         }
 
         // ✅ ATLAS: Suporte a req_id para pareamento preciso de requisições assíncronas
-        if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
-          const pending = conn.pendingRequests.get(msg.req_id);
+        const msgReqId = msg.req_id ? Number(msg.req_id) : null;
+        if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
+          const pending = conn.pendingRequests.get(msgReqId);
           if (pending) {
             clearTimeout(pending.timeout);
-            conn.pendingRequests.delete(msg.req_id);
+            conn.pendingRequests.delete(msgReqId);
             if (msg.error) {
               pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
             } else {
@@ -2344,7 +2345,8 @@ ${filtersText}
     }
 
     return new Promise((resolve, reject) => {
-      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      // ✅ Deriv API req_id deve ser um INTEIRO (1 a 2^31 - 1)
+      const requestId = ++conn.requestIdCounter;
       const timeout = setTimeout(() => {
         conn.pendingRequests.delete(requestId);
         reject(new Error(`Timeout após ${timeoutMs}ms`));

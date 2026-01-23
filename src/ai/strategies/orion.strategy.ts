@@ -748,7 +748,7 @@ ${filtersText}
       authorizedCurrency: string | null;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
-      pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+      pendingRequests: Map<number, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
       subscriptions: Map<string, (msg: any) => void>;
     }
   > = new Map();
@@ -2937,11 +2937,12 @@ ${filtersText}
 
           // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
           // 2.1. Tentar casar por req_id (Mais robusto)
-          if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
-            const pending = conn.pendingRequests.get(msg.req_id);
+          const msgReqId = msg.req_id ? Number(msg.req_id) : null;
+          if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
+            const pending = conn.pendingRequests.get(msgReqId);
             if (pending) {
               clearTimeout(pending.timeout);
-              conn.pendingRequests.delete(msg.req_id);
+              conn.pendingRequests.delete(msgReqId);
               if (msg.error) {
                 pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
               } else {
@@ -3046,7 +3047,8 @@ ${filtersText}
     }
 
     return new Promise((resolve, reject) => {
-      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      // ✅ ORION: Usar req_id INTEIRO (1 a 2^31 - 1) para compliance com Deriv API
+      const requestId = ++conn.requestIdCounter;
       const timeout = setTimeout(() => {
         conn.pendingRequests.delete(requestId);
         reject(new Error(`Timeout após ${timeoutMs}ms`));

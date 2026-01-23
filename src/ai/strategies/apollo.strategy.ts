@@ -84,7 +84,7 @@ export class ApolloStrategy implements IStrategy {
     authorizedCurrency: string | null;
     keepAliveInterval: NodeJS.Timeout | null;
     requestIdCounter: number;
-    pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+    pendingRequests: Map<number, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
     subscriptions: Map<string, (msg: any) => void>;
   }> = new Map();
 
@@ -1187,11 +1187,12 @@ ${filtersText}
             // ✅ Roteamento normal de mensagens para conexões ativas
             if (conn) {
               // 1. Tentar casar com req_id se existir (Prioridade Alta)
-              if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
-                const pending = conn.pendingRequests.get(msg.req_id);
+              const msgReqId = msg.req_id ? Number(msg.req_id) : null;
+              if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
+                const pending = conn.pendingRequests.get(msgReqId);
                 if (pending) {
                   clearTimeout(pending.timeout);
-                  conn.pendingRequests.delete(msg.req_id);
+                  conn.pendingRequests.delete(msgReqId);
                   if (msg.error) pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
                   else pending.resolve(msg);
                 }
@@ -1284,8 +1285,8 @@ ${filtersText}
     }
 
     return new Promise((resolve, reject) => {
-      // ✅ APOLLO: Usar req_id explicitamente no payload para pareamento preciso
-      const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
+      // ✅ APOLLO: Usar req_id INTEIRO (1 a 2^31 - 1) para compliance com Deriv API
+      const requestId = ++conn.requestIdCounter;
 
       const timeout = setTimeout(() => {
         conn.pendingRequests.delete(requestId);
