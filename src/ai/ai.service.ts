@@ -1423,7 +1423,7 @@ export class AiService implements OnModuleInit {
     entry: number = 1,
   ): Promise<DigitTradeResult> {
     const stakeAmount = await this.calculateVelozStake(state, entry, proposal);
-    const currency = state.currency || 'USD';
+    const currency = state.currency || 'USD'; // ZENIX v3.5: Fallback final seguro
     const contractType: 'DIGITEVEN' | 'DIGITODD' = proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD';
     const derivToken = state.derivToken;
 
@@ -2705,7 +2705,7 @@ export class AiService implements OnModuleInit {
       const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
       const finalToken = resolved.token;
       // ✅ [ZENIX v3.4] Usar a moeda resolvida (pode ser BTC, ETH, etc) em vez de forçar USD
-      const finalCurrency = resolved.currency || 'USD';
+      const finalCurrency = resolved.currency || 'USD'; // ZENIX v3.5: Fallback final para USD se a resolução falhar totalmente
 
       this.upsertVelozUserState({
         userId: config.userId,
@@ -2772,7 +2772,7 @@ export class AiService implements OnModuleInit {
         const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
         const finalToken = resolved.token;
         // ✅ [ZENIX v3.4] Usar a moeda resolvida (pode ser BTC, ETH, etc) em vez de forçar USD
-        const finalCurrency = resolved.currency || 'USD';
+        const finalCurrency = resolved.currency || 'USD'; // Garantir que resolved.currency seja priorizado
 
         // ✅ ZENIX v2.1: Se o token mudou, atualizar no banco para persistir a correção
         if (finalToken !== config.derivToken) {
@@ -3357,7 +3357,7 @@ export class AiService implements OnModuleInit {
       await this.executeDigitTradeOnDeriv({
         tradeId,
         derivToken: state.derivToken,
-        currency: state.currency || 'USD',
+        currency: state.currency || 'USD', // ZENIX v3.5
         stakeAmount,
         contractType,
       });

@@ -17,7 +17,7 @@ function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
   payoutCliente: number = 0.35,
-  currency: string = 'USD'
+  currency: string = 'USD' // Default inicial, deve ser sobrescrito pelo state real
 ): number {
   let aposta = 0;
   const minStake = getMinStakeByCurrency(currency);
@@ -259,7 +259,7 @@ export class AtlasStrategy implements IStrategy {
     const profitTargetNum = profitTarget != null ? Number(profitTarget) : null;
     const lossLimitNum = lossLimit != null ? Number(lossLimit) : null;
     const stopLossNormalized = lossLimitNum != null ? -Math.abs(lossLimitNum) : null;
-    const normalizedCurrency = (currency || 'USD').toUpperCase();
+    const normalizedCurrency = (currency || 'USD').toUpperCase(); // Fallback para USD apenas se realmente não houver nada
     const minStake = getMinStakeByCurrency(normalizedCurrency);
     const apostaInicial = entryValue != null ? Number(entryValue) : minStake;
 
@@ -1063,7 +1063,7 @@ export class AtlasStrategy implements IStrategy {
         amount: contractParams.amount,
         basis: 'stake',
         contract_type: contractParams.contract_type,
-        currency: contractParams.currency || 'USD',
+        currency: connection.authorizedCurrency || contractParams.currency || 'USD',
         duration: 1,
         duration_unit: 't',
         symbol: contractParams.symbol,
@@ -1135,11 +1135,11 @@ export class AtlasStrategy implements IStrategy {
         // Se o erro é de saldo insuficiente e o saldo reportado é muito baixo (< $1), 
         // provavelmente o token está apontando para a conta errada (Real vs Demo)
         if (isInsufficientBalance && reportedBalanceValue !== null && reportedBalanceValue < 1.00) {
-          this.logger.error(`[ATLAS][${symbol}] ⚠️ POSSÍVEL TOKEN MISMATCH: Esperava conta com saldo alto, mas API reportou ${formatCurrency(reportedBalanceValue, 'USD')}`);
+          this.logger.error(`[ATLAS][${symbol}] ⚠️ POSSÍVEL TOKEN MISMATCH: Esperava conta com saldo alto, mas API reportou ${formatCurrency(reportedBalanceValue, connection.authorizedCurrency || 'USD')}`);
           this.saveAtlasLog(userId, symbol, 'erro',
             `⚠️ ERRO DE CONFIGURAÇÃO DE CONTA\n` +
             `• O token salvo pode estar incorreto.\n` +
-            `• Saldo reportado: ${formatCurrency(reportedBalanceValue, 'USD')}\n` +
+            `• Saldo reportado: ${formatCurrency(reportedBalanceValue, connection.authorizedCurrency || 'USD')}\n` +
             `• SOLUÇÃO: Reconecte sua conta Deriv nas Configurações.`);
         } else {
           this.saveAtlasLog(userId, symbol, 'erro',
@@ -2149,6 +2149,7 @@ ${filtersText}
    */
   private async getOrCreateWebSocketConnection(token: string, userId?: string, symbol?: string): Promise<{
     ws: WebSocket;
+    authorizedCurrency: string | null;
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
     subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
@@ -2157,6 +2158,7 @@ ${filtersText}
     if (existing && existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
       return {
         ws: existing.ws,
+        authorizedCurrency: existing.authorizedCurrency,
         sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
         subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
           this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
@@ -2356,6 +2358,7 @@ ${filtersText}
     const conn = this.wsConnections.get(token)!;
     return {
       ws: conn.ws,
+      authorizedCurrency: conn.authorizedCurrency,
       sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
       subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
         this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
