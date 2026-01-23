@@ -123,6 +123,37 @@ export class AutonomousAgentController {
         };
       }
 
+      // Query user settings for fictitious balance
+      let fictitiousBalance = 0;
+      let isFictitiousBalanceActive = false;
+
+      try {
+        const userSettings = await this.agentService['dataSource'].query(
+          'SELECT fictitious_balance, is_fictitious_balance_active FROM user_settings WHERE user_id = ?',
+          [userId]
+        );
+
+        if (userSettings && userSettings.length > 0) {
+          fictitiousBalance = parseFloat(userSettings[0].fictitious_balance) || 0;
+          isFictitiousBalanceActive = userSettings[0].is_fictitious_balance_active === 1 || userSettings[0].is_fictitious_balance_active === true;
+        }
+      } catch (settingsError) {
+        this.logger.warn(`[GetConfig] Could not fetch user settings (non-critical):`, settingsError);
+      }
+
+      // Calculate adjusted initial balance
+      let adjustedInitialBalance = parseFloat(config.initial_balance) || 0;
+
+      // Check if account is demo (currency === 'DEMO' or token starts with 'VRT')
+      const isDemo = config.currency === 'DEMO' ||
+        config.deriv_token?.startsWith('VRT');
+
+      // Add fictitious balance if active and demo account
+      if (isFictitiousBalanceActive && isDemo && fictitiousBalance > 0) {
+        adjustedInitialBalance += fictitiousBalance;
+        this.logger.log(`[GetConfig] Added fictitious balance ${fictitiousBalance} to initial balance for user ${userId}`);
+      }
+
       // Converter snake_case para camelCase para o frontend
       const formattedConfig = {
         id: config.id,
@@ -136,7 +167,7 @@ export class AutonomousAgentController {
         symbol: config.symbol,
         agentType: config.agent_type,
         tradingMode: config.trading_mode,
-        initialBalance: parseFloat(config.initial_balance) || 0,
+        initialBalance: adjustedInitialBalance,
         sessionStatus: config.session_status,
         sessionDate: config.session_date,
         dailyProfit: parseFloat(config.daily_profit) || 0,
