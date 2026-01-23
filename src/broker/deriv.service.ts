@@ -15,7 +15,7 @@ type AggregatedBalances = {
   warnings: string[];
 };
 
-type DerivAccountResult = {
+export type DerivAccountResult = {
   loginid: string;
   currency: string;
   balance: { value: number; currency: string };

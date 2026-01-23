@@ -30,7 +30,7 @@ import {
 import { Type } from 'class-transformer';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
-import { DerivService } from './deriv.service';
+import { DerivService, DerivAccountResult } from './deriv.service';
 import { DerivWebSocketManagerService } from './deriv-websocket-manager.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull } from 'typeorm';
@@ -210,15 +210,7 @@ export class DerivController {
   }
 
   private buildResponse(
-    account: {
-      loginid?: string;
-      currency?: string;
-      balance?: any;
-      balancesByCurrency?: Record<string, number>;
-      balancesByCurrencyDemo?: Record<string, number>;
-      balancesByCurrencyReal?: Record<string, number>;
-      aggregatedBalances?: any;
-    },
+    account: Partial<DerivAccountResult> | null | undefined,
     preferredCurrency: string,
   ) {
     const currency = account?.currency ?? preferredCurrency;
@@ -247,7 +239,7 @@ export class DerivController {
       realAmount: account?.realAmount ?? 0,
       demoAmount: account?.demoAmount ?? 0,
       // Sempre incluir tokensByLoginId, mesmo que vazio
-      tokensByLoginId: (account && 'tokensByLoginId' in account && account.tokensByLoginId) ? account.tokensByLoginId : {},
+      tokensByLoginId: account?.tokensByLoginId ?? {},
     };
 
     // Log para debug - verificar se os campos estão presentes
