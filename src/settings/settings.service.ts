@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserRepository } from '../domain/repositories/user.repository';
-import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
+import { USER_REPOSITORY_TOKEN, DERIV_SERVICE } from '../constants/tokens';
 import { UserSettingsEntity } from '../infrastructure/database/entities/user-settings.entity';
 import { UserActivityLogEntity } from '../infrastructure/database/entities/user-activity-log.entity';
 import { UserSessionEntity } from '../infrastructure/database/entities/user-session.entity';
@@ -24,6 +24,7 @@ export class SettingsService {
     private readonly activityLogRepository: Repository<UserActivityLogEntity>,
     @InjectRepository(UserSessionEntity)
     private readonly sessionRepository: Repository<UserSessionEntity>,
+    @Inject(DERIV_SERVICE) private readonly derivService: any,
   ) { }
 
   async getSettings(userId: string) {
@@ -259,7 +260,13 @@ export class SettingsService {
         balance: targetBalance,
         raw: currentDerivInfo?.raw,
       });
-      this.logger.log(`[SettingsService] deriv_currency atualizado com sucesso`);
+
+      // Invalidar cache do DerivService para forçar reconexão com os novos dados
+      if (this.derivService && typeof this.derivService.clearSession === 'function') {
+        this.derivService.clearSession(userId);
+      }
+
+      this.logger.log(`[SettingsService] deriv_currency atualizado com sucesso e sessão invalidada`);
     }
 
     if (
@@ -385,6 +392,37 @@ export class SettingsService {
       { token },
       { lastActivity: new Date() },
     );
+  }
+
+  async updateDerivToken(userId: string, derivToken: string, tradeCurrency: string, ipAddress?: string, userAgent?: string) {
+    this.logger.log(`[SettingsService] updateDerivToken para usuário ${userId}, currency: ${tradeCurrency}`);
+
+    const isDemo = tradeCurrency === 'DEMO';
+    const updateData: any = {};
+
+    if (isDemo) {
+      updateData.tokenDemo = derivToken;
+      updateData.tokenDemoCurrency = 'USD'; // Padrão demo
+    } else {
+      updateData.tokenReal = derivToken;
+      updateData.tokenRealCurrency = tradeCurrency !== 'DEMO' ? tradeCurrency : 'USD';
+    }
+
+    // Se for real e não "DEMO", também atualizamos a derivCurrency
+    if (!isDemo) {
+      updateData.currency = tradeCurrency;
+    }
+
+    await this.userRepository.updateDerivInfo(userId, updateData);
+
+    // Invalidar cache do DerivService
+    if (this.derivService && typeof this.derivService.clearSession === 'function') {
+      this.derivService.clearSession(userId);
+    }
+
+    await this.logActivity(userId, 'UPDATE_DERIV_TOKEN', `Atualizou token Deriv para ${tradeCurrency}`, ipAddress, userAgent);
+
+    return { success: true, message: 'Token Deriv atualizado com sucesso' };
   }
 }
 

@@ -64,10 +64,12 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.delete(id);
   }
 
-  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string; realAmount?: number; demoAmount?: number }): Promise<void> {
-    const updateData: any = {
-      derivLoginId: info.loginId,
-    };
+  async updateDerivInfo(userId: string, info: { loginId?: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string; realAmount?: number; demoAmount?: number }): Promise<void> {
+    const updateData: any = {};
+
+    if (info.loginId !== undefined) {
+      updateData.derivLoginId = info.loginId;
+    }
 
     // Só atualizar currency se foi fornecido explicitamente
     if (info.currency !== undefined) {

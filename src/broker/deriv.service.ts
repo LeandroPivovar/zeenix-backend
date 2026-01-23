@@ -491,6 +491,11 @@ export class DerivService {
     return this.sessionStore.get(userId);
   }
 
+  clearSession(userId: string) {
+    this.logger.log(`[DerivService] Limpando sessão para usuário ${userId}`);
+    this.sessionStore.delete(userId);
+  }
+
   /**
    * Verifica email e envia código de verificação
    * Seguindo a documentação oficial da Deriv: https://deriv.com/

@@ -66,6 +66,14 @@ class UpdateSettingsDto {
   showDollarSign?: boolean;
 }
 
+class UpdateDerivTokenDto {
+  @IsString()
+  token: string;
+
+  @IsString()
+  tradeCurrency: string;
+}
+
 @Controller('settings')
 @UseGuards(AuthGuard('jwt'))
 export class SettingsController {
@@ -193,6 +201,18 @@ export class SettingsController {
     return await this.settingsService.updateSettings(
       userId,
       body,
+      this.getIpAddress(req),
+      this.getUserAgent(req)
+    );
+  }
+
+  @Post('deriv-token')
+  async updateDerivToken(@Req() req: any, @Body() body: UpdateDerivTokenDto) {
+    const userId = req.user.userId;
+    return await this.settingsService.updateDerivToken(
+      userId,
+      body.token,
+      body.tradeCurrency,
       this.getIpAddress(req),
       this.getUserAgent(req)
     );
