@@ -12,6 +12,8 @@ export class User {
     public readonly derivBalance?: string | null,
     public readonly tokenDemo?: string | null,
     public readonly tokenReal?: string | null,
+    public readonly tokenRealCurrency?: string | null,
+    public readonly tokenDemoCurrency?: string | null,
     public readonly derivRaw?: any | null,
     public readonly realAmount: number = 0,
     public readonly demoAmount: number = 0,
@@ -27,7 +29,7 @@ export class User {
     firstAccess: boolean = true,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, 0, 0, 'user');
+    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, 'user');
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -44,6 +46,8 @@ export class User {
       this.derivBalance,
       this.tokenDemo,
       this.tokenReal,
+      this.tokenRealCurrency,
+      this.tokenDemoCurrency,
       this.derivRaw,
       this.realAmount,
       this.demoAmount,
@@ -65,6 +69,8 @@ export class User {
       this.derivBalance,
       this.tokenDemo,
       this.tokenReal,
+      this.tokenRealCurrency,
+      this.tokenDemoCurrency,
       this.derivRaw,
       this.realAmount,
       this.demoAmount,

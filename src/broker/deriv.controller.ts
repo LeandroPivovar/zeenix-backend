@@ -365,14 +365,32 @@ export class DerivController {
       hasTokensByLoginId: !!accountForCurrency?.tokensByLoginId
     })}`);
     this.derivService.setSession(userId, sessionPayload);
-    // Identificar tipo de token para salvar (VRTC = Demo)
+    // Identificar tipo de token para salvar (VRTC = Demo) e extrair moedas
     const isDemo = preciseAccount.loginid?.startsWith('VRTC');
-    const tokenUpdates: { tokenDemo?: string; tokenReal?: string } = {};
+    const tokenUpdates: { tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string } = {};
 
     if (isDemo) {
       tokenUpdates.tokenDemo = token;
+      tokenUpdates.tokenDemoCurrency = preciseAccount.currency;
+
+      // Se tivermos as contas reais no raw, tentar achar a moeda real
+      if (account?.balancesByCurrencyReal) {
+        const realCurrencies = Object.keys(account.balancesByCurrencyReal);
+        if (realCurrencies.length > 0) {
+          tokenUpdates.tokenRealCurrency = realCurrencies[0];
+        }
+      }
     } else {
       tokenUpdates.tokenReal = token;
+      tokenUpdates.tokenRealCurrency = preciseAccount.currency;
+
+      // Se tivermos as contas demo no raw, tentar achar a moeda demo
+      if (account?.balancesByCurrencyDemo) {
+        const demoCurrencies = Object.keys(account.balancesByCurrencyDemo);
+        if (demoCurrencies.length > 0) {
+          tokenUpdates.tokenDemoCurrency = demoCurrencies[0];
+        }
+      }
     }
 
     await this.userRepository.updateDerivInfo(userId, {
@@ -384,7 +402,7 @@ export class DerivController {
       demoAmount: accountForCurrency.demoAmount,
       ...tokenUpdates
     });
-    this.logger.log(`[${source}] Dados iniciais salvos no banco para usuário ${userId}. Tokens salvos: ${JSON.stringify(Object.keys(tokenUpdates))}`);
+    this.logger.log(`[${source}] Dados iniciais salvos no banco para usuário ${userId}. Tokens salvos: ${JSON.stringify(Object.keys(tokenUpdates))}, DemoCurrency: ${tokenUpdates.tokenDemoCurrency}, RealCurrency: ${tokenUpdates.tokenRealCurrency}`);
 
     this.logger.log(
       `[${source}] Fazendo nova consulta à API Deriv para buscar saldo atualizado para usuário ${userId}...`,
@@ -607,14 +625,18 @@ export class DerivController {
 
       let tokenDemo: string | undefined;
       let tokenReal: string | undefined;
+      let tokenDemoCurrency: string | undefined;
+      let tokenRealCurrency: string | undefined;
 
-      // Iterar sobre accounts para extrair tokens demo e real
+      // Iterar sobre accounts para extrair tokens e moedas demo e real
       normalizedAccounts.forEach(account => {
         if (account.loginid?.startsWith('VRTC')) {
           tokenDemo = account.token;
+          tokenDemoCurrency = account.currency;
         } else {
           // Assumindo que qualquer outro é Real (CR, etc)
           tokenReal = account.token;
+          tokenRealCurrency = account.currency;
         }
       });
 
@@ -624,9 +646,11 @@ export class DerivController {
           loginId: derivInfo.loginId || result.loginid || selectedAccount.loginid,
           raw: derivInfo.raw,
           tokenDemo,
-          tokenReal
+          tokenReal,
+          tokenDemoCurrency,
+          tokenRealCurrency
         });
-        this.logger.log(`[CONNECT-OAUTH] Tokens armazenados para ${Object.keys(tokensByLoginId).length} contas. Demo: ${!!tokenDemo}, Real: ${!!tokenReal}`);
+        this.logger.log(`[CONNECT-OAUTH] Tokens armazenados para ${Object.keys(tokensByLoginId).length} contas. Demo: ${!!tokenDemo} (${tokenDemoCurrency}), Real: ${!!tokenReal} (${tokenRealCurrency})`);
       }
 
       return {

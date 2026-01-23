@@ -64,7 +64,7 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.delete(id);
   }
 
-  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; realAmount?: number; demoAmount?: number }): Promise<void> {
+  async updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string; realAmount?: number; demoAmount?: number }): Promise<void> {
     const updateData: any = {
       derivLoginId: info.loginId,
     };
@@ -94,6 +94,14 @@ export class TypeOrmUserRepository implements UserRepository {
       updateData.tokenReal = info.tokenReal;
     }
 
+    if (info.tokenRealCurrency !== undefined) {
+      updateData.tokenRealCurrency = info.tokenRealCurrency;
+    }
+
+    if (info.tokenDemoCurrency !== undefined) {
+      updateData.tokenDemoCurrency = info.tokenDemoCurrency;
+    }
+
     // Atualizar realAmount se fornecido
     if (info.realAmount !== undefined) {
       updateData.realAmount = info.realAmount;
@@ -107,10 +115,10 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.update(userId, updateData);
   }
 
-  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number } | null> {
+  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number; tokenRealCurrency: string | null; tokenDemoCurrency: string | null } | null> {
     const userEntity = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw', 'realAmount', 'demoAmount']
+      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw', 'realAmount', 'demoAmount', 'tokenRealCurrency', 'tokenDemoCurrency']
     });
     if (!userEntity) return null;
     return {
@@ -120,6 +128,8 @@ export class TypeOrmUserRepository implements UserRepository {
       raw: userEntity.derivRaw ?? null,
       realAmount: userEntity.realAmount ?? 0,
       demoAmount: userEntity.demoAmount ?? 0,
+      tokenRealCurrency: userEntity.tokenRealCurrency ?? null,
+      tokenDemoCurrency: userEntity.tokenDemoCurrency ?? null,
     };
   }
 
@@ -149,6 +159,8 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.derivBalance,
       entity.tokenDemo,
       entity.tokenReal,
+      entity.tokenRealCurrency,
+      entity.tokenDemoCurrency,
       entity.derivRaw,
       entity.realAmount,
       entity.demoAmount,
@@ -168,6 +180,8 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.role = domain.role;
     entity.createdAt = domain.createdAt;
     entity.updatedAt = domain.updatedAt;
+    entity.tokenRealCurrency = domain.tokenRealCurrency ?? null;
+    entity.tokenDemoCurrency = domain.tokenDemoCurrency ?? null;
     entity.realAmount = domain.realAmount;
     entity.demoAmount = domain.demoAmount;
     return entity;
