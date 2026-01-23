@@ -64,6 +64,12 @@ const createImageUploadOptions = (subfolder: string) =>
 
 const createVideoUploadOptions = () => createMediaUploadOptions(['lessons', 'videos'], ['video/'], 1024);
 
+const createMaterialUploadOptions = () => createMediaUploadOptions(
+  ['lessons', 'materials'],
+  ['application/', 'text/', 'image/'],
+  50
+);
+
 @Controller('courses')
 export class CoursesController {
   constructor(
@@ -87,6 +93,12 @@ export class CoursesController {
   @UseInterceptors(FileInterceptor('file', createVideoUploadOptions()))
   uploadLessonVideo(@UploadedFile() file: Express.Multer.File) {
     return this.handleUploadedFile(file, ['lessons', 'videos']);
+  }
+
+  @Post('lessons/upload/material')
+  @UseInterceptors(FileInterceptor('file', createMaterialUploadOptions()))
+  uploadMaterial(@UploadedFile() file: Express.Multer.File) {
+    return this.handleUploadedFile(file, ['lessons', 'materials']);
   }
 
   // Courses CRUD

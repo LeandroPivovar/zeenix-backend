@@ -340,6 +340,8 @@ export class CoursesService {
     const material = this.materialRepository.create({
       id: uuidv4(),
       ...createMaterialDto,
+      filePath: this.normalizeMediaPath(createMaterialDto.filePath),
+      link: this.normalizeMediaPath(createMaterialDto.link) || '',
     });
     return await this.materialRepository.save(material);
   }
@@ -347,7 +349,16 @@ export class CoursesService {
   async updateMaterial(id: string, updateMaterialDto: UpdateMaterialDto) {
     const material = await this.materialRepository.findOne({ where: { id } });
     if (!material) throw new NotFoundException('Material não encontrado');
-    Object.assign(material, updateMaterialDto);
+
+    const updateData: any = { ...updateMaterialDto };
+    if (updateMaterialDto.filePath !== undefined) {
+      updateData.filePath = this.normalizeMediaPath(updateMaterialDto.filePath);
+    }
+    if (updateMaterialDto.link !== undefined) {
+      updateData.link = this.normalizeMediaPath(updateMaterialDto.link) || '';
+    }
+
+    Object.assign(material, updateData);
     return await this.materialRepository.save(material);
   }
 
