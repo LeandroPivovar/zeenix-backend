@@ -7,6 +7,7 @@ import { StatsIAsService } from './stats-ias.service';
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
 import { AutonomousAgentService } from '../autonomous-agent/autonomous-agent.service';
+import { getMinStakeByCurrency, formatCurrency } from '../utils/currency.utils';
 
 export type DigitParity = 'PAR' | 'IMPAR';
 
@@ -1149,7 +1150,7 @@ export class AiService implements OnModuleInit {
     // Se atingiu take profit (stop win)
     if (config.profitTarget && config.sessionBalance >= config.profitTarget) {
       this.logger.warn(
-        `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: $${config.sessionBalance.toFixed(2)} >= Meta: $${config.profitTarget} - PARANDO IMEDIATAMENTE`,
+        `[Veloz][${state.userId}] 🎯 STOP WIN ATINGIDO! Saldo: ${formatCurrency(config.sessionBalance, state.currency)} >= Meta: ${formatCurrency(config.profitTarget, state.currency)} - PARANDO IMEDIATAMENTE`,
       );
       // Desativar imediatamente
       await this.checkAndEnforceLimits(state.userId);
@@ -1161,7 +1162,7 @@ export class AiService implements OnModuleInit {
     // Se atingiu stop loss
     if (config.lossLimit && config.sessionBalance <= -config.lossLimit) {
       this.logger.warn(
-        `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -$${Math.abs(config.sessionBalance).toFixed(2)} >= Limite: $${config.lossLimit} - PARANDO IMEDIATAMENTE`,
+        `[Veloz][${state.userId}] 🛑 STOP LOSS ATINGIDO! Saldo: -${formatCurrency(Math.abs(config.sessionBalance), state.currency)} >= Limite: ${formatCurrency(config.lossLimit, state.currency)} - PARANDO IMEDIATAMENTE`,
       );
       // Desativar imediatamente
       await this.checkAndEnforceLimits(state.userId);
@@ -1345,9 +1346,9 @@ export class AiService implements OnModuleInit {
     if (entry === 1) {
       // Primeira entrada: usar valor inicial
       if (state.apostaBase <= 0) {
-        state.apostaBase = state.capital || 0.35;
+        state.apostaBase = state.capital || getMinStakeByCurrency(state.currency);
       }
-      return Math.max(0.35, state.apostaBase); // Mínimo da Deriv: 0.35
+      return Math.max(getMinStakeByCurrency(state.currency), state.apostaBase); // ✅ Moeda dinâmica
     }
 
     if (entry === 2) {
@@ -1360,7 +1361,7 @@ export class AiService implements OnModuleInit {
         );
 
         if (apostaComSoros !== null) {
-          return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
+          return Math.max(getMinStakeByCurrency(state.currency), apostaComSoros); // ✅ Moeda dinâmica
         }
       }
       // Se não está no Soros, entrar em martingale
@@ -1376,7 +1377,7 @@ export class AiService implements OnModuleInit {
         );
 
         if (apostaComSoros !== null) {
-          return Math.max(0.35, apostaComSoros); // Mínimo da Deriv: 0.35
+          return Math.max(getMinStakeByCurrency(state.currency), apostaComSoros); // ✅ Moeda dinâmica
         }
       }
       // Se não está no Soros, entrar em martingale
@@ -1407,12 +1408,12 @@ export class AiService implements OnModuleInit {
 
     this.logger.debug(
       `[Veloz][Martingale ${state.modoMartingale.toUpperCase()}] ` +
-      `Perdas totais: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `Perdas totais: ${formatCurrency(state.perdaAcumulada, state.currency)} | ` +
       `Payout cliente: ${payoutCliente.toFixed(2)}% | ` +
-      `Próxima aposta: $${proximaAposta.toFixed(2)}`,
+      `Próxima aposta: ${formatCurrency(proximaAposta, state.currency)}`,
     );
 
-    return Math.max(0.35, proximaAposta); // Mínimo da Deriv: 0.35
+    return Math.max(getMinStakeByCurrency(state.currency), proximaAposta); // ✅ Moeda dinâmica
   }
 
 
@@ -1435,7 +1436,7 @@ export class AiService implements OnModuleInit {
     );
     const tradeId = insertResult.insertId;
 
-    this.logger.log(`[Veloz] Iniciando trade ${tradeId} | ${proposal} | $${stakeAmount} | entrada=${entry}`);
+    this.logger.log(`[Veloz] Iniciando trade ${tradeId} | ${proposal} | ${formatCurrency(stakeAmount, state.currency)} | entrada=${entry}`);
 
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
@@ -1774,11 +1775,11 @@ export class AiService implements OnModuleInit {
 
         if (recuperacaoReal < recuperacaoEsperada) {
           this.logger.warn(
-            `[Veloz][Martingale] ⚠️ Recuperação incompleta: esperado $${recuperacaoEsperada.toFixed(2)}, obtido $${recuperacaoReal.toFixed(2)}`,
+            `[Veloz][Martingale] ⚠️ Recuperação incompleta: esperado ${formatCurrency(recuperacaoEsperada, state.currency)}, obtido ${formatCurrency(recuperacaoReal, state.currency)}`,
           );
         } else {
           this.logger.log(
-            `[Veloz][Martingale] ✅ Recuperação completa: $${recuperacaoEsperada.toFixed(2)} recuperado`,
+            `[Veloz][Martingale] ✅ Recuperação completa: ${formatCurrency(recuperacaoEsperada, state.currency)} recuperado`,
           );
         }
       }
@@ -1797,7 +1798,7 @@ export class AiService implements OnModuleInit {
           state.ultimoLucro = result.profitLoss;
           this.logger.log(
             `[Veloz][Soros] ✅ Entrada 1 vitoriosa | Ativando Soros Nível 1 | ` +
-            `Próxima: $${stakeAmount.toFixed(2)} + $${result.profitLoss.toFixed(2)} = $${(stakeAmount + result.profitLoss).toFixed(2)}`,
+            `Próxima: ${formatCurrency(stakeAmount, state.currency)} + ${formatCurrency(result.profitLoss, state.currency)} = ${formatCurrency(stakeAmount + result.profitLoss, state.currency)}`,
           );
         } else if (entry === 2 && state.vitoriasConsecutivas === 1) {
           // Vitória no Soros nível 1: ativar Soros nível 2
@@ -1825,10 +1826,10 @@ export class AiService implements OnModuleInit {
 
       this.logger.log(
         `[Veloz][${state.modoMartingale.toUpperCase()}] ✅ VITÓRIA na ${entry}ª entrada! | ` +
-        `Ganho: $${result.profitLoss.toFixed(2)} | ` +
-        `Perda recuperada: $${state.perdaAcumulada.toFixed(2)} | ` +
-        `Lucro líquido: $${lucroLiquido.toFixed(2)} | ` +
-        `Capital: $${state.virtualCapital.toFixed(2)} | ` +
+        `Ganho: ${formatCurrency(result.profitLoss, state.currency)} | ` +
+        `Perda recuperada: ${formatCurrency(state.perdaAcumulada, state.currency)} | ` +
+        `Lucro líquido: ${formatCurrency(lucroLiquido, state.currency)} | ` +
+        `Capital: ${formatCurrency(state.virtualCapital, state.currency)} | ` +
         `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
       );
 
@@ -1836,14 +1837,14 @@ export class AiService implements OnModuleInit {
       this.saveLogAsync(state.userId, 'resultado', '🎉 VITÓRIA!');
       this.saveLogAsync(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
       this.saveLogAsync(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ✅`);
-      this.saveLogAsync(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'resultado', `Retorno: +$${(stakeAmount + result.profitLoss).toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'resultado', `Lucro: +$${result.profitLoss.toFixed(2)}`);
-      this.saveLogAsync(state.userId, 'resultado', `Capital: $${(state.virtualCapital - result.profitLoss).toFixed(2)} → $${state.virtualCapital.toFixed(2)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Investido: -${formatCurrency(stakeAmount, state.currency)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Retorno: +${formatCurrency(stakeAmount + result.profitLoss, state.currency)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Lucro: +${formatCurrency(result.profitLoss, state.currency)}`);
+      this.saveLogAsync(state.userId, 'resultado', `Capital: ${formatCurrency(state.virtualCapital - result.profitLoss, state.currency)} → ${formatCurrency(state.virtualCapital, state.currency)}`);
 
       if (entry > 1) {
         this.saveLogAsync(state.userId, 'resultado', `🔄 MARTINGALE RESETADO`);
-        this.saveLogAsync(state.userId, 'resultado', `Perda recuperada: +$${state.perdaAcumulada.toFixed(2)}`);
+        this.saveLogAsync(state.userId, 'resultado', `Perda recuperada: +${formatCurrency(state.perdaAcumulada, state.currency)}`);
       }
 
       // ✅ CORREÇÃO: Manter apostaBase e apostaInicial (não resetar para 0)
@@ -1856,7 +1857,7 @@ export class AiService implements OnModuleInit {
         state.vitoriasConsecutivas = 0;
         state.ultimoLucro = 0;
         // Próxima entrada será o valor inicial
-        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: ${formatCurrency(state.apostaBase, state.currency)} (entrada inicial)`);
         this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
         return;
       }
@@ -1869,10 +1870,10 @@ export class AiService implements OnModuleInit {
           state.vitoriasConsecutivas,
         );
         if (proximaApostaComSoros !== null) {
-          this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${proximaApostaComSoros.toFixed(2)} (Soros Nível ${state.vitoriasConsecutivas})`);
+          this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: ${formatCurrency(proximaApostaComSoros, state.currency)} (Soros Nível ${state.vitoriasConsecutivas})`);
         }
       } else {
-        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: $${state.apostaBase.toFixed(2)} (entrada inicial)`);
+        this.saveLogAsync(state.userId, 'resultado', `Próxima aposta: ${formatCurrency(state.apostaBase, state.currency)} (entrada inicial)`);
       }
 
       this.saveLogAsync(state.userId, 'info', '📡 Aguardando próximo sinal...');
@@ -1916,8 +1917,8 @@ export class AiService implements OnModuleInit {
     }
 
     this.logger.warn(
-      `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -$${stakeAmount.toFixed(2)} | ` +
-      `Perda acumulada: $${state.perdaAcumulada.toFixed(2)} | ` +
+      `[Veloz][${state.modoMartingale.toUpperCase()}] ❌ PERDA na ${entry}ª entrada: -${formatCurrency(stakeAmount, state.currency)} | ` +
+      `Perda acumulada: ${formatCurrency(state.perdaAcumulada, state.currency)} | ` +
       `Vitórias consecutivas: ${state.vitoriasConsecutivas}`,
     );
 
@@ -1925,9 +1926,9 @@ export class AiService implements OnModuleInit {
     this.saveLog(state.userId, 'resultado', '❌ DERROTA');
     this.saveLog(state.userId, 'resultado', `Operação #${tradeId}: ${proposal}`);
     this.saveLog(state.userId, 'resultado', `Resultado: ${Math.floor(result.exitPrice) % 10} ❌`);
-    this.saveLog(state.userId, 'resultado', `Investido: -$${stakeAmount.toFixed(2)}`);
-    this.saveLog(state.userId, 'resultado', `Perda: $${result.profitLoss.toFixed(2)}`);
-    this.saveLog(state.userId, 'resultado', `Perda acumulada: -$${state.perdaAcumulada.toFixed(2)}`);
+    this.saveLog(state.userId, 'resultado', `Investido: -${formatCurrency(stakeAmount, state.currency)}`);
+    this.saveLog(state.userId, 'resultado', `Perda: ${formatCurrency(result.profitLoss, state.currency)}`);
+    this.saveLog(state.userId, 'resultado', `Perda acumulada: -${formatCurrency(state.perdaAcumulada, state.currency)}`);
 
     // ✅ ZENIX v2.0: Verificar limite ANTES de incrementar e calcular próxima aposta
     // Conservador: máximo 5 entradas (entry 1-5, reseta quando chegar em 5)
@@ -2703,7 +2704,8 @@ export class AiService implements OnModuleInit {
       // ✅ ZENIX v2.0: Resolver conta antes de sincronizar/restaurar
       const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
       const finalToken = resolved.token;
-      const finalCurrency = resolved.isVirtual ? 'USD' : (config.currency === 'DEMO' || !config.currency ? 'USD' : config.currency);
+      // ✅ [ZENIX v3.4] Usar a moeda resolvida (pode ser BTC, ETH, etc) em vez de forçar USD
+      const finalCurrency = resolved.currency || 'USD';
 
       this.upsertVelozUserState({
         userId: config.userId,
@@ -2769,7 +2771,8 @@ export class AiService implements OnModuleInit {
         // ✅ ZENIX v2.0: Resolver conta antes de sincronizar/restaurar
         const resolved = await this.resolveDerivAccount(config.userId, config.derivToken, config.currency);
         const finalToken = resolved.token;
-        const finalCurrency = resolved.isVirtual ? 'USD' : (config.currency === 'DEMO' || !config.currency ? 'USD' : config.currency);
+        // ✅ [ZENIX v3.4] Usar a moeda resolvida (pode ser BTC, ETH, etc) em vez de forçar USD
+        const finalCurrency = resolved.currency || 'USD';
 
         // ✅ ZENIX v2.1: Se o token mudou, atualizar no banco para persistir a correção
         if (finalToken !== config.derivToken) {
@@ -2784,7 +2787,7 @@ export class AiService implements OnModuleInit {
           await this.strategyManager.activateUser(config.userId, 'atlas', {
             mode: config.mode || 'veloz',
             stakeAmount: Number(config.stakeAmount) || 0,
-            entryValue: Number(config.entryValue) || 0.35,
+            entryValue: Number(config.entryValue) || getMinStakeByCurrency(finalCurrency),
             derivToken: finalToken,
             currency: finalCurrency,
             modoMartingale: config.modoMartingale || 'conservador',
@@ -2822,7 +2825,7 @@ export class AiService implements OnModuleInit {
     modoMartingale?: ModoMartingale;
   }) {
     const { userId, stakeAmount, entryValue, derivToken, currency, modoMartingale = 'conservador' } = params;
-    const apostaInicial = entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
+    const apostaInicial = entryValue || getMinStakeByCurrency(currency); // ✅ Moeda dinâmica
 
     this.logger.log(
       `[UpsertVelozState] userId=${userId} | capital=${stakeAmount} | currency=${currency} | martingale=${modoMartingale}`,
@@ -4051,11 +4054,8 @@ export class AiService implements OnModuleInit {
 
     // Atualizar variáveis com valores resolvidos
     const finalToken = resolvedAccount.token;
-    // Se foi resolvido para virtual e a moeda pedida não era MEMO/DEMO, 
-    // precisamos ajustar a moeda gravada no banco para não confundir o frontend?
-    // O frontend costuma enviar 'USD' ou 'DEMO'.
-    // Se resolveDerivAccount retornou isVirtual=true, vamos tratar como 'DEMO' para logs, mas 'USD' para deriv
-    const finalCurrency = resolvedAccount.isVirtual ? 'USD' : (currency === 'DEMO' || !currency ? 'USD' : currency);
+    // ✅ [ZENIX v3.4] Usar a moeda resolvida (pode ser BTC, ETH, etc) em vez de forçar USD
+    const finalCurrency = resolvedAccount.currency || 'USD';
     // Nota: O 'currency' gravado no banco costuma ser 'USD' mesmo para demo, mas vamos manter coerência.
 
     // Se houve troca forçada, logar aviso claro
@@ -4064,7 +4064,7 @@ export class AiService implements OnModuleInit {
     }
 
     // ✅ Normalizar moeda (DEMO não é uma moeda válida para a Deriv, usar USD como padrão para contas virtuais)
-    const normalizedCurrency = (finalCurrency === 'DEMO' || !finalCurrency) ? 'USD' : finalCurrency;
+    const normalizedCurrency = finalCurrency;
 
     this.logger.log(
       `[ActivateAI] userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency} (original: ${currency}) | mode=${mode} | martingale=${modoMartingale} | strategy=${strategy} | symbol=${symbol}`,
@@ -4117,7 +4117,7 @@ export class AiService implements OnModuleInit {
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
          VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || 0.35, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -4132,7 +4132,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || 0.35, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
             );
           } catch (error2: any) {
             // Se entry_value também não existir
@@ -4183,12 +4183,12 @@ export class AiService implements OnModuleInit {
 
     if ((mode || '').toLowerCase() === 'veloz') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
+        `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount} | entryValue=${entryValue || getMinStakeByCurrency(normalizedCurrency)}`,
       );
       this.upsertVelozUserState({
         userId,
         stakeAmount,
-        entryValue: entryValue || 0.35, // ✅ Passar entryValue
+        entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
         derivToken: finalToken,
         currency: normalizedCurrency,
       });
@@ -4196,12 +4196,12 @@ export class AiService implements OnModuleInit {
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'moderado') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
+        `[ActivateAI] Sincronizando estado Moderado | stake=${stakeAmount} | entryValue=${entryValue || getMinStakeByCurrency(normalizedCurrency)}`,
       );
       this.upsertModeradoUserState({
         userId,
         stakeAmount,
-        entryValue: entryValue || 0.35, // ✅ Passar entryValue
+        entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
         derivToken: finalToken,
         currency: normalizedCurrency,
       });
@@ -4209,12 +4209,12 @@ export class AiService implements OnModuleInit {
       this.removePrecisoUserState(userId);
     } else if ((mode || '').toLowerCase() === 'preciso') {
       this.logger.log(
-        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount} | entryValue=${entryValue || 0.35}`,
+        `[ActivateAI] Sincronizando estado Preciso | stake=${stakeAmount} | entryValue=${entryValue || getMinStakeByCurrency(normalizedCurrency)}`,
       );
       this.upsertPrecisoUserState({
         userId,
         stakeAmount,
-        entryValue: entryValue || 0.35, // ✅ Passar entryValue
+        entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
         derivToken: finalToken,
         currency: normalizedCurrency,
       });
@@ -4233,7 +4233,7 @@ export class AiService implements OnModuleInit {
         await this.strategyManager.activateUser(userId, strategy, {
           mode: mode || 'veloz',
           stakeAmount, // Capital total da conta
-          entryValue: entryValue || 0.35, // ✅ Valor de entrada por operação (padrão: 0.35)
+          entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
           derivToken: finalToken, // ✅ USAR TOKEN RESOLVIDO (finalToken) e não o argumento (derivToken)
           currency: normalizedCurrency,
           modoMartingale: modoMartingale || 'conservador',
@@ -4321,8 +4321,9 @@ export class AiService implements OnModuleInit {
     const values: any[] = [];
 
     if (stakeAmount !== undefined) {
-      if (stakeAmount < 0.35) {
-        throw new Error('Valor de entrada deve ser no mínimo $0.35');
+      // Permite valores menores para cripto (BTC, etc)
+      if (stakeAmount <= 0) {
+        throw new Error('Valor de entrada deve ser maior que zero');
       }
       updates.push('stake_amount = ?');
       values.push(stakeAmount);
@@ -4442,7 +4443,7 @@ export class AiService implements OnModuleInit {
         userId,
         isActive: false,
         stakeAmount: 10,
-        entryValue: 0.35, // ✅ Valor padrão de entrada
+        entryValue: getMinStakeByCurrency('USD'), // ✅ Moeda dinâmica (padrão USD)
         currency: 'USD',
         mode: 'veloz',
         strategy: 'orion', // ✅ Estratégia padrão
@@ -4462,7 +4463,8 @@ export class AiService implements OnModuleInit {
     const config = result[0];
     // ✅ Garantir que entryValue tenha um valor padrão se não existir
     if (config && (config.entryValue === null || config.entryValue === undefined)) {
-      config.entryValue = 0.35;
+      const currency = config.currency || 'USD';
+      config.entryValue = getMinStakeByCurrency(currency);
     }
     // ✅ Garantir que strategy tenha um valor padrão se não existir
     if (config && (!config.strategy || config.strategy === null)) {
@@ -6570,11 +6572,14 @@ export class AiService implements OnModuleInit {
           `[SyncModerado] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
         );
 
+        // ✅ [ZENIX v3.4] Resolver conta para garantir moeda correta (BTC, etc)
+        const resolved = await this.resolveDerivAccount(user.userId, user.derivToken, user.currency);
+
         this.upsertModeradoUserState({
           userId: user.userId,
           stakeAmount: parseFloat(user.stakeAmount),
-          derivToken: user.derivToken,
-          currency: user.currency,
+          derivToken: resolved.token,
+          currency: resolved.currency || 'USD',
           modoMartingale: user.modoMartingale || 'conservador',
         });
       }
@@ -6595,7 +6600,7 @@ export class AiService implements OnModuleInit {
     modoMartingale?: ModoMartingale;
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
-    const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
+    const apostaInicial = params.entryValue || getMinStakeByCurrency(params.currency); // ✅ Moeda dinâmica
 
     this.logger.log(
       `[UpsertModeradoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,
@@ -7363,11 +7368,14 @@ export class AiService implements OnModuleInit {
           `[SyncPreciso] Lido do banco: userId=${user.userId} | stake=${user.stakeAmount} | martingale=${user.modoMartingale}`,
         );
 
+        // ✅ [ZENIX v3.4] Resolver conta para garantir moeda correta (BTC, etc)
+        const resolved = await this.resolveDerivAccount(user.userId, user.derivToken, user.currency);
+
         this.upsertPrecisoUserState({
           userId: user.userId,
           stakeAmount: parseFloat(user.stakeAmount),
-          derivToken: user.derivToken,
-          currency: user.currency,
+          derivToken: resolved.token,
+          currency: resolved.currency || 'USD',
           modoMartingale: user.modoMartingale || 'conservador',
         });
       }
@@ -7388,7 +7396,7 @@ export class AiService implements OnModuleInit {
     modoMartingale?: ModoMartingale;
   }): void {
     const modoMartingale = params.modoMartingale || 'conservador';
-    const apostaInicial = params.entryValue || 0.35; // ✅ Usar entryValue se fornecido, senão 0.35
+    const apostaInicial = params.entryValue || getMinStakeByCurrency(params.currency); // ✅ Moeda dinâmica
 
     this.logger.log(
       `[UpsertPrecisoState] userId=${params.userId} | capital=${params.stakeAmount} | currency=${params.currency} | martingale=${modoMartingale}`,

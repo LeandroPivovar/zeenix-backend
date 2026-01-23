@@ -6,6 +6,10 @@ import { TradeEventsService } from '../trade-events.service';
 
 import { IStrategy, ModeConfig, ATLAS_VELOZ_CONFIG, ATLAS_NORMAL_CONFIG, ATLAS_LENTO_CONFIG, ModoMartingale } from './common.types';
 import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+import { getMinStakeByCurrency, formatCurrency } from '../../utils/currency.utils';
+
+// ✅ [ZENIX v3.4] Suporte para moedas dinâmicas (BTC, etc)
+// Removidas funções locais, usando currency.utils.ts
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
 // Atualizado: Payout ajustado para 0.92 (95% - 3% markup = 92%)
@@ -13,8 +17,10 @@ function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
   payoutCliente: number = 0.35,
+  currency: string = 'USD'
 ): number {
   let aposta = 0;
+  const minStake = getMinStakeByCurrency(currency);
 
   // Ajuste do payout se vier como porcentagem (ex: 92)
   const payout = payoutCliente > 1 ? payoutCliente / 100 : payoutCliente;
@@ -34,7 +40,8 @@ function calcularProximaApostaAtlas(
       break;
   }
 
-  return Math.max(0.35, Math.round(aposta * 100) / 100);
+  const decimals = ['BTC', 'ETH'].includes(currency.toUpperCase()) ? 8 : 2;
+  return Math.max(minStake, Math.round(aposta * Math.pow(10, decimals)) / Math.pow(10, decimals));
 }
 
 // ✅ ATLAS: Estado do usuário
@@ -252,7 +259,9 @@ export class AtlasStrategy implements IStrategy {
     const profitTargetNum = profitTarget != null ? Number(profitTarget) : null;
     const lossLimitNum = lossLimit != null ? Number(lossLimit) : null;
     const stopLossNormalized = lossLimitNum != null ? -Math.abs(lossLimitNum) : null;
-    const apostaInicial = entryValue != null ? Number(entryValue) : 0.35;
+    const normalizedCurrency = (currency || 'USD').toUpperCase();
+    const minStake = getMinStakeByCurrency(normalizedCurrency);
+    const apostaInicial = entryValue != null ? Number(entryValue) : minStake;
 
     const { isNew, hasConfigChanges } = this.upsertAtlasUserState({
       userId,
@@ -667,7 +676,7 @@ export class AtlasStrategy implements IStrategy {
       // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
         this.saveAtlasLog(state.userId, symbol, 'info',
-          `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
+          `🎯 META DE LUCRO ATINGIDA! Lucro: ${formatCurrency(lucroAtual, state.currency)} | Meta: ${formatCurrency(profitTarget, state.currency)} - IA DESATIVADA`
         );
 
         await this.dataSource.query(
@@ -701,7 +710,7 @@ export class AtlasStrategy implements IStrategy {
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
             this.saveAtlasLog(state.userId, symbol, 'info',
-              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${currentPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
+              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
             );
           }
         }
@@ -712,8 +721,8 @@ export class AtlasStrategy implements IStrategy {
 
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
-            this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroFinal.toFixed(2)} - IA DESATIVADA`
+            this.saveAtlasLog(state.userId, symbol, 'info',
+              `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
             );
 
             await this.dataSource.query(
@@ -742,7 +751,7 @@ export class AtlasStrategy implements IStrategy {
       const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
       if (lossLimit > 0 && perdaAtual >= lossLimit) {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`
+          `🛑 STOP LOSS ATINGIDO! Perda: ${formatCurrency(perdaAtual, state.currency)} | Limite: ${formatCurrency(lossLimit, state.currency)} - IA DESATIVADA`
         );
 
         await this.dataSource.query(
@@ -781,7 +790,7 @@ export class AtlasStrategy implements IStrategy {
         const payout = isPriceAction ? 0.92 : 0.35;
 
         const perdas = state.perdaAcumulada;
-        stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout);
+        stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout, state.currency);
 
         // ✅ LOG PADRONIZADO V2: Martingale
         this.logMartingaleLevelV2(state.userId, {
@@ -802,8 +811,8 @@ export class AtlasStrategy implements IStrategy {
         if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
           this.saveAtlasLog(state.userId, symbol, 'alerta',
             `🛡️ [MODO SOBREVIVÊNCIA]\n` +
-            `• Motivo: Stake do Martingale ($${stakeAmount.toFixed(2)}) excede Stop Loss.\n` +
-            `• Ação: Ajustando para stake disponível ($${stopLossDisponivel.toFixed(2)}).`);
+            `• Motivo: Stake do Martingale (${formatCurrency(stakeAmount, state.currency)}) excede Stop Loss.\n` +
+            `• Ação: Ajustando para stake disponível (${formatCurrency(stopLossDisponivel, state.currency)}).`);
 
           stakeAmount = stopLossDisponivel;
         }
@@ -817,7 +826,9 @@ export class AtlasStrategy implements IStrategy {
         });
       }
 
-      stakeAmount = Math.max(0.35, Number(stakeAmount.toFixed(2)));
+      const minStake = getMinStakeByCurrency(state.currency);
+      const decimals = ['BTC', 'ETH'].includes(state.currency.toUpperCase()) ? 8 : 2;
+      stakeAmount = Math.max(minStake, Number(stakeAmount.toFixed(decimals)));
 
       // GESTÃO DE RISCO - Clamping
       let minAllowedBalance = 0.0;
@@ -844,20 +855,20 @@ export class AtlasStrategy implements IStrategy {
         let adjustedStake = state.capital - minAllowedBalance;
         adjustedStake = Math.round(adjustedStake * 100) / 100;
 
-        if (adjustedStake < 0.35) {
+        if (adjustedStake < minStake) {
           this.saveAtlasLog(state.userId, symbol, 'alerta',
             `🛡️ [MODO SOBREVIVÊNCIA]\n` +
             `• Motivo: Sem margem de risco para Martingale.\n` +
-            `• Ação: Resetando para Stake Base ($${state.apostaBase.toFixed(2)}) para continuar operando.`);
+            `• Ação: Resetando para Stake Base (${formatCurrency(state.apostaBase, state.currency)}) para continuar operando.`);
 
           state.martingaleStep = 0;
           state.perdaAcumulada = 0;
           state.isInRecovery = false;
           stakeAmount = state.apostaBase;
         } else {
-          if (adjustedStake !== stakeAmount) {
+          if (Math.abs(adjustedStake - stakeAmount) > 1e-10) {
             this.saveAtlasLog(state.userId, symbol, 'alerta',
-              `⚠️ [PRECISÃO] Stake ajustada de $${stakeAmount.toFixed(2)} para $${adjustedStake.toFixed(2)} para respeitar ${limitType}`);
+              `⚠️ [PRECISÃO] Stake ajustada de ${formatCurrency(stakeAmount, state.currency)} para ${formatCurrency(adjustedStake, state.currency)} para respeitar ${limitType}`);
             stakeAmount = adjustedStake;
           }
         }
@@ -879,7 +890,7 @@ export class AtlasStrategy implements IStrategy {
 
       this.logger.log(
         `[ATLAS][${symbol}] 🎲 EXECUTANDO | User: ${state.userId} | ` +
-        `Operação: ${operation} | Stake: $${stakeAmount.toFixed(2)} | ` +
+        `Operação: ${operation} | Stake: ${formatCurrency(stakeAmount, state.currency)} | ` +
         `Recovery: ${state.isInRecovery ? `M${state.martingaleStep}` : 'Não'} | ` +
         `Soros: ${state.isInSoros ? `Nível ${state.vitoriasConsecutivas}` : 'Não'}`,
       );
@@ -996,7 +1007,7 @@ export class AtlasStrategy implements IStrategy {
           exitPrice,
         });
 
-        this.logger.log(`[ATLAS][${symbol}] ${confirmedStatus} | User: ${state.userId} | P&L: $${profit.toFixed(2)}`);
+        this.logger.log(`[ATLAS][${symbol}] ${confirmedStatus} | User: ${state.userId} | P&L: ${formatCurrency(profit, state.currency)}`);
 
         await this.processAtlasResult(state, symbol, confirmedStatus === 'WON', stakeAmount, operation, profit, exitPrice, tradeId);
 
@@ -1124,11 +1135,11 @@ export class AtlasStrategy implements IStrategy {
         // Se o erro é de saldo insuficiente e o saldo reportado é muito baixo (< $1), 
         // provavelmente o token está apontando para a conta errada (Real vs Demo)
         if (isInsufficientBalance && reportedBalanceValue !== null && reportedBalanceValue < 1.00) {
-          this.logger.error(`[ATLAS][${symbol}] ⚠️ POSSÍVEL TOKEN MISMATCH: Esperava conta com saldo alto, mas API reportou $${reportedBalanceValue}`);
+          this.logger.error(`[ATLAS][${symbol}] ⚠️ POSSÍVEL TOKEN MISMATCH: Esperava conta com saldo alto, mas API reportou ${formatCurrency(reportedBalanceValue, 'USD')}`);
           this.saveAtlasLog(userId, symbol, 'erro',
             `⚠️ ERRO DE CONFIGURAÇÃO DE CONTA\n` +
             `• O token salvo pode estar incorreto.\n` +
-            `• Saldo reportado: $${reportedBalanceValue}\n` +
+            `• Saldo reportado: ${formatCurrency(reportedBalanceValue, 'USD')}\n` +
             `• SOLUÇÃO: Reconecte sua conta Deriv nas Configurações.`);
         } else {
           this.saveAtlasLog(userId, symbol, 'erro',
@@ -1378,7 +1389,7 @@ export class AtlasStrategy implements IStrategy {
           `🛑 LIMITE DE RECUPERAÇÃO ATINGIDO\n` +
           `• Motivo: 7 Perdas Consecutivas.\n` +
           `• Ação: Resetando ciclo de martingale.\n` +
-          `• Perda Total: $${state.perdaAcumulada.toFixed(2)}`);
+          `• Perda Total: ${formatCurrency(state.perdaAcumulada, state.currency)}`);
 
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
@@ -1460,13 +1471,13 @@ export class AtlasStrategy implements IStrategy {
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
       this.saveAtlasLog(state.userId, symbol, 'info',
-        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`
+        `🎯 META DE LUCRO ATINGIDA! Lucro: ${formatCurrency(lucroAtual, state.currency)} | Meta: ${formatCurrency(profitTarget, state.currency)} - IA DESATIVADA`
       );
 
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
          WHERE user_id = ? AND is_active = 1`,
-        [`Meta de lucro atingida: +$${lucroAtual.toFixed(2)}`, state.userId],
+        [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, state.userId],
       );
 
       this.tradeEvents.emit({
@@ -1493,14 +1504,14 @@ export class AtlasStrategy implements IStrategy {
 
         if (capitalSessao <= stopBlindado) {
           const lucroFinal = capitalSessao - capitalInicial;
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroFinal.toFixed(2)} - IA DESATIVADA`
+          this.saveAtlasLog(state.userId, symbol, 'info',
+            `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
           );
 
           await this.dataSource.query(
             `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
              WHERE user_id = ? AND is_active = 1`,
-            [`Stop Blindado: +$${lucroFinal.toFixed(2)}`, state.userId],
+            [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
           this.tradeEvents.emit({
@@ -1523,13 +1534,13 @@ export class AtlasStrategy implements IStrategy {
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
       this.saveAtlasLog(state.userId, symbol, 'alerta',
-        `🛑 STOP LOSS ATINGIDO! Perda: $${perdaAtual.toFixed(2)} | Limite: $${lossLimit.toFixed(2)} - IA DESATIVADA`
+        `🛑 STOP LOSS ATINGIDO! Perda: ${formatCurrency(perdaAtual, state.currency)} | Limite: ${formatCurrency(lossLimit, state.currency)} - IA DESATIVADA`
       );
 
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
          WHERE user_id = ? AND is_active = 1`,
-        [`Stop Loss atingido: -$${perdaAtual.toFixed(2)}`, state.userId],
+        [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
       );
 
       this.tradeEvents.emit({
@@ -1618,7 +1629,8 @@ export class AtlasStrategy implements IStrategy {
     }
 
     // Criar novo estado
-    const apostaInicial = params.apostaInicial || 0.35;
+    const minStake = getMinStakeByCurrency(params.currency);
+    const apostaInicial = params.apostaInicial || minStake;
 
     this.atlasUsers.set(params.userId, {
       userId: params.userId,
@@ -1916,11 +1928,13 @@ export class AtlasStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | ⚙️ Configurações Iniciais
 • Modo: ${config.operationMode}
 • Perfil: ${config.riskProfile}
-• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
-• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}
+• Meta: ${config.profitTarget > 0 ? formatCurrency(config.profitTarget, currency) : 'N/A'}
+• Stop Loss: ${config.stopLoss > 0 ? formatCurrency(config.stopLoss, currency) : 'N/A'}
 • Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
@@ -1934,9 +1948,11 @@ export class AtlasStrategy implements IStrategy {
     mode: string;
     strategyName: string;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | 📡 Início de Sessão
-• Saldo Inicial: $${session.initialBalance.toFixed(2)}
-• Meta do Dia: $${session.profitTarget.toFixed(2)}
+• Saldo Inicial: ${formatCurrency(session.initialBalance, currency)}
+• Meta do Dia: ${formatCurrency(session.profitTarget, currency)}
 • Status: Monitorando Mercado`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
@@ -1981,10 +1997,12 @@ ${filtersText}
     stake: number;
     balance: number;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const emoji = result.status === 'WIN' ? '✅' : '❌';
     const message = `❄️ ATLAS | ${emoji} Resultado: ${result.status}
-• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
-• Saldo: $${result.balance.toFixed(2)}`;
+• Lucro/Perda: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
+• Saldo: ${formatCurrency(result.balance, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
@@ -1997,8 +2015,10 @@ ${filtersText}
     profitPercentage: number;
     contractType: string;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | 🔄 Martingale Nível ${martingale.level}
-• Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
+• Próxima Stake: ${formatCurrency(martingale.calculatedStake, currency)}
 • Objetivo: Recuperação`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
@@ -2009,12 +2029,14 @@ ${filtersText}
     stakeBase: number;
     level?: number;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const level = soros.level || 1;
     const newStake = soros.stakeBase + soros.previousProfit;
 
     const message = `❄️ ATLAS | 🚀 Soros Nível ${level}
-• Lucro Anterior: $${soros.previousProfit.toFixed(2)}
-• Nova Stake: $${newStake.toFixed(2)}`;
+• Lucro Anterior: ${formatCurrency(soros.previousProfit, currency)}
+• Nova Stake: ${formatCurrency(newStake, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
@@ -2024,8 +2046,10 @@ ${filtersText}
     accumulatedProfit: number;
     currentStake: number;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
-• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
+• Lucro Acumulado: ${formatCurrency(streak.accumulatedProfit, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
@@ -2036,8 +2060,10 @@ ${filtersText}
     profitPercentage: number;
     stakeBase: number;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | 🛡️ Recuperação Concluída
-• Recuperado: $${recovery.recoveredLoss.toFixed(2)}
+• Recuperado: ${formatCurrency(recovery.recoveredLoss, currency)}
 • Ação: Retornando à Stake Base`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
@@ -2046,8 +2072,10 @@ ${filtersText}
   private logConservativeReset(userId: string, reset: {
     stakeBase: number;
   }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `❄️ ATLAS | ⚠️ Limite de Recuperação (Conservador)
-• Ação: Resetando para Stake Base ($${reset.stakeBase.toFixed(2)})`;
+• Ação: Resetando para Stake Base (${formatCurrency(reset.stakeBase, currency)})`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
