@@ -8,7 +8,7 @@ export interface UserRepository {
   findAll(): Promise<User[]>;
   update(user: User): Promise<User>;
   delete(id: string): Promise<void>;
-  updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string }): Promise<void>;
-  getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any } | null>;
+  updateDerivInfo(userId: string, info: { loginId: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; realAmount?: number; demoAmount?: number }): Promise<void>;
+  getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number } | null>;
   clearDerivInfo(userId: string): Promise<void>;
 }

@@ -10,6 +10,7 @@ export class CreateMaterialDto {
   @IsEnum(['PDF', 'DOC', 'XLS', 'PPT', 'LINK', 'OTHER'])
   type: string;
 
+  @IsOptional()
   @IsString()
   link: string;
 

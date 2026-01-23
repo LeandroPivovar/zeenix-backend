@@ -55,6 +55,12 @@ export class UserEntity {
   @Column({ type: 'decimal', precision: 36, scale: 18, nullable: true, name: 'deriv_balance' })
   derivBalance?: string | null;
 
+  @Column({ type: 'decimal', precision: 36, scale: 18, default: 0, name: 'real_amount' })
+  realAmount: number;
+
+  @Column({ type: 'decimal', precision: 36, scale: 18, default: 0, name: 'demo_amount' })
+  demoAmount: number;
+
   @Column({ type: 'json', nullable: true, name: 'deriv_raw' })
   derivRaw?: any | null;
 

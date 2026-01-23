@@ -244,12 +244,14 @@ export class DerivController {
       balancesByCurrencyDemo: account?.balancesByCurrencyDemo ?? {},
       balancesByCurrencyReal: account?.balancesByCurrencyReal ?? {},
       aggregatedBalances: account?.aggregatedBalances ?? null,
+      realAmount: account?.realAmount ?? 0,
+      demoAmount: account?.demoAmount ?? 0,
       // Sempre incluir tokensByLoginId, mesmo que vazio
       tokensByLoginId: (account && 'tokensByLoginId' in account && account.tokensByLoginId) ? account.tokensByLoginId : {},
     };
 
     // Log para debug - verificar se os campos estão presentes
-    this.logger.log(`[DerivController] buildResponse - balancesByCurrencyDemo: ${JSON.stringify(response.balancesByCurrencyDemo)}, balancesByCurrencyReal: ${JSON.stringify(response.balancesByCurrencyReal)}, hasTokensByLoginId: ${!!response.tokensByLoginId}`);
+    this.logger.log(`[DerivController] buildResponse - realAmount: ${response.realAmount}, demoAmount: ${response.demoAmount}, balancesByCurrencyDemo: ${JSON.stringify(response.balancesByCurrencyDemo)}, balancesByCurrencyReal: ${JSON.stringify(response.balancesByCurrencyReal)}, hasTokensByLoginId: ${!!response.tokensByLoginId}`);
 
     return response;
   }
@@ -337,7 +339,23 @@ export class DerivController {
       balancesByCurrencyReal: account?.balancesByCurrencyReal,
       aggregatedBalances: account?.aggregatedBalances,
       tokensByLoginId,
+      realAmount: 0,
+      demoAmount: 0,
     };
+
+    // Calcular saldo demo total
+    if (accountForCurrency.balancesByCurrencyDemo) {
+      accountForCurrency.demoAmount = Object.values(accountForCurrency.balancesByCurrencyDemo as Record<string, number>)
+        .reduce((sum, val) => sum + (val || 0), 0);
+    }
+
+    // Identificar o maior saldo real
+    if (accountForCurrency.balancesByCurrencyReal) {
+      const realBalances = Object.values(accountForCurrency.balancesByCurrencyReal as Record<string, number>);
+      if (realBalances.length > 0) {
+        accountForCurrency.realAmount = Math.max(...realBalances);
+      }
+    }
 
     const sessionPayload = {
       ...this.buildResponse(accountForCurrency, preferredCurrency),
@@ -370,6 +388,8 @@ export class DerivController {
       currency: sessionPayload.currency ?? accountForCurrency.currency,
       balance: sessionPayload.balance?.value ?? undefined,
       raw: accountForCurrency,
+      realAmount: accountForCurrency.realAmount,
+      demoAmount: accountForCurrency.demoAmount,
       ...tokenUpdates
     });
     this.logger.log(`[${source}] Dados iniciais salvos no banco para usuário ${userId}. Tokens salvos: ${JSON.stringify(Object.keys(tokenUpdates))}`);
@@ -399,8 +419,24 @@ export class DerivController {
 
       const refreshedRaw = {
         ...refreshedAccount,
-        tokensByLoginId: tokensToKeep
+        tokensByLoginId: tokensToKeep,
+        realAmount: 0,
+        demoAmount: 0,
       };
+
+      // Calcular saldo demo total
+      if (refreshedRaw.balancesByCurrencyDemo) {
+        refreshedRaw.demoAmount = Object.values(refreshedRaw.balancesByCurrencyDemo as Record<string, number>)
+          .reduce((sum, val) => sum + (val || 0), 0);
+      }
+
+      // Identificar o maior saldo real
+      if (refreshedRaw.balancesByCurrencyReal) {
+        const realBalances = Object.values(refreshedRaw.balancesByCurrencyReal as Record<string, number>);
+        if (realBalances.length > 0) {
+          refreshedRaw.realAmount = Math.max(...realBalances);
+        }
+      }
 
       this.logger.log(`[${source}] Atualizando banco de dados com dados atualizados...`);
       // Log para debug - verificar o que está sendo salvo como raw
@@ -420,6 +456,8 @@ export class DerivController {
           refreshedRaw.balance?.value ??
           undefined,
         raw: refreshedRaw,
+        realAmount: refreshedRaw.realAmount,
+        demoAmount: refreshedRaw.demoAmount,
         // Não precisamos atualizar tokens aqui pois já foram salvos ou mantidos
       });
       this.derivService.setSession(userId, refreshedSessionPayload);
@@ -673,7 +711,23 @@ export class DerivController {
         const accountWithTokens = {
           ...account,
           tokensByLoginId: mergedTokens,
+          realAmount: 0,
+          demoAmount: 0,
         };
+
+        // Calcular saldo demo total
+        if (accountWithTokens.balancesByCurrencyDemo) {
+          accountWithTokens.demoAmount = Object.values(accountWithTokens.balancesByCurrencyDemo as Record<string, number>)
+            .reduce((sum, val) => sum + (val || 0), 0);
+        }
+
+        // Identificar o maior saldo real
+        if (accountWithTokens.balancesByCurrencyReal) {
+          const realBalances = Object.values(accountWithTokens.balancesByCurrencyReal as Record<string, number>);
+          if (realBalances.length > 0) {
+            accountWithTokens.realAmount = Math.max(...realBalances);
+          }
+        }
 
         const sessionPayload = {
           ...this.buildResponse(accountWithTokens, preferredCurrency),
@@ -682,12 +736,16 @@ export class DerivController {
         this.logger.log(`[STATUS] SessionPayload após buildResponse: ${JSON.stringify({
           balancesByCurrency: sessionPayload.balancesByCurrency,
           balancesByCurrencyDemo: sessionPayload.balancesByCurrencyDemo,
-          balancesByCurrencyReal: sessionPayload.balancesByCurrencyReal
+          balancesByCurrencyReal: sessionPayload.balancesByCurrencyReal,
+          realAmount: sessionPayload.realAmount,
+          demoAmount: sessionPayload.demoAmount,
         })}`);
         this.derivService.setSession(userId, sessionPayload);
         this.logger.log(`[STATUS] DEBUG - account sendo salvo como raw (WITH TOKENS): ${JSON.stringify({
           hasBalancesByCurrencyDemo: !!accountWithTokens.balancesByCurrencyDemo,
           hasBalancesByCurrencyReal: !!accountWithTokens.balancesByCurrencyReal,
+          realAmount: accountWithTokens.realAmount,
+          demoAmount: accountWithTokens.demoAmount,
           tokensCount: Object.keys(accountWithTokens.tokensByLoginId || {}).length,
           tokensKeys: Object.keys(accountWithTokens.tokensByLoginId || {})
         })}`);
@@ -696,6 +754,8 @@ export class DerivController {
           currency: sessionPayload.currency ?? account.currency,
           balance: sessionPayload.balance?.value ?? account.balance?.value ?? undefined,
           raw: accountWithTokens,
+          realAmount: accountWithTokens.realAmount,
+          demoAmount: accountWithTokens.demoAmount,
         });
         this.logger.log(`[STATUS] Saldo atualizado com sucesso: ${JSON.stringify(account)}`);
         this.logger.log(`[STATUS] SessionPayload retornado: ${JSON.stringify({

@@ -489,7 +489,7 @@ ${filtersText}
       const result = await this.executeTradeViaWebSocket(state.derivToken, {
         contract_type: direction,
         amount: stake,
-        currency: state.currency
+        currency: state.currency || 'USD'
       }, state.userId, async (contractId, entryPrice) => {
         // ✅ [APOLLO] Master Trader Replication - IMMEDIATE (at entry)
         try {

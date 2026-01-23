@@ -45,6 +45,7 @@ interface ConnectionState {
   proposalSubscriptionId: string | null;
   openContractSubscriptionId: string | null;
   pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string; barrier?: number } | null;
+  currency: string | null;
 }
 
 @Injectable()
@@ -64,7 +65,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     tickSubscriptionId: null,
     proposalSubscriptionId: null,
     openContractSubscriptionId: null,
-    pendingBuyConfig: null
+    pendingBuyConfig: null,
+    currency: null
   };
 
   private appId: number;
@@ -165,7 +167,8 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
               this.state.isAuthorized = true;
               this.state.reconnectAttempts = 0;
               this.state.loginid = msg.authorize.loginid;
-              this.logger.log(`[DerivWS] ✅ Autorizado! Conta: ${this.state.loginid} (${msg.authorize.currency})`);
+              this.state.currency = msg.authorize.currency;
+              this.logger.log(`[DerivWS] ✅ Autorizado! Conta: ${this.state.loginid} (${this.state.currency})`);
               this.emit('authorized', msg.authorize);
               resolve(true);
             } else {
@@ -389,7 +392,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       amount: config.amount,
       basis: 'stake',
       contract_type: config.contractType,
-      currency: 'USD',
+      currency: this.state.currency || 'USD',
       duration: config.duration,
       duration_unit: config.durationUnit,
       symbol: config.symbol,
@@ -449,7 +452,13 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
   getActiveSymbols(): void { this.send({ active_symbols: 'brief' }); }
   getTradingDurations(landingCompany: string = 'svg'): void { this.send({ trading_durations: 1, landing_company_short: landingCompany }); }
-  getContractsFor(symbol: string, currency: string = 'USD'): void { this.send({ contracts_for: symbol, currency, landing_company: 'svg' }); }
+  getContractsFor(symbol: string, currency?: string): void {
+    this.send({
+      contracts_for: symbol,
+      currency: currency || this.state.currency || 'USD',
+      landing_company: 'svg'
+    });
+  }
   sellContract(contractId: string, price: number): void { this.send({ sell: contractId, price: price }); }
   cancelSubscription(subscriptionId: string): void { this.send({ forget: subscriptionId }); }
   cancelTickSubscription(): void {
