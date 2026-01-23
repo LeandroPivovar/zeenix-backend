@@ -745,6 +745,7 @@ ${filtersText}
     {
       ws: WebSocket;
       authorized: boolean;
+      authorizedCurrency: string | null;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
       pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
@@ -2905,7 +2906,8 @@ ${filtersText}
             }
 
             conn.authorized = true;
-            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+            conn.authorizedCurrency = msg.authorize?.currency || null;
+            this.logger.log(`[ORION] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'} | Moeda: ${conn.authorizedCurrency}`);
 
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
@@ -2926,14 +2928,29 @@ ${filtersText}
           // ✅ Processar mensagens de subscription (proposal_open_contract) - PRIORIDADE 1
           if (msg.proposal_open_contract) {
             const contractId = msg.proposal_open_contract.contract_id;
-            if (contractId && conn.subscriptions.has(contractId)) {
-              const callback = conn.subscriptions.get(contractId)!;
+            const callback = conn.subscriptions.get(contractId);
+            if (callback) {
               callback(msg);
               return;
             }
           }
 
           // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
+          // 2.1. Tentar casar por req_id (Mais robusto)
+          if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
+            const pending = conn.pendingRequests.get(msg.req_id);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              conn.pendingRequests.delete(msg.req_id);
+              if (msg.error) {
+                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+              } else {
+                pending.resolve(msg);
+              }
+            }
+            return;
+          }
+
           if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
             // Processar primeira requisição pendente (FIFO)
             const firstKey = conn.pendingRequests.keys().next().value;
@@ -2962,7 +2979,8 @@ ${filtersText}
         const conn = {
           ws: socket,
           authorized: false,
-          keepAliveInterval: null,
+          authorizedCurrency: null as string | null,
+          keepAliveInterval: null as NodeJS.Timeout | null,
           requestIdCounter: 0,
           pendingRequests: new Map(),
           subscriptions: new Map(),
@@ -3035,7 +3053,10 @@ ${filtersText}
       }, timeoutMs);
 
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
-      conn.ws.send(JSON.stringify(payload));
+
+      // ✅ Injetar req_id no payload para pareamento preciso
+      const finalPayload = { ...payload, req_id: requestId };
+      conn.ws.send(JSON.stringify(finalPayload));
     });
   }
 

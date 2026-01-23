@@ -78,7 +78,15 @@ export class ApolloStrategy implements IStrategy {
   private appId: string;
 
   // WebSocket Pool
-  private wsConnections: Map<string, any> = new Map();
+  private wsConnections: Map<string, {
+    ws: WebSocket;
+    authorized: boolean;
+    authorizedCurrency: string | null;
+    keepAliveInterval: NodeJS.Timeout | null;
+    requestIdCounter: number;
+    pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
+    subscriptions: Map<string, (msg: any) => void>;
+  }> = new Map();
 
   // ============================================
   // 🎨 HELPERS DE LOG PADRÃO ZENIX v2.0 (APOLLO)
@@ -1164,6 +1172,7 @@ ${filtersText}
                 this.wsConnections.set(token, {
                   ws: socket,
                   authorized: true,
+                  authorizedCurrency: msg.authorize?.currency || null,
                   pendingRequests: new Map(),
                   subscriptions: new Map(),
                   keepAliveInterval: keepAlive,
@@ -1178,23 +1187,19 @@ ${filtersText}
             // ✅ Roteamento normal de mensagens para conexões ativas
             if (conn) {
               // 1. Tentar casar com req_id se existir (Prioridade Alta)
-              if (msg.req_id || (msg.echo_req && msg.echo_req.req_id)) {
-                const reqId = msg.req_id || msg.echo_req.req_id;
-                for (const [key, val] of conn.pendingRequests.entries()) {
-                  if (key.toString() === reqId.toString()) {
-                    clearTimeout(val.timeout);
-                    conn.pendingRequests.delete(key);
-                    if (msg.error) val.reject(new Error(msg.error.message));
-                    else val.resolve(msg);
-                    return; // Handled
-                  }
+              if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
+                const pending = conn.pendingRequests.get(msg.req_id);
+                if (pending) {
+                  clearTimeout(pending.timeout);
+                  conn.pendingRequests.delete(msg.req_id);
+                  if (msg.error) pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                  else pending.resolve(msg);
                 }
+                return;
               }
 
-              // 2. Lógica Falback (FIFO) igual Orion para Proposal/Buy
-              // Se não casou por ID (ou não tem ID), mas é uma resposta de trade esperada
+              // Fallback legado (FIFO) - Menos seguro mas mantém compatibilidade para msgs sem req_id
               if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-                // Pega a primeira requisição pendente (FIFO)
                 const firstKey = conn.pendingRequests.keys().next().value;
                 if (firstKey) {
                   const pending = conn.pendingRequests.get(firstKey);
@@ -1206,22 +1211,24 @@ ${filtersText}
                     } else {
                       pending.resolve(msg);
                     }
-                    return; // Handled
                   }
+                  return;
                 }
               }
 
               // 3. Subscriptions (Proposal Open Contract, Ticks)
               if (msg.proposal_open_contract) {
                 const id = msg.proposal_open_contract.contract_id;
-                if (conn.subscriptions.has(id)) {
-                  conn.subscriptions.get(id)(msg);
+                const callback = conn.subscriptions.get(id);
+                if (callback) {
+                  callback(msg);
                   return;
                 }
               }
               if (msg.tick) {
                 const id = msg.tick.id;
-                if (conn.subscriptions.has(id)) conn.subscriptions.get(id)(msg);
+                const callback = conn.subscriptions.get(id);
+                if (callback) callback(msg);
               }
             }
 
@@ -1277,9 +1284,7 @@ ${filtersText}
     }
 
     return new Promise((resolve, reject) => {
-      // ✅ ORION Logic: Use string ID for internal tracking, but DO NOT inject into payload unless needed
-      // Deriv API does NOT require req_id in payload for most calls if we track via FIFO or other means.
-      // If we injected a float before, it caused "Input validation failed".
+      // ✅ APOLLO: Usar req_id explicitamente no payload para pareamento preciso
       const requestId = `req_${++conn.requestIdCounter}_${Date.now()}`;
 
       const timeout = setTimeout(() => {
@@ -1290,7 +1295,8 @@ ${filtersText}
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
       try {
-        conn.ws.send(JSON.stringify(payload));
+        const finalPayload = { ...payload, req_id: requestId };
+        conn.ws.send(JSON.stringify(finalPayload));
       } catch (e) {
         clearTimeout(timeout);
         conn.pendingRequests.delete(requestId);

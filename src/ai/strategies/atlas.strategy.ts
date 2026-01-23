@@ -128,6 +128,7 @@ export class AtlasStrategy implements IStrategy {
     {
       ws: WebSocket;
       authorized: boolean;
+      authorizedCurrency: string | null;
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
       pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
@@ -2150,6 +2151,7 @@ ${filtersText}
     const connInit = {
       ws: socket,
       authorized: false,
+      authorizedCurrency: null as string | null,
       keepAliveInterval: null as NodeJS.Timeout | null,
       requestIdCounter: 0,
       pendingRequests: new Map(),
@@ -2212,7 +2214,8 @@ ${filtersText}
           }
 
           conn.authorized = true;
-          this.logger.log(`[ATLAS][${symbol || 'POOL'}] ✅ Autorizado`);
+          conn.authorizedCurrency = msg.authorize?.currency || null;
+          this.logger.log(`[ATLAS][${symbol || 'POOL'}] ✅ Autorizado | Moeda: ${conn.authorizedCurrency}`);
 
           conn.keepAliveInterval = setInterval(() => {
             if (socket.readyState === WebSocket.OPEN) {
@@ -2240,7 +2243,24 @@ ${filtersText}
           }
         }
 
+        // ✅ ATLAS: Suporte a req_id para pareamento preciso de requisições assíncronas
+        if (msg.req_id && conn.pendingRequests.has(msg.req_id)) {
+          const pending = conn.pendingRequests.get(msg.req_id);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            conn.pendingRequests.delete(msg.req_id);
+            if (msg.error) {
+              pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            } else {
+              pending.resolve(msg);
+            }
+          }
+          return;
+        }
+
+        // Fallback legado para mensagens sem req_id (ex: notificações de contrato se não tiverem req_id)
         if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+          // Se não tiver req_id, ainda tentamos pegar o primeiro pendente (menos seguro, mas mantém compatibilidade)
           const firstKey = conn.pendingRequests.keys().next().value;
           if (firstKey) {
             const pending = conn.pendingRequests.get(firstKey);
@@ -2331,7 +2351,10 @@ ${filtersText}
       }, timeoutMs);
 
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
-      conn.ws.send(JSON.stringify(payload));
+
+      // ✅ Injetar req_id no payload
+      const finalPayload = { ...payload, req_id: requestId };
+      conn.ws.send(JSON.stringify(finalPayload));
     });
   }
 
