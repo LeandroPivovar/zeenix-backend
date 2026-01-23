@@ -838,11 +838,10 @@ export class AtlasStrategy implements IStrategy {
           `❌ SALDO INSUFICIENTE! Capital atual (${formatCurrency(state.capital, state.currency)}) é menor que o necessário (${formatCurrency(requiredBalance, state.currency)}) para o stake calculado (${formatCurrency(stakeAmount, state.currency)}). IA DESATIVADA.`
         );
 
-        await this.dataSource.query(
-          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW()
-           WHERE user_id = ? AND is_active = 1`,
-          [`Saldo insuficiente: ${formatCurrency(state.capital, state.currency)} < ${formatCurrency(requiredBalance, state.currency)}`, state.userId],
-        );
+        // ✅ 1. DESATIVAR IMEDIATAMENTE DA MEMÓRIA (Para evitar loop se o DB falhar)
+        state.isStopped = true;
+        state.isOperationActive = false;
+        await this.deactivateUser(state.userId);
 
         this.tradeEvents.emit({
           userId: state.userId,
@@ -852,10 +851,27 @@ export class AtlasStrategy implements IStrategy {
           profitLoss: lucroAtual
         });
 
-        // ✅ IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
-        await this.deactivateUser(state.userId);
-        state.isStopped = true;
-        state.isOperationActive = false;
+        // ✅ 2. TENTAR ATUALIZAR STATUS NO BANCO
+        try {
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [`Saldo insuficiente: ${formatCurrency(state.capital, state.currency)} < ${formatCurrency(requiredBalance, state.currency)}`, state.userId],
+          );
+        } catch (dbError) {
+          this.logger.error(`[ATLAS] ⚠️ Erro ao atualizar status 'stopped_insufficient_balance' no DB: ${dbError.message}. Tentando fallback para 'stopped_loss'.`);
+          // Fallback para stopped_loss caso o enum não suporte o novo status
+          try {
+            await this.dataSource.query(
+              `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+              [`Saldo insuficiente (status fallback): ${formatCurrency(state.capital, state.currency)}`, state.userId],
+            );
+          } catch (e) {
+            console.error('[ATLAS] Falha crítica ao salvar stop no DB', e);
+          }
+        }
+
         return;
       }
 

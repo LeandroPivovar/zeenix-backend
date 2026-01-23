@@ -731,7 +731,7 @@ export class TitanStrategy implements IStrategy {
                     : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
             } else {
                 sessionStatus = 'stopped_insufficient_balance';
-                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`;
+                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`;
             }
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', logMsg);
@@ -745,7 +745,17 @@ export class TitanStrategy implements IStrategy {
             });
 
             await this.deactivateUser(state.userId);
-            await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [sessionStatus, state.userId]);
+
+            try {
+                await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [sessionStatus, logMsg, state.userId]);
+            } catch (dbError) {
+                this.logger.error(`[TITAN] ⚠️ Erro ao atualizar status '${sessionStatus}' no DB: ${dbError.message}`);
+                if (sessionStatus === 'stopped_insufficient_balance') {
+                    try {
+                        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [logMsg, state.userId]);
+                    } catch (e) { console.error('[TITAN] Falha crítica no fallback DB', e); }
+                }
+            }
             return;
         }
 

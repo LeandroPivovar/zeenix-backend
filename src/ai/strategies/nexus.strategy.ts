@@ -594,7 +594,7 @@ export class NexusStrategy implements IStrategy {
         // ✅ [ZENIX v3.4] Check Insufficient Balance
         if (state.capital < stake) {
             this.saveNexusLog(state.userId, this.symbol, 'erro',
-                `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`
+                `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`
             );
             await this.stopUser(state, 'stopped_insufficient_balance');
             return;
@@ -853,20 +853,34 @@ export class NexusStrategy implements IStrategy {
             profitLoss: profit
         });
 
-        // 3. Atualizar Banco de Dados (ai_user_config)
-        // Desativar IA e atualizar session_status para mostrar modal no frontend
-        await this.dataSource.query(
-            `UPDATE ai_user_config 
-             SET is_active = 0, 
-                 session_status = ?, 
-                 deactivation_reason = ?,
-                 deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = 1`,
-            [reason, logMessage, state.userId]
-        );
-
-        // 4. Remover da Memória (Pausar execução imediata)
+        // 3. Remover da Memória (Pausar execução imediata - ANTES, para evitar loops)
         await this.deactivateUser(state.userId);
+
+        // 4. Atualizar Banco de Dados (ai_user_config)
+        // Desativar IA e atualizar session_status para mostrar modal no frontend
+        try {
+            await this.dataSource.query(
+                `UPDATE ai_user_config 
+                 SET is_active = 0, 
+                     session_status = ?, 
+                     deactivation_reason = ?,
+                     deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [reason, logMessage, state.userId]
+            );
+        } catch (dbError) {
+            this.logger.error(`[NEXUS] ⚠️ Erro ao atualizar status '${reason}' no DB: ${dbError.message}.`);
+            // Tentativa de fallback se for erro de ENUM
+            if (reason === 'stopped_insufficient_balance') {
+                try {
+                    await this.dataSource.query(
+                        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+                         WHERE user_id = ? AND is_active = 1`,
+                        [logMessage, state.userId]
+                    );
+                } catch (e) { console.error('[NEXUS] Falha crítica no fallback DB', e); }
+            }
+        }
 
         this.logger.log(`[NEXUS] ${state.userId} parado por ${reason}. Status salvo no banco.`);
     }
