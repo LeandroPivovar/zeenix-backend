@@ -362,18 +362,29 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     }
   }
 
-  subscribeToSymbol(symbol: string): void {
+  subscribeToSymbol(symbol: string, count?: number): void {
     this.symbol = symbol;
-    const now = Math.floor(Date.now() / 1000);
-    this.send({
+    // const now = Math.floor(Date.now() / 1000); // Não precisamos de start se usarmos count com end='latest'
+
+    // Configuração para buscar ticks
+    const req: any = {
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 1000,
-      start: now - 600,
       end: 'latest',
       subscribe: 1,
       style: 'ticks'
-    });
+    };
+
+    // Se count for fornecido, usar ele (prioridade)
+    if (count && count > 0) {
+      req.count = count;
+    } else {
+      // Padrão antigo ou fallback
+      req.count = 1000;
+      // req.start = now - 600; // Opcional se count for grande o suficiente
+    }
+
+    this.send(req);
   }
 
   buyContract(buyConfig: any): void {

@@ -1716,9 +1716,9 @@ export class DerivController {
   @Post('trading/subscribe-symbol')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
-  async subscribeSymbol(@Body() body: { symbol: string; token?: string; loginid?: string }, @Req() req: any) {
+  async subscribeSymbol(@Body() body: { symbol: string; token?: string; loginid?: string; count?: number }, @Req() req: any) {
     const userId = req.user.userId;
-    this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se no símbolo ${body.symbol}`);
+    this.logger.log(`[Trading] Usuário ${userId} inscrevendo-se no símbolo ${body.symbol} (count: ${body.count || 'default'})`);
 
     try {
       const service = this.wsManager.getOrCreateService(userId);
@@ -1732,7 +1732,7 @@ export class DerivController {
         await service.connect(token);
       }
 
-      service.subscribeToSymbol(body.symbol);
+      service.subscribeToSymbol(body.symbol, body.count);
       return { success: true, message: 'Inscrição iniciada' };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao inscrever-se no símbolo: ${error.message}`);
