@@ -211,6 +211,7 @@ class RiskManager {
   private totalLossAccumulated: number;
   private lastResultWasWin: boolean;
   private _blindadoActive: boolean;
+  private lastWasRecovery: boolean; // ✅ Flag para detectar se último win foi recuperação
 
   constructor(
     initialBalance: number,
@@ -229,6 +230,7 @@ class RiskManager {
     this.totalLossAccumulated = 0.0;
     this.lastResultWasWin = false;
     this._blindadoActive = false;
+    this.lastWasRecovery = false;
 
     // Validação de Segurança
     if (this.stopLossLimit <= 0) {
@@ -244,11 +246,16 @@ class RiskManager {
       this.consecutiveLosses += 1;
       this.totalLossAccumulated += stakeUsed;
       this.lastResultWasWin = false;
+      this.lastWasRecovery = false;
     } else {
+      // ✅ Detectar se era uma recuperação (tinha perdas consecutivas)
+      const wasRecovery = this.consecutiveLosses > 0;
+
       // Se ganhou, reseta ciclo de recuperação
       this.consecutiveLosses = 0;
       this.totalLossAccumulated = 0.0;
       this.lastResultWasWin = true;
+      this.lastWasRecovery = wasRecovery; // Guardar flag para próximo cálculo
     }
   }
 
@@ -328,7 +335,19 @@ class RiskManager {
       }
     }
     // --- LÓGICA DE SOROS (APÓS WIN) ---
-    // --- LÓGICA DE SOROS (APÓS WIN) ---
+    // ✅ NÃO aplicar Soros se o último trade foi uma recuperação bem-sucedida
+    else if (this.lastWasRecovery) {
+      // Último trade foi recuperação - voltar para aposta base, NÃO aplicar Soros
+      this.lastWasRecovery = false; // Reset flag
+      if (logger) {
+        logger.log(`♻️ [RECUPERAÇÃO COMPLETA] Voltando para aposta base após recuperação bem-sucedida`);
+      }
+      if (saveLog) {
+        saveLog('info', `♻️ RECUPERAÇÃO COMPLETA\n• Resetando para aposta base: $${baseStake.toFixed(2)}\n• Não aplicando Soros sobre lucro de recuperação`);
+      }
+      nextStake = baseStake; // Forçar volta para base
+    }
+    // --- LÓGICA DE SOROS (APÓS WIN NORMAL) ---
     else if (lastProfit > 0 && vitoriasConsecutivas !== undefined && vitoriasConsecutivas > 0 && vitoriasConsecutivas <= 3) {
       nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
