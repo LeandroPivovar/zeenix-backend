@@ -3415,7 +3415,8 @@ export class AiService implements OnModuleInit {
     // Buscar a sessão mais recente do dia; se não houver, pegar a última sessão registrada
     const sessionQueryToday = `
       SELECT 
-        COALESCE(session_balance, 0) as sessionBalance,
+        COALESCE(NULLIF(session_balance, 0), stake_amount, 0) as sessionBalance,
+        stake_amount as initialStake,
         created_at as sessionCreatedAt
       FROM ai_user_config
       WHERE user_id = ? 
@@ -3425,7 +3426,8 @@ export class AiService implements OnModuleInit {
     `;
     const sessionQueryAny = `
       SELECT 
-        COALESCE(session_balance, 0) as sessionBalance,
+        COALESCE(NULLIF(session_balance, 0), stake_amount, 0) as sessionBalance,
+        stake_amount as initialStake,
         created_at as sessionCreatedAt
       FROM ai_user_config
       WHERE user_id = ?
@@ -4088,8 +4090,8 @@ export class AiService implements OnModuleInit {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
-         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
+         VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -4103,8 +4105,8 @@ export class AiService implements OnModuleInit {
             await this.dataSource.query(
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-               VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+               VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+              [userId, stakeAmount, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
             );
           } catch (error2: any) {
             // Se entry_value também não existir
@@ -4112,8 +4114,8 @@ export class AiService implements OnModuleInit {
               await this.dataSource.query(
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-                 VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                 VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                [userId, stakeAmount, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
@@ -4125,8 +4127,8 @@ export class AiService implements OnModuleInit {
             await this.dataSource.query(
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
-               VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+               VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+              [userId, stakeAmount, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
             );
           } catch (error2: any) {
             // Se stop_blindado_percent também não existir
@@ -4134,8 +4136,8 @@ export class AiService implements OnModuleInit {
               await this.dataSource.query(
                 `INSERT INTO ai_user_config 
                  (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
-                 VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-                [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+                 VALUES (?, TRUE, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+                [userId, stakeAmount, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
               );
             } else {
               throw error2;
