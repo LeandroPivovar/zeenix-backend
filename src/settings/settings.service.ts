@@ -415,6 +415,15 @@ export class SettingsService {
 
     await this.userRepository.updateDerivInfo(userId, updateData);
 
+    // Atualizar também a tabela de configurações para persistir a escolha
+    let settings = await this.settingsRepository.findOne({ where: { userId } });
+    if (settings) {
+      if (TRADE_CURRENCY_OPTIONS.includes(tradeCurrency as any)) {
+        settings.tradeCurrency = tradeCurrency as TradeCurrency;
+        await this.settingsRepository.save(settings);
+      }
+    }
+
     // Invalidar cache do DerivService
     if (this.derivService && typeof this.derivService.clearSession === 'function') {
       this.derivService.clearSession(userId);
