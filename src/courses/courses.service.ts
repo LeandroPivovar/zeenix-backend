@@ -69,7 +69,7 @@ export class CoursesService {
 
   async findAll() {
     const courses = await this.courseEntityRepository.find({
-      order: { createdAt: 'DESC' },
+      order: { orderIndex: 'ASC', createdAt: 'DESC' },
     });
     let lessonCountMap: Record<string, number> = {};
     let lessonDurationMap: Record<string, number> = {};
@@ -258,6 +258,15 @@ export class CoursesService {
     if (!course) throw new NotFoundException('Curso não encontrado');
     await this.courseEntityRepository.remove(course);
     return { success: true, message: 'Curso removido com sucesso' };
+  }
+
+  async reorderCourses(orders: { id: string; orderIndex: number }[]) {
+    await this.courseEntityRepository.manager.transaction(async transactionalEntityManager => {
+      for (const order of orders) {
+        await transactionalEntityManager.update(CourseEntity, order.id, { orderIndex: order.orderIndex });
+      }
+    });
+    return { success: true };
   }
 
   // CRUD Modules

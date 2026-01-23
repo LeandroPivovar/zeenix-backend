@@ -196,6 +196,12 @@ export class CoursesController {
     return this.coursesService.remove(id);
   }
 
+  @Put('reorder/all')
+  @UseGuards(AuthGuard('jwt'))
+  reorderCourses(@Body() body: { orders: { id: string; orderIndex: number }[] }) {
+    return this.coursesService.reorderCourses(body.orders);
+  }
+
   // Modules CRUD
   @Post('modules')
   createModule(@Body() createModuleDto: CreateModuleDto) {

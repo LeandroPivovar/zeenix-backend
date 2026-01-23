@@ -63,6 +63,9 @@ export class CourseEntity {
   @Column({ type: 'int', default: 0, name: 'total_lessons' })
   totalLessons: number;
 
+  @Column({ type: 'int', default: 0, name: 'order_index' })
+  orderIndex: number;
+
   @Column({ type: 'varchar', length: 20, name: 'total_duration', default: '0 min' })
   totalDuration: string;
 
