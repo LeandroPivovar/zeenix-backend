@@ -594,7 +594,7 @@ export class NexusStrategy implements IStrategy {
         // ✅ [ZENIX v3.4] Check Insufficient Balance
         if (state.capital < stake) {
             this.saveNexusLog(state.userId, this.symbol, 'erro',
-                `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`
+                `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`
             );
             await this.stopUser(state, 'stopped_insufficient_balance');
             return;

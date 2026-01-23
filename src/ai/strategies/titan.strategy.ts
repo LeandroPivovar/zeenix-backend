@@ -731,7 +731,7 @@ export class TitanStrategy implements IStrategy {
                     : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
             } else {
                 sessionStatus = 'stopped_insufficient_balance';
-                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`;
+                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`;
             }
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', logMsg);

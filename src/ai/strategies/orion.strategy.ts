@@ -2534,7 +2534,7 @@ ${filtersText}
         state.userId,
         this.symbol,
         'erro',
-        `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}\n\n📋 Contas Cache:\n${accountListInfo}`
+        `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${saldoNecessario.toFixed(2)}) para o stake calculado ($${stakeAmount.toFixed(2)}). IA DESATIVADA.\n\n📋 Contas Cache:\n${accountListInfo}`
       );
 
       this.tradeEvents.emit({

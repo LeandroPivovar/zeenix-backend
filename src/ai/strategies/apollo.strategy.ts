@@ -429,7 +429,7 @@ ${filtersText}
     // Validate if local capital estimate is enough (with 10% margin)
     const requiredBalance = stake * 1.1;
     if (state.capital < requiredBalance) {
-      this.saveLog(state.userId, 'erro', `❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${requiredBalance.toFixed(2)}`);
+      this.saveLog(state.userId, 'erro', `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${requiredBalance.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`);
       await this.handleStopInternal(state, 'insufficient_balance', state.capital);
       return;
     }
