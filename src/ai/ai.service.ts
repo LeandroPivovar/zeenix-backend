@@ -2742,6 +2742,7 @@ export class AiService implements OnModuleInit {
           currency,
           modo_martingale as modoMartingale,
           mode,
+          symbol,
           profit_target as profitTarget,
           loss_limit as lossLimit
          FROM ai_user_config
@@ -2793,6 +2794,7 @@ export class AiService implements OnModuleInit {
             modoMartingale: config.modoMartingale || 'conservador',
             profitTarget: config.profitTarget || null,
             lossLimit: config.lossLimit || null,
+            symbol: config.symbol || null,
           });
         } catch (error) {
           this.logger.error(`[SyncAtlas] Erro ao ativar usuário ${config.userId}:`, error);
@@ -4085,9 +4087,9 @@ export class AiService implements OnModuleInit {
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
-         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
+         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -4468,7 +4470,7 @@ export class AiService implements OnModuleInit {
                 mode
              FROM ai_user_config 
              WHERE is_active = TRUE 
-             AND LOWER(mode) = 'fast'`
+             AND LOWER(mode) IN ('fast', 'veloz')`
       );
 
       this.logger.debug(`[Fast Mode] Encontrados ${fastModeUsers.length} usuários ativos`);
@@ -4516,7 +4518,7 @@ export class AiService implements OnModuleInit {
                 next_trade_at as nextTradeAt
              FROM ai_user_config 
              WHERE is_active = TRUE 
-             AND LOWER(mode) != 'fast'
+             AND LOWER(mode) NOT IN ('fast', 'veloz')
              AND (next_trade_at IS NULL OR next_trade_at <= NOW())
              LIMIT 10`
       );

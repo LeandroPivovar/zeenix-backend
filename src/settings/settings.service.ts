@@ -62,6 +62,13 @@ export class SettingsService {
       fictitiousBalance: settings.fictitiousBalance,
       isFictitiousBalanceActive: settings.isFictitiousBalanceActive,
       showDollarSign: settings.showDollarSign,
+      // Broker specific account data
+      tokenReal: user.tokenReal,
+      tokenRealCurrency: user.tokenRealCurrency,
+      realAmount: user.realAmount,
+      tokenDemo: user.tokenDemo,
+      tokenDemoCurrency: user.tokenDemoCurrency,
+      demoAmount: user.demoAmount,
     };
   }
 
