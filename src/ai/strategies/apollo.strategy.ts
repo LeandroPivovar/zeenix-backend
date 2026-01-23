@@ -747,9 +747,23 @@ ${filtersText}
 
     state.isOperationActive = false;
     this.tradeEvents.emit({ userId: state.userId, type: type as any, strategy: 'apollo', profitLoss: finalAmount });
-    await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
-    // ✅ IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
+
+    // ✅ 1. IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
+    // Feito ANTES do banco para evitar loops se o banco falhar
     await this.deactivateUser(state.userId);
+
+    // ✅ 2. Atualizar Banco
+    try {
+      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
+    } catch (dbError) {
+      this.logger.error(`[APOLLO] ⚠️ Erro ao atualizar status '${type}' no DB: ${dbError.message}`);
+      // Fallback para stopped_loss se der erro (ex: ENUM inválido)
+      if (type === 'stopped_insufficient_balance') {
+        try {
+          await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status='stopped_loss', deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [state.userId]);
+        } catch (e) { console.error('[APOLLO] Falha crítica no fallback DB', e); }
+      }
+    }
   }
 
   // --- INFRASTRUCTURE ---

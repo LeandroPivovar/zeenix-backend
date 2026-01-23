@@ -2537,13 +2537,6 @@ ${filtersText}
         `❌ Saldo insuficiente para operação | Capital: $${state.capital.toFixed(2)} | Necessário: $${saldoNecessario.toFixed(2)}\n\n📋 Contas Cache:\n${accountListInfo}`
       );
 
-      // ✅ [ZENIX v3.4] Stop AI on insufficient balance
-      await this.dataSource.query(
-        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? AND is_active = 1`,
-        [`Saldo insuficiente: $${state.capital.toFixed(2)}`, state.userId],
-      );
-
       this.tradeEvents.emit({
         userId: state.userId,
         type: 'stopped_insufficient_balance',
@@ -2553,7 +2546,27 @@ ${filtersText}
       });
 
       // ✅ IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
+      // ANTES DA QUERY DE BANCO para evitar loop
       await this.deactivateUser(state.userId);
+
+      // ✅ [ZENIX v3.4] Stop AI on insufficient balance
+      try {
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [`Saldo insuficiente: $${state.capital.toFixed(2)}`, state.userId],
+        );
+      } catch (dbError) {
+        this.logger.error(`[ORION] ⚠️ Erro ao atualizar status 'stopped_insufficient_balance' no DB: ${dbError.message}`);
+        // Fallback
+        try {
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+               WHERE user_id = ? AND is_active = 1`,
+            [`Saldo insuficiente: $${state.capital.toFixed(2)}`, state.userId],
+          );
+        } catch (e) { console.error('[ORION] Falha crítica no fallback DB', e); }
+      }
 
       // ✅ Resetar contador de ticks para permitir nova tentativa (se reiniciado)
       if ('ticksDesdeUltimaOp' in state) {

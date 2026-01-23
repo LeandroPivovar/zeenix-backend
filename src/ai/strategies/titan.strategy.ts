@@ -745,7 +745,17 @@ export class TitanStrategy implements IStrategy {
             });
 
             await this.deactivateUser(state.userId);
-            await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ? WHERE user_id = ?`, [sessionStatus, state.userId]);
+
+            try {
+                await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [sessionStatus, logMsg, state.userId]);
+            } catch (dbError) {
+                this.logger.error(`[TITAN] ⚠️ Erro ao atualizar status '${sessionStatus}' no DB: ${dbError.message}`);
+                if (sessionStatus === 'stopped_insufficient_balance') {
+                    try {
+                        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [logMsg, state.userId]);
+                    } catch (e) { console.error('[TITAN] Falha crítica no fallback DB', e); }
+                }
+            }
             return;
         }
 
