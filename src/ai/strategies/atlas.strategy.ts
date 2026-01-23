@@ -12,7 +12,7 @@ import { getMinStakeByCurrency, formatCurrency } from '../../utils/currency.util
 // Removidas funções locais, usando currency.utils.ts
 
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
-// Atualizado: Payout ajustado para 0.92 (95% - 3% markup = 92%)
+// Atualizado: Payout ajustado para 0.83 (83%) para garantir recuperação com margem de segurança
 function calcularProximaApostaAtlas(
   perdasTotais: number,
   modo: ModoMartingale,
@@ -787,7 +787,7 @@ export class AtlasStrategy implements IStrategy {
         // DIGITOVER/UNDER tem payout ~40% (alta probabilidade ~70%)
         // CALL/PUT (Rise/Fall) tem payout ~92% (95% - 3% markup)
         const isPriceAction = (operation === 'CALL' || operation === 'PUT') && state.martingaleStep >= 2;
-        const payout = isPriceAction ? 0.92 : 0.35;
+        const payout = isPriceAction ? 0.83 : 0.35;
 
         const perdas = state.perdaAcumulada;
         stakeAmount = calcularProximaApostaAtlas(perdas, state.modoMartingale, payout, state.currency);
@@ -1301,7 +1301,7 @@ export class AtlasStrategy implements IStrategy {
     // Se foi operação de Price Action (CALL/PUT), o payout é diferente (~0.95)
     // Se foi OVER/UNDER, é (~0.63)
     const isPriceAction = operation === 'CALL' || operation === 'PUT';
-    const currentPayout = isPriceAction ? 0.95 : modeConfig.payout;
+    const currentPayout = isPriceAction ? 0.83 : modeConfig.payout;
 
 
     if (isWin) {
