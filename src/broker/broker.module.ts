@@ -13,7 +13,7 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 @Module({
   imports: [
     UserModule,
-    SettingsModule,
+    forwardRef(() => SettingsModule),
     TypeOrmModule.forFeature([TradeEntity]),
     forwardRef(() => CopyTradingModule),
   ],
