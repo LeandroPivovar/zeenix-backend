@@ -591,6 +591,15 @@ export class NexusStrategy implements IStrategy {
             this.saveNexusLog.bind(this)
         );
 
+        // ✅ [ZENIX v3.4] Check Insufficient Balance
+        if (state.capital < stake) {
+            this.saveNexusLog(state.userId, this.symbol, 'erro',
+                `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`
+            );
+            await this.stopUser(state, 'stopped_insufficient_balance');
+            return;
+        }
+
         if (stake <= 0) {
             const reason = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
             await this.stopUser(state, reason);
@@ -798,7 +807,7 @@ export class NexusStrategy implements IStrategy {
         }
     }
 
-    private async stopUser(state: NexusUserState, reason: 'stopped_blindado' | 'stopped_loss' | 'stopped_profit') {
+    private async stopUser(state: NexusUserState, reason: 'stopped_blindado' | 'stopped_loss' | 'stopped_profit' | 'stopped_insufficient_balance') {
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) {
             await this.deactivateUser(state.userId);
@@ -826,6 +835,10 @@ export class NexusStrategy implements IStrategy {
             case 'stopped_blindado':
                 logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
+                break;
+            case 'stopped_insufficient_balance':
+                logMessage = `❌ SALDO INSUFICIENTE! Seu saldo atual não é suficiente para realizar novas operações. IA DESATIVADA.`;
+                logType = 'erro';
                 break;
         }
 

@@ -720,20 +720,28 @@ export class TitanStrategy implements IStrategy {
             saveTitanLogCallback
         );
 
-        if (stake <= 0) {
-            const blindadoMsg = riskManager.blindadoActive
-                ? `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${riskManager.guaranteedProfit.toFixed(2)} - IA DESATIVADA`
-                : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
+        if (stake <= 0 || state.capital < stake) {
+            let sessionStatus: 'stopped_blindado' | 'stopped_loss' | 'stopped_insufficient_balance';
+            let logMsg = '';
 
-            this.saveTitanLog(state.userId, this.symbol, 'alerta', blindadoMsg);
+            if (stake <= 0) {
+                sessionStatus = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
+                logMsg = riskManager.blindadoActive
+                    ? `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${riskManager.guaranteedProfit.toFixed(2)} - IA DESATIVADA`
+                    : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
+            } else {
+                sessionStatus = 'stopped_insufficient_balance';
+                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que a entrada mínima ($${stake.toFixed(2)}). IA DESATIVADA.`;
+            }
+
+            this.saveTitanLog(state.userId, this.symbol, 'alerta', logMsg);
 
             // Emit event for frontend modal
-            const sessionStatus = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
             this.tradeEvents.emit({
                 userId: state.userId,
                 type: sessionStatus,
                 strategy: 'titan',
-                profitProtected: riskManager.blindadoActive ? riskManager.guaranteedProfit : undefined
+                profitProtected: sessionStatus === 'stopped_blindado' ? riskManager.guaranteedProfit : undefined
             });
 
             await this.deactivateUser(state.userId);

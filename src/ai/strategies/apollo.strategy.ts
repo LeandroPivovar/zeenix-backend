@@ -430,25 +430,7 @@ ${filtersText}
     const requiredBalance = stake * 1.1;
     if (state.capital < requiredBalance) {
       this.saveLog(state.userId, 'erro', `❌ Saldo insuficiente | Capital: $${state.capital.toFixed(2)} | Necessário: $${requiredBalance.toFixed(2)}`);
-
-      // Detailed log with available accounts (Async)
-      this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [state.userId])
-        .then(res => {
-          let accountInfo = 'Sem dados de conta.';
-          try {
-            if (res && res.length > 0 && res[0].deriv_raw) {
-              const raw = typeof res[0].deriv_raw === 'string' ? JSON.parse(res[0].deriv_raw) : res[0].deriv_raw;
-              if (raw?.authorize?.account_list) {
-                accountInfo = raw.authorize.account_list
-                  .map((acc: any) => `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`)
-                  .join('\n');
-              }
-            }
-          } catch (e) { accountInfo = 'Erro ao ler dados da conta.'; }
-
-          this.saveLog(state.userId, 'erro', `📋 Contas Disponíveis:\n${accountInfo}`);
-        });
-
+      await this.handleStopInternal(state, 'insufficient_balance', state.capital);
       return;
     }
 
@@ -757,15 +739,17 @@ ${filtersText}
     return true;
   }
 
-  private async handleStopInternal(state: ApolloUserState, reason: 'profit' | 'loss' | 'blindado', finalAmount: number) {
+  private async handleStopInternal(state: ApolloUserState, reason: 'profit' | 'loss' | 'blindado' | 'insufficient_balance', finalAmount: number) {
     let type = 'stopped_loss';
     if (reason === 'profit') type = 'stopped_profit';
     if (reason === 'blindado') type = 'stopped_blindado';
+    if (reason === 'insufficient_balance') type = 'stopped_insufficient_balance';
 
     state.isOperationActive = false;
     this.tradeEvents.emit({ userId: state.userId, type: type as any, strategy: 'apollo', profitLoss: finalAmount });
     await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
-    this.users.delete(state.userId);
+    // ✅ IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
+    await this.deactivateUser(state.userId);
   }
 
   // --- INFRASTRUCTURE ---

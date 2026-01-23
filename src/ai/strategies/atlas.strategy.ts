@@ -830,6 +830,35 @@ export class AtlasStrategy implements IStrategy {
       const decimals = ['BTC', 'ETH'].includes(state.currency.toUpperCase()) ? 8 : 2;
       stakeAmount = Math.max(minStake, Number(stakeAmount.toFixed(decimals)));
 
+      // ✅ [ZENIX v3.4] Check Insufficient Balance (DEPOIS de calcular stake)
+      // Verificar se o capital é suficiente para o stake calculado (que pode ser maior devido ao martingale)
+      const requiredBalance = stakeAmount * 1.1; // 10% de margem de segurança
+      if (state.capital < requiredBalance) {
+        this.saveAtlasLog(state.userId, symbol, 'erro',
+          `❌ SALDO INSUFICIENTE! Capital atual (${formatCurrency(state.capital, state.currency)}) é menor que o necessário (${formatCurrency(requiredBalance, state.currency)}) para o stake calculado (${formatCurrency(stakeAmount, state.currency)}). IA DESATIVADA.`
+        );
+
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [`Saldo insuficiente: ${formatCurrency(state.capital, state.currency)} < ${formatCurrency(requiredBalance, state.currency)}`, state.userId],
+        );
+
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: 'stopped_insufficient_balance',
+          strategy: 'atlas',
+          symbol: symbol,
+          profitLoss: lucroAtual
+        });
+
+        // ✅ IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
+        await this.deactivateUser(state.userId);
+        state.isStopped = true;
+        state.isOperationActive = false;
+        return;
+      }
+
       // GESTÃO DE RISCO - Clamping
       let minAllowedBalance = 0.0;
       let limitType = '';
