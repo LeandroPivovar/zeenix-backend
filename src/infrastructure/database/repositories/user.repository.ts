@@ -107,7 +107,7 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.update(userId, updateData);
   }
 
-  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any } | null> {
+  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number } | null> {
     const userEntity = await this.userRepository.findOne({
       where: { id: userId },
       select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw', 'realAmount', 'demoAmount']

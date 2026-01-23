@@ -25,6 +25,8 @@ type DerivAccountResult = {
   accountsByCurrency: Record<string, CurrencyAccountEntry[]>;
   aggregatedBalances?: AggregatedBalances;
   tokensByLoginId?: Record<string, string>;
+  realAmount?: number;
+  demoAmount?: number;
 };
 
 @Injectable()
