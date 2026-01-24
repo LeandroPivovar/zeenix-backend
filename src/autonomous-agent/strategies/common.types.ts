@@ -55,5 +55,6 @@ export interface IAutonomousAgentStrategy {
   onContractFinish(userId: string, result: { win: boolean; profit: number; contractId: string }): Promise<void>;
   getUserState(userId: string): Promise<AutonomousAgentState | null>;
   resetDailySession(userId: string): Promise<void>;
+  isUserActive(userId: string): boolean;
 }
 

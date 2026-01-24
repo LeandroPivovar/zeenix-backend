@@ -312,6 +312,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
+   * Verifica se um usuário está ativo
+   */
+  isUserActive(userId: string): boolean {
+    return this.userConfigs.has(userId) && this.userStates.has(userId);
+  }
+
+  /**
    * Processa um tick recebido
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {

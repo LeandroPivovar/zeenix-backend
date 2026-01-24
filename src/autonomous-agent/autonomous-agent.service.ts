@@ -176,8 +176,10 @@ export class AutonomousAgentService implements OnModuleInit {
    * Inscreve-se nos ticks do símbolo R_100
    * ✅ ATUALIZADO: Todos os agentes autônomos operam apenas em R_100
    */
-  private subscribeToTicks(): void {
+  private async subscribeToTicks(): Promise<void> {
     for (const symbol of this.activeSymbols) {
+      if (this.subscriptions.has(symbol)) continue; // Já inscrito
+
       this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
       const subscriptionPayload = {
         ticks_history: symbol,
@@ -188,8 +190,11 @@ export class AutonomousAgentService implements OnModuleInit {
         style: 'ticks',
       };
       this.send(subscriptionPayload);
+
+      // Pequeno delay entre inscrições para não sobrecarregar a conexão
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    this.logger.log(`✅ [AutonomousAgent] Inscrições enviadas para: ${Array.from(this.activeSymbols).join(', ')}`);
+    this.logger.log(`✅ [AutonomousAgent] Inscrições concluídas para: ${Array.from(this.activeSymbols).join(', ')}`);
   }
 
   /**
@@ -620,6 +625,16 @@ export class AutonomousAgentService implements OnModuleInit {
       // Atualizar config com os valores resolvidos para garantir consistência
       config.derivToken = resolvedToken;
       config.currency = resolvedCurrency;
+
+      // ✅ [ORION] GUARD DE ATIVAÇÃO: Evitar reativação se já estiver ativo com mesma config
+      // Isso impede loops de reinicialização que limpam o histórico de ticks
+      const strategyName = (config.agentType || config.strategy || 'orion').toLowerCase().replace('arion', 'orion');
+      const currentStrategy = this.strategyManager.getStrategy(strategyName);
+      if (currentStrategy && (currentStrategy as any).isUserActive && (currentStrategy as any).isUserActive(userId)) {
+        // Opcional: comparar config aqui se quiser ser ultra rigoroso
+        this.logger.debug(`[ActivateAgent] 🛡️ Usuário ${userId} já está ativo na estratégia ${strategyName}. Ignorando reativação para manter histórico.`);
+        return;
+      }
 
       // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
       // (mantém apenas as transações/trades)
