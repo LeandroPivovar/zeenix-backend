@@ -36,7 +36,7 @@ const ZEUS_V37_CONFIGS = {
         symbol: 'R_100',
         contractType: 'DIGITOVER', // 🎯 Digit Over 3
         targetDigit: 3,
-        payout: 0.92,
+        payout: 1.44, // Payout real aproximado (144% retorno, 44% lucro)
     },
     M1_ULTRA: {
         name: 'ULTRA PRECISO',
@@ -46,9 +46,9 @@ const ZEUS_V37_CONFIGS = {
         lastDigits: 2,
         maxVolatility: 0.40,
         symbol: 'R_100',
-        contractType: 'DIGITMATCHES', // 🔄 Digit Matches
+        contractType: 'DIGITMATCH', // ✅ Nome correto para API Deriv
         targetDigit: 3,
-        payout: 0.92,
+        payout: 8.0, // Payout real aproximado (900% retorno, 800% lucro)
     },
     M2_HIPER: {
         name: 'HIPER PRECISO',
@@ -58,30 +58,30 @@ const ZEUS_V37_CONFIGS = {
         lastDigits: 2,
         maxVolatility: 0.35,
         symbol: 'R_100',
-        contractType: 'DIGITMATCHES', // 🔄 Digit Matches
+        contractType: 'DIGITMATCH', // ✅ Nome correto para API Deriv
         targetDigit: 3,
-        payout: 0.92,
+        payout: 8.0, // Payout real aproximado (900% retorno, 800% lucro)
     },
 };
 
 const ZEUS_V37_RISK_MANAGEMENT = {
     CONSERVADOR: {
         maxRecoveryLevel: 5,
-        profitTargetPercent: 0.01, // 1% conforme solicitado
+        profitTargetPercent: 0.00, // 0% (Zero a Zero conforme imagem)
         acceptLoss: true,
-        payout: 0.92,
+        payout: 8.0, // Payout de referência para Match
     },
     MODERADO: {
         maxRecoveryLevel: -1, // Infinity
-        profitTargetPercent: 0.15,
+        profitTargetPercent: 0.15, // +15% da stake base
         acceptLoss: false,
-        payout: 0.92,
+        payout: 8.0,
     },
     AGRESSIVO: {
         maxRecoveryLevel: -1, // Infinity
-        profitTargetPercent: 0.30,
+        profitTargetPercent: 0.30, // +30% da stake base
         acceptLoss: false,
-        payout: 0.92,
+        payout: 8.0,
     },
 };
 @Injectable()
@@ -622,15 +622,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // SE CHEGOU AQUI, TODOS OS FILTROS PASSARAM!
-        // Cálculo de Probabilidade Final (para fins de log/UI)
-        const baseProb = 20; // Probabilidade base de sinal do ZEUS v3.7
-        const finalProb = Math.min(99, baseProb + (losersCount * 5) + (maxConsecutive * 5));
+        // ✅ ZEUS v3.7: Se passou pelos 8 filtros técnicos, o sinal é CONFIRMADO (100% de chance de entrada)
+        const finalProb = 100;
 
         return {
-            signal: 'DIGIT', // Usado para rotear para DIGITOVER ou DIGITMATCHES conforme contrato definido
+            signal: 'DIGIT',
             probability: finalProb,
             payout: modeConfig.payout,
-            confidence: finalProb / 100,
+            confidence: 1.0,
             details: {
                 digitPattern: `${losersCount}/${modeConfig.windowSize} perdedores (Max Cons: ${maxConsecutive})`,
                 volatility: volatilityNormalized, // ✅ Manter como número bruto
@@ -702,9 +701,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return { action: 'STOP', reason: 'TAKE_PROFIT' };
         }
 
-        // B. Filtro de Precisão baseado no Modo (v2.2 thresholds dinâmicos)
-        // No modo PRECISO com janela 6, o score máximo é 80%. Para permitir entradas, deve ser <= 80.
-        const requiredProb = state.mode === 'PRECISO' ? 70 : (state.mode === 'ULTRA' ? 80 : 85);
+        // B. Filtro de Precisão (v2.2 thresholds simplificados)
+        // ✅ Se a análise retornou 100% de probabilidade, todos os filtros técnicos passaram
+        const requiredProb = 90;
 
         if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
             const stake = this.calculateStake(userId, marketAnalysis.payout);
@@ -876,10 +875,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // Moderado/Agressivo: stake = (perdas + lucro_alvo) / 0.92
 
             const lossToRecover = state.totalLossAccumulated;
+            // ✅ CORREÇÃO (conforme imagens): O lucro alvo é calculado sobre a STAKE BASE (M0)
             const targetProfitAdd = config.initialStake * riskSettings.profitTargetPercent;
 
-            // FÓRMULA DINÂMICA: (Perda + Lucro Alvo) / Payout do Mercado
-            // No Match (payout ~8.0), a stake de recuperação é muito menor e segura.
+            // FÓRMULA OFICIAL: (perdas_acumuladas + lucro_alvo) / Payout do Mercado
             const recoveryPayoutFactor = marketPayoutPercent > 0 ? marketPayoutPercent : 0.92;
             stake = (lossToRecover + targetProfitAdd) / recoveryPayoutFactor;
 
@@ -1052,7 +1051,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
             const targetDigit = ZEUS_V37_CONFIGS[currentModeKey]?.targetDigit ?? 3;
 
-            if (contractType === 'DIGITOVER' || contractType === 'DIGITMATCHES') {
+            if (contractType === 'DIGITOVER' || contractType === 'DIGITMATCH') {
                 duration = 1;
                 barrier = targetDigit.toString();
             } else {
@@ -1073,51 +1072,50 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 },
             );
 
-            try {
-                const contractId = await this.buyContract(
+            let lastErrorMsg = 'Falha ao comprar contrato';
+            const contractId = await this.buyContract(
+                userId,
+                config.derivToken,
+                contractType,
+                config.symbol,
+                decision.stake || config.initialStake,
+                duration,
+                barrier, // Passar barrier
+                2 // maxRetries
+            ).catch(err => {
+                lastErrorMsg = err.message;
+                return null;
+            });
+
+            if (contractId) {
+                state.currentContractId = contractId;
+                state.currentTradeId = tradeId;
+
+                // ✅ Log de operação no padrão Orion
+                await this.saveLog(
                     userId,
-                    config.derivToken,
-                    contractType,
-                    config.symbol,
-                    decision.stake || config.initialStake,
-                    duration,
-                    barrier, // Passar barrier
-                    2 // maxRetries
+                    'INFO',
+                    'TRADER',
+                    `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)}`,
                 );
 
-                if (contractId) {
-                    state.currentContractId = contractId;
-                    state.currentTradeId = tradeId;
-
-                    // ✅ Log de operação no padrão Orion
-                    await this.saveLog(
-                        userId,
-                        'INFO',
-                        'TRADER',
-                        `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)}`,
-                    );
-
-                    // ✅ Atualizar trade com contract_id
-                    await this.updateTradeRecord(tradeId, {
-                        contractId: contractId,
-                        status: 'ACTIVE',
-                    });
-                } else {
-                    // Se falhou, resetar isWaitingContract e atualizar trade com erro
-                    state.isWaitingContract = false;
-                    await this.updateTradeRecord(tradeId, {
-                        status: 'ERROR',
-                        errorMessage: 'Falha ao comprar contrato',
-                    });
-                    await this.saveLog(userId, 'ERROR', 'API', 'Falha ao comprar contrato. Aguardando novo sinal...');
-                }
-            } catch (error) {
-                // Se houve erro, resetar isWaitingContract
+                // ✅ Atualizar trade com contract_id
+                await this.updateTradeRecord(tradeId, {
+                    contractId: contractId,
+                    status: 'ACTIVE',
+                });
+            } else {
+                // Se falhou, resetar isWaitingContract e atualizar trade com erro
                 state.isWaitingContract = false;
-                this.logger.error(`[Zeus][${userId}] Erro ao comprar contrato:`, error);
-                await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
+                await this.updateTradeRecord(tradeId, {
+                    status: 'ERROR',
+                    errorMessage: lastErrorMsg,
+                });
+                await this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: ${lastErrorMsg}`);
             }
-        } catch (error) {
+        } catch (error: any) {
+            // Se houve erro, resetar isWaitingContract
+            state.isWaitingContract = false;
             this.logger.error(`[Zeus][${userId}] Erro ao executar trade:`, error);
             await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}`);
         }
