@@ -576,6 +576,67 @@ export class NexusStrategy implements IStrategy {
     getUserState(userId: string) { return this.users.get(userId); }
 
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
+        // ✅ [NEXUS] Verificar Stop Loss Blindado ANTES de calcular stake
+        try {
+            const blindadoConfig = await this.dataSource.query(
+                `SELECT profit_peak, stop_blindado_percent, profit_target,
+                        stake_amount as capitalInicial, session_balance
+                 FROM ai_user_config WHERE user_id = ? AND is_active = 1
+                 LIMIT 1`,
+                [state.userId]
+            );
+
+            if (blindadoConfig && blindadoConfig.length > 0) {
+                const config = blindadoConfig[0];
+                const sessionBalance = parseFloat(config.session_balance) || 0;
+                const capitalInicial = parseFloat(config.capitalInicial) || 0;
+                const profitTarget = parseFloat(config.profit_target) || 0;
+                const capitalSessao = capitalInicial + sessionBalance;
+                const lucroAtual = sessionBalance;
+
+                // ✅ VERIFICAR STOP WIN (profit target)
+                if (profitTarget > 0 && lucroAtual >= profitTarget) {
+                    this.saveNexusLog(state.userId, this.symbol, 'info',
+                        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
+                    await this.stopUser(state, 'stopped_profit');
+                    return;
+                }
+
+                // Update profit peak if current profit is higher
+                let profitPeak = parseFloat(config.profit_peak) || 0;
+                if (lucroAtual > profitPeak) {
+                    profitPeak = lucroAtual;
+                    this.dataSource.query(
+                        `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
+                        [profitPeak, state.userId]
+                    ).catch(err => this.logger.error(`[NEXUS] Erro ao atualizar profit_peak:`, err));
+                }
+
+                // ✅ VERIFICAR STOP BLINDADO (Fixed Floor)
+                if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
+                    const activationThreshold = profitTarget * 0.40;
+
+                    if (profitPeak >= activationThreshold) {
+                        const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
+                        // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
+                        const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
+                        const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+                        if (capitalSessao <= stopBlindado + 0.01) {
+                            const lucroProtegido = capitalSessao - capitalInicial;
+                            this.saveNexusLog(state.userId, this.symbol, 'alerta',
+                                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`);
+                            await this.stopUser(state, 'stopped_blindado');
+                            return;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            this.logger.error(`[NEXUS][${state.userId}] Erro ao verificar Stop Loss Blindado:`, error);
+            // Continue even if there's an error (fail-open)
+        }
+
         const riskManager = this.riskManagers.get(state.userId)!;
         const stake = riskManager.calculateStake(
             state.capital,

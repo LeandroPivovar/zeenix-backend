@@ -687,11 +687,12 @@ ${filtersText}
       if (profit >= activationThreshold) {
         state.stopBlindadoActive = true;
         state.peakProfit = profit;
-        state.stopBlindadoFloor = profit * 0.50;
+        // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
+        state.stopBlindadoFloor = activationThreshold * 0.50;
         this.saveLog(state.userId, 'alerta',
           `🛡️ Proteção de Lucro: Ativado\n` +
           `• Lucro Atual: $${profit.toFixed(2)}\n` +
-          `• Piso Garantido: $${state.stopBlindadoFloor.toFixed(2)}`);
+          `• Piso Garantido (FIXO): $${state.stopBlindadoFloor.toFixed(2)}`);
         this.tradeEvents.emit({
           userId: state.userId,
           type: 'blindado_activated',
@@ -701,9 +702,10 @@ ${filtersText}
         });
       }
     } else {
+      // ✅ FIXED FLOOR: Only update peak for tracking, floor stays fixed
       if (profit > state.peakProfit) {
         state.peakProfit = profit;
-        state.stopBlindadoFloor = state.peakProfit * 0.50;
+        // Floor remains fixed at activationThreshold * 0.50
       }
     }
   }
