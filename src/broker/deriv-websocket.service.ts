@@ -44,6 +44,7 @@ interface ConnectionState {
   tickSubscriptionId: string | null;
   proposalSubscriptionId: string | null;
   openContractSubscriptionId: string | null;
+  balanceSubscriptionId: string | null;
   pendingBuyConfig: { durationUnit?: string; duration?: number; contractType?: string; barrier?: number } | null;
   currency: string | null;
 }
@@ -65,6 +66,7 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
     tickSubscriptionId: null,
     proposalSubscriptionId: null,
     openContractSubscriptionId: null,
+    balanceSubscriptionId: null,
     pendingBuyConfig: null,
     currency: null
   };
@@ -247,7 +249,22 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
       case 'active_symbols':
         this.emit('active_symbols', msg.active_symbols);
         break;
+      case 'balance':
+        this.processBalance(msg);
+        break;
     }
+  }
+
+  private processBalance(msg: any): void {
+    const balance = msg.balance;
+    if (!balance) return;
+
+    if (msg.subscription?.id) {
+      this.state.balanceSubscriptionId = msg.subscription.id;
+    }
+
+    this.logger.log(`[DerivWS] Balance update: ${balance.balance} ${balance.currency}`);
+    this.emit('balance', balance);
   }
 
   private processHistory(msg: any): void {

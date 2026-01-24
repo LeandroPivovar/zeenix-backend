@@ -460,17 +460,17 @@ export class AtlasStrategy implements IStrategy {
     analysis += `\n🧠 ANÁLISE INICIADA...\n`;
     analysis += `• Verificando condições para o modo: ${normalizedMode.toUpperCase()}\n`;
 
-    // ✅ 1. MODO VELOZ: Último dígito > 2
+    // ✅ 1. MODO VELOZ: Esperar 1 dígito perdedor (<= 2)
     if (normalizedMode === 'veloz') {
-      if (lastDigit > 2) {
-        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) > 2\n`;
-        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
+      if (lastDigit <= 2) {
+        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) <= 2 (Dígito Perdedor)\n`;
+        analysis += `✅ GATILHO: Espera Concluída\n`;
         analysis += `💪 FORÇA DO SINAL: 70%\n`;
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
-        analysis += `⏳ AGUARDANDO: Tendência de Alta Frequência...`;
+        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) > 2 (Dígito Vencedor)\n`;
+        analysis += `⏳ AGUARDANDO: 1 Dígito Perdedor...`;
         return { canTrade: false, analysis };
       }
     }
