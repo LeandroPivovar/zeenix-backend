@@ -799,8 +799,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             if (state.mode !== 'PRECISO') {
                 this.logger.log(`[Zeus][${userId}] ✅ RECUPERAÇÃO CONCLUÍDA! Voltando para PRECISO`);
                 state.mode = 'PRECISO';
-                state.sorosActive = true; // Ativa Soros após recuperação como prêmio
-                state.sorosCount = 1;
+                state.sorosActive = false; // Não ativa Soros após recuperação (Exigência Usuário)
+                state.sorosCount = 0;
             } else {
                 // Sistema Soros em modo PRECISO (2 Níveis: 20 -> 31)
                 if (state.sorosActive) {
