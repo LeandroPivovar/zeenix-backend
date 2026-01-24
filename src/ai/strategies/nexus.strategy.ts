@@ -854,6 +854,13 @@ export class NexusStrategy implements IStrategy {
 
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
 
+                // ✅ [ZENIX v3.5] Sync session_balance to DB for Stop Blindado check (Copied from Atlas)
+                const lucroSessao = state.capital - riskManager.getInitialBalance();
+                this.dataSource.query(
+                    `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
+                    [lucroSessao, state.userId]
+                ).catch(e => this.logger.error(`[NEXUS] Erro ao atualizar session_balance: ${e.message}`));
+
                 // ✅ [NEXUS] Master Trader Result Update
                 try {
                     const userMaster = await this.dataSource.query('SELECT trader_mestre FROM users WHERE id = ?', [state.userId]);
