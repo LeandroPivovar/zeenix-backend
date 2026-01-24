@@ -167,17 +167,15 @@ class RiskManager {
         }
 
         // ✅ Lógica de Proteção de Capital (Diferenciando Normal de Blindado)
+        let limitType = '';
         if (this._blindadoActive) {
             // No modo Blindado, o stop é o piso (50% do pico de lucro)
             const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
             minAllowedBalance = this.initialBalance + guaranteedProfit;
-
-            // ✅ [CORREÇÃO] Não reduzir stake proativamente para o piso do blindado (apenas parar se bater)
-            // Isso evita o erro de stake reduzida proativamente relatado pelo usuário.
-            // O stop real (limitRemaining) será verificado no stopUser.
-            minAllowedBalance = this.initialBalance - this.stopLossLimit; // Usa limite normal para cálculo de stake
+            limitType = 'PISO DE LUCRO PROTEGIDO';
         } else {
             minAllowedBalance = this.initialBalance - this.stopLossLimit;
+            limitType = 'STOP LOSS NORMAL';
         }
 
         const potentialBalanceAfterLoss = currentBalance - nextStake;
@@ -186,8 +184,7 @@ class RiskManager {
             adjustedStake = Math.round(adjustedStake * 100) / 100;
 
             if (userId && symbol && logCallback) {
-                const isBlindado = this._blindadoActive;
-                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (${isBlindado ? 'PROTEÇÃO DE LUCRO' : 'STOP NORMAL'})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${isBlindado ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${isBlindado ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
+                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (${limitType})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${this._blindadoActive ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${this._blindadoActive ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
             }
 
             if (adjustedStake < 0.35) return 0.0;
