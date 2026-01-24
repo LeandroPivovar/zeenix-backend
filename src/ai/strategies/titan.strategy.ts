@@ -819,8 +819,11 @@ export class TitanStrategy implements IStrategy {
                 if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
                     if (profitPeak >= profitTarget * 0.40) {
                         const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-                        const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-                        const stopBlindado = capitalInicial + protectedAmount;
+                        // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
+                        const activationThreshold = profitTarget * 0.40;
+                        const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
+                        const protectedAmount = valorProtegidoFixo;
+                        const stopBlindado = capitalInicial + valorProtegidoFixo;
 
                         // Log activation (only once per user)
                         if (!this.blindadoActivatedUsers.has(state.userId)) {

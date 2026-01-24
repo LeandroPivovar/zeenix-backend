@@ -1975,8 +1975,10 @@ ${filtersText}
 
             // ✅ Log quando profit peak aumenta (após ativação)
             if (profitPeak >= activationThreshold) {
-              const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-              const stopBlindado = capitalInicial + protectedAmount;
+              // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
+              const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
+              const protectedAmount = valorProtegidoFixo;
+              const stopBlindado = capitalInicial + valorProtegidoFixo;
 
               this.logger.log(
                 `[ORION][${mode}][${state.userId}] ℹ️🛡️ Stop Blindado Atualizado | ` +
@@ -2002,9 +2004,10 @@ ${filtersText}
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0; // Padrão 50%
             const fatorProtecao = stopBlindadoPercent / 100;
 
-            // Trailing Stop: Protege % do PICO de lucro
-            const protectedAmount = profitPeak * fatorProtecao;
-            const stopBlindado = capitalInicial + protectedAmount;
+            // ✅ FIXED FLOOR: Protege % do THRESHOLD DE ATIVAÇÃO (40% da meta), não do pico
+            const valorProtegidoFixo = (profitTarget * 0.40) * fatorProtecao;
+            const protectedAmount = valorProtegidoFixo;
+            const stopBlindado = capitalInicial + valorProtegidoFixo;
 
             // ✅ Log quando Stop Blindado é ativado pela primeira vez (só loga se ainda não logou)
             const stopBlindadoKey = `stop_blindado_ativado_${state.userId}`;
@@ -2100,8 +2103,11 @@ ${filtersText}
           // Só ativa se atingiu 40% da meta
           if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
-            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-            const stopBlindado = capitalInicial + protectedAmount;
+            // ✅ FIXED FLOOR: Protect % of activation threshold
+            const activationThreshold = profitTarget * 0.40;
+            const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
+            const protectedAmount = valorProtegidoFixo;
+            const stopBlindado = capitalInicial + valorProtegidoFixo;
 
             // Calcular próximo stake do martingale
             const payoutCliente = 92;
@@ -2360,8 +2366,11 @@ ${filtersText}
           // Só ativa se atingiu 40% da meta
           if (profitPeak >= profitTarget * 0.40) {
             const stopBlindadoPercent = parseFloat(config.stopBlindadoPercent) || 50.0;
-            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-            const stopBlindado = capitalInicial + protectedAmount;
+            // ✅ FIXED FLOOR: Protect % of activation threshold
+            const activationThreshold = profitTarget * 0.40;
+            const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
+            const protectedAmount = valorProtegidoFixo;
+            const stopBlindado = capitalInicial + valorProtegidoFixo;
             const availableCapitalAboveStop = capitalSessao - stopBlindado;
 
             this.logger.debug(
