@@ -411,20 +411,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const userTicks = this.ticks.get(userId) || [];
         userTicks.push(tick);
 
+        // ✅ TICK ADVANCE LÓGICA
+        // Incrementa contador de ticks sem análise
+        state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
+
         // Manter apenas os últimos maxTicks
         if (userTicks.length > this.maxTicks) {
             userTicks.shift();
         }
         this.ticks.set(userId, userTicks);
-
-        // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
-        if (state.isWaitingContract) {
-            return;
-        }
-
-        // ✅ TICK ADVANCE LÓGICA
-        // Incrementa contador de ticks sem análise
-        state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
         // 1. Atualizar histórico de ticks e dígitos
         userTicks.push(tick);
@@ -453,8 +448,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.consecutiveLosingDigits = 0;
         }
 
-        // Zeus opera em tempo real baseado em ticks
-        state.ticksSinceLastAnalysis++;
+        // Zeus opera em tempo real baseado em ticks, mas para evitar flood e instabilidade,
+        // só analisa a cada 3 ticks (similar ao Falcon)
+        const requiredSkip = state.mode === 'PRECISO' ? 2 : 3;
+        if (state.ticksSinceLastAnalysis <= requiredSkip) {
+            return; // Pular este tick
+        }
 
 
         // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
@@ -515,7 +514,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 const message = `📊 ANÁLISE ZEUS v3.7\n` +
                     `• Padrão: ${details?.digitPattern || details?.info || 'Analisando...'}\n` +
                     `• Volatilidade: ${details?.volatility || 'Estabilizando...'}\n` +
-                    `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'AGUARDANDO PADRÃO ⌛'}\n` +
+                    `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'AGUARDANDO PADRÃO 🟡'}\n` +
                     `• Modo: ${state.mode}`;
 
                 this.saveLog(userId, 'INFO', 'ANALYZER', message);
