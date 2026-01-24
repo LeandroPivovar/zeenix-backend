@@ -880,10 +880,12 @@ export class AtlasStrategy implements IStrategy {
       let limitType = '';
       const activationThreshold = profitTarget * 0.40;
 
-      if (profitTarget > 0 && profitPeak >= activationThreshold) {
+      // ✅ FIXED FLOOR Logic (Re-applied):
+      // Activation @ 40% of Target. Protection @ % of Activation Value (Fixed).
+      if (profitTarget > 0 && currentPeak >= activationThreshold && stopBlindadoPercent > 0) {
         const factor = stopBlindadoPercent / 100;
-        const guaranteedProfit = profitPeak * factor;
-        minAllowedBalance = capitalInicial + guaranteedProfit;
+        const valorProtegidoFixo = activationThreshold * factor; // Fixed based on activation threshold
+        minAllowedBalance = capitalInicial + valorProtegidoFixo;
         limitType = 'PISO DE LUCRO PROTEGIDO';
       } else {
         if (lossLimit > 0) {
@@ -1545,9 +1547,11 @@ export class AtlasStrategy implements IStrategy {
 
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
-        const stopBlindado = capitalInicial + (profitPeak * factor);
+        // ✅ Fixed Floor: Protect % of Activation Threshold, not Peak
+        const valorProtegidoFixo = activationThreshold * factor;
+        const stopBlindado = capitalInicial + valorProtegidoFixo;
 
-        if (capitalSessao <= stopBlindado) {
+        if (capitalSessao <= stopBlindado + 0.01) { // Added tolerance again just in case
           const lucroFinal = capitalSessao - capitalInicial;
           this.saveAtlasLog(state.userId, symbol, 'info',
             `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
