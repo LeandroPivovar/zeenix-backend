@@ -445,7 +445,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // ✅ Atualizar contador de dígitos perdedores (<= targetDigit)
-        const targetDigit = MODE_CONFIGS[state.mode as keyof typeof MODE_CONFIGS]?.targetDigit || 3;
+        const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
+        const targetDigit = ZEUS_V37_CONFIGS[currentModeKey]?.targetDigit || 3;
         if (lastDigit <= targetDigit) {
             state.consecutiveLosingDigits++;
         } else {
@@ -462,8 +463,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // Zeus 2.2 window size dinâmica
-        const currentMode = state.mode || 'PRECISO';
-        const modeCfg = MODE_CONFIGS[currentMode as keyof typeof MODE_CONFIGS] || MODE_CONFIGS.PRECISO;
+        const modeKeyForTicks = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
+        const modeCfg = ZEUS_V37_CONFIGS[modeKeyForTicks];
         const requiredTicks = modeCfg.windowSize + 1; // +1 para confirmação dupla
 
         if (state.lastDigits.length < requiredTicks) {
@@ -726,7 +727,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 mode: state.mode,
                 isRecovery: state.mode !== 'PRECISO',
                 filters: [marketAnalysis.details?.digitPattern, `Vol: ${marketAnalysis.details?.volatility}`],
-                trigger: `Filtros Estatísticos Zeus v2.2 ⚡ (${state.mode})`,
+                trigger: `Filtros Estatísticos Zeus v3.7 ⚡ (${state.mode})`,
                 probability: marketAnalysis.probability,
                 contractType: marketAnalysis.details?.contractType,
                 direction: marketAnalysis.signal as any
