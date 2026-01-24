@@ -1093,7 +1093,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 decision.stake || config.initialStake,
                 duration,
                 barrier, // Passar barrier
-                2 // maxRetries
+                2, // maxRetries
+                tradeId // ✅ Passar tradeId aqui
             ).catch(err => {
                 lastErrorMsg = err.message;
                 return null;
@@ -1203,6 +1204,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         duration: number,
         barrier?: string, // Adicionado barrier
         maxRetries = 2,
+        tradeId: number = 0, // ✅ Adicionado tradeId
     ): Promise<string | null> {
         const roundedStake = Math.round(stake * 100) / 100;
         let lastError: Error | null = null;
@@ -1334,14 +1336,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                             const state = this.userStates.get(userId);
 
                             // ✅ Log de debug para rastrear atualizações do contrato
-                            this.logger.debug(`[Zeus][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+                            this.logger.debug(`[Zeus][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit}`);
 
-                            // ✅ Atualizar entry_price quando disponível
-                            if (contract.entry_spot && state?.currentTradeId) {
-                                this.updateTradeRecord(state.currentTradeId, {
+                            // ✅ Atualizar entry_price quando disponível - USANDO tradeId DO CLOSURE
+                            if (contract.entry_spot && tradeId) {
+                                this.updateTradeRecord(tradeId, {
                                     entryPrice: Number(contract.entry_spot),
-                                }).then(() => {
-                                    this.logger.log(`[Zeus][${userId}] ✅ Entry price atualizado para ${contract.entry_spot} (trade #${state.currentTradeId})`);
                                 }).catch((error) => {
                                     this.logger.error(`[Zeus][${userId}] Erro ao atualizar entry_price:`, error);
                                 });
@@ -1352,8 +1352,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                                 const errorMsg = `Contrato ${contract.status}: ${contract.error_message || 'Sem mensagem de erro'}`;
                                 this.logger.error(`[Zeus][${userId}] ❌ Contrato ${contractId} foi ${contract.status}: ${errorMsg}`);
 
-                                if (state?.currentTradeId) {
-                                    this.updateTradeRecord(state.currentTradeId, {
+                                if (tradeId) {
+                                    this.updateTradeRecord(tradeId, {
                                         status: 'ERROR',
                                         errorMessage: errorMsg,
                                     }).catch((error) => {
@@ -1363,8 +1363,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                                 if (state) {
                                     state.isWaitingContract = false;
-                                    state.currentContractId = null;
-                                    state.currentTradeId = null;
                                 }
 
                                 // Remover subscription usando pool interno
@@ -1372,8 +1370,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                                 return;
                             }
 
-                            // ✅ Verificar se contrato foi finalizado (igual Orion)
-                            // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
+                            // ✅ Verificar se contrato foi finalizado
                             const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
                                 contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
 
@@ -1384,10 +1381,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                                 this.logger.log(`[Zeus][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
 
-                                // Processar resultado
+                                // Processar resultado - PASSANDO tradeId DO CLOSURE
                                 this.onContractFinish(
                                     userId,
                                     { win, profit, contractId, exitPrice, stake },
+                                    tradeId
                                 ).catch((error) => {
                                     this.logger.error(`[Zeus][${userId}] Erro ao processar resultado:`, error);
                                 });
@@ -1440,6 +1438,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     async onContractFinish(
         userId: string,
         result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
+        tradeIdFromCallback?: number, // ✅ Adicionado parâmetro opcional
     ): Promise<void> {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
@@ -1449,10 +1448,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
+        // ✅ COOLDOWN PÓS-TRADE: Resetar ticksSinceLastAnalysis para um valor negativo
+        // Isso obriga o robô a esperar que o padrão antigo seja "limpado" pelo tempo
+        state.ticksSinceLastAnalysis = -15; // Esperar 15 ticks (aprox 15-30s) antes de reanalisar
         state.isWaitingContract = false;
-        const tradeId = state.currentTradeId;
+
+        // Priorizar tradeId que veio do closure do buyContract
+        const tradeId = tradeIdFromCallback || state.currentTradeId;
+
         state.currentContractId = null;
-        state.currentTradeId = null;
+        if (state.currentTradeId === tradeId) {
+            state.currentTradeId = null;
+        }
 
         this.logger.log(`[Zeus][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
 
