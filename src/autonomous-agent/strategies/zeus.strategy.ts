@@ -33,7 +33,7 @@ const ZEUS_V37_CONFIGS = {
         minConsecutive: 2,
         lastDigits: 2,
         maxVolatility: 0.45,
-        symbol: 'R_50',
+        symbol: 'R_100',
         contractType: 'DIGITOVER', // 🎯 Digit Over 3
         targetDigit: 3,
         payout: 0.92,
@@ -45,7 +45,7 @@ const ZEUS_V37_CONFIGS = {
         minConsecutive: 2,
         lastDigits: 2,
         maxVolatility: 0.40,
-        symbol: 'R_50',
+        symbol: 'R_100',
         contractType: 'DIGITMATCHES', // 🔄 Digit Matches
         targetDigit: 3,
         payout: 0.92,
@@ -57,7 +57,7 @@ const ZEUS_V37_CONFIGS = {
         minConsecutive: 3,
         lastDigits: 2,
         maxVolatility: 0.35,
-        symbol: 'R_50',
+        symbol: 'R_100',
         contractType: 'DIGITMATCHES', // 🔄 Digit Matches
         targetDigit: 3,
         payout: 0.92,
@@ -204,7 +204,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     dailyLossLimit: parseFloat(user.daily_loss_limit),
                     derivToken: resolvedToken, // ✅ Usa o token resolvido
                     currency: user.currency,
-                    symbol: 'R_50',
+                    symbol: 'R_100',
                     initialBalance: parseFloat(user.initial_balance) || 0,
                     stopLossType: 'normal',
                     riskProfile: 'MODERADO',
@@ -271,7 +271,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             dailyLossLimit: config.dailyLossLimit,
             derivToken: config.derivToken,
             currency: config.currency,
-            symbol: 'R_50',
+            symbol: 'R_100',
             initialBalance: config.initialBalance || 0,
             stopLossType: (config as any).stopLossType || 'normal',
             riskProfile: (config as any).riskProfile || 'MODERADO',

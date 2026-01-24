@@ -284,12 +284,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
       case 'tick':
         if (msg.tick) {
-          // ✅ Todos os agentes autônomos usam R_100
-          const symbolForTick = 'R_100';
+          // ✅ Identificar símbolo pelo subscription ID ou usar R_100 como fallback
+          const tickSubId = msg.subscription?.id;
+          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || 'R_100';
 
-          if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
-            this.subscriptionId = msg.subscription.id;
-            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
+          if (tickSubId && (this.subscriptionId !== tickSubId || !this.subscriptions.has(symbolForTick))) {
+            this.subscriptionId = tickSubId;
+            this.subscriptions.set(symbolForTick, tickSubId); // ✅ Garantir mapeamento
+            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${tickSubId} (símbolo: ${symbolForTick})`);
           }
 
           // ✅ Log de debug para verificar se está recebendo ticks
