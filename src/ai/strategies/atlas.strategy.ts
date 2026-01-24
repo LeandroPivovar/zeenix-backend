@@ -1419,12 +1419,12 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
-      // ✅ ATLAS: Defesa Automática (Switch to Lento após 6 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 6 && state.mode !== 'lento') {
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 4 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 4 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 6 Perdas Consecutivas.\n` +
+          `• Motivo: 4 Perdas Consecutivas.\n` +
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 
