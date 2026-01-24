@@ -377,7 +377,7 @@ class RiskManager {
       // Regra: Garantir 50% do lucro máximo atingido.
       const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
       minAllowedBalance = this.initialBalance + guaranteedProfit;
-      limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
+      limitType = 'PISO DE LUCRO PROTEGIDO';
 
       // Mensagem informativa (apenas quando muda o pico)
       if (currentBalance === this.maxBalance && logger) {
@@ -385,7 +385,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ Stop Blindado: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ Proteção de Lucro: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -426,8 +426,8 @@ class RiskManager {
           ` • Motivo: Respeitar ${limitType} (Piso: $${minAllowedBalance.toFixed(2)})`,
         );
         if (saveLog) {
-          if (limitType.includes('BLINDADO')) {
-            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
+          if (limitType.includes('PISO')) {
+            saveLog('alerta', `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
           } else {
             saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
           }

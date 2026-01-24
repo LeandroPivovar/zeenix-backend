@@ -689,7 +689,7 @@ ${filtersText}
         state.peakProfit = profit;
         state.stopBlindadoFloor = profit * 0.50;
         this.saveLog(state.userId, 'alerta',
-          `🛡️ Stop Blindado: Ativado\n` +
+          `🛡️ Proteção de Lucro: Ativado\n` +
           `• Lucro Atual: $${profit.toFixed(2)}\n` +
           `• Piso Garantido: $${state.stopBlindadoFloor.toFixed(2)}`);
         this.tradeEvents.emit({

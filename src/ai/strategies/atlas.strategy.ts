@@ -710,7 +710,7 @@ export class AtlasStrategy implements IStrategy {
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
             this.saveAtlasLog(state.userId, symbol, 'info',
-              `🛡️ Stop Blindado: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
+              `🛡️ Proteção de Lucro: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
             );
           }
         }
@@ -884,7 +884,7 @@ export class AtlasStrategy implements IStrategy {
         const factor = stopBlindadoPercent / 100;
         const guaranteedProfit = profitPeak * factor;
         minAllowedBalance = capitalInicial + guaranteedProfit;
-        limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
+        limitType = 'PISO DE LUCRO PROTEGIDO';
       } else {
         if (lossLimit > 0) {
           minAllowedBalance = capitalInicial - lossLimit;
