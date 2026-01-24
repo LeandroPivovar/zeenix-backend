@@ -513,7 +513,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 const message = `📊 ANÁLISE ZEUS v3.7\n` +
                     `• Padrão: ${details?.digitPattern || details?.info || 'Analisando...'}\n` +
-                    `• Volatilidade: ${details?.volatility || 'Estabilizando...'}\n` +
+                    `• Volatilidade: ${details?.volatility ? Number(details.volatility).toFixed(3) : 'Estabilizando...'}\n` +
                     `• Status: ${signal ? `SINAL ENCONTRADO 🟢 (${probability}%)` : 'AGUARDANDO PADRÃO 🟡'}\n` +
                     `• Modo: ${state.mode}`;
 
@@ -633,7 +633,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             confidence: finalProb / 100,
             details: {
                 digitPattern: `${losersCount}/${modeConfig.windowSize} perdedores (Max Cons: ${maxConsecutive})`,
-                volatility: volatilityNormalized.toFixed(3),
+                volatility: volatilityNormalized, // ✅ Manter como número bruto
                 mode: state.mode,
                 contractType: modeConfig.contractType,
                 targetDigit: modeConfig.targetDigit,
@@ -1559,7 +1559,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const analysisReasoning = `Análise Zeus: Probabilidade ${trade.marketAnalysis.probability.toFixed(1)}%, ` +
             `Direção ${trade.marketAnalysis.signal}, ` +
             `Modo ${state.mode}, ` +
-            `Volatilidade=${trade.marketAnalysis.details?.volatility?.toFixed(4) || 'N/A'}`;
+            `Volatilidade=${trade.marketAnalysis.details?.volatility ? Number(trade.marketAnalysis.details.volatility).toFixed(4) : 'N/A'}`;
 
         try {
             const result = await this.dataSource.query(
