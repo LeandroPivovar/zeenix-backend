@@ -25,46 +25,64 @@ import { LogQueueService } from '../../utils/log-queue.service';
 /**
  * ⚡ ZEUS Strategy Configuration - Versão 2.2 (Manual Técnico)
  */
-const MODE_CONFIGS = {
-    PRECISO: {
-        windowSize: 10,
+const ZEUS_V37_CONFIGS = {
+    M0_PRECISO: {
+        name: 'PRECISO',
+        windowSize: 6,
+        requiredLosers: 4,
+        minConsecutive: 2,
+        lastDigits: 2,
+        maxVolatility: 0.45,
+        symbol: 'R_50',
+        contractType: 'DIGITOVER', // 🎯 Digit Over 3
         targetDigit: 3,
-        requiredLoserDigits: 7,
-        totalDigits: 10,
+        payout: 0.92,
+    },
+    M1_ULTRA: {
+        name: 'ULTRA PRECISO',
+        windowSize: 7,
+        requiredLosers: 5,
+        minConsecutive: 2,
+        lastDigits: 2,
+        maxVolatility: 0.40,
+        symbol: 'R_50',
+        contractType: 'DIGITMATCHES', // 🔄 Digit Matches
+        targetDigit: 3,
+        payout: 0.92,
+    },
+    M2_HIPER: {
+        name: 'HIPER PRECISO',
+        windowSize: 8,
+        requiredLosers: 6,
         minConsecutive: 3,
+        lastDigits: 2,
         maxVolatility: 0.35,
         symbol: 'R_50',
-        contractType: 'DIGITOVER', // 🎯 M0: Digit Over 3 (6 dígitos ganham)
-        payout: 0.70,
-    },
-    ULTRA: {
-        windowSize: 12,
+        contractType: 'DIGITMATCHES', // 🔄 Digit Matches
         targetDigit: 3,
-        requiredLoserDigits: 9,
-        totalDigits: 12,
-        minConsecutive: 4,
-        maxVolatility: 0.30,
-        symbol: 'R_50',
-        contractType: 'DIGITMATCHES', // 🔄 M1: Digit Matches (1 dígito ganha)
-        payout: 8.0,
-    },
-    HIPER: {
-        windowSize: 15,
-        targetDigit: 3,
-        requiredLoserDigits: 12,
-        totalDigits: 15,
-        minConsecutive: 5,
-        maxVolatility: 0.25,
-        symbol: 'R_50',
-        contractType: 'DIGITMATCHES', // 🔄 M2+: Digit Matches (1 dígito ganha)
-        payout: 8.0,
+        payout: 0.92,
     },
 };
 
-const ZEUS_RISK_PROFILES = {
-    CONSERVADOR: { profitFactor: 1.0 },
-    MODERADO: { profitFactor: 1.15 },
-    AGRESSIVO: { profitFactor: 1.30 },
+const ZEUS_V37_RISK_MANAGEMENT = {
+    CONSERVADOR: {
+        maxRecoveryLevel: 5,
+        profitTargetPercent: 0,
+        acceptLoss: true,
+        payout: 0.92,
+    },
+    MODERADO: {
+        maxRecoveryLevel: -1, // Infinity
+        profitTargetPercent: 0.15,
+        acceptLoss: false,
+        payout: 0.92,
+    },
+    AGRESSIVO: {
+        maxRecoveryLevel: -1, // Infinity
+        profitTargetPercent: 0.30,
+        acceptLoss: false,
+        payout: 0.92,
+    },
 };
 @Injectable()
 export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -534,91 +552,90 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
-     * Análise de mercado Zeus v2.2 (8 Filtros Estatísticos)
+     * Análise de mercado Zeus v3.7 (8 Filtros Estatísticos)
      */
     private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
         const state = this.userStates.get(userId);
         if (!state) return null;
 
-        const currentMode = state.mode || 'PRECISO';
-        const modeConfig = MODE_CONFIGS[currentMode as keyof typeof MODE_CONFIGS] || MODE_CONFIGS.PRECISO;
+        const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
+        const modeConfig = ZEUS_V37_CONFIGS[currentModeKey];
 
-        // Garantir que temos dígitos suficientes para a janela + confirmação dupla (windowSize + 1)
-        if (state.lastDigits.length < modeConfig.windowSize + 1) {
+        // Garantir que temos dígitos suficientes
+        if (state.lastDigits.length < modeConfig.windowSize) {
             return null;
         }
 
-        // Janela principal de análise
-        const window = state.lastDigits.slice(-modeConfig.windowSize);
-
-        // FILTRO 1: Contagem de Perdedores (≤ 3)
-        const loserCount = window.filter(d => d <= modeConfig.targetDigit).length;
-
-        // FILTRO 2: Proporção de Perdedores
-        if (loserCount < modeConfig.requiredLoserDigits) {
-            return this.generateHeartbeat(loserCount, modeConfig, window);
-        }
-
-        // FILTRO 3 & 8: Dígitos Consecutivos + Rigor Histórico
-        let maxConsecutive = 0;
-        let currentConsecutive = 0;
-        for (const digit of window) {
-            if (digit <= modeConfig.targetDigit) {
-                currentConsecutive++;
-                maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
-            } else {
-                currentConsecutive = 0;
-            }
-        }
-
-        let requiredConsecutive = modeConfig.minConsecutive;
-        if (state.consecutiveLosses >= 2) {
-            requiredConsecutive += 1; // Filtro 8: Aumenta rigor após 2 perdas
-        }
-
-        if (maxConsecutive < requiredConsecutive) {
-            return this.generateHeartbeat(loserCount, modeConfig, window);
-        }
-
-        // FILTRO 4: Últimos Dígitos Confirmam (Last 3)
-        const last3 = window.slice(-3);
-        if (!last3.every(d => d <= modeConfig.targetDigit)) {
-            return this.generateHeartbeat(loserCount, modeConfig, window);
-        }
-
-        // FILTRO 5: Volatilidade (Desvio Padrão)
-        const volatility = this.calculateDigitalVolatility(window);
-        if (volatility > modeConfig.maxVolatility) {
-            return this.generateHeartbeat(loserCount, modeConfig, window);
-        }
+        const digits = state.lastDigits.slice(-modeConfig.windowSize);
 
         // FILTRO 6: Horário Válido
         if (!this.isValidHour()) {
-            return this.generateHeartbeat(loserCount, modeConfig, window);
+            return this.generateHeartbeat(0, modeConfig, digits);
         }
 
-        // FILTRO 7: Confirmação Dupla (Janela Anterior - shift 1)
-        const windowPrev = state.lastDigits.slice(-modeConfig.windowSize - 1, -1);
-        const loserCountPrev = windowPrev.filter(d => d <= modeConfig.targetDigit).length;
-        if (loserCountPrev < modeConfig.requiredLoserDigits - 1) { // Aceita um a menos na anterior
-            return this.generateHeartbeat(loserCount, modeConfig, window);
+        // FILTRO 1: PADRÃO (Contagem de Perdedores ≤ 3)
+        const losersCount = digits.filter(d => d <= modeConfig.targetDigit).length;
+        if (losersCount < modeConfig.requiredLosers) {
+            return this.generateHeartbeat(losersCount, modeConfig, digits);
+        }
+
+        // FILTRO 2: CONSECUTIVOS (≥ minConsecutive)
+        let consecutive = 0;
+        let maxConsecutive = 0;
+        for (const d of digits) {
+            if (d <= modeConfig.targetDigit) consecutive++;
+            else consecutive = 0;
+            maxConsecutive = Math.max(maxConsecutive, consecutive);
+        }
+
+        let requiredConsecutive = modeConfig.minConsecutive;
+        // FILTRO 8: AJUSTE POR HISTÓRICO RECENTE
+        if (state.consecutiveLosses >= 2) {
+            requiredConsecutive += 1;
+        }
+
+        if (maxConsecutive < requiredConsecutive) {
+            return this.generateHeartbeat(losersCount, modeConfig, digits);
+        }
+
+        // FILTRO 3: MOMENTUM (Últimos "lastDigits" dígitos)
+        const lastDigitsMomentum = digits.slice(-modeConfig.lastDigits);
+        if (!lastDigitsMomentum.every(d => d <= modeConfig.targetDigit)) {
+            return this.generateHeartbeat(losersCount, modeConfig, digits);
+        }
+
+        // FILTRO 4: VOLATILIDADE (Fórmula v3.7: stdDev / 9 <= maxVolatility)
+        const mean = digits.reduce((a, b) => a + b, 0) / digits.length;
+        const variance = digits.map(d => Math.pow(d - mean, 2)).reduce((a, b) => a + b, 0) / digits.length;
+        const stdDev = Math.sqrt(variance);
+        const volatilityNormalized = stdDev / 9;
+
+        if (volatilityNormalized > modeConfig.maxVolatility) {
+            return this.generateHeartbeat(losersCount, modeConfig, digits);
+        }
+
+        // FILTRO 7: CONFIRMAÇÃO DUPLA (Janela Anterior Shift 1)
+        if (state.lastDigits.length >= modeConfig.windowSize + 1) {
+            const prevWindow = state.lastDigits.slice(-modeConfig.windowSize - 1, -1);
+            const prevLosers = prevWindow.filter(d => d <= modeConfig.targetDigit).length;
+            if (prevLosers < modeConfig.requiredLosers - 1) {
+                return this.generateHeartbeat(losersCount, modeConfig, digits);
+            }
         }
 
         // SE CHEGOU AQUI, TODOS OS FILTROS PASSARAM!
-        // Calcular Score Final (0-100)
-        const loserScore = (loserCount / modeConfig.totalDigits) * 40;
-        const consecutiveScore = Math.min((maxConsecutive / requiredConsecutive) * 40, 40);
-        const volatilityScore = (1 - (volatility / modeConfig.maxVolatility)) * 20;
-        const finalProbability = Math.min(99, Math.round(loserScore + consecutiveScore + volatilityScore + 20)); // +20 base for signal
+        // Cálculo de Probabilidade Final (para fins de log/UI)
+        const baseProb = 20; // Probabilidade base de sinal do ZEUS v3.7
+        const finalProb = Math.min(99, baseProb + (losersCount * 5) + (maxConsecutive * 5));
 
         return {
-            signal: modeConfig.contractType === 'DIGITOVER' ? 'DIGIT' : (state.martingaleLevel > 0 ? 'MATCH' : 'DIGIT'),
-            probability: finalProbability,
+            signal: 'DIGIT', // Usado para rotear para DIGITOVER ou DIGITMATCHES conforme contrato definido
+            probability: finalProb,
             payout: modeConfig.payout,
-            confidence: finalProbability / 100,
+            confidence: finalProb / 100,
             details: {
-                digitPattern: `${loserCount}/${modeConfig.windowSize} perdedores (Max Cons: ${maxConsecutive})`,
-                volatility: volatility.toFixed(3),
+                digitPattern: `${losersCount}/${modeConfig.windowSize} perdedores (Max Cons: ${maxConsecutive})`,
+                volatility: volatilityNormalized.toFixed(3),
                 mode: state.mode,
                 contractType: modeConfig.contractType,
                 targetDigit: modeConfig.targetDigit,
@@ -627,15 +644,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         };
     }
 
-    private generateHeartbeat(loserCount: number, modeConfig: any, window: number[]): MarketAnalysis {
-        const prob = Math.min(49, Math.round((loserCount / modeConfig.requiredLoserDigits) * 40));
+    private generateHeartbeat(losersFound: number, modeConfig: any, window: number[]): MarketAnalysis {
+        const prob = Math.min(49, Math.round((losersFound / modeConfig.requiredLosers) * 40));
         return {
             signal: null,
             probability: prob,
             payout: 0,
             confidence: prob / 100,
             details: {
-                info: `Aguardando padrão (${loserCount}/${modeConfig.requiredLoserDigits})`,
+                info: `Aguardando padrão (${losersFound}/${modeConfig.requiredLosers})`,
                 mode: modeConfig.symbol,
                 lastDigits: window.slice(-5).join(',')
             }
@@ -654,14 +671,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const hour = now.getHours();
         const minute = now.getMinutes();
 
-        // Bloqueia 09:00-09:30
-        if (hour === 9 && minute < 30) return false;
-        // Bloqueia 17:30-18:00
-        if (hour === 17 && minute >= 30) return false;
-        // Bloqueia após as 18:00 (ajustável conforme config do usuário se necessário)
-        if (hour >= 18) return false;
-        // Bloqueia antes das 07:00
-        if (hour < 7) return false;
+        // 7:00 às 18:00 (v3.7)
+        if (hour < 7 || hour >= 18) return false;
+
+        // Bloqueio extra para alta volatilidade Orion Style (mantido se necessário, ou removido se quiser rigidamente v3.7)
+        // Se quisermos seguir rigorosamente o documento v3.7, apenas 7-18 basta.
 
         return true;
     }
@@ -840,28 +854,34 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let stake = config.initialStake;
 
         if (state.mode === 'PRECISO') {
-            // Sistema Soros 3 níveis
+            // No modo preciso v3.7, operamos com stake base ou o sistema Soros (prêmio por lucro/recuperação)
             if (state.sorosActive && state.sorosCount > 0) {
-                // Manual diz: Stake inicial (ou Soros se ativo), dobra entrada
-                stake = config.initialStake * Math.pow(2, Math.min(state.sorosCount, 3));
+                stake = config.initialStake + (state.lastProfit > 0 ? state.lastProfit : 0);
             }
         } else {
-            // Recuperação (ULTRA/HIPER) - Usa Fator por Perfil
+            // Recuperação (ULTRA/HIPER) 
             const riskProfile = config.riskProfile || 'MODERADO';
-            const riskSettings = ZEUS_RISK_PROFILES[riskProfile as keyof typeof ZEUS_RISK_PROFILES] || ZEUS_RISK_PROFILES.MODERADO;
-            const profitFactor = riskSettings.profitFactor;
+            const riskSettings = ZEUS_V37_RISK_MANAGEMENT[riskProfile as keyof typeof ZEUS_V37_RISK_MANAGEMENT] || ZEUS_V37_RISK_MANAGEMENT.MODERADO;
 
-            // Payout do DIGITMATCHES é ~8.0
-            const recoveryPayout = 8.0;
-            const adjustedPayout = recoveryPayout * (1 - this.comissaoPlataforma);
+            // Fórmulas v3.7:
+            // Conservador: status = perdas / 0.92 (Objetivo Zero a Zero)
+            // Moderado/Agressivo: stake = (perdas + lucro_alvo) / 0.92
 
-            const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
+            const lossToRecover = state.totalLossAccumulated;
+            const targetProfitAdd = config.initialStake * riskSettings.profitTargetPercent;
 
-            // Stake = (Perda * Fator) / Payout
-            stake = (lossToRecover * profitFactor) / adjustedPayout;
+            stake = (lossToRecover + targetProfitAdd) / 0.92;
 
-            if (state.consecutiveLosses > 5) {
-                this.logger.warn(`[Zeus][${userId}] 🚨 Limite de recuperação excedido. Retornando ao básico.`);
+            // FILTRO DE SEGURANÇA M5 (CONSERVADOR)
+            if (riskSettings.acceptLoss && state.martingaleLevel > riskSettings.maxRecoveryLevel) {
+                this.logger.warn(`[Zeus][${userId}] 🛑 M5 PERDIDO (MODO CONSERVADOR). Aceitando perda de $${lossToRecover.toFixed(2)} e reiniciando.`);
+                this.saveLog(userId, 'WARN', 'RISK', `Limite de recuperação M5 atingido. Reiniciando ciclo após perda de $${lossToRecover.toFixed(2)}.`);
+
+                state.mode = 'PRECISO';
+                state.totalLossAccumulated = 0;
+                state.martingaleLevel = 0;
+                state.consecutiveLosses = 0;
+
                 return config.initialStake;
             }
         }
