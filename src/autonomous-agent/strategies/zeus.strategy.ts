@@ -55,22 +55,20 @@ const ZEUS_V4_CONFIGS = {
 const ZEUS_V4_RISK_MANAGEMENT = {
     CONSERVADOR: {
         maxRecoveryLevel: 3, // M0 -> M1, M2, M3
-        profitFactor: 1.02, // 102% (Recupera + 2% gordura)
+        profitFactor: 1.02, // 102% (Recupera + 2%)
         useStopBlindado: false
     },
     MODERADO: {
         maxRecoveryLevel: 4,
-        profitFactor: 1.15, // 115% (Recupera + 15% lucro)
+        profitFactor: 1.15, // 115% (Recupera + 15%)
         useStopBlindado: true
     },
     AGRESSIVO: {
         maxRecoveryLevel: 5,
-        profitFactor: 1.30, // 130% (Recupera + 30% lucro)
+        profitFactor: 1.30, // 130% (Recupera + 30%)
         useStopBlindado: true
     },
 };
-
-
 @Injectable()
 export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     name = 'zeus';
@@ -796,12 +794,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * Atualiza o modo do agente baseado em vitória/derrota
      */
-    /**
-     * Atualiza o modo do agente baseado em vitória/derrota
-     */
-    /**
-     * Atualiza o modo do agente baseado em vitória/derrota
-     */
     private updateMode(userId: string, win: boolean): void {
         const state = this.userStates.get(userId);
         const config = this.userConfigs.get(userId);
@@ -810,34 +802,42 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (win) {
             state.consecutiveWins++;
             state.consecutiveLosses = 0;
-            state.totalLossAccumulated = 0; // Reset loss on win
+            state.totalLossAccumulated = 0; // Resetar perdas acumuladas ao vencer (recuperou)
 
-            // Se estava em recuperação (Level > 0), volta para M0 e NÃO ativa Soros
-            if (state.martingaleLevel > 0) {
-                this.logger.log(`[Zeus][${userId}] ✅ RECUPERAÇÃO CONCLUÍDA! Retornando para M0 (Digit Over 3)`);
-                state.martingaleLevel = 0;
-                state.sorosActive = false; // Reset Soros forced
-                state.sorosCount = 0;
-            } else {
-                // Win no M0 -> Lógica Soros (2 Níveis: Base -> Base+Lucro)
-                if (!state.sorosActive) {
-                    state.sorosActive = true;
-                    state.sorosCount = 1; // Próxima stake será Soros Nível 1
-                    this.logger.log(`[Zeus][${userId}] 🚀 Vitória em M0! Ativando Soros Nível 1 para próxima entrada.`);
+            // Lógica de Soros Nível 1 (Apenas no modo Normal M0)
+            if (state.martingaleLevel === 0) {
+                if (state.sorosLevel === 0) {
+                    // Win 1 -> Ativar Soros para a próxima
+                    state.sorosLevel = 1;
+                    this.logger.log(`[Zeus][${userId}] ✅ WIN (M0) -> Ativando SOROS NÍVEL 1 para próxima entrada`);
                 } else {
-                    // Já estava em Soros (Nível 1), completa o ciclo e reseta
-                    state.sorosActive = false;
-                    state.sorosCount = 0;
-                    this.logger.log(`[Zeus][${userId}] 🎯 Ciclo Soros completo! Retornando à stake base.`);
+                    // Win 2 (Soros) -> Cycle Complete, Reset
+                    state.sorosLevel = 0;
+                    this.logger.log(`[Zeus][${userId}] ✅ WIN (SOROS) -> Ciclo completado! Retornando a stake inicial.`);
+                }
+            } else {
+                // Se venceu na recuperação (M1+), reseta para M0
+                state.martingaleLevel = 0;
+                state.sorosLevel = 0; // Garante reset do Soros ao voltar da recuperação
+
+                if (state.lastContractType?.includes('RISE_FALL') || state.lastContractType === 'CALL' || state.lastContractType === 'PUT') {
+                    this.logger.log(`[Zeus][${userId}] ✅ RECUPERAÇÃO CONCLUÍDA! Retornando para M0 (Digit Over 3)`);
                 }
             }
 
         } else {
             state.consecutiveWins = 0;
             state.consecutiveLosses++;
+
+            // Se perdeu no Soros (M0, Soros 1)
+            // A perda acumulada deve considerar o valor total apostado (Stake Inicial + Lucro Anterior)
+            // O profit atual já vem negativo com o valor da stake perdida, então podemos usar isso.
+
+            // Resetar Soros em caso de Loss
+            state.sorosLevel = 0;
+
+            // Incrementar nível de recuperação
             state.martingaleLevel++;
-            state.sorosActive = false; // Loss quebra Soros
-            state.sorosCount = 0;
 
             if (state.lastProfit < 0) {
                 state.totalLossAccumulated += Math.abs(state.lastProfit);
@@ -845,11 +845,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             // Log de entrada em recuperação
             if (state.martingaleLevel === 1) {
-                this.logger.log(`[Zeus][${userId}] ⚠️ LOSS (M0) -> Iniciando Recuperação PRICE ACTION (RISE/FALL)`);
+                this.logger.log(`[Zeus][${userId}] ⚠️ LOSS -> Iniciando Recuperação PRICE ACTION (RISE/FALL)`);
             }
         }
     }
 
+    /**
+     * Calcula o stake baseado no modo e situação
+     */
     /**
      * Calcula o stake baseado no modo e situação (Zeus v4.0)
      */
@@ -859,18 +862,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (!config || !state) return 0;
 
-        // M0: Entrada Normal -> Stake Inicial ou Soros
+        // M0: Entrada Normal (Com suporte a Soros Nível 1)
         if (state.martingaleLevel === 0) {
-            // Lógica Soros (Nível 1)
-            if (state.sorosActive && state.sorosCount === 1) {
-                const lastProfit = state.lastProfit > 0 ? state.lastProfit : 0;
-                if (lastProfit > 0) {
-                    const sorosStake = config.initialStake + lastProfit;
-                    this.logger.log(`[Zeus][${userId}] 🚀 Calculando Stake Soros Nível 1: Base $${config.initialStake} + Profit $${lastProfit.toFixed(2)} = $${sorosStake.toFixed(2)}`);
-                    return Math.round(sorosStake * 100) / 100;
-                } else {
-                    this.logger.warn(`[Zeus][${userId}] ⚠️ Soros ativo mas lastProfit inválido ($${state.lastProfit}). Usando stake base.`);
-                }
+            if (state.sorosLevel === 1) {
+                // Soros: Stake Inicial + Lucro da Anterior
+                // Lucro da anterior está em state.lastProfit (positivo)
+                // Se por algum motivo for <=0, fallback para initialStake
+                const sorosStake = config.initialStake + (state.lastProfit > 0 ? state.lastProfit : 0);
+                this.logger.log(`[Zeus][${userId}] 🚀 CALCULANDO SOROS: ${config.initialStake.toFixed(2)} + ${state.lastProfit.toFixed(2)} = ${sorosStake.toFixed(2)}`);
+                return Math.round(sorosStake * 100) / 100;
             }
             return config.initialStake;
         }
@@ -887,12 +887,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.logger.warn(`[Zeus][${userId}] 🛑 Limite Recuperação ${riskProfile} (M${riskSettings.maxRecoveryLevel}) atingido.`);
             this.saveLog(userId, 'WARN', 'RISK', `Limite M${riskSettings.maxRecoveryLevel} atingido. Aceitando perda de $${state.totalLossAccumulated.toFixed(2)}.`);
 
-            // Reset forçado (Aceitou Perda)
+            // Reset forçado
             state.martingaleLevel = 0;
+            state.sorosLevel = 0;
             state.totalLossAccumulated = 0;
             state.consecutiveLosses = 0;
-            state.sorosActive = false;
-
             return config.initialStake;
         }
 
