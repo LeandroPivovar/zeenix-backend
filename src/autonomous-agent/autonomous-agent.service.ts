@@ -358,8 +358,8 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    // ✅ Todos os agentes autônomos usam R_100
-    const tickSymbol = symbol || 'R_100';
+    // ✅ Cada agente decide os símbolos que processa
+    const tickSymbol = symbol;
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
     const parity = this.getParityFromDigit(digit);

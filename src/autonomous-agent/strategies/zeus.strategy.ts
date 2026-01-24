@@ -1589,7 +1589,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         const analysisData = {
-            strategy: 'Zeus',
+            strategy: 'zeus',
             mode: state.mode,
             probability: trade.marketAnalysis.probability,
             signal: trade.marketAnalysis.signal,
@@ -1622,7 +1622,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.stakeAmount,
                     state.mode === 'PRECISO' ? 'M0' : (state.mode === 'ULTRA' ? 'M1' : 'M2'),
                     trade.payout * 100, // Converter para percentual
-                    config.symbol,
+                    config.symbol || 'R_100',
                 ],
 
             );
@@ -1734,7 +1734,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
              daily_loss = ?,
              total_trades = ?,
              updated_at = NOW()
-         WHERE user_id = ? AND agent_type = 'Zeus'`,
+         WHERE user_id = ? AND agent_type = 'zeus'`,
                 [
                     Math.max(0, state.lucroAtual),
                     Math.abs(Math.min(0, state.lucroAtual)),
