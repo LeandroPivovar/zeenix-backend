@@ -240,6 +240,8 @@ export class DerivController {
       demoAmount: account?.demoAmount ?? 0,
       // Sempre incluir tokensByLoginId, mesmo que vazio
       tokensByLoginId: account?.tokensByLoginId ?? {},
+      idRealAccount: account?.idRealAccount,
+      idDemoAccount: account?.idDemoAccount,
     };
 
     // Log para debug - verificar se os campos estão presentes
@@ -413,6 +415,8 @@ export class DerivController {
       raw: accountForCurrency,
       realAmount: accountForCurrency.realAmount,
       demoAmount: accountForCurrency.demoAmount,
+      idRealAccount: accountForCurrency.idRealAccount,
+      idDemoAccount: accountForCurrency.idDemoAccount,
       ...tokenUpdates
     });
     this.logger.log(`[${source}] Dados iniciais salvos no banco para usuário ${userId}. Tokens salvos: ${JSON.stringify(Object.keys(tokenUpdates))}, DemoCurrency: ${tokenUpdates.tokenDemoCurrency}, RealCurrency: ${tokenUpdates.tokenRealCurrency}`);
@@ -481,6 +485,8 @@ export class DerivController {
         raw: refreshedRaw,
         realAmount: refreshedRaw.realAmount,
         demoAmount: refreshedRaw.demoAmount,
+        idRealAccount: refreshedRaw.idRealAccount,
+        idDemoAccount: refreshedRaw.idDemoAccount,
         // Não precisamos atualizar tokens aqui pois já foram salvos ou mantidos
       });
       this.derivService.setSession(userId, refreshedSessionPayload);
@@ -796,6 +802,8 @@ export class DerivController {
           raw: accountWithTokens,
           realAmount: accountWithTokens.realAmount,
           demoAmount: accountWithTokens.demoAmount,
+          idRealAccount: accountWithTokens.idRealAccount,
+          idDemoAccount: accountWithTokens.idDemoAccount,
         });
         this.logger.log(`[STATUS] Saldo atualizado com sucesso: ${JSON.stringify(account)}`);
         this.logger.log(`[STATUS] SessionPayload retornado: ${JSON.stringify({

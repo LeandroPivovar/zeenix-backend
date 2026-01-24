@@ -27,6 +27,8 @@ export type DerivAccountResult = {
   tokensByLoginId?: Record<string, string>;
   realAmount?: number;
   demoAmount?: number;
+  idRealAccount?: string;
+  idDemoAccount?: string;
 };
 
 @Injectable()
@@ -360,7 +362,9 @@ export class DerivService {
               aggregatedBalances,
               tokensByLoginId: {
                 [selectedEntry.loginid || balanceData.loginid]: token
-              }
+              },
+              idRealAccount: allRealAccounts.length > 0 ? allRealAccounts[0].loginid : undefined,
+              idDemoAccount: allDemoAccounts.length > 0 ? allDemoAccounts[0].loginid : undefined,
             };
 
             this.logger.log(
@@ -476,6 +480,8 @@ export class DerivService {
       balancesByCurrencyReal: account.balancesByCurrencyReal ?? {},
       accountsByCurrency: account.accountsByCurrency ?? {},
       tokensByLoginId: account.tokensByLoginId ?? {},
+      idRealAccount: account.idRealAccount,
+      idDemoAccount: account.idDemoAccount,
     };
   }
 
