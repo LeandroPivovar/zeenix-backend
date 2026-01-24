@@ -667,6 +667,7 @@ export class AtlasStrategy implements IStrategy {
 
       const lucroAtual = parseFloat(config.sessionBalance) || 0;
       const capitalSessao = capitalInicial + lucroAtual;
+      const currentPeak = Math.max(profitPeak, lucroAtual);
 
       // Sincronizar estado em memória com banco (para exibição correta)
       state.capital = capitalSessao;
