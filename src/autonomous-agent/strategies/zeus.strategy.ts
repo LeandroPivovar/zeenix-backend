@@ -28,39 +28,39 @@ import { LogQueueService } from '../../utils/log-queue.service';
 const ZEUS_V37_CONFIGS = {
     M0_PRECISO: {
         name: 'PRECISO',
-        windowSize: 6,
-        requiredLosers: 4,
-        minConsecutive: 2,
+        windowSize: 10,  // Aumentado (antes 6)
+        requiredLosers: 8, // Aumentado (antes 4)
+        minConsecutive: 4,
         lastDigits: 2,
         maxVolatility: 0.45,
         symbol: 'R_100',
         contractType: 'DIGITOVER', // 🎯 Digit Over 3
         targetDigit: 3,
-        payout: 1.44, // Payout real aproximado (144% retorno, 44% lucro)
+        payout: 1.44,
     },
     M1_ULTRA: {
         name: 'ULTRA PRECISO',
-        windowSize: 7,
-        requiredLosers: 5,
-        minConsecutive: 2,
-        lastDigits: 2,
+        windowSize: 15, // Aumentado (antes 7)
+        requiredLosers: 14, // Aumentado para Match (antes 5)
+        minConsecutive: 6,
+        lastDigits: 3,
         maxVolatility: 0.40,
         symbol: 'R_100',
-        contractType: 'DIGITMATCH', // ✅ Nome correto para API Deriv
+        contractType: 'DIGITMATCH',
         targetDigit: 3,
-        payout: 8.0, // Payout real aproximado (900% retorno, 800% lucro)
+        payout: 8.0,
     },
     M2_HIPER: {
         name: 'HIPER PRECISO',
-        windowSize: 8,
-        requiredLosers: 6,
-        minConsecutive: 3,
-        lastDigits: 2,
+        windowSize: 20, // Aumentado (antes 8)
+        requiredLosers: 19, // Aumentado para Match (antes 6)
+        minConsecutive: 8,
+        lastDigits: 4,
         maxVolatility: 0.35,
         symbol: 'R_100',
-        contractType: 'DIGITMATCH', // ✅ Nome correto para API Deriv
+        contractType: 'DIGITMATCH',
         targetDigit: 3,
-        payout: 8.0, // Payout real aproximado (900% retorno, 800% lucro)
+        payout: 8.0,
     },
 };
 
@@ -402,64 +402,49 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return; // Já está processando, ignorar este tick
         }
 
-        // Se está aguardando resultado de contrato, não processar novos ticks
+        // ✅ ATUALIZAR SEMPRE O HISTÓRICO (Mesmo se estiver esperando contrato)
+        const userTicks = this.ticks.get(userId) || [];
+        userTicks.push(tick);
+        if (userTicks.length > this.maxTicks) userTicks.shift();
+        this.ticks.set(userId, userTicks);
+
+        // Coletar dígito de forma robusta
+        const priceStr = tick.value.toFixed(8).replace(/\.?0+$/, '').replace('.', '');
+        const lastDigit = parseInt(priceStr[priceStr.length - 1]);
+        state.lastDigits.push(lastDigit);
+        if (state.lastDigits.length > 30) state.lastDigits.shift();
+
+        // Se está aguardando resultado de contrato, paramos aqui (mas histórico já foi atualizado)
         if (state.isWaitingContract) {
             return;
         }
 
-        // Adicionar tick à coleção
-        const userTicks = this.ticks.get(userId) || [];
-        userTicks.push(tick);
-
-        // ✅ TICK ADVANCE LÓGICA
-        // Incrementa contador de ticks sem análise
+        // ✅ TICK ADVANCE LÓGICA (Só conta para análise se NÃO houver operação)
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
-        // Manter apenas os últimos maxTicks
-        if (userTicks.length > this.maxTicks) {
-            userTicks.shift();
-        }
-        this.ticks.set(userId, userTicks);
-
-        // 1. Atualizar histórico de ticks e dígitos
-        userTicks.push(tick);
-        if (userTicks.length > this.maxTicks) {
-            userTicks.shift();
-        }
-
-        // ✅ Coletar o último dígito do tick (Price)
-        const priceStr = tick.value.toString();
-        const lastDigit = parseInt(priceStr[priceStr.length - 1]);
-
-        // ✅ Atualizar histórico de dígitos
-        state.lastDigits.push(lastDigit);
-
-        const maxWindow = 20; // Espaço suficiente para os modos ULTRA/HIPER
-        if (state.lastDigits.length > maxWindow) {
-            state.lastDigits.shift();
-        }
-
-        // ✅ Atualizar contador de dígitos perdedores (<= targetDigit)
-        const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
-        const targetDigit = ZEUS_V37_CONFIGS[currentModeKey]?.targetDigit || 3;
-        if (lastDigit <= targetDigit) {
-            state.consecutiveLosingDigits++;
-        } else {
-            state.consecutiveLosingDigits = 0;
-        }
-
-        // Zeus opera em tempo real baseado em ticks, mas para evitar flood e instabilidade,
+        // Zeus opera em tempo real baseado em ticks, mas para evitar flood,
         // só analisa a cada 3 ticks (similar ao Falcon)
         const requiredSkip = state.mode === 'PRECISO' ? 2 : 3;
         if (state.ticksSinceLastAnalysis <= requiredSkip) {
             return; // Pular este tick
         }
 
+        // ✅ Atualizar contador de dígitos perdedores para o modo atual
+        const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
+        const targetDigit = ZEUS_V37_CONFIGS[currentModeKey]?.targetDigit || 3;
 
-        // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
-        if (state.isWaitingContract) {
-            return;
+        const isLoser = (ZEUS_V37_CONFIGS[currentModeKey]?.contractType === 'DIGITMATCH')
+            ? lastDigit !== targetDigit
+            : lastDigit <= targetDigit;
+
+        if (isLoser) {
+            state.consecutiveLosingDigits++;
+        } else {
+            state.consecutiveLosingDigits = 0;
         }
+
+        // Multi-tick delay concluído, resetar para próximo ciclo
+        state.ticksSinceLastAnalysis = 0;
 
         // Zeus 2.2 window size dinâmica
         const modeKeyForTicks = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
@@ -1105,8 +1090,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             });
 
             if (contractId) {
+                // ✅ VINCULAÇÃO RÍGIDA: Setar ids no state APENAS após confirmação
                 state.currentContractId = contractId;
                 state.currentTradeId = tradeId;
+
+                this.logger.log(`[Zeus][${userId}] 🎫 Trade VINCLULADO: TradeId=${tradeId}, ContractId=${contractId}`);
 
                 // ✅ Log de operação no padrão Orion
                 await this.saveLog(
@@ -1608,7 +1596,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.duration,
                     trade.entryPrice,
                     trade.stakeAmount,
-                    state.mode === 'PRECISO' ? 'M0' : (state.mode === 'ULTRA' ? 'M1' : 'M2+'),
+                    state.mode === 'PRECISO' ? 'M0' : (state.mode === 'ULTRA' ? 'M1' : 'M2'),
                     trade.payout * 100, // Converter para percentual
                     config.symbol,
                 ],
@@ -1616,9 +1604,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             );
 
             const insertId = Array.isArray(result) ? result[0]?.insertId : result?.insertId;
+
+            if (!insertId) {
+                this.logger.error(`[Zeus][${userId}] ❌ INSERT falhou - Sem ID gerado. Result: ${JSON.stringify(result)}`);
+            } else {
+                this.logger.log(`[Zeus][${userId}] 💾 Registro de trade criado: ID ${insertId}`);
+            }
+
             return insertId || 0;
-        } catch (error) {
-            this.logger.error(`[Zeus][${userId}] Erro ao criar registro de trade:`, error);
+        } catch (error: any) {
+            this.logger.error(`[Zeus][${userId}] ❌ ERRO CRÍTICO no Banco de Dados (INSERT): ${error.message}`);
             return 0;
         }
     }
