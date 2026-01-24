@@ -154,7 +154,7 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `🛡️ STOP LOSS BLINDADO ATIVADO\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
+                logCallback(userId, symbol, 'alerta', `🛡️ Stop Blindado: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
             }
         }
 
@@ -833,7 +833,7 @@ export class NexusStrategy implements IStrategy {
                 logType = 'alerta';
                 break;
             case 'stopped_blindado':
-                logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
+                logMessage = `🛡️ STOP BLINDADO ATINGIDO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
                 break;
             case 'stopped_insufficient_balance':

@@ -385,7 +385,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ STOP BLINDADO ATIVADO\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ Stop Blindado: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -409,7 +409,7 @@ class RiskManager {
             logger.log(
               `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog) saveLog('alerta', `🏆 META/STOP BLINDADO ATINGIDO\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
             if (saveLog) saveLog('alerta', `🛑 STOP LOSS NORMAL ATINGIDO\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);

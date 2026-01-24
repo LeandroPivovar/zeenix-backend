@@ -403,7 +403,7 @@ class RiskManager {
             if (userId && symbol && logCallback) {
                 const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
                 logCallback(userId, symbol, 'info',
-                    `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
+                    `🛡️ Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
             }
         }
 
