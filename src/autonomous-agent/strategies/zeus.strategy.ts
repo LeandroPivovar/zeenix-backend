@@ -67,7 +67,7 @@ const ZEUS_V37_CONFIGS = {
 const ZEUS_V37_RISK_MANAGEMENT = {
     CONSERVADOR: {
         maxRecoveryLevel: 5,
-        profitTargetPercent: 0,
+        profitTargetPercent: 0.01, // 1% conforme solicitado
         acceptLoss: true,
         payout: 0.92,
     },
@@ -878,7 +878,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const lossToRecover = state.totalLossAccumulated;
             const targetProfitAdd = config.initialStake * riskSettings.profitTargetPercent;
 
-            stake = (lossToRecover + targetProfitAdd) / 0.92;
+            // FÓRMULA DINÂMICA: (Perda + Lucro Alvo) / Payout do Mercado
+            // No Match (payout ~8.0), a stake de recuperação é muito menor e segura.
+            const recoveryPayoutFactor = marketPayoutPercent > 0 ? marketPayoutPercent : 0.92;
+            stake = (lossToRecover + targetProfitAdd) / recoveryPayoutFactor;
 
             // FILTRO DE SEGURANÇA M5 (CONSERVADOR)
             if (riskSettings.acceptLoss && state.martingaleLevel > riskSettings.maxRecoveryLevel) {
