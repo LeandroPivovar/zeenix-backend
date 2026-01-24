@@ -373,10 +373,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.debug(`[Zeus] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
         // }
 
-        // ✅ Processar para todos os usuários ativos (sempre R_100, ignorar símbolo do banco se for R_75)
+        // ✅ Processar para todos os usuários ativos
         for (const [userId, config] of this.userConfigs.entries()) {
-            // Sempre processar se o tick for R_100 (todos os agentes autônomos usam R_100)
-            if (tickSymbol === 'R_100') {
+            // Processar se o símbolo do tick coincidir com o configurado para o usuário (ex: R_50)
+            if (tickSymbol === config.symbol) {
                 promises.push(this.processTickForUser(userId, tick).catch((error) => {
                     this.logger.error(`[Zeus][${userId}] Erro ao processar tick:`, error);
                 }));
@@ -480,9 +480,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // ✅ Log inicial de análise ou heartbeat a cada X ticks
-        if (state.lastDigits.length === requiredTicks || state.lastDigits.length % 20 === 0) {
-            this.logAnalysisStarted(userId, state.mode || 'PRECISO', state.lastDigits.length);
-        }
+        // Removido log redundante com o resultado do analyzeMarket para evitar flood
 
         // ✅ Verificar novamente ANTES de fazer análise
         if (state.isWaitingContract) {
@@ -514,9 +512,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 this.logger.debug(`[Zeus][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}`);
 
-                const message = `📊 ANÁLISE ZEUS v2.2\n` +
-                    `• Padrão: ${details?.digitPattern || 'Analisando...'}\n` +
-                    `• Volatilidade: ${details?.volatility || 'N/A'}\n` +
+                const message = `📊 ANÁLISE ZEUS v3.7\n` +
+                    `• Padrão: ${details?.digitPattern || details?.info || 'Analisando...'}\n` +
+                    `• Volatilidade: ${details?.volatility || 'Estabilizando...'}\n` +
                     `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'AGUARDANDO PADRÃO ⌛'}\n` +
                     `• Modo: ${state.mode}`;
 
@@ -2288,7 +2286,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 }
 
 /**
- * Configuração do usuário para Zeus v2.2
+ * Configuração do usuário para Zeus v3.7
  */
 interface ZeusUserConfig extends AutonomousAgentConfig {
     initialBalance: number;
@@ -2297,7 +2295,7 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
 }
 
 /**
- * Estado interno do Zeus v2.2
+ * Estado interno do Zeus v3.7
  */
 interface ZeusUserState extends AutonomousAgentState {
     mode: 'PRECISO' | 'ULTRA' | 'HIPER';
