@@ -611,15 +611,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ CORREÇÃO: Recusar se a volatilidade for ZERO (mercado parado ou feed travado)
         if (volatilityNormalized <= 0.0001 || volatilityNormalized > modeConfig.maxVolatility) {
-            return this.generateHeartbeat(losersCount, modeConfig, digits);
+            return this.generateHeartbeat(losersCount, modeConfig, digits, maxConsecutive, volatilityNormalized);
         }
 
         // FILTRO 7: CONFIRMAÇÃO DUPLA (Janela Anterior Shift 1)
         if (state.lastDigits.length >= modeConfig.windowSize + 1) {
             const prevWindow = state.lastDigits.slice(-modeConfig.windowSize - 1, -1);
-            const prevLosers = prevWindow.filter(d => d <= modeConfig.targetDigit).length;
+            const prevLosers = modeConfig.contractType === 'DIGITMATCH'
+                ? prevWindow.filter(d => d !== modeConfig.targetDigit).length
+                : prevWindow.filter(d => d <= modeConfig.targetDigit).length;
+
             if (prevLosers < modeConfig.requiredLosers - 1) {
-                return this.generateHeartbeat(losersCount, modeConfig, digits);
+                return this.generateHeartbeat(losersCount, modeConfig, digits, maxConsecutive, volatilityNormalized);
             }
         }
 
@@ -643,15 +646,22 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         };
     }
 
-    private generateHeartbeat(losersFound: number, modeConfig: any, window: number[]): MarketAnalysis {
+    private generateHeartbeat(losersFound: number, modeConfig: any, window: number[], maxCons: number = 0, vol: number = 0): MarketAnalysis {
         const prob = Math.min(49, Math.round((losersFound / modeConfig.requiredLosers) * 40));
+
+        let statusMsg = `Aguardando padrão (${losersFound}/${modeConfig.requiredLosers})`;
+        if (losersFound >= modeConfig.requiredLosers && maxCons < modeConfig.minConsecutive) {
+            statusMsg = `Cons: ${maxCons}/${modeConfig.minConsecutive} ⌛`;
+        }
+
         return {
             signal: null,
             probability: prob,
             payout: 0,
             confidence: prob / 100,
             details: {
-                info: `Aguardando padrão (${losersFound}/${modeConfig.requiredLosers})`,
+                info: statusMsg,
+                volatility: vol > 0 ? vol : null,
                 mode: modeConfig.symbol,
                 lastDigits: window.slice(-5).join(',')
             }
