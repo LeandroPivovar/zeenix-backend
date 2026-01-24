@@ -827,7 +827,7 @@ export class TitanStrategy implements IStrategy {
                             this.blindadoActivatedUsers.add(state.userId);
 
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
+                                `🛡️ Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
 
                             // Emit event for frontend
                             this.tradeEvents.emit({
@@ -850,7 +850,7 @@ export class TitanStrategy implements IStrategy {
                         // Log profit peak update (if already activated and peak increased)
                         if (this.blindadoActivatedUsers.has(state.userId) && lucroAtual > (parseFloat(config.profit_peak) || 0)) {
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
+                                `🛡️ Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
                         }
 
                         // Check if capital fell below protected level -> TRIGGER BLINDADO
