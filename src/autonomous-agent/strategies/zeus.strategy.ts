@@ -514,7 +514,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 const message = `📊 ANÁLISE ZEUS v3.7\n` +
                     `• Padrão: ${details?.digitPattern || details?.info || 'Analisando...'}\n` +
                     `• Volatilidade: ${details?.volatility || 'Estabilizando...'}\n` +
-                    `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'AGUARDANDO PADRÃO 🟡'}\n` +
+                    `• Status: ${signal ? `SINAL ENCONTRADO 🟢 (${probability}%)` : 'AGUARDANDO PADRÃO 🟡'}\n` +
                     `• Modo: ${state.mode}`;
 
                 this.saveLog(userId, 'INFO', 'ANALYZER', message);
@@ -702,8 +702,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return { action: 'STOP', reason: 'TAKE_PROFIT' };
         }
 
-        // B. Filtro de Precisão baseado no Modo (v2.2 thresholds)
-        const requiredProb = 85; // Zeus v2.2 exige 85% de precisão
+        // B. Filtro de Precisão baseado no Modo (v2.2 thresholds dinâmicos)
+        // No modo PRECISO com janela 6, o score máximo é 80%. Para permitir entradas, deve ser <= 80.
+        const requiredProb = state.mode === 'PRECISO' ? 70 : (state.mode === 'ULTRA' ? 80 : 85);
 
         if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
             const stake = this.calculateStake(userId, marketAnalysis.payout);
