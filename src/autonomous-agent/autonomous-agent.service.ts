@@ -25,8 +25,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private ticks: Tick[] = [];
   private readonly maxTicks = 100;
   private readonly appId: string;
-  private symbol = 'R_100'; // Símbolo padrão para todos os agentes autônomos
-  private activeSymbols = new Set<string>(['R_100']); // ✅ Todos os agentes autônomos usam R_100
+  private symbol = 'R_100';
+  private activeSymbols = new Set<string>(['R_100', 'R_50']); // ✅ Adicionado R_50
   private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
@@ -177,19 +177,19 @@ export class AutonomousAgentService implements OnModuleInit {
    * ✅ ATUALIZADO: Todos os agentes autônomos operam apenas em R_100
    */
   private subscribeToTicks(): void {
-    // ✅ Todos os agentes autônomos usam R_100
-    const symbol = 'R_100';
-    this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
-    const subscriptionPayload = {
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: this.maxTicks,
-      end: 'latest',
-      subscribe: 1,
-      style: 'ticks',
-    };
-    this.send(subscriptionPayload);
-    this.logger.log(`✅ [AutonomousAgent] Requisição de inscrição enviada para ${symbol}`);
+    for (const symbol of this.activeSymbols) {
+      this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
+      const subscriptionPayload = {
+        ticks_history: symbol,
+        adjust_start_time: 1,
+        count: this.maxTicks,
+        end: 'latest',
+        subscribe: 1,
+        style: 'ticks',
+      };
+      this.send(subscriptionPayload);
+    }
+    this.logger.log(`✅ [AutonomousAgent] Inscrições enviadas para: ${Array.from(this.activeSymbols).join(', ')}`);
   }
 
   /**
