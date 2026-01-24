@@ -70,6 +70,8 @@ export class SettingsService {
       tokenDemo: user.tokenDemo,
       tokenDemoCurrency: user.tokenDemoCurrency,
       demoAmount: user.demoAmount,
+      idRealAccount: user.idRealAccount,
+      idDemoAccount: user.idDemoAccount,
     };
   }
 

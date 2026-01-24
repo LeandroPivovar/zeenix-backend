@@ -57,6 +57,12 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 10, nullable: true, name: 'token_demo_currency' })
   tokenDemoCurrency?: string | null;
 
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'id_real_account' })
+  idRealAccount?: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'id_demo_account' })
+  idDemoAccount?: string | null;
+
   // suportar cripto (ex.: BTC com muitas casas decimais)
   @Column({ type: 'decimal', precision: 36, scale: 18, nullable: true, name: 'deriv_balance' })
   derivBalance?: string | null;

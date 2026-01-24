@@ -17,6 +17,8 @@ export class User {
     public readonly derivRaw?: any | null,
     public readonly realAmount: number = 0,
     public readonly demoAmount: number = 0,
+    public readonly idRealAccount?: string | null,
+    public readonly idDemoAccount?: string | null,
     public readonly role: string = 'user',
   ) { }
 
@@ -29,7 +31,7 @@ export class User {
     firstAccess: boolean = true,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, 'user');
+    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, null, null, 'user');
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -51,6 +53,8 @@ export class User {
       this.derivRaw,
       this.realAmount,
       this.demoAmount,
+      this.idRealAccount,
+      this.idDemoAccount,
       this.role,
     );
   }
@@ -74,6 +78,8 @@ export class User {
       this.derivRaw,
       this.realAmount,
       this.demoAmount,
+      this.idRealAccount,
+      this.idDemoAccount,
       this.role,
     );
   }
