@@ -403,7 +403,7 @@ class RiskManager {
             if (userId && symbol && logCallback) {
                 const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
                 logCallback(userId, symbol, 'info',
-                    `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
+                    `🛡️ Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
             }
         }
 
@@ -827,7 +827,7 @@ export class TitanStrategy implements IStrategy {
                             this.blindadoActivatedUsers.add(state.userId);
 
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
+                                `🛡️ Proteção de Lucro: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
 
                             // Emit event for frontend
                             this.tradeEvents.emit({
@@ -844,13 +844,13 @@ export class TitanStrategy implements IStrategy {
                             const activationTrigger = profitTarget * 0.40;
                             const percentualProgresso = (lucroAtual / activationTrigger) * 100;
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `ℹ️🛡️ Stop Blindado: Lucro $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
+                                `🛡️ Proteção de Lucro: $${lucroAtual.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
                         }
 
                         // Log profit peak update (if already activated and peak increased)
                         if (this.blindadoActivatedUsers.has(state.userId) && lucroAtual > (parseFloat(config.profit_peak) || 0)) {
                             this.saveTitanLog(state.userId, this.symbol, 'info',
-                                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
+                                `🛡️ Proteção de Lucro: Atualizado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo 50%: $${protectedAmount.toFixed(2)}`);
                         }
 
                         // Check if capital fell below protected level -> TRIGGER BLINDADO

@@ -460,17 +460,17 @@ export class AtlasStrategy implements IStrategy {
     analysis += `\n🧠 ANÁLISE INICIADA...\n`;
     analysis += `• Verificando condições para o modo: ${normalizedMode.toUpperCase()}\n`;
 
-    // ✅ 1. MODO VELOZ: Último dígito > 2
+    // ✅ 1. MODO VELOZ: Esperar 1 dígito perdedor (<= 2)
     if (normalizedMode === 'veloz') {
-      if (lastDigit > 2) {
-        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) > 2\n`;
-        analysis += `✅ GATILHO: Padrão de Fluxo Confirmado\n`;
+      if (lastDigit <= 2) {
+        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) <= 2 (Dígito Perdedor)\n`;
+        analysis += `✅ GATILHO: Espera Concluída\n`;
         analysis += `💪 FORÇA DO SINAL: 70%\n`;
         analysis += `📊 ENTRADA: DIGITOVER 2`;
         return { canTrade: true, analysis };
       } else {
-        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) <= 2\n`;
-        analysis += `⏳ AGUARDANDO: Tendência de Alta Frequência...`;
+        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) > 2 (Dígito Vencedor)\n`;
+        analysis += `⏳ AGUARDANDO: 1 Dígito Perdedor...`;
         return { canTrade: false, analysis };
       }
     }
@@ -710,7 +710,7 @@ export class AtlasStrategy implements IStrategy {
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
             this.saveAtlasLog(state.userId, symbol, 'info',
-              `ℹ️🛡️Stop Blindado: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
+              `🛡️ Proteção de Lucro: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
             );
           }
         }
@@ -884,7 +884,7 @@ export class AtlasStrategy implements IStrategy {
         const factor = stopBlindadoPercent / 100;
         const guaranteedProfit = profitPeak * factor;
         minAllowedBalance = capitalInicial + guaranteedProfit;
-        limitType = 'STOP BLINDADO (LUCRO GARANTIDO)';
+        limitType = 'PISO DE LUCRO PROTEGIDO';
       } else {
         if (lossLimit > 0) {
           minAllowedBalance = capitalInicial - lossLimit;
@@ -1419,12 +1419,12 @@ export class AtlasStrategy implements IStrategy {
         state.virtualLossActive = true;
       }
 
-      // ✅ ATLAS: Defesa Automática (Switch to Lento após 6 perdas consecutivas na recuperação)
-      if (state.isInRecovery && state.martingaleStep >= 6 && state.mode !== 'lento') {
+      // ✅ ATLAS: Defesa Automática (Switch to Lento após 4 perdas consecutivas na recuperação)
+      if (state.isInRecovery && state.martingaleStep >= 4 && state.mode !== 'lento') {
         state.mode = 'lento';
         this.saveAtlasLog(state.userId, symbol, 'alerta',
           `🛡️ DEFESA AUTOMÁTICA ATIVADA\n` +
-          `• Motivo: 6 Perdas Consecutivas.\n` +
+          `• Motivo: 4 Perdas Consecutivas.\n` +
           `• Ação: Mudando para MODO LENTO para proteção de capital.`);
       }
 

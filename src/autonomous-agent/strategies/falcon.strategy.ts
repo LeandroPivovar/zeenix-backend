@@ -312,6 +312,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
+   * Verifica se um usuário está ativo
+   */
+  isUserActive(userId: string): boolean {
+    return this.userConfigs.has(userId) && this.userStates.has(userId);
+  }
+
+  /**
    * Processa um tick recebido
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -441,7 +448,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const cutoff = state.mode === 'PRECISO' ? 70 : (state.mode === 'ULTRA' ? 80 : 90);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
-          `• Status: ${signal ? 'SINAL ENCONTRADO ✅' : 'SEM PADRÃO CLARO ❌'}\n` +
+          `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
           `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
         this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);

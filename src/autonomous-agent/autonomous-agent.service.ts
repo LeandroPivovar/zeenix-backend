@@ -25,8 +25,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private ticks: Tick[] = [];
   private readonly maxTicks = 100;
   private readonly appId: string;
-  private symbol = 'R_100'; // Símbolo padrão para todos os agentes autônomos
-  private activeSymbols = new Set<string>(['R_100']); // ✅ Todos os agentes autônomos usam R_100
+  private symbol = 'R_100';
+  private activeSymbols = new Set<string>(['R_100', 'R_50']); // ✅ Adicionado R_50
   private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
@@ -176,20 +176,25 @@ export class AutonomousAgentService implements OnModuleInit {
    * Inscreve-se nos ticks do símbolo R_100
    * ✅ ATUALIZADO: Todos os agentes autônomos operam apenas em R_100
    */
-  private subscribeToTicks(): void {
-    // ✅ Todos os agentes autônomos usam R_100
-    const symbol = 'R_100';
-    this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
-    const subscriptionPayload = {
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: this.maxTicks,
-      end: 'latest',
-      subscribe: 1,
-      style: 'ticks',
-    };
-    this.send(subscriptionPayload);
-    this.logger.log(`✅ [AutonomousAgent] Requisição de inscrição enviada para ${symbol}`);
+  private async subscribeToTicks(): Promise<void> {
+    for (const symbol of this.activeSymbols) {
+      if (this.subscriptions.has(symbol)) continue; // Já inscrito
+
+      this.logger.log(`📡 [AutonomousAgent] Inscrevendo-se nos ticks de ${symbol}...`);
+      const subscriptionPayload = {
+        ticks_history: symbol,
+        adjust_start_time: 1,
+        count: this.maxTicks,
+        end: 'latest',
+        subscribe: 1,
+        style: 'ticks',
+      };
+      this.send(subscriptionPayload);
+
+      // Pequeno delay entre inscrições para não sobrecarregar a conexão
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    this.logger.log(`✅ [AutonomousAgent] Inscrições concluídas para: ${Array.from(this.activeSymbols).join(', ')}`);
   }
 
   /**
@@ -284,12 +289,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
       case 'tick':
         if (msg.tick) {
-          // ✅ Todos os agentes autônomos usam R_100
-          const symbolForTick = 'R_100';
+          // ✅ Identificar símbolo pelo subscription ID ou usar R_100 como fallback
+          const tickSubId = msg.subscription?.id;
+          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || 'R_100';
 
-          if (msg.subscription?.id && this.subscriptionId !== msg.subscription.id) {
-            this.subscriptionId = msg.subscription.id;
-            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${this.subscriptionId} (símbolo: ${symbolForTick})`);
+          if (tickSubId && (this.subscriptionId !== tickSubId || !this.subscriptions.has(symbolForTick))) {
+            this.subscriptionId = tickSubId;
+            this.subscriptions.set(symbolForTick, tickSubId); // ✅ Garantir mapeamento
+            this.logger.log(`📋 [AutonomousAgent] Subscription ID capturado: ${tickSubId} (símbolo: ${symbolForTick})`);
           }
 
           // ✅ Log de debug para verificar se está recebendo ticks
@@ -351,8 +358,8 @@ export class AutonomousAgentService implements OnModuleInit {
       return;
     }
 
-    // ✅ Todos os agentes autônomos usam R_100
-    const tickSymbol = symbol || 'R_100';
+    // ✅ Cada agente decide os símbolos que processa
+    const tickSymbol = symbol;
     const value = parseFloat(tick.quote);
     const digit = this.extractLastDigit(value);
     const parity = this.getParityFromDigit(digit);
@@ -618,6 +625,16 @@ export class AutonomousAgentService implements OnModuleInit {
       // Atualizar config com os valores resolvidos para garantir consistência
       config.derivToken = resolvedToken;
       config.currency = resolvedCurrency;
+
+      // ✅ [ORION] GUARD DE ATIVAÇÃO: Evitar reativação se já estiver ativo com mesma config
+      // Isso impede loops de reinicialização que limpam o histórico de ticks
+      const strategyName = (config.agentType || config.strategy || 'orion').toLowerCase().replace('arion', 'orion');
+      const currentStrategy = this.strategyManager.getStrategy(strategyName);
+      if (currentStrategy && (currentStrategy as any).isUserActive && (currentStrategy as any).isUserActive(userId)) {
+        // Opcional: comparar config aqui se quiser ser ultra rigoroso
+        this.logger.debug(`[ActivateAgent] 🛡️ Usuário ${userId} já está ativo na estratégia ${strategyName}. Ignorando reativação para manter histórico.`);
+        return;
+      }
 
       // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
       // (mantém apenas as transações/trades)
@@ -1051,8 +1068,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private sessionDateCache: Map<string, { date: Date | string | null; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 30000; // 30 segundos
 
-  async getLogs(userId: string, limit?: number): Promise<any[]> {
-    const limitClause = limit ? `LIMIT ${limit}` : '';
+  async getLogs(userId: string, limit: number = 500): Promise<any[]> {
+    const limitClause = `LIMIT ${limit}`;
 
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;

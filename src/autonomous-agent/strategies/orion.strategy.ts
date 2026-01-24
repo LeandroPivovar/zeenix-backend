@@ -43,7 +43,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
     @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(forwardRef(() => OrionStrategy)) private readonly orionStrategy: OrionStrategy,
     @Inject(forwardRef(() => LogQueueService)) private readonly logQueueService?: LogQueueService,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     this.logger.log('🌟 ORION Strategy para Agente Autônomo inicializado (100% IA Orion)');
@@ -55,7 +55,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
     if (this.orionStrategy) {
       await this.orionStrategy.initialize();
     }
-    
+
     // Sincronizar usuários ativos do banco
     await this.syncActiveUsersFromDb();
   }
@@ -87,7 +87,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
         };
 
         this.userConfigs.set(userId, config);
-        
+
         // Ativar usuário na Orion Strategy
         await this.activateUserInOrion(userId, config);
       }
@@ -123,7 +123,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
 
   async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
     this.userConfigs.set(userId, config);
-    
+
     // Ativar usuário na Orion Strategy
     await this.activateUserInOrion(userId, config);
 
@@ -134,13 +134,20 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
 
   async deactivateUser(userId: string): Promise<void> {
     this.userConfigs.delete(userId);
-    
+
     // Desativar usuário na Orion Strategy
     if (this.orionStrategy) {
       await this.orionStrategy.deactivateUser(userId);
     }
 
     this.logger.log(`[Orion] ✅ Usuário ${userId} desativado`);
+  }
+
+  /**
+   * Verifica se um usuário está ativo
+   */
+  isUserActive(userId: string): boolean {
+    return this.userConfigs.has(userId);
   }
 
   /**
@@ -170,7 +177,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
   ): Promise<void> {
     // A Orion Strategy já gerencia os resultados
     // Aqui apenas atualizamos o banco de dados do agente autônomo
-    
+
     const config = this.userConfigs.get(userId);
     if (!config) return;
 

@@ -94,10 +94,11 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ ZEUS: Processa R_100
+    // ✅ ZEUS: Processa R_100 e R_50
     const zeusStrategy = this.strategies.get('zeus');
     if (zeusStrategy && typeof (zeusStrategy as any).processTick === 'function') {
-      if (tickSymbol === 'R_100') {
+      // Zeus agora suporta R_100 e R_50
+      if (tickSymbol === 'R_100' || tickSymbol === 'R_50') {
         promises.push(
           (zeusStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Zeus] Erro:', error);

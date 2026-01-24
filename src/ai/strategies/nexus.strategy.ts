@@ -154,7 +154,7 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `🛡️ STOP LOSS BLINDADO ATIVADO\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
+                logCallback(userId, symbol, 'alerta', `🛡️ Proteção de Lucro: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
             }
         }
 
@@ -162,7 +162,7 @@ class RiskManager {
         if (this.useBlindado && !this._blindadoActive && profitAccumulatedAtPeak > 0 && profitAccumulatedAtPeak < activationTrigger) {
             const percentualProgresso = (profitAccumulatedAtPeak / activationTrigger) * 100;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'info', `ℹ️🛡️ Stop Blindado: Lucro $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
+                logCallback(userId, symbol, 'info', `🛡️ Proteção de Lucro: $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
             }
         }
 
@@ -187,7 +187,7 @@ class RiskManager {
 
             if (userId && symbol && logCallback) {
                 const isBlindado = this._blindadoActive;
-                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (STOP ${isBlindado ? 'BLINDADO' : 'NORMAL'})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${isBlindado ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${isBlindado ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
+                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (${isBlindado ? 'PROTEÇÃO DE LUCRO' : 'STOP NORMAL'})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${isBlindado ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${isBlindado ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
             }
 
             if (adjustedStake < 0.35) return 0.0;
@@ -833,7 +833,7 @@ export class NexusStrategy implements IStrategy {
                 logType = 'alerta';
                 break;
             case 'stopped_blindado':
-                logMessage = `🛡️ STOP-LOSS BLINDADO ATIVADO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
+                logMessage = `🛡️ STOP BLINDADO ATINGIDO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de $${profit.toFixed(2)} para proteger o seu capital.`;
                 logType = 'alerta';
                 break;
             case 'stopped_insufficient_balance':
