@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { CopyTradingService } from '../../copy-trading/copy-trading.service';
+import { formatCurrency } from '../../utils/currency.utils';
 import { TradeEventsService } from '../trade-events.service';
 
 
@@ -542,7 +543,7 @@ export class NexusStrategy implements IStrategy {
 
         this.riskManagers.set(userId, new RiskManager(
             stakeAmount, lossLimit || 50, profitTarget || 100,
-            modoMartingale.toUpperCase(), stopLossBlindado !== false
+            modoMartingale.toUpperCase(), false // ✅ Disable internal blindado to avoid 'alerta' on activation
         ));
 
         this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode} (Input: ${inputMode})`);
@@ -610,22 +611,41 @@ export class NexusStrategy implements IStrategy {
                         `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
                         [profitPeak, state.userId]
                     ).catch(err => this.logger.error(`[NEXUS] Erro ao atualizar profit_peak:`, err));
+
+                    // ✅ ATLAS LOGIC: Log Activation (INFO) - Avoids modal trigger
+                    if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
+                        const activationThreshold = profitTarget * 0.40;
+                        if (profitPeak >= activationThreshold) {
+                            const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
+                            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
+
+                            this.saveNexusLog(state.userId, this.symbol, 'info',
+                                `🛡️ Proteção de Lucro: Ativado | Lucro atual ${formatCurrency(profitPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
+                            );
+                        }
+                    }
                 }
 
-                // ✅ VERIFICAR STOP BLINDADO (Fixed Floor)
+                // ✅ VERIFICAR STOP BLINDADO (Dynamic Trailing - Copied from Atlas)
                 if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
+                    let currentPeak = profitPeak;
                     const activationThreshold = profitTarget * 0.40;
 
-                    if (profitPeak >= activationThreshold) {
+                    if (currentPeak >= activationThreshold) {
                         const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-                        // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
-                        const valorProtegidoFixo = activationThreshold * (stopBlindadoPercent / 100);
-                        const stopBlindado = capitalInicial + valorProtegidoFixo;
+                        const factor = stopBlindadoPercent / 100;
 
-                        if (capitalSessao <= stopBlindado + 0.01) {
-                            const lucroProtegido = capitalSessao - capitalInicial;
-                            this.saveNexusLog(state.userId, this.symbol, 'alerta',
-                                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`);
+                        // ✅ ATLAS LOGIC: Trailing Stop based on Peak High (not fixed threshold)
+                        // Atlas: const stopBlindado = capitalInicial + (currentPeak * factor);
+                        const stopBlindado = capitalInicial + (currentPeak * factor);
+
+                        if (capitalSessao <= stopBlindado) {
+                            const lucroFinal = capitalSessao - capitalInicial;
+
+                            this.saveNexusLog(state.userId, this.symbol, 'info',
+                                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
+                            );
+
                             await this.stopUser(state, 'stopped_blindado');
                             return;
                         }
