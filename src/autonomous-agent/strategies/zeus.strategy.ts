@@ -724,7 +724,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 mode: state.mode,
                 isRecovery: state.mode !== 'PRECISO',
                 filters: [marketAnalysis.details?.digitPattern, `Vol: ${marketAnalysis.details?.volatility}`],
-                trigger: `Filtros Estatísticos Zeus v3.7 ⚡ (${state.mode})`,
+                trigger: `Filtros Zeus v3.7 🛡️ (${state.mode})`,
                 probability: marketAnalysis.probability,
                 contractType: marketAnalysis.details?.contractType,
                 direction: marketAnalysis.signal as any
@@ -2184,7 +2184,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             message += `✅ FILTRO ${index + 1}: ${filter}\n`;
         });
         message += `✅ GATILHO: ${signal.trigger}\n`;
-        message += `💪 FORÇA DO SINAL: ${signal.probability}%\n`;
+        message += `💪 CONFIANÇA TÉCNICA: ${signal.probability}% (Filtros Atendidos)\n`;
+        message += `⚠️ Nota: 100% indica que todas as regras de entrada foram cumpridas. O mercado ainda pode variar.`;
 
         if (signal.direction) {
             message += `📊 ENTRADA: ${signal.contractType} ${signal.direction}`;
