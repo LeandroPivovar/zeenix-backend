@@ -571,8 +571,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return this.generateHeartbeat(0, modeConfig, digits);
         }
 
-        // FILTRO 1: PADRÃO (Contagem de Perdedores ≤ 3)
-        const losersCount = digits.filter(d => d <= modeConfig.targetDigit).length;
+        // FILTRO 1: PADRÃO (Contagem de Perdedores)
+        // ✅ CORREÇÃO: Padrão de perdedores dinâmico por contrato
+        // - No OVER: Perdedores são dígitos <= target (0, 1, 2, 3)
+        // - No MATCH: Perdedores são dígitos DIFERENTES do target (não saiu o número)
+        const losersCount = modeConfig.contractType === 'DIGITMATCH'
+            ? digits.filter(d => d !== modeConfig.targetDigit).length
+            : digits.filter(d => d <= modeConfig.targetDigit).length;
+
         if (losersCount < modeConfig.requiredLosers) {
             return this.generateHeartbeat(losersCount, modeConfig, digits);
         }
@@ -581,7 +587,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let consecutive = 0;
         let maxConsecutive = 0;
         for (const d of digits) {
-            if (d <= modeConfig.targetDigit) consecutive++;
+            const isLoser = modeConfig.contractType === 'DIGITMATCH'
+                ? d !== modeConfig.targetDigit
+                : d <= modeConfig.targetDigit;
+
+            if (isLoser) consecutive++;
             else consecutive = 0;
             maxConsecutive = Math.max(maxConsecutive, consecutive);
         }
@@ -598,7 +608,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // FILTRO 3: MOMENTUM (Últimos "lastDigits" dígitos)
         const lastDigitsMomentum = digits.slice(-modeConfig.lastDigits);
-        if (!lastDigitsMomentum.every(d => d <= modeConfig.targetDigit)) {
+        const allMomentumLosers = lastDigitsMomentum.every(d =>
+            modeConfig.contractType === 'DIGITMATCH'
+                ? d !== modeConfig.targetDigit
+                : d <= modeConfig.targetDigit
+        );
+
+        if (!allMomentumLosers) {
             return this.generateHeartbeat(losersCount, modeConfig, digits);
         }
 
@@ -608,7 +624,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const stdDev = Math.sqrt(variance);
         const volatilityNormalized = stdDev / 9;
 
-        if (volatilityNormalized > modeConfig.maxVolatility) {
+        // ✅ CORREÇÃO: Recusar se a volatilidade for ZERO (mercado parado ou feed travado)
+        if (volatilityNormalized <= 0.0001 || volatilityNormalized > modeConfig.maxVolatility) {
             return this.generateHeartbeat(losersCount, modeConfig, digits);
         }
 
