@@ -802,13 +802,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.sorosActive = true; // Ativa Soros após recuperação como prêmio
                 state.sorosCount = 1;
             } else {
-                // Sistema Soros em modo PRECISO
+                // Sistema Soros em modo PRECISO (2 Níveis: 20 -> 31)
                 if (state.sorosActive) {
                     state.sorosCount++;
-                    if (state.sorosCount >= 3) {
+                    if (state.sorosCount >= 2) { // Reset após 2 níveis
                         state.sorosActive = false;
                         state.sorosCount = 0;
-                        this.logger.log(`[Zeus][${userId}] 🚀 Ciclo Soros 3 níveis completo! Voltando à stake base.`);
+                        this.logger.log(`[Zeus][${userId}] 🚀 Ciclo Soros 2 níveis completo! Voltando à stake base.`);
                     }
                 } else {
                     state.sorosActive = true;
@@ -853,9 +853,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let stake = config.initialStake;
 
         if (state.mode === 'PRECISO') {
-            // No modo preciso v3.7, operamos com stake base ou o sistema Soros (prêmio por lucro/recuperação)
-            if (state.sorosActive && state.sorosCount > 0) {
-                stake = config.initialStake + (state.lastProfit > 0 ? state.lastProfit : 0);
+            // No modo preciso v3.7, operamos com stake base ou o sistema Soros 2 níveis (20 -> 31)
+            if (state.sorosActive && state.sorosCount === 1) {
+                // Nível 2 do Soros (Base + Lucro Aprox = 31)
+                // Usamos valor fixo de 31 conforme solicitado se a base for 20
+                if (config.initialStake >= 19 && config.initialStake <= 21) {
+                    stake = 31.15; // Valor exato aproximado
+                } else {
+                    // Fallback proporcional se a stake for diferente de 20
+                    stake = config.initialStake * 1.55;
+                }
+            } else {
+                stake = config.initialStake;
             }
         } else {
             // Recuperação (ULTRA/HIPER) 
@@ -1033,12 +1042,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.lastContractType = contractType;
 
             // ✅ Definir duration e barrier com base no contractType
-            let duration: number;
+            let duration = 1; // Padrão Zeus v3.7 é 1 tick para dígitos
             let barrier: string | undefined;
 
-            if (contractType === 'DIGITOVER') {
+            // Obter targetDigit da config do modo atual
+            const currentModeKey = state.mode === 'PRECISO' ? 'M0_PRECISO' : (state.mode === 'ULTRA' ? 'M1_ULTRA' : 'M2_HIPER');
+            const targetDigit = ZEUS_V37_CONFIGS[currentModeKey]?.targetDigit ?? 3;
+
+            if (contractType === 'DIGITOVER' || contractType === 'DIGITMATCHES') {
                 duration = 1;
-                barrier = '3'; // Exemplo de barreira para DIGITOVER
+                barrier = targetDigit.toString();
             } else {
                 duration = 5;
                 barrier = undefined;
