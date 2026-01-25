@@ -1161,9 +1161,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
     let effectiveStartDate = startDate;
+    // REMOVIDO: Permitir histórico completo para cálculo de estatísticas (Melhor/Pior dia)
+    /*
     if (sessionDate && sessionDate > startDate) {
       effectiveStartDate = sessionDate;
     }
+    */
 
     const trades = await this.dataSource.query(
       `SELECT 
