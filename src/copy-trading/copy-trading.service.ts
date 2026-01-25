@@ -634,8 +634,8 @@ export class CopyTradingService {
 
 
         // ✅ Barrier from operation
-        // Se barrier for 0, deve ser respeitado (não é falsy neste contexto)
-        const barrier = (operation.barrier !== undefined && operation.barrier !== null) ? operation.barrier : 0.1;
+        // Passado diretamente sem default para evitar transformar RISE/FALL em barreira
+        const barrier = operation.barrier;
 
         // Executar trade do copiador (Fire and Forget para não travar loop do master)
         // Mas com callback para salvar no banco
@@ -1640,7 +1640,7 @@ export class CopyTradingService {
   /**
    * Executa trade na Deriv API para um copiador
    */
-  private async executeCopierTrade(
+  public async executeCopierTrade(
     userId: string,
     tradeConfig: {
       symbol: string;

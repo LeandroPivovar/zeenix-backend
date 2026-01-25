@@ -73,7 +73,7 @@ export class ManualTradeController {
                                 userId,
                                 body.symbol || 'R_100',
                                 body.contractType || 'CALL',
-                                body.barrier || 0.1,
+                                body.barrier, // Removido o default de 0.1
                                 body.buyPrice || 0,
                                 percent,
                                 1.00, // multiplier
@@ -88,18 +88,109 @@ export class ManualTradeController {
                         this.logger.error(`[ManualTrade] Error inserting into master_trader_operations: ${dbErr.message}`);
                     }
 
-                    await this.copyTradingService.replicateManualOperation(userId, {
-                        contractId: body.contractId,
-                        contractType: body.contractType || 'CALL',
-                        symbol: body.symbol,
-                        duration: body.duration || 1,
-                        durationUnit: body.durationUnit || 'm',
-                        stakeAmount: body.buyPrice || 0,
-                        percent: percent,
-                        entrySpot: body.entrySpot || 0,
-                        entryTime: body.entryTime || Math.floor(Date.now() / 1000),
-                        barrier: body.barrier || 0.1,
-                    });
+                    // ✅ [ZENIX v4.0] Cópia direta no controller para evitar barreira forçada e garantir autonomia
+                    try {
+                        const copiers = await this.dataSource.query(
+                            `SELECT 
+                                c.*, 
+                                u.token_demo, 
+                                u.token_real, 
+                                u.real_amount, 
+                                u.demo_amount,
+                                u.deriv_raw, 
+                                s.trade_currency, 
+                                css.id as session_id
+                             FROM copy_trading_config c
+                             JOIN users u ON c.user_id = u.id
+                             LEFT JOIN user_settings s ON c.user_id = s.user_id
+                             JOIN copy_trading_sessions css ON css.user_id = c.user_id AND css.status = 'active'
+                             WHERE c.trader_id = ? AND c.is_active = 1 AND c.session_status = 'active'`,
+                            [userId],
+                        );
+
+                        if (copiers && copiers.length > 0) {
+                            this.logger.log(`[ManualTrade] Replicando para ${copiers.length} copiadores (Sem barreira forçada)`);
+
+                            for (const copier of copiers) {
+                                // Resolver token do copiador
+                                let copierToken = null;
+                                const currencyPref = (copier.trade_currency || 'USD').toUpperCase();
+                                if (currencyPref === 'DEMO') {
+                                    copierToken = copier.token_demo;
+                                } else {
+                                    copierToken = copier.token_real;
+                                }
+                                if (!copierToken) copierToken = copier.deriv_token;
+                                if (!copierToken) continue;
+
+                                // Calcular Stake
+                                let copierStake = 0;
+                                if (copier.allocation_type === 'proportion') {
+                                    const userBalance = currencyPref === 'DEMO'
+                                        ? parseFloat(copier.demo_amount || 0)
+                                        : parseFloat(copier.real_amount || 0);
+                                    copierStake = (userBalance * percent) / 100;
+                                } else {
+                                    copierStake = body.buyPrice || 0;
+                                }
+                                copierStake = Math.round(copierStake * 100) / 100;
+                                if (copierStake <= 0) copierStake = 0.35;
+
+                                const entryTime = body.entryTime || Math.floor(Date.now() / 1000);
+
+                                // Executar trade para o copiador
+                                this.copyTradingService.executeCopierTrade(copier.user_id, {
+                                    symbol: body.symbol,
+                                    contractType: body.contractType || 'CALL',
+                                    duration: body.duration || 1,
+                                    durationUnit: body.durationUnit || 'm',
+                                    stakeAmount: copierStake,
+                                    derivToken: copierToken,
+                                    barrier: body.barrier // Passado diretamente (undefined se não houver)
+                                }).then(async (copierContractId) => {
+                                    if (copierContractId) {
+                                        try {
+                                            await this.dataSource.query(
+                                                `INSERT INTO copy_trading_operations 
+                                                (session_id, user_id, trader_operation_id, operation_type, barrier, symbol, duration,
+                                                 stake_amount, result, profit, leverage, allocation_type, allocation_value,
+                                                 executed_at)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))`,
+                                                [
+                                                    copier.session_id,
+                                                    copier.user_id,
+                                                    body.contractId,
+                                                    body.contractType || 'CALL',
+                                                    body.barrier,
+                                                    body.symbol,
+                                                    body.duration || 1,
+                                                    copierStake,
+                                                    'pending',
+                                                    0,
+                                                    '1x',
+                                                    copier.allocation_type,
+                                                    copier.allocation_value,
+                                                    entryTime
+                                                ]
+                                            );
+                                            await this.dataSource.query(
+                                                `UPDATE copy_trading_sessions 
+                                                SET total_operations = total_operations + 1, last_operation_at = NOW()
+                                                WHERE id = ?`,
+                                                [copier.session_id]
+                                            );
+                                        } catch (dbErr) {
+                                            this.logger.error(`[ManualTrade] Error saving copier operation: ${dbErr.message}`);
+                                        }
+                                    }
+                                }).catch(err => {
+                                    this.logger.error(`[ManualTrade] Execution error for copier ${copier.user_id}: ${err.message}`);
+                                });
+                            }
+                        }
+                    } catch (replErr) {
+                        this.logger.error(`[ManualTrade] Error in direct replication: ${replErr.message}`);
+                    }
                 }
             } catch (err) {
                 this.logger.error(`[ManualTrade] Error in master replication: ${err.message}`);

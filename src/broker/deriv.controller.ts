@@ -1340,7 +1340,7 @@ export class DerivController {
                 percent: percent,
                 entrySpot: finalEntrySpot || 0,
                 entryTime: data.entryTime || Math.floor(Date.now() / 1000),
-                barrier: data.barrier || 0.1,
+                barrier: data.barrier,
               },
             );
           }
@@ -1881,10 +1881,6 @@ export class DerivController {
       if (digitContracts.includes(body.contractType)) {
         if (body.barrier !== undefined && body.barrier !== null) {
           proposalConfig.barrier = body.barrier;
-        } else {
-          // Por padrão, usar 3 para DIGITOVER, mas 5 para outros se necessário (ajuste conforme lógica)
-          // Solicitação específica do usuário: usar 3 como padrão
-          proposalConfig.barrier = 0.1;
         }
       }
 
@@ -1992,7 +1988,7 @@ export class DerivController {
       let barrier = body.barrier;
       const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
       if (digitContracts.includes(body.contractType)) {
-        barrier = barrier !== undefined && barrier !== null ? barrier : 0.1;
+        barrier = body.barrier;
       }
 
       let multiplier = body.multiplier;
@@ -2089,9 +2085,6 @@ export class DerivController {
       if (digitContracts.includes(config.contractType)) {
         if ((config as any).barrier !== undefined && (config as any).barrier !== null) {
           proposalConfig.barrier = (config as any).barrier;
-        } else {
-          // Por padrão, usar 3 se não especificado (solicitação do usuário)
-          proposalConfig.barrier = 0.1;
         }
       }
 
