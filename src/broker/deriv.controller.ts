@@ -13,6 +13,7 @@ import {
   UseGuards,
   HttpException,
   Param,
+  RequestTimeoutException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Inject } from '@nestjs/common';
@@ -1999,27 +2000,53 @@ export class DerivController {
         multiplier = multiplier !== undefined && multiplier !== null ? multiplier : 10;
       }
 
-      // Executar compra diretamente (Instant Buy)
-      service.buyContract({
-        // proposalId não é passado, forçando o modo Instant Buy no service
-        price: body.amount, // Limit order price (stake)
-        amount: body.amount,
-        symbol: body.symbol,
-        contractType: body.contractType,
-        duration: body.duration,
-        durationUnit: body.durationUnit,
-        barrier: barrier,
-        multiplier: multiplier,
-        currency: preferredCurrency,
-        token: token, // Token resolvido
-        loginid: targetLoginid // Login ID alvo
+      // Executar compra e aguardar confirmação (Promise wrapper)
+      // Isso garante que o frontend receba os dados da operação (contract_id) 
+      // mesmo que o SSE falhe ou tenha atraso.
+      const tradeData: any = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          // Se der timeout, limpar listener e assumir que a ordem foi enviada mas sem confirmação imediata
+          // (O SSE ainda pode pegar depois, ou falhou mesmo)
+          service.removeListener('buy', handler);
+          reject(new RequestTimeoutException('Timeout aguardando confirmação da compra pelo Broker'));
+        }, 15000); // 15s timeout
+
+        const handler = (data: any) => {
+          clearTimeout(timeout);
+          resolve(data);
+        };
+
+        // Escutar apenas uma vez o próximo evento 'buy'
+        service.once('buy', handler);
+
+        try {
+          // Enviar comando via WS
+          service.buyContract({
+            price: body.amount,
+            amount: body.amount,
+            symbol: body.symbol,
+            contractType: body.contractType,
+            duration: body.duration,
+            durationUnit: body.durationUnit,
+            barrier: barrier,
+            multiplier: multiplier,
+            currency: preferredCurrency,
+            token: token,
+            loginid: targetLoginid
+          });
+        } catch (e) {
+          clearTimeout(timeout);
+          service.removeListener('buy', handler);
+          reject(e);
+        }
       });
 
       return {
         success: true,
-        message: 'Ordem de compra enviada (Processamento Otimizado)',
+        message: 'Compra executada com sucesso',
         amount: body.amount,
-        optimized: true
+        optimized: true,
+        tradeData: tradeData // Retornar dados completos da operação (contract_id, entry_spot, etc)
       };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao comprar contrato: ${error.message}`);
