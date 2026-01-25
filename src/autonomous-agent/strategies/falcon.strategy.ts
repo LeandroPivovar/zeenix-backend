@@ -1643,8 +1643,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `INSERT INTO autonomous_agent_trades (
           user_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
-          martingale_level, payout, symbol, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW())`,
+          martingale_level, payout, symbol, status, strategy, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'falcon', NOW())`,
         [
           userId,
           JSON.stringify(analysisData),

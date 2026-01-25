@@ -106,6 +106,21 @@ export class AutonomousAgentService implements OnModuleInit {
       await createIndex(`CREATE INDEX idx_ai_trades_stats_query ON ai_trades(user_id, status, created_at, profit_loss)`, 'idx_ai_trades_stats_query');
       await createIndex(`CREATE INDEX idx_ai_trades_created_status ON ai_trades(created_at, status)`, 'idx_ai_trades_created_status');
 
+      // 3. Adicionar coluna strategy em autonomous_agent_trades
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE autonomous_agent_trades 
+          ADD COLUMN strategy VARCHAR(50) DEFAULT NULL
+        `);
+        this.logger.log('[CreateStatsIndexes] ✅ Coluna strategy adicionada em autonomous_agent_trades');
+      } catch (error) {
+        if (error.errno === 1060 || error.code === 'ER_DUP_FIELDNAME') {
+          // Coluna já existe
+        } else {
+          this.logger.error('[CreateStatsIndexes] Erro ao adicionar coluna strategy em autonomous_agent_trades:', error);
+        }
+      }
+
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
@@ -1147,7 +1162,7 @@ export class AutonomousAgentService implements OnModuleInit {
     // Implementação similar à da IA
     return { updated: 0, deleted: 0, errors: 0 };
   }
-  async getDailyStats(userId: string, days: number = 30): Promise<any> {
+  async getDailyStats(userId: string, days: number = 30, agent?: string): Promise<any> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startDate = new Date(today);
@@ -1161,12 +1176,11 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
     let effectiveStartDate = startDate;
-    // REMOVIDO: Permitir histórico completo para cálculo de estatísticas (Melhor/Pior dia)
-    /*
-    if (sessionDate && sessionDate > startDate) {
-      effectiveStartDate = sessionDate;
-    }
-    */
+
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    const params: any[] = [userId, effectiveStartDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
 
     const trades = await this.dataSource.query(
       `SELECT 
@@ -1181,10 +1195,12 @@ export class AutonomousAgentService implements OnModuleInit {
        WHERE user_id = ? 
          AND created_at >= ?
          AND status IN ('WON', 'LOST')
+         ${strategyFilter}
        GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '-03:00'))
        ORDER BY date ASC`, // ASC para calcular acumulado corretamente
-      [userId, effectiveStartDate.toISOString()]
+      params
     );
+
 
     let cumulativeProfit = 0;
     const dailyData = trades.map((day: any) => {
@@ -1221,7 +1237,7 @@ export class AutonomousAgentService implements OnModuleInit {
     return dailyData.reverse(); // Volta para DESC para o frontend
   }
 
-  async getWeeklyStats(userId: string, weeks: number = 10): Promise<any[]> {
+  async getWeeklyStats(userId: string, weeks: number = 10, agent?: string): Promise<any[]> {
     // Buscar config para obter DATA DA SESSÃO e Saldo Inicial
     const config = await this.getAgentConfig(userId);
     const sessionDate = config?.session_date ? new Date(config.session_date) : null;
@@ -1233,34 +1249,26 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
     let effectiveStartDate = startDate;
-    // REMOVIDO: Permitir histórico completo
-    /*
-    if (sessionDate && sessionDate > startDate) {
-      effectiveStartDate = sessionDate;
-    }
-    */
 
-    // Query grouping by Year-Week
-    // Note: SQL syntax for week depends on DB. Assuming compatible/standard function or using DATE formatting.
-    // For universal support, we might fetch all trades and aggregate in JS, but let's try SQL grouping first.
-    // SQLite: strftime('%Y-%W', created_at)
-    // MySQL: DATE_FORMAT(created_at, '%Y-%u')
-    // We will use JS aggregation for safety across DB types if we want to be safe, 
-    // but the existing code uses Date(created_at), implying standard SQL or simple mapping.
-    // Let's fetch daily stats and aggregate weekly in JS to be safe and accurate with calendar weeks.
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    const params: any[] = [userId, effectiveStartDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
 
     // Fetch trades for the period
     const trades = await this.dataSource.query(
       `SELECT 
             created_at,
             profit_loss,
-            status
+            status,
+            strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND created_at >= ?
            AND status IN ('WON', 'LOST')
+           ${strategyFilter}
          ORDER BY created_at ASC`,
-      [userId, effectiveStartDate.toISOString()]
+      params
     );
 
     // Group by Week (Sunday-Saturday or similar)
@@ -1344,7 +1352,7 @@ export class AutonomousAgentService implements OnModuleInit {
     return result.reverse();
   }
 
-  async getProfitEvolution(userId: string, days: number = 30): Promise<any[]> {
+  async getProfitEvolution(userId: string, days: number = 30, agent?: string): Promise<any[]> {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Reset time to start of today for consistent filtering
     const startDate = new Date(today);
@@ -1357,27 +1365,24 @@ export class AutonomousAgentService implements OnModuleInit {
       startDate.setDate(today.getDate() - days);
     }
 
-    // ✅ Filtro de sessão: REMOVIDO para permitir ver histórico completo independente da sessão atual
-    /*
-    const config = await this.getAgentConfig(userId);
-    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
-
-    if (sessionDate && sessionDate > startDate) {
-      startDate.setTime(sessionDate.getTime());
-    }
-    */
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    const params: any[] = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
 
     // Select trades in the period
     const trades = await this.dataSource.query(
       `SELECT 
          created_at,
-         profit_loss
+         profit_loss,
+         strategy
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
          AND created_at >= ?
          AND status IN ('WON', 'LOST')
+         ${strategyFilter}
        ORDER BY created_at ASC`,
-      [userId, startDate.toISOString()]
+      params
     );
 
     // ✅ NOVO: Se days <= 1 (Sessão de hoje), retornar evolução POR TRADE para melhor visualização
@@ -1541,11 +1546,11 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string): Promise<any[]> {
+  async getDailyTrades(userId: string, date: string, agent?: string): Promise<any[]> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
-      const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+      // const sessionDate = config?.session_date ? new Date(config.session_date) : null; // Unused now
 
       // Validar formato da data YYYY-MM-DD
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -1556,14 +1561,15 @@ export class AutonomousAgentService implements OnModuleInit {
         targetDateStr = new Date().toISOString().split('T')[0];
       }
 
-      // Se a data solicitada for HOJE, filtra pela SESSÃO ATUAL (se existir)
-      const todayStr = new Date().toISOString().split('T')[0];
-      const isToday = targetDateStr === todayStr;
+      // Filter logic
+      const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+      const params: any[] = [userId, targetDateStr];
+      if (strategyFilter && agent) params.push(agent);
 
       // Definir início e fim do dia para compatibilidade com qualquer DB (SQLite, Postgres, etc)
       // Assumindo UTC strings
-      const startOfDayStr = `${targetDateStr}T00:00:00.000Z`;
-      const endOfDayStr = `${targetDateStr}T23:59:59.999Z`;
+      // const startOfDayStr = `${targetDateStr}T00:00:00.000Z`; // Unused
+      // const endOfDayStr = `${targetDateStr}T23:59:59.999Z`; // Unused
 
       let query = `
          SELECT 
@@ -1574,31 +1580,25 @@ export class AutonomousAgentService implements OnModuleInit {
            profit_loss,
            status,
            entry_price,
-           exit_price
+           exit_price,
+           strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
            AND status IN ('WON', 'LOST')
+           ${strategyFilter}
       `;
 
-      const params: any[] = [userId, targetDateStr];
-
-      // Adicionar filtro de sessão se for HOJE e tiver sessionDate
-      /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
-         Se filtrarmos aqui, a tabela mostrará apenas a sessão.
-         Mas o "Relatório Diário" implica dia todo.
-         Se a sessão começou ontem, "Sessão Atual" pode incluir ontem?
-         Session Date é timestamp.
-         
-         Vou assumir que o usuário quer ver TUDO do DIA, mas limitar estatísticas à sessão?
-         Ou ver apenas SESSÃO no relatório?
-         O prompt diz: "mostre aqui APENAS operações dentro da sessão atual"
-         Vou aplicar o filtro de sessão se for hoje.
-      */
+      // REMOVIDO: Filtro de sessão para HOJE
+      // O usuário relatou sumiço de operações.
+      // O correto é mostrar TUDO do dia selecionado, a "Sessão" é apenas um conceito de controle de risco.
+      // Se ele pausou e iniciou 3 sessões hoje, quer ver todas no relatório de hoje.
+      /*
       if (isToday && sessionDate) {
-        query += ` AND created_at >= ?`;
-        params.push(sessionDate.toISOString());
+        // query += ` AND created_at >= ?`;
+        // params.push(sessionDate.toISOString());
       }
+      */
 
       query += ` ORDER BY created_at DESC`;
 
