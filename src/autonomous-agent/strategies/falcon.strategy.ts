@@ -45,28 +45,28 @@ const FALCON_MODES = {
   VELOZ: {
     name: 'VELOZ',
     windowSize: 20, // Janela fixa de 20 ticks
-    Hn_threshold: 0.65, // Entropia normalizada mínima
-    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4
-    strength_threshold: 0.45, // Força do padrão
-    volatility_max: 0.70, // Volatilidade máxima permitida (Mercado Normal ~0.63)
+    Hn_threshold: 0.78, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    p_over3_threshold: 0.58, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    strength_threshold: 0.56, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    volatility_max: 0.70, // Volatilidade máxima permitida
     lossesToDowngrade: 2, // Após 2 perdas, muda para NORMAL
   },
   NORMAL: {
     name: 'NORMAL',
     windowSize: 20,
-    Hn_threshold: 0.72, // ✅ AJUSTADO: De 0.80 para 0.72 (Mercado real flutua 0.70-0.80)
-    p_over3_threshold: 0.55, // ✅ AJUSTADO: De 0.60 para 0.55 (Mais realista)
-    strength_threshold: 0.50, // ✅ AJUSTADO: De 0.58 para 0.50
-    volatility_max: 0.65, // ✅ CORRIGIDO: De 0.20 para 0.65 (0.20 era impossível com Hn alto)
+    Hn_threshold: 0.80, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    p_over3_threshold: 0.60, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    strength_threshold: 0.58, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    volatility_max: 0.65,
     lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
   },
   PRECISO: {
     name: 'PRECISO',
     windowSize: 20,
-    Hn_threshold: 0.78, // ✅ AJUSTADO: De 0.86 para 0.78 (Exigente mas possível)
-    p_over3_threshold: 0.60, // ✅ AJUSTADO: De 0.64 para 0.60
-    strength_threshold: 0.55, // ✅ AJUSTADO: De 0.62 para 0.55
-    volatility_max: 0.60, // ✅ CORRIGIDO: De 0.20 para 0.60
+    Hn_threshold: 0.86, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    p_over3_threshold: 0.64, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    strength_threshold: 0.62, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
+    volatility_max: 0.60,
     lossesToDowngrade: null, // Permanece até recuperar
   },
 };
@@ -482,7 +482,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}, moves=${ups}^/${downs}v`);
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
-        const cutoff = state.mode === 'VELOZ' ? 65 : (state.mode === 'NORMAL' ? 70 : 75);
+        const cutoff = state.mode === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
@@ -747,10 +747,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const currentMode = state.mode as keyof typeof FALCON_MODES;
     const settings = FALCON_MODES[currentMode];
 
-    // Thresholds de probabilidade por modo:
-    // VELOZ: 65%, NORMAL: 70%, PRECISO: 75%
-    const requiredProb = currentMode === 'VELOZ' ? 65 :
-      (currentMode === 'NORMAL' ? 70 : 75);
+    // Thresholds de probabilidade por modo (Atualizados conforme v1.0 thresholds):
+    // VELOZ: 78%, NORMAL: 80%, PRECISO: 86%
+    const requiredProb = currentMode === 'VELOZ' ? 78 :
+      (currentMode === 'NORMAL' ? 80 : 86);
 
     if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
       // ✅ Calcular stake
@@ -1120,7 +1120,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         {
           contractType: contractType,
           stakeAmount: decision.stake || config.initialStake,
-          duration: 5,
+          duration: 1,
           marketAnalysis: marketAnalysis,
           payout: zenixPayout,
           entryPrice: currentPrice, // ✅ Usar preço atual instead of 0
@@ -1138,7 +1138,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           contractType,
           config.symbol,
           decision.stake || config.initialStake,
-          5, // duration em ticks
+          1, // duration em ticks (ZENIX v1.0 standard)
         );
 
         if (contractId) {
@@ -1150,7 +1150,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             userId,
             'INFO',
             'TRADER',
-            `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)} `,
+            `⚡ ENTRADA CONFIRMADA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`,
           );
 
           // ✅ Atualizar trade com contract_id
@@ -1543,7 +1543,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
 
     // ✅ Log de resultado no padrão Orion
-    this.logTradeResultV2(userId, {
+    await this.logTradeResultV2(userId, {
       status: result.win ? 'WIN' : 'LOSS',
       profit: result.profit,
       stake: result.stake,
@@ -1846,7 +1846,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses = 0;
       state.consecutiveWins = 0;
       state.opsCount = 0;
-      state.mode = 'PRECISO';
+      state.mode = 'VELOZ';
       state.stopBlindadoAtivo = false;
       state.pisoBlindado = 0;
       state.lastProfit = 0;
@@ -2257,7 +2257,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
   // --- CATEGORIA 3: EXECUÇÃO E RESULTADO ---
 
-  private logTradeResultV2(userId: string, result: {
+  private async logTradeResultV2(userId: string, result: {
     status: 'WIN' | 'LOSS';
     profit: number;
     stake: number;
@@ -2270,7 +2270,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       `• Saldo Atual: $${result.balance.toFixed(2)}`;
 
     this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
-    this.saveLog(userId, 'INFO', 'EXECUTION', message);
+    await this.saveLog(userId, 'INFO', 'EXECUTION', message);
   }
 
   private logSorosActivation(userId: string, soros: {

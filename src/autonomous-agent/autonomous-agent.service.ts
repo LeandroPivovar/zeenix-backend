@@ -626,17 +626,16 @@ export class AutonomousAgentService implements OnModuleInit {
       config.derivToken = resolvedToken;
       config.currency = resolvedCurrency;
 
-      // ✅ [ORION] GUARD DE ATIVAÇÃO: Evitar reativação se já estiver ativo com mesma config
-      // Isso impede loops de reinicialização que limpam o histórico de ticks
-      const strategyName = (config.agentType || config.strategy || 'orion').toLowerCase().replace('arion', 'orion');
-      const currentStrategy = this.strategyManager.getStrategy(strategyName);
-      if (currentStrategy && (currentStrategy as any).isUserActive && (currentStrategy as any).isUserActive(userId)) {
-        // Opcional: comparar config aqui se quiser ser ultra rigoroso
-        this.logger.debug(`[ActivateAgent] 🛡️ Usuário ${userId} já está ativo na estratégia ${strategyName}. Ignorando reativação para manter histórico.`);
-        return;
+      // ✅ [ZENIX v2.0] GARANTIR EXCLUSIVIDADE: Desativar qualquer estratégia anterior antes de iniciar a nova
+      // Isso resolve o problema de múltiplos agentes rodando simultaneamente (ex: Sentinel e Falcon juntos)
+      try {
+        await this.strategyManager.deactivateUser(userId);
+        this.logger.log(`[ActivateAgent] 🔄 Estratégias anteriores desativadas para usuário ${userId}`);
+      } catch (deactivateError) {
+        this.logger.warn(`[ActivateAgent] ⚠️ Erro ao desativar estratégias anteriores (não crítico):`, deactivateError);
       }
 
-      // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
+      // ✅ [ORION] PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
       // (mantém apenas as transações/trades)
       try {
         await this.dataSource.query(
