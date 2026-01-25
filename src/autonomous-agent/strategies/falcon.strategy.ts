@@ -1448,19 +1448,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           continue;
         }
 
-        // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
+        // ✅ Se não é retentável ou esgotou tentativas, logar e lançar erro
         if (attempt >= maxRetries) {
           this.logger.error(`[Falcon][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
+          throw new Error(`Falha após ${maxRetries + 1} tentativas: ${errorMessage}`);
         } else {
           this.logger.error(`[Falcon][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`, error?.stack);
+          throw new Error(errorMessage);
         }
-        return null;
       }
     }
 
     // ✅ Se chegou aqui, todas as tentativas falharam
-    this.logger.error(`[Falcon][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
-    return null;
+    const finalError = lastError?.message || 'Erro desconhecido';
+    this.logger.error(`[Falcon][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${finalError}`);
+    throw new Error(finalError);
   }
 
   /**
