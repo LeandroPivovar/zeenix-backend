@@ -595,7 +595,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     return {
       probability,
       signal: signal as any, // Type cast para manter compatibilidade
-      payout: 0.95, // Payout típico para Digit Over
+      payout: 0.635, // ✅ Payout REAL para Digit Over 3 (~63.5%) - Fix para Martingale
       confidence: probability / 100,
       details: {
         trend: signal,
