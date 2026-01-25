@@ -9,11 +9,17 @@ interface TickDto {
 
 interface GetRecommendationDto {
   ticks: TickDto[];
+  symbol: string;
+  tradeType: string;
+  duration: number;
+  durationUnit: string;
+  amount: number;
+  multiplier?: number;
 }
 
 @Controller('gemini')
 export class GeminiController {
-  constructor(private readonly geminiService: GeminiService) {}
+  constructor(private readonly geminiService: GeminiService) { }
 
   @Post('recommendation')
   @UseGuards(AuthGuard('jwt'))
@@ -28,9 +34,17 @@ export class GeminiController {
 
     // Pegar os últimos 10 ticks
     const last10Ticks = body.ticks.slice(-10);
-    
-    const recommendation = await this.geminiService.getTradingRecommendation(last10Ticks);
-    
+
+    const recommendation = await this.geminiService.getTradingRecommendation(
+      last10Ticks,
+      body.symbol,
+      body.tradeType,
+      body.duration,
+      body.durationUnit,
+      body.amount,
+      body.multiplier
+    );
+
     return recommendation;
   }
 }

@@ -5,7 +5,15 @@ export class GeminiService {
   private readonly GEMINI_API_KEY = 'AIzaSyDEe-kanGsyCuwau8hYCog6-Z5cR_OXnqE';
   private readonly GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-  async getTradingRecommendation(ticks: Array<{ value: number; epoch: number }>): Promise<{
+  async getTradingRecommendation(
+    ticks: Array<{ value: number; epoch: number }>,
+    symbol?: string,
+    tradeType?: string,
+    duration?: number,
+    durationUnit?: string,
+    amount?: number,
+    multiplier?: number
+  ): Promise<{
     action: 'CALL' | 'PUT';
     confidence: number;
     reasoning?: string;
@@ -17,7 +25,18 @@ export class GeminiService {
         timestamp: new Date(t.epoch * 1000).toISOString()
       }));
 
+      const contextInfo = `
+Contexto da Operação:
+- Mercado: ${symbol || 'Não informado'}
+- Tipo de Negociação: ${tradeType || 'Não informado'}
+- Duração: ${duration || 'Não informado'} ${durationUnit || ''}
+- Valor de Entrada: ${amount || 'Não informado'}
+${multiplier ? `- Multiplicador: ${multiplier}` : ''}
+`;
+
       const prompt = `Você é um especialista em day trading, considere o método abaixo para dar uma dica de ação (por enquanto operar somente no método call e put).
+
+${contextInfo}
 
 Os últimos 10 dados recebidos foram estes:
 ${JSON.stringify(ticksData, null, 2)}
@@ -26,11 +45,11 @@ Nos dê um retorno no formato JSON com a seguinte estrutura:
 {
   "action": "CALL" ou "PUT",
   "confidence": número de 0 a 100 (porcentagem de confiabilidade),
-  "entry_time_seconds": número (em quantos segundos a partir de agora o usuário deve entrar na operação, ex: 5, 10, 30),
+  "entry_time_seconds": número (em quantos segundos EXATOS a partir de agora o usuário deve entrar na operação, ex: 12, 34, 40),
   "reasoning": "breve explicação do motivo da recomendação"
 }
 
-Analise a tendência dos preços e forneça uma recomendação baseada em análise técnica.`;
+Analise a tendência dos preços, o contexto do mercado e forneça uma recomendação precisa baseada em análise técnica. O tempo de entrada deve ser exato.`;
 
       const response = await fetch(`${this.GEMINI_API_URL}?key=${this.GEMINI_API_KEY}`, {
         method: 'POST',
@@ -79,13 +98,17 @@ Analise a tendência dos preços e forneça uma recomendação baseada em análi
         reasoning: recommendation.reasoning || 'Análise baseada nos últimos 10 ticks'
       };
     } catch (error) {
-      console.error('[GeminiService] Erro ao obter recomendação:', error);
+      console.error('[GeminiService] Erro ao obter recomendação - Detalhes:', {
+        message: error.message,
+        stack: error.stack,
+        response: error.response?.data || error.response || 'No response data'
+      });
 
       // Retornar recomendação padrão em caso de erro
       return {
         action: 'CALL',
         confidence: 50,
-        reasoning: 'Erro ao processar recomendação da IA'
+        reasoning: `Erro ao processar recomendação da IA: ${error.message}`
       };
     }
   }
