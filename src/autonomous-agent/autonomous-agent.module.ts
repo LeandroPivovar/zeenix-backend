@@ -16,7 +16,7 @@ import { ZeusStrategy } from './strategies/zeus.strategy';
 @Module({
   imports: [
     TypeOrmModule.forFeature([]),
-    SettingsModule,
+    forwardRef(() => SettingsModule),
     BrokerModule,
     forwardRef(() => AiModule), // ✅ Importar AiModule para usar OrionStrategy
     // ✅ UtilsModule é global, não precisa importar
