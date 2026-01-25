@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { TradeEntity, TradeType, TradeStatus } from '../infrastructure/database/entities/trade.entity';
 import { v4 as uuidv4 } from 'uuid';
 import { CopyTradingService } from '../copy-trading/copy-trading.service';
@@ -26,6 +26,7 @@ export class ManualTradeController {
         @InjectRepository(UserEntity)
         private readonly userRepository: Repository<UserEntity>,
         private readonly copyTradingService: CopyTradingService,
+        private readonly dataSource: DataSource,
     ) { }
 
     @Post('notify/buy')
@@ -61,6 +62,31 @@ export class ManualTradeController {
                     const user = await this.userRepository.findOne({ where: { id: userId } });
                     const userBalance = user?.derivBalance ? parseFloat(user.derivBalance) : 0;
                     const percent = userBalance > 0 ? ((body.buyPrice || 0) / userBalance) * 100 : 0;
+
+                    // ✅ [FIX] Salvar na tabela master_trader_operations para exibição no feed/social
+                    try {
+                        await this.dataSource.query(
+                            `INSERT INTO master_trader_operations 
+                             (trader_id, symbol, contract_type, barrier, stake, percent, multiplier, duration, duration_unit, trade_type, status, created_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                            [
+                                userId,
+                                body.symbol || 'R_100',
+                                body.contractType || 'CALL',
+                                body.barrier || 0.1,
+                                body.buyPrice || 0,
+                                percent,
+                                1.00, // multiplier
+                                body.duration || 1,
+                                body.durationUnit || 'm',
+                                (body.contractType || 'CALL').includes('CALL') || (body.contractType || '').includes('RISE') ? 'CALL' : 'PUT',
+                                'OPEN'
+                            ]
+                        );
+                        this.logger.log(`[ManualTrade] Master operation recorded in master_trader_operations for user ${userId}`);
+                    } catch (dbErr) {
+                        this.logger.error(`[ManualTrade] Error inserting into master_trader_operations: ${dbErr.message}`);
+                    }
 
                     await this.copyTradingService.replicateManualOperation(userId, {
                         contractId: body.contractId,
@@ -121,6 +147,21 @@ export class ManualTradeController {
                 const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
                 if (isMasterTrader && trade.status !== TradeStatus.PENDING) {
                     const result = trade.status === TradeStatus.WON ? 'win' : 'loss';
+
+                    // ✅ [FIX] Atualizar o registro do Master Trader na tabela master_trader_operations
+                    try {
+                        await this.dataSource.query(
+                            `UPDATE master_trader_operations 
+                             SET status = 'CLOSED', result = ?, profit = ?
+                             WHERE trader_id = ? AND status = 'OPEN' AND symbol = ?
+                             ORDER BY created_at DESC LIMIT 1`,
+                            [result, Number(trade.profit || 0), userId, trade.symbol]
+                        );
+                        this.logger.log(`[ManualTrade] Master operation updated in master_trader_operations for user ${userId}`);
+                    } catch (dbErr) {
+                        this.logger.error(`[ManualTrade] Error updating master_trader_operations: ${dbErr.message}`);
+                    }
+
                     await this.copyTradingService.updateCopyTradingOperationsResult(
                         userId,
                         contractId,
