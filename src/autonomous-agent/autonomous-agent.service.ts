@@ -1473,177 +1473,44 @@ export class AutonomousAgentService implements OnModuleInit {
       params
     );
 
-    // ✅ NOVO: Se days <= 1 (Sessão de hoje), retornar evolução POR TRADE para melhor visualização
-    // Ou se range < 24h
-    const diffHours = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
+    // ✅ NOVO: Sempre retornar evolução POR TRADE para melhor visualização (Requisito "Todas as trades")
+    const dataPoints: { time: number, value: number }[] = [];
+    let cumulativeProfit = 0;
 
-    if (days <= 1 || diffHours <= 24) {
-      const dataPoints: { time: number, value: number }[] = [];
-      let cumulativeProfit = 0;
-
-      // Adicionar ponto inicial (Saldo Inicial do dia/periodo)
-      // Se for sessao de hoje, o saldo inicial deve ser: SaldoAtual - LucroHoje
-      // Mas initialBalance do DB é o saldo inicial da CONTA (fixo no config) ou Saldo Atual?
-      // O campo initial_balance na tabela config costuma ser o saldo no momento da configuração.
-      // Vamos assumir que queremos mostrar a evolução a partir do Initial Balance GLOBAL configurado + Lucro Acumulado ANTES do periodo?
-      // Isso complica.
-      // Vamos simplificar: O gráfico mostra CRESCIMENTO durante o período selecionado.
-      // Se days=30, mostra de 0 a X? Ou do saldo do dia -30 até hoje?
-      // Se o user quer ver "Todas as trades", ele quer ver a banca crescendo desde o inicio.
-      // Se ele seleciona "Hoje", ele quer ver o saldo de hoje? Ex: $1000 -> $1050.
-
-      // Para fazer isso direito (Saldo no Tempo), precisamos saber o saldo no inicio do periodo.
-      // SaldoInicio = InitialBalanceGlobal + LucroTotalAteInicioDoPeriodo.
-      // Isso requer query de lucro total até startDate.
-
-      // Query lucro anterior
-      const prevTrades = await this.dataSource.query(
-        `SELECT SUM(profit_loss) as total
-         FROM autonomous_agent_trades 
-         WHERE user_id = ? 
-           AND created_at < ?
-           AND status IN ('WON', 'LOST')`,
-        [userId, startDate.toISOString()]
-      );
-
-      const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
-      const startBalance = initialBalance + prevProfit;
-
-      dataPoints.push({
-        time: startDate.getTime() / 1000,
-        value: Number(startBalance.toFixed(2))
-      });
-
-      cumulativeProfit = startBalance;
-
-      for (const trade of trades) {
-        cumulativeProfit += parseFloat(trade.profit_loss) || 0;
-        dataPoints.push({
-          time: new Date(trade.created_at).getTime() / 1000,
-          value: Number(cumulativeProfit.toFixed(2))
-        });
-      }
-
-      // Adicionar ponto final (agora)
-      if (dataPoints.length > 0) {
-        dataPoints.push({
-          time: Date.now() / 1000,
-          value: Number(cumulativeProfit.toFixed(2))
-        });
-      }
-
-      return dataPoints;
-    }
-
-    // Lógica para periodos longos (agrupados)
-    // 1. Calcular saldo inicial do periodo
+    // Calcular saldo inicial do periodo
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
-         FROM autonomous_agent_trades 
-         WHERE user_id = ? 
-           AND created_at < ?
-           AND status IN ('WON', 'LOST')`,
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')`,
       [userId, startDate.toISOString()]
     );
-    const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
-    let currentBalance = initialBalance + prevProfit;
 
-    // Map trades to their bucket timestamps
-    const tradesMap = new Map<number, number>(); // timestamp (ms) -> profit sum
+    const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
+    const startBalance = initialBalance + prevProfit;
+
+    dataPoints.push({
+      time: startDate.getTime() / 1000,
+      value: Number(startBalance.toFixed(2))
+    });
+
+    cumulativeProfit = startBalance;
 
     for (const trade of trades) {
-      const tradeDate = new Date(trade.created_at);
-      let bucketTime: number;
-
-      if (days <= 1) { // Redundant check but ok
-        tradeDate.setMinutes(0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else if (days <= 2) {
-        const hour = tradeDate.getHours();
-        const block = Math.floor(hour / 6) * 6;
-        tradeDate.setHours(block, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else if (days <= 3) {
-        const hour = tradeDate.getHours();
-        const block = Math.floor(hour / 12) * 12;
-        tradeDate.setHours(block, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else {
-        tradeDate.setHours(0, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      }
-
-      const profit = parseFloat(trade.profit_loss) || 0;
-      const current = tradesMap.get(bucketTime) || 0;
-      tradesMap.set(bucketTime, current + profit);
-    }
-
-    // Generate continuous sequence of buckets
-    const dataPoints: { time: string | number, value: number }[] = [];
-
-    // Determine interval in ms
-    let intervalMs: number;
-    if (days <= 1) intervalMs = 60 * 60 * 1000;
-    else if (days <= 2) intervalMs = 6 * 60 * 60 * 1000;
-    else if (days <= 3) intervalMs = 12 * 60 * 60 * 1000;
-    else intervalMs = 24 * 60 * 60 * 1000;
-
-    const endTime = Date.now();
-    let currentBucketTime = startDate.getTime();
-
-    // Round start bucket logic (simplified from previous)
-    if (days > 3) {
-      const d = new Date(currentBucketTime);
-      d.setHours(0, 0, 0, 0);
-      currentBucketTime = d.getTime();
-    } else {
-      // Keep precise start time for short periods or align to block?
-      // Aligning to block is safer for grouping
-      const d = new Date(currentBucketTime);
-      d.setMinutes(0, 0, 0); // generic align
-      currentBucketTime = d.getTime();
-    }
-
-    while (currentBucketTime <= endTime) {
-      // Add profit from this bucket if any
-      // AQUI É IMPORTANTE: O saldo deve evoluir com o tempo. 
-      // O tradesMap tem o LUCRO do bucket.
-      // currentBalance começa com saldo ANTES do periodo.
-      // A cada bucket, somamos o lucro do bucket ao currentBalance e plotamos.
-
-      // Precisamos encontrar trades que caem NESTE bucket ou usar o map
-      // O map tem keys exatas?
-      // O map foi construído com keys "arredondadas".
-      // Precisamos iterar pelos buckets arredondados.
-
-      // Melhorar arredondamento do currentBucketTime para bater com o map
-      let key = currentBucketTime;
-      // ... (Logica de alinhamento repetida, idealmente extrair)
-      // Simplificação: vamos confiar no loop de intervalo, mas garantir que a key gerada bata.
-      // Se o map usou setHours(0,0,0,0), o loop deve gerar datas com 00:00:00.
-
-      // Para 4+ days: alignment already done above.
-
-      if (tradesMap.has(currentBucketTime)) {
-        currentBalance += tradesMap.get(currentBucketTime)!;
-      }
-
-      // Se não houve trades no bucket, currentBalance se mantém (linha reta).
-
-      // Determine output time format
-      let timeValue: string | number;
-      if (days < 4) {
-        timeValue = currentBucketTime / 1000;
-      } else {
-        timeValue = new Date(currentBucketTime).toISOString().split('T')[0];
-      }
-
+      cumulativeProfit += parseFloat(trade.profit_loss) || 0;
       dataPoints.push({
-        time: timeValue,
-        value: Number(currentBalance.toFixed(2))
+        time: new Date(trade.created_at).getTime() / 1000,
+        value: Number(cumulativeProfit.toFixed(2))
       });
+    }
 
-      currentBucketTime += intervalMs;
+    // Adicionar ponto final (agora) para manter a linha até o presente
+    if (dataPoints.length > 0) {
+      dataPoints.push({
+        time: Date.now() / 1000,
+        value: Number(cumulativeProfit.toFixed(2))
+      });
     }
 
     return dataPoints;
