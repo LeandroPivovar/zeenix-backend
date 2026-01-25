@@ -381,12 +381,10 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
   subscribeToSymbol(symbol: string, count?: number): void {
     this.symbol = symbol;
-    // const now = Math.floor(Date.now() / 1000); // Não precisamos de start se usarmos count com end='latest'
 
-    // Configuração para buscar ticks
+    // Configuração base da requisição
     const req: any = {
       ticks_history: symbol,
-      adjust_start_time: 1,
       end: 'latest',
       subscribe: 1,
       style: 'ticks'
@@ -394,13 +392,15 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
 
     // Se count for fornecido, usar ele (prioridade)
     if (count && count > 0) {
-      req.count = count;
+      req.count = Number(count);
+      // adjust_start_time: 1 // REMOVIDO: Pode causar conflito se start não for fornecido
     } else {
       // Padrão antigo ou fallback
       req.count = 1000;
-      // req.start = now - 600; // Opcional se count for grande o suficiente
+      req.adjust_start_time = 1; // Manter apenas para o padrão se necessário
     }
 
+    this.logger.log(`[DerivWS] Inscrevendo em símbolo: ${JSON.stringify(req)}`);
     this.send(req);
   }
 
