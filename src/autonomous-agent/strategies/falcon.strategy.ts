@@ -216,7 +216,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         };
 
         this.userConfigs.set(userId, config);
-        this.initializeUserState(userId, config);
+
+        // ✅ CORREÇÃO: Não reinicializar estado se já existir!
+        // Isso evita que o bot "esqueça" que atingiu meta/stop se o sync rodar
+        if (!this.userStates.has(userId)) {
+          this.initializeUserState(userId, config);
+        } else {
+          // Se já existe, apenas atualizar config mas manter estado
+          this.logger.debug(`[Falcon][${userId}] Config atualizada via sync (Estado mantido)`);
+        }
       }
 
       this.logger.log(`[Falcon] Sincronizados ${activeUsers.length} usuários ativos`);
