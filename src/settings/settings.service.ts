@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -8,6 +8,8 @@ import { USER_REPOSITORY_TOKEN, DERIV_SERVICE } from '../constants/tokens';
 import { UserSettingsEntity } from '../infrastructure/database/entities/user-settings.entity';
 import { UserActivityLogEntity } from '../infrastructure/database/entities/user-activity-log.entity';
 import { UserSessionEntity } from '../infrastructure/database/entities/user-session.entity';
+import { AiService } from '../ai/ai.service';
+import { AutonomousAgentService } from '../autonomous-agent/autonomous-agent.service';
 
 const TRADE_CURRENCY_OPTIONS = ['USD', 'BTC', 'DEMO'] as const;
 type TradeCurrency = (typeof TRADE_CURRENCY_OPTIONS)[number];
@@ -25,6 +27,10 @@ export class SettingsService {
     @InjectRepository(UserSessionEntity)
     private readonly sessionRepository: Repository<UserSessionEntity>,
     @Inject(DERIV_SERVICE) private readonly derivService: any,
+    @Inject(forwardRef(() => AiService))
+    private readonly aiService: AiService,
+    @Inject(forwardRef(() => AutonomousAgentService))
+    private readonly autonomousAgentService: AutonomousAgentService,
   ) { }
 
   async getSettings(userId: string) {
@@ -205,6 +211,17 @@ export class SettingsService {
       normalizedUpdates.tradeCurrency !== previousState.tradeCurrency
     ) {
       changes.push(`Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`);
+
+      // ✅ Desativar IA e Agente Autônomo ao mudar de moeda/conta
+      try {
+        this.logger.log(`[SettingsService] Desativando IA e Agente Autônomo para o usuário ${userId} devido à mudança de moeda.`);
+        await Promise.all([
+          this.aiService.deactivateUserAI(userId).catch(e => this.logger.error(`Erro ao desativar IA: ${e.message}`)),
+          this.autonomousAgentService.deactivateAgent(userId).catch(e => this.logger.error(`Erro ao desativar Agente: ${e.message}`))
+        ]);
+      } catch (e) {
+        this.logger.error(`[SettingsService] Erro ao desativar serviços: ${e.message}`);
+      }
 
       // Atualizar também a coluna deriv_currency na tabela users
       // Se for DEMO, manter a moeda base (USD) na deriv_currency
@@ -429,6 +446,17 @@ export class SettingsService {
     // Invalidar cache do DerivService
     if (this.derivService && typeof this.derivService.clearSession === 'function') {
       this.derivService.clearSession(userId);
+    }
+
+    // ✅ Desativar IA e Agente Autônomo ao atualizar token (muda o contexto operacional)
+    try {
+      this.logger.log(`[SettingsService] Desativando IA e Agente Autônomo para o usuário ${userId} devido à atualização de token.`);
+      await Promise.all([
+        this.aiService.deactivateUserAI(userId).catch(e => this.logger.error(`Erro ao desativar IA: ${e.message}`)),
+        this.autonomousAgentService.deactivateAgent(userId).catch(e => this.logger.error(`Erro ao desativar Agente: ${e.message}`))
+      ]);
+    } catch (e) {
+      this.logger.error(`[SettingsService] Erro ao desativar serviços: ${e.message}`);
     }
 
     await this.logActivity(userId, 'UPDATE_DERIV_TOKEN', `Atualizou token Deriv para ${tradeCurrency}`, ipAddress, userAgent);

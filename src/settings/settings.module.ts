@@ -9,12 +9,16 @@ import { SettingsController } from './settings.controller';
 import { DERIV_SERVICE } from '../constants/tokens';
 import { DerivService } from '../broker/deriv.service';
 import { BrokerModule } from '../broker/broker.module';
+import { AiModule } from '../ai/ai.module';
+import { AutonomousAgentModule } from '../autonomous-agent/autonomous-agent.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([UserSettingsEntity, UserActivityLogEntity, UserSessionEntity]),
     UserModule,
     forwardRef(() => BrokerModule),
+    forwardRef(() => AiModule),
+    forwardRef(() => AutonomousAgentModule),
   ],
   controllers: [SettingsController],
   providers: [
