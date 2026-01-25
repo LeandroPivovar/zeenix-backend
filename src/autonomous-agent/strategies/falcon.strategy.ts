@@ -1119,6 +1119,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         },
       );
 
+      // ✅ CORREÇÃO DE RACE CONDITION: 
+      // Definir currentTradeId IMEDIATAMENTE, antes de chamar buyContract via API.
+      state.currentTradeId = tradeId;
+
       try {
         const contractId = await this.buyContract(
           userId,
@@ -1131,7 +1135,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (contractId) {
           state.currentContractId = contractId;
-          state.currentTradeId = tradeId;
+          // state.currentTradeId = tradeId; // ✅ Já definido acima para evitar race condition
 
           // ✅ Log de operação no padrão Orion
           await this.saveLog(
@@ -1149,6 +1153,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         } else {
           // Se falhou, resetar isWaitingContract e atualizar trade com erro
           state.isWaitingContract = false;
+          state.currentTradeId = null; // ✅ Resetar ID pois falhou
           await this.updateTradeRecord(tradeId, {
             status: 'ERROR',
             errorMessage: 'Falha ao comprar contrato',
@@ -1158,6 +1163,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       } catch (error) {
         // Se houve erro, resetar isWaitingContract
         state.isWaitingContract = false;
+        state.currentTradeId = null; // ✅ Resetar ID pois falhou
         this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato: `, error);
         await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
       }
