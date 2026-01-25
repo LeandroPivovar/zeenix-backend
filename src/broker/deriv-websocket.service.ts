@@ -405,12 +405,32 @@ export class DerivWebSocketService extends EventEmitter implements OnModuleDestr
   }
 
   buyContract(buyConfig: any): void {
-    const { proposalId, price, duration, durationUnit, contractType, barrier } = buyConfig;
+    const { proposalId, price, duration, durationUnit, contractType, barrier, symbol, currency, amount, multiplier } = buyConfig;
 
     this.state.pendingBuyConfig = { durationUnit, duration, contractType, barrier };
 
     if (proposalId) {
       this.send({ buy: proposalId, price: Number(price) });
+    } else {
+      // Instant Buy (Optimization without Proposal RTT)
+      const parameters: any = {
+        amount: Number(amount),
+        basis: 'stake',
+        contract_type: contractType,
+        currency: currency || this.state.currency || 'USD',
+        symbol: symbol,
+        duration: Number(duration),
+        duration_unit: durationUnit,
+      };
+
+      if (barrier !== undefined && barrier !== null) parameters.barrier = String(barrier);
+      if (multiplier !== undefined && multiplier !== null) parameters.multiplier = Number(multiplier);
+
+      this.send({
+        buy: 1,
+        price: Number(price),
+        parameters
+      });
     }
   }
 
