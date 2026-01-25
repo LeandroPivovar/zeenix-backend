@@ -45,28 +45,28 @@ const FALCON_MODES = {
   VELOZ: {
     name: 'VELOZ',
     windowSize: 20, // Janela fixa de 20 ticks
-    Hn_threshold: 0.65, // Entropia normalizada mínima (Era 0.78 - AJUSTADO para mercado real)
-    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4 (Era 0.58 - AJUSTADO)
-    strength_threshold: 0.45, // Força do padrão (Era 0.56 - AJUSTADO + corrigido bug de comparação)
-    volatility_max: 0.70, // Volatilidade máxima permitida (Era 0.20 - AJUSTADO para mercado real)
+    Hn_threshold: 0.65, // Entropia normalizada mínima
+    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4
+    strength_threshold: 0.45, // Força do padrão
+    volatility_max: 0.70, // Volatilidade máxima permitida (Mercado Normal ~0.63)
     lossesToDowngrade: 2, // Após 2 perdas, muda para NORMAL
   },
   NORMAL: {
     name: 'NORMAL',
     windowSize: 20,
-    Hn_threshold: 0.80,
-    p_over3_threshold: 0.60,
-    strength_threshold: 0.58,
-    volatility_max: 0.20,
+    Hn_threshold: 0.72, // ✅ AJUSTADO: De 0.80 para 0.72 (Mercado real flutua 0.70-0.80)
+    p_over3_threshold: 0.55, // ✅ AJUSTADO: De 0.60 para 0.55 (Mais realista)
+    strength_threshold: 0.50, // ✅ AJUSTADO: De 0.58 para 0.50
+    volatility_max: 0.65, // ✅ CORRIGIDO: De 0.20 para 0.65 (0.20 era impossível com Hn alto)
     lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
   },
   PRECISO: {
     name: 'PRECISO',
     windowSize: 20,
-    Hn_threshold: 0.86,
-    p_over3_threshold: 0.64,
-    strength_threshold: 0.62,
-    volatility_max: 0.20,
+    Hn_threshold: 0.78, // ✅ AJUSTADO: De 0.86 para 0.78 (Exigente mas possível)
+    p_over3_threshold: 0.60, // ✅ AJUSTADO: De 0.64 para 0.60
+    strength_threshold: 0.55, // ✅ AJUSTADO: De 0.62 para 0.55
+    volatility_max: 0.60, // ✅ CORRIGIDO: De 0.20 para 0.60
     lossesToDowngrade: null, // Permanece até recuperar
   },
 };
@@ -389,12 +389,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return; // Já está processando, ignorar este tick
     }
 
-    // Se está aguardando resultado de contrato, não processar novos ticks
-    if (state.isWaitingContract) {
-      return;
-    }
-
-    // Adicionar tick à coleção
+    // ✅ CORREÇÃO CRÍTICA: Coletar tick SEMPRE, mesmo aguardando contrato
+    // Isso garante que a janela de análise não tenha "buracos" (gaps) de dados
     const userTicks = this.ticks.get(userId) || [];
     userTicks.push(tick);
 
@@ -404,8 +400,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
     this.ticks.set(userId, userTicks);
 
-    // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
+    // Se está aguardando resultado de contrato, interromper AQUI (após coletar)
     if (state.isWaitingContract) {
+      // Apenas logar heartbeat ocasional para saber que está vivo e coletando
+      if (userTicks.length % 10 === 0) {
+        this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados em background: ${userTicks.length})`);
+      }
       return;
     }
 
@@ -595,7 +595,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     return {
       probability,
       signal: signal as any, // Type cast para manter compatibilidade
-      payout: 0.95, // Payout típico para Digit Over
+      payout: 0.635, // ✅ Payout REAL para Digit Over 3 (~63.5%) - Fix para Martingale
       confidence: probability / 100,
       details: {
         trend: signal,
@@ -1119,6 +1119,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         },
       );
 
+      // ✅ CORREÇÃO DE RACE CONDITION: 
+      // Definir currentTradeId IMEDIATAMENTE, antes de chamar buyContract via API.
+      state.currentTradeId = tradeId;
+
       try {
         const contractId = await this.buyContract(
           userId,
@@ -1131,7 +1135,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (contractId) {
           state.currentContractId = contractId;
-          state.currentTradeId = tradeId;
+          // state.currentTradeId = tradeId; // ✅ Já definido acima para evitar race condition
 
           // ✅ Log de operação no padrão Orion
           await this.saveLog(
@@ -1149,6 +1153,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         } else {
           // Se falhou, resetar isWaitingContract e atualizar trade com erro
           state.isWaitingContract = false;
+          state.currentTradeId = null; // ✅ Resetar ID pois falhou
           await this.updateTradeRecord(tradeId, {
             status: 'ERROR',
             errorMessage: 'Falha ao comprar contrato',
@@ -1158,6 +1163,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       } catch (error) {
         // Se houve erro, resetar isWaitingContract
         state.isWaitingContract = false;
+        state.currentTradeId = null; // ✅ Resetar ID pois falhou
         this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato: `, error);
         await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
       }
