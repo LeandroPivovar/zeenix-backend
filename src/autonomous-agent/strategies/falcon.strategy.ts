@@ -45,10 +45,10 @@ const FALCON_MODES = {
   VELOZ: {
     name: 'VELOZ',
     windowSize: 20, // Janela fixa de 20 ticks
-    Hn_threshold: 0.78, // Entropia normalizada mínima
-    p_over3_threshold: 0.58, // Probabilidade de dígitos >= 4
-    strength_threshold: 0.56, // Força do padrão
-    volatility_max: 0.20, // Volatilidade máxima permitida (V_MAX)
+    Hn_threshold: 0.65, // Entropia normalizada mínima (Era 0.78 - AJUSTADO para mercado real)
+    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4 (Era 0.58 - AJUSTADO)
+    strength_threshold: 0.45, // Força do padrão (Era 0.56 - AJUSTADO + corrigido bug de comparação)
+    volatility_max: 0.70, // Volatilidade máxima permitida (Era 0.20 - AJUSTADO para mercado real)
     lossesToDowngrade: 2, // Após 2 perdas, muda para NORMAL
   },
   NORMAL: {
