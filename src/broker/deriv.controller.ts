@@ -2428,201 +2428,200 @@ export class DerivController {
       throw new BadRequestException(error.message || 'Erro ao buscar últimas ordens');
     }
   }
-}
 
-@Post('trading/notify/buy')
-@UseGuards(AuthGuard('jwt'))
-@HttpCode(HttpStatus.OK)
-async notifyBuy(@Body() body: NotifyBuyDto, @Req() req: any) {
-  const userId = req.user.userId;
-  this.logger.log(`[Trading] Notificação de compra recebida (Frontend) - ContractId: ${body.contractId}`);
+  @Post('trading/notify/buy')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async notifyBuy(@Body() body: NotifyBuyDto, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Notificação de compra recebida (Frontend) - ContractId: ${body.contractId}`);
 
-  try {
-    await this.processBuyEvent(userId, body);
-    return { success: true };
-  } catch (error) {
-    this.logger.error(`[Trading] Erro ao processar notificação de compra: ${error.message}`);
-    throw new BadRequestException(error.message);
+    try {
+      await this.processBuyEvent(userId, body);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao processar notificação de compra: ${error.message}`);
+      throw new BadRequestException(error.message);
+    }
   }
-}
 
-@Post('trading/notify/end')
-@UseGuards(AuthGuard('jwt'))
-@HttpCode(HttpStatus.OK)
-async notifyEnd(@Body() body: NotifyEndDto, @Req() req: any) {
-  const userId = req.user.userId;
-  this.logger.log(`[Trading] Notificação de finalização recebida (Frontend) - ContractId: ${body.contractId}, Status: ${body.status}`);
+  @Post('trading/notify/end')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async notifyEnd(@Body() body: NotifyEndDto, @Req() req: any) {
+    const userId = req.user.userId;
+    this.logger.log(`[Trading] Notificação de finalização recebida (Frontend) - ContractId: ${body.contractId}, Status: ${body.status}`);
 
-  try {
-    await this.processTradeUpdateEvent(userId, body);
-    return { success: true };
-  } catch (error) {
-    this.logger.error(`[Trading] Erro ao processar notificação de fim: ${error.message}`);
-    throw new BadRequestException(error.message);
+    try {
+      await this.processTradeUpdateEvent(userId, body);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`[Trading] Erro ao processar notificação de fim: ${error.message}`);
+      throw new BadRequestException(error.message);
+    }
   }
-}
 
   // Helper Methods for Logic Reuse (extracted from streamTrading)
 
   private async processBuyEvent(userId: string, data: any) {
-  // Garantir que entrySpot tenha um valor
-  let entrySpot = data.entrySpot !== undefined ? data.entrySpot : (data.entry_spot !== undefined ? data.entry_spot : null);
+    // Garantir que entrySpot tenha um valor
+    let entrySpot = data.entrySpot !== undefined ? data.entrySpot : (data.entry_spot !== undefined ? data.entry_spot : null);
 
-  // Se não encontrou entrySpot, tentar obter do último tick do serviço WebSocket (apenas se disponível)
-  if (entrySpot === null || entrySpot === undefined) {
-    try {
-      const service = this.wsManager.getService(userId);
-      if (service) {
-        const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
-        if (ticks && ticks.length > 0) {
-          const lastTick = ticks[ticks.length - 1];
-          if (lastTick && lastTick.value) {
-            entrySpot = Number(lastTick.value);
-            this.logger.log(`[Trading] EntrySpot não enviado, usando último tick do backend: ${entrySpot}`);
+    // Se não encontrou entrySpot, tentar obter do último tick do serviço WebSocket (apenas se disponível)
+    if (entrySpot === null || entrySpot === undefined) {
+      try {
+        const service = this.wsManager.getService(userId);
+        if (service) {
+          const ticks = (service as any).getTicks ? (service as any).getTicks() : ((service as any).ticks || []);
+          if (ticks && ticks.length > 0) {
+            const lastTick = ticks[ticks.length - 1];
+            if (lastTick && lastTick.value) {
+              entrySpot = Number(lastTick.value);
+              this.logger.log(`[Trading] EntrySpot não enviado, usando último tick do backend: ${entrySpot}`);
+            }
           }
         }
+      } catch (error) {
+        // Ignorar erro se não conseguir pegar do WS backend
+      }
+    }
+
+    const finalEntrySpot = entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null;
+
+    this.logger.log(`[Trading] Salvando compra - ID: ${data.contractId}, entrySpot: ${finalEntrySpot}, Price: ${data.buyPrice}`);
+
+    // Verificar se já existe (idempotência)
+    const existing = await this.tradeRepository.findOne({ where: { derivTransactionId: String(data.contractId) } });
+    if (existing) {
+      this.logger.warn(`[Trading] Compra já salva anteriormente: ${data.contractId}`);
+      return;
+    }
+
+    const trade = this.tradeRepository.create({
+      id: uuidv4(),
+      userId,
+      contractType: data.contractType || 'CALL',
+      timeType: data.durationUnit === 't' ? 'tick' : 'time',
+      duration: String(data.duration || 1),
+      multiplier: 1.00,
+      entryValue: data.buyPrice || 0,
+      entrySpot: finalEntrySpot,
+      tradeType: 'BUY' as any,
+      status: TradeStatus.PENDING,
+      derivTransactionId: data.contractId ? String(data.contractId) : null,
+      symbol: data.symbol ? String(data.symbol) : null,
+    });
+    const savedTrade = await this.tradeRepository.save(trade);
+    this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}`);
+
+    // Copy Trading Logic
+    try {
+      const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
+      if (isMasterTrader) {
+        this.logger.log(`[Trading] Usuário ${userId} é expert, replicando operação para copiadores...`);
+
+        const user = await this.userRepository.findById(userId);
+        const userBalance = user?.derivBalance ? parseFloat(user.derivBalance) : 0;
+        const percent = userBalance > 0 ? ((data.buyPrice || 0) / userBalance) * 100 : 0;
+
+        await this.copyTradingService.replicateManualOperation(
+          userId,
+          {
+            contractId: data.contractId,
+            contractType: data.contractType || 'CALL',
+            symbol: data.symbol,
+            duration: data.duration || 1,
+            durationUnit: data.durationUnit || 'm',
+            stakeAmount: data.buyPrice || 0,
+            percent: percent,
+            entrySpot: finalEntrySpot || 0,
+            entryTime: data.entryTime || Math.floor(Date.now() / 1000),
+            barrier: data.barrier || 0.1,
+          },
+        );
       }
     } catch (error) {
-      // Ignorar erro se não conseguir pegar do WS backend
+      this.logger.error(`[Trading] Erro ao replicar operação para copiadores: ${error.message}`);
     }
   }
-
-  const finalEntrySpot = entrySpot !== null && entrySpot !== undefined ? Number(entrySpot) : null;
-
-  this.logger.log(`[Trading] Salvando compra - ID: ${data.contractId}, entrySpot: ${finalEntrySpot}, Price: ${data.buyPrice}`);
-
-  // Verificar se já existe (idempotência)
-  const existing = await this.tradeRepository.findOne({ where: { derivTransactionId: String(data.contractId) } });
-  if (existing) {
-    this.logger.warn(`[Trading] Compra já salva anteriormente: ${data.contractId}`);
-    return;
-  }
-
-  const trade = this.tradeRepository.create({
-    id: uuidv4(),
-    userId,
-    contractType: data.contractType || 'CALL',
-    timeType: data.durationUnit === 't' ? 'tick' : 'time',
-    duration: String(data.duration || 1),
-    multiplier: 1.00,
-    entryValue: data.buyPrice || 0,
-    entrySpot: finalEntrySpot,
-    tradeType: 'BUY' as any,
-    status: TradeStatus.PENDING,
-    derivTransactionId: data.contractId ? String(data.contractId) : null,
-    symbol: data.symbol ? String(data.symbol) : null,
-  });
-  const savedTrade = await this.tradeRepository.save(trade);
-  this.logger.log(`[Trading] Operação de compra salva no banco: ${savedTrade.id}`);
-
-  // Copy Trading Logic
-  try {
-    const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
-    if (isMasterTrader) {
-      this.logger.log(`[Trading] Usuário ${userId} é expert, replicando operação para copiadores...`);
-
-      const user = await this.userRepository.findById(userId);
-      const userBalance = user?.derivBalance ? parseFloat(user.derivBalance) : 0;
-      const percent = userBalance > 0 ? ((data.buyPrice || 0) / userBalance) * 100 : 0;
-
-      await this.copyTradingService.replicateManualOperation(
-        userId,
-        {
-          contractId: data.contractId,
-          contractType: data.contractType || 'CALL',
-          symbol: data.symbol,
-          duration: data.duration || 1,
-          durationUnit: data.durationUnit || 'm',
-          stakeAmount: data.buyPrice || 0,
-          percent: percent,
-          entrySpot: finalEntrySpot || 0,
-          entryTime: data.entryTime || Math.floor(Date.now() / 1000),
-          barrier: data.barrier || 0.1,
-        },
-      );
-    }
-  } catch (error) {
-    this.logger.error(`[Trading] Erro ao replicar operação para copiadores: ${error.message}`);
-  }
-}
 
   private async processTradeUpdateEvent(userId: string, data: any) {
-  // Garantir que exitSpot tenha um valor
-  let exitSpot = data.exitSpot !== undefined ? data.exitSpot : (data.exit_spot !== undefined ? data.exit_spot : null);
-  // Fallbacks
-  if ((exitSpot === null || exitSpot === undefined) && data.current_spot !== undefined) exitSpot = data.current_spot;
+    // Garantir que exitSpot tenha um valor
+    let exitSpot = data.exitSpot !== undefined ? data.exitSpot : (data.exit_spot !== undefined ? data.exit_spot : null);
+    // Fallbacks
+    if ((exitSpot === null || exitSpot === undefined) && data.current_spot !== undefined) exitSpot = data.current_spot;
 
-  const finalExitSpot = exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null;
-  const contractId = String(data.contractId || data.contract_id);
+    const finalExitSpot = exitSpot !== null && exitSpot !== undefined ? Number(exitSpot) : null;
+    const contractId = String(data.contractId || data.contract_id);
 
-  this.logger.log(`[Trading] Processando atualização de trade - ID: ${contractId}, Profit: ${data.profit}, Status: ${data.status}`);
+    this.logger.log(`[Trading] Processando atualização de trade - ID: ${contractId}, Profit: ${data.profit}, Status: ${data.status}`);
 
-  let trade = await this.tradeRepository.findOne({
-    where: { derivTransactionId: contractId },
-    order: { createdAt: 'DESC' },
-  });
+    let trade = await this.tradeRepository.findOne({
+      where: { derivTransactionId: contractId },
+      order: { createdAt: 'DESC' },
+    });
 
-  if (!trade) {
-    this.logger.warn(`[Trading] Trade não encontrado para atualização: ${contractId}. Tentando salvar atrasado...`);
-    // Se não achou (pode ter acontecido race condition se notifyBuy falhou ou atrasou), cria?
-    // Melhor logar erro por enquanto.
-    return;
-  }
-
-  if (trade) {
-    let shouldSave = false;
-
-    if (data.symbol && (!trade.symbol || trade.symbol !== data.symbol)) {
-      trade.symbol = data.symbol;
-      shouldSave = true;
-    }
-    if (data.entrySpot !== undefined && data.entrySpot !== null && (!trade.entrySpot)) {
-      trade.entrySpot = Number(data.entrySpot);
-      shouldSave = true;
+    if (!trade) {
+      this.logger.warn(`[Trading] Trade não encontrado para atualização: ${contractId}. Tentando salvar atrasado...`);
+      // Se não achou (pode ter acontecido race condition se notifyBuy falhou ou atrasou), cria?
+      // Melhor logar erro por enquanto.
+      return;
     }
 
-    const isFinalized = data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost' || data.status === 'win';
+    if (trade) {
+      let shouldSave = false;
 
-    if (isFinalized) {
-      trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
-      trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null;
-      if (!trade.exitValue && data.payout && data.status === 'won') trade.exitValue = Number(data.payout);
-
-      trade.exitSpot = finalExitSpot;
-
-      // Status Logic
-      if (trade.profit !== null && trade.profit > 0) trade.status = TradeStatus.WON;
-      else if (trade.profit !== null && trade.profit < 0) trade.status = TradeStatus.LOST;
-      else if (data.status === 'won' || data.status === 'win') trade.status = TradeStatus.WON;
-      else if (data.status === 'lost' || data.status === 'loss') trade.status = TradeStatus.LOST;
-
-      const savedTrade = await this.tradeRepository.save(trade);
-      this.logger.log(`[Trading] Trade finalizado salvo: ${savedTrade.id}, Status: ${savedTrade.status}`);
-
-      // Copy Trading Update
-      if ((savedTrade.status === TradeStatus.WON || savedTrade.status === TradeStatus.LOST)) {
-        try {
-          const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
-          if (isMasterTrader) {
-            const result = savedTrade.status === TradeStatus.WON ? 'win' : 'loss';
-            const profit = Number(savedTrade.profit || 0);
-            const entryValue = Number(savedTrade.entryValue || 0);
-
-            await this.copyTradingService.updateCopyTradingOperationsResult(
-              userId,
-              contractId,
-              result,
-              profit,
-              entryValue,
-            );
-          }
-        } catch (error) {
-          this.logger.error(`[Trading] Erro ao atualizar copy trading: ${error.message}`);
-        }
+      if (data.symbol && (!trade.symbol || trade.symbol !== data.symbol)) {
+        trade.symbol = data.symbol;
+        shouldSave = true;
       }
-    } else {
-      if (shouldSave) await this.tradeRepository.save(trade);
+      if (data.entrySpot !== undefined && data.entrySpot !== null && (!trade.entrySpot)) {
+        trade.entrySpot = Number(data.entrySpot);
+        shouldSave = true;
+      }
+
+      const isFinalized = data.is_sold || data.status === 'sold' || data.is_expired || data.status === 'expired' || data.status === 'won' || data.status === 'lost' || data.status === 'win';
+
+      if (isFinalized) {
+        trade.profit = data.profit !== null && data.profit !== undefined ? Number(data.profit) : null;
+        trade.exitValue = data.sellPrice !== null && data.sellPrice !== undefined ? Number(data.sellPrice) : null;
+        if (!trade.exitValue && data.payout && data.status === 'won') trade.exitValue = Number(data.payout);
+
+        trade.exitSpot = finalExitSpot;
+
+        // Status Logic
+        if (trade.profit !== null && trade.profit > 0) trade.status = TradeStatus.WON;
+        else if (trade.profit !== null && trade.profit < 0) trade.status = TradeStatus.LOST;
+        else if (data.status === 'won' || data.status === 'win') trade.status = TradeStatus.WON;
+        else if (data.status === 'lost' || data.status === 'loss') trade.status = TradeStatus.LOST;
+
+        const savedTrade = await this.tradeRepository.save(trade);
+        this.logger.log(`[Trading] Trade finalizado salvo: ${savedTrade.id}, Status: ${savedTrade.status}`);
+
+        // Copy Trading Update
+        if ((savedTrade.status === TradeStatus.WON || savedTrade.status === TradeStatus.LOST)) {
+          try {
+            const isMasterTrader = await this.copyTradingService.isMasterTrader(userId);
+            if (isMasterTrader) {
+              const result = savedTrade.status === TradeStatus.WON ? 'win' : 'loss';
+              const profit = Number(savedTrade.profit || 0);
+              const entryValue = Number(savedTrade.entryValue || 0);
+
+              await this.copyTradingService.updateCopyTradingOperationsResult(
+                userId,
+                contractId,
+                result,
+                profit,
+                entryValue,
+              );
+            }
+          } catch (error) {
+            this.logger.error(`[Trading] Erro ao atualizar copy trading: ${error.message}`);
+          }
+        }
+      } else {
+        if (shouldSave) await this.tradeRepository.save(trade);
+      }
     }
   }
-}
 }
