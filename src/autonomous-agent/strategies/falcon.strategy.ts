@@ -45,28 +45,28 @@ const FALCON_MODES = {
   VELOZ: {
     name: 'VELOZ',
     windowSize: 20, // Janela fixa de 20 ticks
-    Hn_threshold: 0.65, // Entropia normalizada mínima (Era 0.78 - AJUSTADO para mercado real)
-    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4 (Era 0.58 - AJUSTADO)
-    strength_threshold: 0.45, // Força do padrão (Era 0.56 - AJUSTADO + corrigido bug de comparação)
-    volatility_max: 0.70, // Volatilidade máxima permitida (Era 0.20 - AJUSTADO para mercado real)
+    Hn_threshold: 0.65, // Entropia normalizada mínima
+    p_over3_threshold: 0.52, // Probabilidade de dígitos >= 4
+    strength_threshold: 0.45, // Força do padrão
+    volatility_max: 0.70, // Volatilidade máxima permitida (Mercado Normal ~0.63)
     lossesToDowngrade: 2, // Após 2 perdas, muda para NORMAL
   },
   NORMAL: {
     name: 'NORMAL',
     windowSize: 20,
-    Hn_threshold: 0.80,
-    p_over3_threshold: 0.60,
-    strength_threshold: 0.58,
-    volatility_max: 0.20,
+    Hn_threshold: 0.72, // ✅ AJUSTADO: De 0.80 para 0.72 (Mercado real flutua 0.70-0.80)
+    p_over3_threshold: 0.55, // ✅ AJUSTADO: De 0.60 para 0.55 (Mais realista)
+    strength_threshold: 0.50, // ✅ AJUSTADO: De 0.58 para 0.50
+    volatility_max: 0.65, // ✅ CORRIGIDO: De 0.20 para 0.65 (0.20 era impossível com Hn alto)
     lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
   },
   PRECISO: {
     name: 'PRECISO',
     windowSize: 20,
-    Hn_threshold: 0.86,
-    p_over3_threshold: 0.64,
-    strength_threshold: 0.62,
-    volatility_max: 0.20,
+    Hn_threshold: 0.78, // ✅ AJUSTADO: De 0.86 para 0.78 (Exigente mas possível)
+    p_over3_threshold: 0.60, // ✅ AJUSTADO: De 0.64 para 0.60
+    strength_threshold: 0.55, // ✅ AJUSTADO: De 0.62 para 0.55
+    volatility_max: 0.60, // ✅ CORRIGIDO: De 0.20 para 0.60
     lossesToDowngrade: null, // Permanece até recuperar
   },
 };
