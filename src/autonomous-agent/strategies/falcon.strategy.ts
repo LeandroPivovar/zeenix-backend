@@ -1255,17 +1255,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
         // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
+        // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
+        const proposalRequest: any = {
+          proposal: 1,
+          amount: roundedStake,
+          basis: 'stake',
+          contract_type: contractType,
+          currency: 'USD',
+          duration: duration,
+          duration_unit: 't',
+          symbol: symbol,
+        };
+
+        // ✅ FALCON SPECIFIC: Adicionar prediction para DIGITOVER
+        if (contractType === 'DIGITOVER') {
+          proposalRequest.last_digit_prediction = 3;
+        }
+
         const proposalResponse = await connection.sendRequest(
-          {
-            proposal: 1,
-            amount: roundedStake,
-            basis: 'stake',
-            contract_type: contractType,
-            currency: 'USD',
-            duration: duration,
-            duration_unit: 't',
-            symbol: symbol,
-          },
+          proposalRequest,
           60000, // timeout 60s (igual Orion)
         );
 
