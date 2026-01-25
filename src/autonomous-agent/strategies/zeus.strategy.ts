@@ -946,8 +946,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const adjustedStake = Math.round(remaining * 100) / 100;
 
             if (adjustedStake < 0.35) {
-                this.logger.log(`[Zeus][${userId}] 🛑 STOP LOSS ATINGIDO (Margem insuficiente).`);
-                await this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido (Margem insuficiente para trade mínimo). Parando.`);
+                this.logger.log(`[Zeus][${userId}] 🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!`);
+                await this.saveLog(userId, 'WARN', 'RISK', `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
                 return { action: 'STOP', reason: 'STOP_LOSS_LIMIT' };
             }
 

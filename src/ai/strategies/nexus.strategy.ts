@@ -184,11 +184,22 @@ class RiskManager {
             let adjustedStake = currentBalance - minAllowedBalance;
             adjustedStake = Math.round(adjustedStake * 100) / 100;
 
-            if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `⚠️ AJUSTE DE RISCO (${limitType})\n• Stake Calculada: $${nextStake.toFixed(2)}\n• ${this._blindadoActive ? 'Lucro Protegido Restante' : 'Saldo Restante até Stop'}: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para ${this._blindadoActive ? 'não violar a proteção de lucro' : 'respeitar o Stop Loss exato'}.`);
+            if (adjustedStake < 0.35) {
+                const msg = this._blindadoActive
+                    ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+                    : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+                if (userId && symbol && logCallback) {
+                    logCallback(userId, symbol, 'alerta', msg);
+                }
+                return 0.0;
             }
 
-            if (adjustedStake < 0.35) return 0.0;
+            if (userId && symbol && logCallback) {
+                const adjMsg = this._blindadoActive
+                    ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção.`
+                    : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`;
+                logCallback(userId, symbol, 'alerta', adjMsg);
+            }
             return adjustedStake;
         }
 
