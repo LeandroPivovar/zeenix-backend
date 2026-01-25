@@ -1230,9 +1230,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
     let effectiveStartDate = startDate;
+    // REMOVIDO: Permitir histórico completo
+    /*
     if (sessionDate && sessionDate > startDate) {
       effectiveStartDate = sessionDate;
     }
+    */
 
     // Query grouping by Year-Week
     // Note: SQL syntax for week depends on DB. Assuming compatible/standard function or using DATE formatting.
@@ -1351,13 +1354,15 @@ export class AutonomousAgentService implements OnModuleInit {
       startDate.setDate(today.getDate() - days);
     }
 
-    // ✅ Filtro de sessão: Se houver sessão ativa, filtrar a partir da data da sessão
+    // ✅ Filtro de sessão: REMOVIDO para permitir ver histórico completo independente da sessão atual
+    /*
     const config = await this.getAgentConfig(userId);
     const sessionDate = config?.session_date ? new Date(config.session_date) : null;
 
     if (sessionDate && sessionDate > startDate) {
       startDate.setTime(sessionDate.getTime());
     }
+    */
 
     // Select trades in the period
     const trades = await this.dataSource.query(
