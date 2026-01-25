@@ -626,17 +626,16 @@ export class AutonomousAgentService implements OnModuleInit {
       config.derivToken = resolvedToken;
       config.currency = resolvedCurrency;
 
-      // ✅ [ORION] GUARD DE ATIVAÇÃO: Evitar reativação se já estiver ativo com mesma config
-      // Isso impede loops de reinicialização que limpam o histórico de ticks
-      const strategyName = (config.agentType || config.strategy || 'orion').toLowerCase().replace('arion', 'orion');
-      const currentStrategy = this.strategyManager.getStrategy(strategyName);
-      if (currentStrategy && (currentStrategy as any).isUserActive && (currentStrategy as any).isUserActive(userId)) {
-        // Opcional: comparar config aqui se quiser ser ultra rigoroso
-        this.logger.debug(`[ActivateAgent] 🛡️ Usuário ${userId} já está ativo na estratégia ${strategyName}. Ignorando reativação para manter histórico.`);
-        return;
+      // ✅ [ZENIX v2.0] GARANTIR EXCLUSIVIDADE: Desativar qualquer estratégia anterior antes de iniciar a nova
+      // Isso resolve o problema de múltiplos agentes rodando simultaneamente (ex: Sentinel e Falcon juntos)
+      try {
+        await this.strategyManager.deactivateUser(userId);
+        this.logger.log(`[ActivateAgent] 🔄 Estratégias anteriores desativadas para usuário ${userId}`);
+      } catch (deactivateError) {
+        this.logger.warn(`[ActivateAgent] ⚠️ Erro ao desativar estratégias anteriores (não crítico):`, deactivateError);
       }
 
-      // ✅ PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
+      // ✅ [ORION] PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
       // (mantém apenas as transações/trades)
       try {
         await this.dataSource.query(
@@ -1231,9 +1230,12 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Se tiver sessao ativa, não mostrar dados anteriores a ela
     let effectiveStartDate = startDate;
+    // REMOVIDO: Permitir histórico completo
+    /*
     if (sessionDate && sessionDate > startDate) {
       effectiveStartDate = sessionDate;
     }
+    */
 
     // Query grouping by Year-Week
     // Note: SQL syntax for week depends on DB. Assuming compatible/standard function or using DATE formatting.
@@ -1352,13 +1354,15 @@ export class AutonomousAgentService implements OnModuleInit {
       startDate.setDate(today.getDate() - days);
     }
 
-    // ✅ Filtro de sessão: Se houver sessão ativa, filtrar a partir da data da sessão
+    // ✅ Filtro de sessão: REMOVIDO para permitir ver histórico completo independente da sessão atual
+    /*
     const config = await this.getAgentConfig(userId);
     const sessionDate = config?.session_date ? new Date(config.session_date) : null;
 
     if (sessionDate && sessionDate > startDate) {
       startDate.setTime(sessionDate.getTime());
     }
+    */
 
     // Select trades in the period
     const trades = await this.dataSource.query(

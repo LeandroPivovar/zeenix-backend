@@ -450,12 +450,21 @@ ${filtersText}
     if (stake > limitRemaining) {
       if (limitRemaining < 0.35) {
         // Stop reached
-        const type = state.stopBlindadoActive ? 'blindado' : 'loss';
-        this.handleStopInternal(state, type, state.stopBlindadoActive ? state.stopBlindadoFloor : -state.stopLoss);
+        const isBlindado = state.stopBlindadoActive;
+        const msg = isBlindado
+          ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+          : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+
+        this.saveLog(state.userId, 'alerta', msg);
+        this.handleStopInternal(state, isBlindado ? 'blindado' : 'loss', isBlindado ? state.stopBlindadoFloor : -state.stopLoss);
         return;
       }
       stake = Number(limitRemaining.toFixed(2));
-      this.saveLog(state.userId, 'alerta', `⚠️ [AJUSTE] Stake ajustada para $${stake.toFixed(2)} (Limite de risco)`);
+      const adjMsg = state.stopBlindadoActive
+        ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${stake.toFixed(2)}\n• Lucro Protegido Restante: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para não violar a proteção.`
+        : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${stake.toFixed(2)}\n• Saldo Restante até Stop: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para respeitar o Stop Loss.`;
+
+      this.saveLog(state.userId, 'alerta', adjMsg);
     }
 
     state.currentStake = stake; // Save for record

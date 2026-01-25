@@ -428,13 +428,23 @@ class RiskManager {
             let adjustedStake = currentBalance - minAllowedBalance;
             adjustedStake = Math.round(adjustedStake * 100) / 100;
 
-            if (userId && symbol && logCallback) {
-                const balanceRemaining = (currentBalance - minAllowedBalance).toFixed(2);
-                logCallback(userId, symbol, 'alerta',
-                    `⚠️ [RISCO] Entrada calculada ($${nextStake.toFixed(2)}) violaria o Stop Loss.\n• Ajuste de Precisão: Stake reduzida para $${adjustedStake.toFixed(2)} (Saldo Restante Permitido: $${balanceRemaining})`);
+            if (adjustedStake < 0.35) {
+                const msg = this._blindadoActive
+                    ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+                    : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+                if (userId && symbol && logCallback) {
+                    logCallback(userId, symbol, 'alerta', msg);
+                }
+                return 0.0;
             }
 
-            if (adjustedStake < 0.35) return 0.0;
+            if (userId && symbol && logCallback) {
+                const balanceRemaining = (currentBalance - minAllowedBalance).toFixed(2);
+                const adjMsg = this._blindadoActive
+                    ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção.`
+                    : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`;
+                logCallback(userId, symbol, 'alerta', adjMsg);
+            }
             return adjustedStake;
         }
 

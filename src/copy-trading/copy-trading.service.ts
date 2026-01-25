@@ -1477,7 +1477,11 @@ export class CopyTradingService {
           -- Dados do Usuário
           u.name as user_name,
           u.email as user_email,
-          COALESCE(u.deriv_balance, 0) as deriv_balance,
+          CASE 
+            WHEN COALESCE(us.trade_currency, c.currency, 'USD') = 'DEMO' 
+            THEN COALESCE(u.demo_amount, 0)
+            ELSE COALESCE(u.real_amount, 0)
+          END as user_balance,
           u.token_demo,
           u.token_real,
           u.deriv_raw,
@@ -1547,7 +1551,7 @@ export class CopyTradingService {
           totalOperations: parseInt(copier.total_operations || '0', 10),
           sessionStatus: copier.session_status,
           todayProfit: parseFloat(copier.today_profit || '0'),
-          derivBalance: parseFloat(copier.deriv_balance || '0'),
+          derivBalance: parseFloat(copier.user_balance || '0'),
         };
 
         // ✅ Lógica de Resolução de Token (Igual ao AiService e DerivController)

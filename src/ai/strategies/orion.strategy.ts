@@ -409,10 +409,10 @@ class RiskManager {
             logger.log(
               `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
-            if (saveLog) saveLog('alerta', `🛑 STOP LOSS NORMAL ATINGIDO\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
+            if (saveLog) saveLog('alerta', `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
           }
         }
         return 0.0; // Sinal de parada

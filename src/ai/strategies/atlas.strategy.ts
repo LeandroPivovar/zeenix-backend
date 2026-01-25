@@ -807,9 +807,41 @@ export class AtlasStrategy implements IStrategy {
         // Veloz: +5% | Moderado: +15% | Agressivo: +15%
 
 
+        const minStake = getMinStakeByCurrency(state.currency);
+        const decimals = ['BTC', 'ETH'].includes(state.currency.toUpperCase()) ? 8 : 2;
+
         const stopLossDisponivel = this.calculateAvailableStopLoss(state);
 
-        if (stopLossDisponivel > 0 && stakeAmount > stopLossDisponivel) {
+        if (stakeAmount > stopLossDisponivel) {
+          if (stopLossDisponivel < minStake) {
+            const isBlindado = state.blindadoActive;
+            const msg = isBlindado
+              ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+              : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+
+            this.saveAtlasLog(state.userId, symbol, 'alerta', msg);
+
+            // ✅ 1. DESATIVAR IMEDIATAMENTE DA MEMÓRIA
+            state.isStopped = true;
+            state.isOperationActive = false;
+            await this.deactivateUser(state.userId);
+
+            this.tradeEvents.emit({
+              userId: state.userId,
+              type: isBlindado ? 'stopped_blindado' : 'stopped_loss',
+              strategy: 'atlas',
+              symbol: symbol,
+              profitLoss: state.totalProfitLoss
+            });
+
+            await this.dataSource.query(
+              `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+              [isBlindado ? 'stopped_blindado' : 'stopped_loss', msg, state.userId],
+            );
+            return;
+          }
+
           this.saveAtlasLog(state.userId, symbol, 'alerta',
             `🛡️ [MODO SOBREVIVÊNCIA]\n` +
             `• Motivo: Stake do Martingale (${formatCurrency(stakeAmount, state.currency)}) excede Stop Loss.\n` +
@@ -817,6 +849,8 @@ export class AtlasStrategy implements IStrategy {
 
           stakeAmount = stopLossDisponivel;
         }
+
+        stakeAmount = Math.max(minStake, Number(stakeAmount.toFixed(decimals)));
       } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
         stakeAmount = state.apostaBase + state.ultimoLucro;
         // ✅ LOG PADRONIZADO V2: Soros
