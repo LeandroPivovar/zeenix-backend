@@ -1269,7 +1269,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ FALCON SPECIFIC: Adicionar prediction para DIGITOVER
         if (contractType === 'DIGITOVER') {
-          proposalRequest.last_digit_prediction = 3;
+          proposalRequest.barrier = 3;
         }
 
         const proposalResponse = await connection.sendRequest(
