@@ -556,7 +556,15 @@ export class CopyTradingService {
 
       // 1. Buscar copiadores ativos deste Master Trader E suas sessões ativas
       const copiers = await this.dataSource.query(
-        `SELECT c.*, u.token_demo, u.token_real, u.deriv_raw, s.trade_currency, css.id as session_id, css.current_balance as session_balance
+        `SELECT 
+            c.*, 
+            u.token_demo, 
+            u.token_real, 
+            u.real_amount, 
+            u.demo_amount,
+            u.deriv_raw, 
+            s.trade_currency, 
+            css.id as session_id
          FROM copy_trading_config c
          JOIN users u ON c.user_id = u.id
          LEFT JOIN user_settings s ON c.user_id = s.user_id
@@ -575,25 +583,24 @@ export class CopyTradingService {
       // 2. Iterar e executar para cada copiador
       for (const copier of copiers) {
         // Resolver token do copiador (Demo ou Real)
-        let copierToken = copier.deriv_token; // Default: token da config
+        let copierToken = null;
         const currencyPref = (copier.trade_currency || 'USD').toUpperCase();
 
-        // 1. Tentar usar token explícito da tabela users se disponível (Prioridade Total)
-        if (currencyPref === 'DEMO' && copier.token_demo) {
+        // 1. Selecionar token baseado na preferência de moeda (DEMO ou REAL)
+        if (currencyPref === 'DEMO') {
           copierToken = copier.token_demo;
-        } else if (currencyPref !== 'DEMO' && copier.token_real) {
-          copierToken = copier.token_real;
         } else {
-          // 2. Fallback somente se não tiver tokens explícitos
-          const derivRaw = copier.deriv_raw || null; // copier.deriv_raw pode não estar na query original, verificar?
-          // A query original JOIN copy_trading_config c ... JOIN users u ... SELECT c.*, u.token_demo... 
-          // Users table has deriv_raw? Yes. Need check if selected.
-          // Query: SELECT c.*, u.token_demo, u.token_real, s.trade_currency, css.id as session_id
+          copierToken = copier.token_real;
         }
 
-        // Se não tiver token, pular
+        // Se não tiver o token específico, tenta o token da config como fallback
         if (!copierToken) {
-          this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} sem token válido. Ignorando.`);
+          copierToken = copier.deriv_token;
+        }
+
+        // Se ainda não tiver token, pular
+        if (!copierToken) {
+          this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} sem token válido (${currencyPref}). Ignorando.`);
           continue;
         }
 
@@ -601,34 +608,27 @@ export class CopyTradingService {
         let copierStake = 0;
 
         if (copier.allocation_type === 'proportion') {
-          // PROPORTION: Usar percentual do Mestre aplicado ao Saldo Disponível do Copiador
-          // Requisito: "pegue este valor (percent) aplique no saldo disponivel do usuário"
+          // PROPORTION: Usar percentual do Mestre aplicado ao Saldo Real/Demo do Usuário (Tabela Users)
+          const masterPercent = operation.percent || 0.35;
+          const userBalance = currencyPref === 'DEMO'
+            ? parseFloat(copier.demo_amount || 0)
+            : parseFloat(copier.real_amount || 0);
 
-          const masterPercent = operation.percent || 0.35; // Fallback se não vier
-          const copierBalance = parseFloat(copier.session_balance) || 0;
-
-          if (copierBalance > 0) {
-            copierStake = (copierBalance * masterPercent) / 100;
-            this.logger.log(`[ReplicateManual] Proporcional: Balance $${copierBalance.toFixed(2)} * ${masterPercent.toFixed(2)}% = $${copierStake.toFixed(2)}`);
-          } else {
-            this.logger.warn(`[ReplicateManual] Copiador ${copier.user_id} Proporcional mas sem saldo na sessão (balance=0). Ignorando.`);
-            continue;
-          }
-
+          copierStake = (userBalance * masterPercent) / 100;
+          this.logger.log(`[ReplicateManual] Proporcional: Balance ${currencyPref} $${userBalance.toFixed(2)} * ${masterPercent.toFixed(2)}% = $${copierStake.toFixed(2)}`);
         } else {
           // FIXED: Espelho Fixo (Mesmo valor do mestre)
-          // Requisito: "pegue o mesmo valor (stake de master_trader_operations) e aplique para o copiador"
           copierStake = operation.stakeAmount;
           this.logger.log(`[ReplicateManual] Fixo (Espelho): Stake Mestre $${operation.stakeAmount} -> Copiador $${copierStake.toFixed(2)}`);
         }
 
-        // Validar mínimo necessário da Deriv (0.35)
-        // Se o valor calculado for MENOR que 0.35, devemos respeitar o mínimo da API ou pular?
-        // Geralmente, ajusta-se para o mínimo. 
-        // "tire o padrão 0,35c" -> refere-se ao fallback quando não há config. 
-        // Se HÁ config e deu 0.1, a API rejeitaria. Vamos ajustar para 0.35.
-        if (copierStake < 0.35) {
-          copierStake = 0.35;
+        // Rounding to 2 decimal places
+        copierStake = Math.round(copierStake * 100) / 100;
+
+        // Se a stake for 0 ou negativa, ainda assim tentamos com o mínimo de segurança ou deixamos falhar?
+        // Como o usuário pediu "não verifique saldo nem nada", vamos apenas garantir que não seja NaN ou <= 0 literal.
+        if (copierStake <= 0) {
+          copierStake = 0.35; // Mínimo absoluto para não quebrar a proposta da API
         }
         copierStake = Math.round(copierStake * 100) / 100;
 
