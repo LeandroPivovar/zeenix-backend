@@ -1191,6 +1191,21 @@ export class AutonomousAgentService implements OnModuleInit {
     const params: any[] = [userId, effectiveStartDate.toISOString(), effectiveEndDate.toISOString()];
     if (strategyFilter && agent) params.push(agent);
 
+    // ✅ CORREÇÃO: Calcular lucro acumulado ANTES do periodo filtrado por estratégia
+    const prevParams = [userId, effectiveStartDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
+
+    const prevTrades = await this.dataSource.query(
+      `SELECT SUM(profit_loss) as total
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
+      prevParams
+    );
+    const prevProgress = parseFloat(prevTrades[0]?.total) || 0;
+
     const trades = await this.dataSource.query(
       `SELECT 
          DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) as date,
@@ -1211,7 +1226,7 @@ export class AutonomousAgentService implements OnModuleInit {
     );
 
 
-    let cumulativeProfit = 0;
+    let cumulativeProfit = prevProgress;
     const dailyData = trades.map((day: any) => {
       const profit = parseFloat(day.profit) || 0;
       const loss = parseFloat(day.loss) || 0;
@@ -1237,7 +1252,7 @@ export class AutonomousAgentService implements OnModuleInit {
         profit: Number(netProfit.toFixed(2)),
         ops,
         winRate: Number(winRate.toFixed(2)),
-        capital: Number((initialBalance + cumulativeProfit).toFixed(2)),
+        capital: Number(cumulativeProfit.toFixed(2)),
         avgTime,
         badge: ''
       };
@@ -1369,20 +1384,23 @@ export class AutonomousAgentService implements OnModuleInit {
     // Convert to array and calculate cumulative capital
     const groupsList = Array.from(groupMap.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    // Precisamos do saldo inicial ANTES do primeiro grupo para calcular corretamente?
-    // Sim, se quisermos mostrar "Capital Final" correto.
-    // Query saldo anterior ao startDate
+    // Precisamos do saldo inicial ANTES do primeiro grupo para calcular corretamente (Lucro Acumulado)
+    // Query saldo anterior ao startDate filtrado por agente
+    const prevParams = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
+
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND created_at < ?
-           AND status IN ('WON', 'LOST')`,
-      [userId, startDate.toISOString()]
+           AND status IN ('WON', 'LOST')
+           ${strategyFilter}`,
+      prevParams
     );
     const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
 
-    let currentCapital = initialBalance + prevProfit;
+    let currentCapital = prevProfit;
     const result: any[] = [];
 
     for (const group of groupsList) {
@@ -1477,25 +1495,39 @@ export class AutonomousAgentService implements OnModuleInit {
     const dataPoints: { time: number, value: number }[] = [];
     let cumulativeProfit = 0;
 
-    // Calcular saldo inicial do periodo
+    // Calcular lucro acumulado ANTES do periodo para este agente/filtro
+    // Se quisermos o balanço TOTAL (Capital), somamos o initialBalance.
+    // Mas se o objetivo for a PERFORMANCE do periodo (conforme mockup com 0 no eixo),
+    // vamos iniciar em 0 no início do range ou no lucro acumulado relativo.
+
+    // Para bater com o mockup (eixo 0, -40, -80), o gráfico deve ser o lucro RELATIVO do período.
+    const prevParams = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
+
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
          AND created_at < ?
-         AND status IN ('WON', 'LOST')`,
-      [userId, startDate.toISOString()]
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
+      prevParams
     );
 
     const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
-    const startBalance = initialBalance + prevProfit;
+
+    // Decisão: Iniciar o gráfico em 0 no startDate para mostrar a "Performance do Período Selecionado"
+    // Ou iniciar em prevProfit se quisermos a "Performance Acumulada de Todo o Tempo".
+    // Como o mockup mostra valores negativos e 0 no centro, a performance RELATIVA é mais provável.
+    // Para permitir que o usuário veja o lucro ACUMULADO de hj, começamos em 0.
+    const startingValue = 0;
 
     dataPoints.push({
       time: startDate.getTime() / 1000,
-      value: Number(startBalance.toFixed(2))
+      value: Number(startingValue.toFixed(2))
     });
 
-    cumulativeProfit = startBalance;
+    cumulativeProfit = startingValue;
 
     for (const trade of trades) {
       cumulativeProfit += parseFloat(trade.profit_loss) || 0;
