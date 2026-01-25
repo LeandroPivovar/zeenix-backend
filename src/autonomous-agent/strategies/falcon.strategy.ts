@@ -389,12 +389,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return; // Já está processando, ignorar este tick
     }
 
-    // Se está aguardando resultado de contrato, não processar novos ticks
-    if (state.isWaitingContract) {
-      return;
-    }
-
-    // Adicionar tick à coleção
+    // ✅ CORREÇÃO CRÍTICA: Coletar tick SEMPRE, mesmo aguardando contrato
+    // Isso garante que a janela de análise não tenha "buracos" (gaps) de dados
     const userTicks = this.ticks.get(userId) || [];
     userTicks.push(tick);
 
@@ -404,8 +400,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
     this.ticks.set(userId, userTicks);
 
-    // ✅ Verificar novamente se está aguardando resultado (pode ter mudado durante coleta de ticks)
+    // Se está aguardando resultado de contrato, interromper AQUI (após coletar)
     if (state.isWaitingContract) {
+      // Apenas logar heartbeat ocasional para saber que está vivo e coletando
+      if (userTicks.length % 10 === 0) {
+        this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados em background: ${userTicks.length})`);
+      }
       return;
     }
 
