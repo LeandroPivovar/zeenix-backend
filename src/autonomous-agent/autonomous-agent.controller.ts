@@ -242,10 +242,16 @@ export class AutonomousAgentController {
 
   @Get('daily-stats/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getDailyStats(@Param('userId') userId: string, @Query('days') days?: string) {
+  async getDailyStats(
+    @Param('userId') userId: string,
+    @Query('days') days?: string,
+    @Query('agent') agent?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ) {
     try {
       const daysNum = days ? parseInt(days, 10) : 30;
-      const stats = await this.agentService.getDailyStats(userId, daysNum);
+      const stats = await this.agentService.getDailyStats(userId, daysNum, agent, startDate, endDate);
 
       return {
         success: true,
@@ -264,12 +270,17 @@ export class AutonomousAgentController {
     }
   }
 
-  @Get('weekly-stats/:userId')
+  @Get('summary-stats/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getWeeklyStats(@Param('userId') userId: string, @Query('weeks') weeks?: string) {
+  async getSummaryStats(
+    @Param('userId') userId: string,
+    @Query('groupBy') groupBy?: 'week' | 'month' | 'semester' | 'year',
+    @Query('agent') agent?: string
+  ) {
     try {
-      const weeksNum = weeks ? parseInt(weeks, 10) : 10;
-      const stats = await this.agentService.getWeeklyStats(userId, weeksNum);
+      // Default to 'week' if not provided
+      const groupParam = groupBy || 'week';
+      const stats = await this.agentService.getSummaryStats(userId, groupParam, agent);
 
       return {
         success: true,
@@ -290,10 +301,16 @@ export class AutonomousAgentController {
 
   @Get('profit-evolution/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getProfitEvolution(@Param('userId') userId: string, @Query('days') days?: string) {
+  async getProfitEvolution(
+    @Param('userId') userId: string,
+    @Query('days') days?: string,
+    @Query('agent') agent?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ) {
     try {
       const daysNum = days ? parseInt(days, 10) : 30;
-      const evolution = await this.agentService.getProfitEvolution(userId, daysNum);
+      const evolution = await this.agentService.getProfitEvolution(userId, daysNum, agent, startDate, endDate);
 
       return {
         success: true,
@@ -523,9 +540,9 @@ export class AutonomousAgentController {
   }
   @Get('daily-trades/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getDailyTrades(@Param('userId') userId: string, @Query('date') date: string) {
+  async getDailyTrades(@Param('userId') userId: string, @Query('date') date: string, @Query('agent') agent?: string) {
     try {
-      const trades = await this.agentService.getDailyTrades(userId, date || 'today');
+      const trades = await this.agentService.getDailyTrades(userId, date || 'today', agent);
       return {
         success: true,
         data: trades,
