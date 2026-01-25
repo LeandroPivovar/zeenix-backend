@@ -13,6 +13,7 @@ import {
   UseGuards,
   HttpException,
   Param,
+  RequestTimeoutException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Inject } from '@nestjs/common';
@@ -1983,71 +1984,69 @@ export class DerivController {
 
       this.logger.log(`[Trading] Compra solicitada com contractType: ${body.contractType}`);
 
-      // IMPORTANTE: Na API Deriv, quando você compra usando um proposalId, o contract_type já está definido na proposta.
-      // Se o contractType enviado não corresponder ao da proposta, a compra será do tipo errado.
-      // Por segurança, SEMPRE buscar uma nova proposta com o contractType correto, mesmo se houver proposalId.
-      // Isso garante que o tipo correto seja sempre usado.
-      this.logger.log(`[Trading] Buscando proposta com contractType: ${body.contractType} (proposalId fornecido: ${body.proposalId || 'nenhum'})`);
+      // OPTIMIZATION: Instant Buy (Skip Proposal Roundtrip)
+      // A Deriv permite comprar diretamente passando os parâmetros (buy: 1)
+      this.logger.log(`[Trading] Executando Instant Buy (Otimizado) - ${body.symbol} ${body.contractType}`);
 
-      // Buscar proposta com os parâmetros fornecidos (sempre buscar nova para garantir tipo correto)
-      const proposalConfig: any = {
-        symbol: body.symbol,
-        contractType: body.contractType,
-        duration: body.duration,
-        durationUnit: body.durationUnit,
-        amount: body.amount,
-      };
-
-      // Adicionar barrier para contratos de dígitos
+      // Preparar defaults para barrier e multiplier
+      let barrier = body.barrier;
       const digitContracts = ['DIGITMATCH', 'DIGITDIFF', 'DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER'];
       if (digitContracts.includes(body.contractType)) {
-        proposalConfig.barrier = body.barrier !== undefined && body.barrier !== null ? body.barrier : 0.1;
+        barrier = barrier !== undefined && barrier !== null ? barrier : 0.1;
       }
 
-      // Adicionar multiplier para contratos MULTUP/MULTDOWN
+      let multiplier = body.multiplier;
       if (body.contractType === 'MULTUP' || body.contractType === 'MULTDOWN') {
-        proposalConfig.multiplier = body.multiplier !== undefined && body.multiplier !== null ? body.multiplier : 10;
+        multiplier = multiplier !== undefined && multiplier !== null ? multiplier : 10;
       }
 
-      const proposal = await this.getProposalInternal(service, proposalConfig);
+      // Executar compra e aguardar confirmação (Promise wrapper)
+      // Isso garante que o frontend receba os dados da operação (contract_id) 
+      // mesmo que o SSE falhe ou tenha atraso.
+      const tradeData: any = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          // Se der timeout, limpar listener e assumir que a ordem foi enviada mas sem confirmação imediata
+          // (O SSE ainda pode pegar depois, ou falhou mesmo)
+          service.removeListener('buy', handler);
+          reject(new RequestTimeoutException('Timeout aguardando confirmação da compra pelo Broker'));
+        }, 15000); // 15s timeout
 
-      if (!proposal || !proposal.id) {
-        throw new BadRequestException('Não foi possível obter proposta para compra.');
-      }
+        const handler = (data: any) => {
+          clearTimeout(timeout);
+          resolve(data);
+        };
 
-      const proposalId = proposal.id;
-      this.logger.log(`[Trading] ✅ Proposta obtida: ${proposalId} para contractType: ${body.contractType}`);
+        // Escutar apenas uma vez o próximo evento 'buy'
+        service.once('buy', handler);
 
-      // Validar que proposalId é uma string válida
-      if (!proposalId || typeof proposalId !== 'string') {
-        throw new BadRequestException('Proposta inválida para compra.');
-      }
-
-      // IMPORTANTE: A Deriv usa o contract_type da proposta quando compra por proposalId
-      // Se o contractType enviado não corresponder ao da proposta, buscar nova proposta
-      // Por segurança, sempre buscar nova proposta se o contractType for diferente
-      // (Isso garante que o tipo correto seja usado)
-      this.logger.log(`[Trading] Usando proposalId: ${proposalId} com contractType: ${body.contractType}`);
-
-      // Executar compra, passando durationUnit e duration para preservar valores originais
-      // Também passar contractType para validação no processamento
-      // ✅ ATUALIZAÇÃO REFACTOR: Passar objeto com token explícito para garantir uso da conexão correta
-      service.buyContract({
-        proposalId,
-        price: body.amount,
-        durationUnit: body.durationUnit,
-        duration: body.duration,
-        contractType: body.contractType,
-        token: token, // Token resolvido
-        barrier: body.barrier, // Adicionado barrier
-        loginid: targetLoginid      // Login ID alvo
+        try {
+          // Enviar comando via WS
+          service.buyContract({
+            price: body.amount,
+            amount: body.amount,
+            symbol: body.symbol,
+            contractType: body.contractType,
+            duration: body.duration,
+            durationUnit: body.durationUnit,
+            barrier: barrier,
+            multiplier: multiplier,
+            currency: preferredCurrency,
+            token: token,
+            loginid: targetLoginid
+          });
+        } catch (e) {
+          clearTimeout(timeout);
+          service.removeListener('buy', handler);
+          reject(e);
+        }
       });
 
       return {
         success: true,
-        message: 'Compra executada',
-        proposalId,
+        message: 'Compra executada com sucesso',
         amount: body.amount,
+        optimized: true,
+        tradeData: tradeData // Retornar dados completos da operação (contract_id, entry_spot, etc)
       };
     } catch (error) {
       this.logger.error(`[Trading] Erro ao comprar contrato: ${error.message}`);
