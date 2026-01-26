@@ -9,6 +9,7 @@ import { CourseEntity } from '../infrastructure/database/entities/course.entity'
 import { ModuleEntity } from '../infrastructure/database/entities/module.entity';
 import { LessonEntity } from '../infrastructure/database/entities/lesson.entity';
 import { MaterialEntity } from '../infrastructure/database/entities/material.entity';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { CreateModuleDto } from './dto/create-module.dto';
@@ -34,6 +35,8 @@ export class CoursesService {
     private readonly lessonEntityRepository: Repository<LessonEntity>,
     @InjectRepository(MaterialEntity)
     private readonly materialRepository: Repository<MaterialEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
   ) { }
 
   private normalizeMediaPath(path?: string | null): string | null {
@@ -67,10 +70,22 @@ export class CoursesService {
     return `${minutes} min`;
   }
 
-  async findAll() {
-    const courses = await this.courseEntityRepository.find({
-      order: { orderIndex: 'ASC', createdAt: 'DESC' },
-    });
+  async findAll(userPlanId?: string | null) {
+    const query = this.courseEntityRepository.createQueryBuilder('course');
+
+    // Se houver um plano de usuário (não admin), filtrar
+    if (userPlanId) {
+      query.where('course.visibility = :public', { public: 'public' })
+        .orWhere('(course.visibility = :restricted AND (course.plan_ids IS NULL OR JSON_CONTAINS(course.plan_ids, :planId)))', {
+          restricted: 'restricted',
+          planId: `"${userPlanId}"`,
+        });
+    }
+
+    const courses = await query
+      .orderBy('course.orderIndex', 'ASC')
+      .addOrderBy('course.createdAt', 'DESC')
+      .getMany();
     let lessonCountMap: Record<string, number> = {};
     let lessonDurationMap: Record<string, number> = {};
     if (courses.length) {
@@ -119,6 +134,7 @@ export class CoursesService {
       availableFrom: c.availableFrom,
       availableUntil: c.availableUntil,
       visibility: c.visibility,
+      planIds: c.planIds || [],
       totalLessons: lessonCountMap[c.id] || 0,
       totalDuration: this.formatTotalDuration(lessonDurationMap[c.id] || 0),
       createdAt: c.createdAt,
@@ -204,6 +220,7 @@ export class CoursesService {
       availableFrom: course.availableFrom,
       availableUntil: course.availableUntil,
       visibility: course.visibility,
+      planIds: course.planIds || [],
       totalLessons: totalLessonsCount,
       totalDuration: this.formatTotalDuration(totalDurationMinutes),
       createdAt: course.createdAt,
@@ -224,6 +241,7 @@ export class CoursesService {
       socialImage: this.normalizeMediaPath(createCourseDto.socialImage),
       totalLessons: 0,
       totalDuration: '0 min',
+      planIds: createCourseDto.planIds || [],
     });
     return await this.courseEntityRepository.save(course);
   }
@@ -250,6 +268,9 @@ export class CoursesService {
       updateData.socialImage = null;
     }
 
+    if (updateCourseDto.planIds !== undefined) {
+      course.planIds = updateCourseDto.planIds;
+    }
     Object.assign(course, updateData);
     return await this.courseEntityRepository.save(course);
   }
@@ -462,6 +483,13 @@ export class CoursesService {
       contentType: lesson.contentType,
       title: lesson.title
     };
+  }
+
+  async getUserPlanId(userId: string): Promise<string | null> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+    return user?.planId || null;
   }
 }
 

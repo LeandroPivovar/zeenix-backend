@@ -109,8 +109,29 @@ export class CoursesController {
 
   // Courses CRUD
   @Get()
-  findAll() {
-    return this.coursesService.findAll();
+  async findAll(@Req() req: any) {
+    let userPlanId: string | null = null;
+
+    // Tentar identificar o usuário para filtrar por plano
+    try {
+      const authHeader = req.headers?.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const payload = this.jwtService.decode(token) as { sub: string; email: string; role?: string } | null;
+        if (payload?.sub) {
+          // Se for admin, não filtra por plano (vê tudo)
+          if (payload.role !== 'admin') {
+            // Buscar o plano do usuário
+            const userProgress = await this.coursesService.getUserPlanId(payload.sub);
+            userPlanId = userProgress;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao identificar usuário no findAll:', err);
+    }
+
+    return this.coursesService.findAll(userPlanId);
   }
 
   // Modules CRUD - rotas específicas antes das genéricas
