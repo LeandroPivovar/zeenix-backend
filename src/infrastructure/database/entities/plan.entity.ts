@@ -13,7 +13,7 @@ export class PlanEntity {
   slug: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true, name: 'external_id' })
-  externalId: string;
+  externalId?: string;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   price: number;

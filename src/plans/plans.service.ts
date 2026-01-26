@@ -185,7 +185,7 @@ export class PlansService {
       isRecommended: data.isRecommended || false,
       isActive: data.isActive !== undefined ? data.isActive : true,
       displayOrder: data.displayOrder || 0,
-      externalId: data.externalId || null,
+      externalId: data.externalId,
     });
 
     const savedPlan = await this.planRepository.save(plan);
