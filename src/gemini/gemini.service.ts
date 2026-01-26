@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class GeminiService {
-  private readonly GEMINI_API_KEY = 'AIzaSyDEe-kanGsyCuwau8hYCog6-Z5cR_OXnqE';
+  private readonly GEMINI_API_KEY: string;
   private readonly GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
+  constructor(private configService: ConfigService) {
+    this.GEMINI_API_KEY = this.configService.get<string>('GEMINI_API_KEY') || '';
+  }
 
   async getTradingRecommendation(
     ticks: Array<{ value: number; epoch: number }>,
