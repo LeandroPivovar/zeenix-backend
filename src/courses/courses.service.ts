@@ -329,7 +329,7 @@ export class CoursesService {
 
     // Se for marcado como tutorial da Deriv, desmarcar todos os outros
     if (updateLessonDto.isDerivTutorial) {
-      await this.lessonEntityRepository.update({}, { isDerivTutorial: false });
+      await this.lessonEntityRepository.update({ isDerivTutorial: true }, { isDerivTutorial: false });
     }
 
     Object.assign(lesson, updateData);
