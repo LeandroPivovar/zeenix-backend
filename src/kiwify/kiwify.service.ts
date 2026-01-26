@@ -114,7 +114,9 @@ export class KiwifyService {
                             email: customer.email,
                             phone: customer.mobile || customer.phone || '',
                             lastPurchaseDate: sale.created_at,
-                            product: sale.product_name || 'Produto Desconhecido',
+                            product: sale.product ? sale.product.name : (sale.product_name || 'Produto Desconhecido'),
+                            offer_id: sale.product ? sale.product.offer_id : '-',
+                            offer_name: sale.product ? sale.product.offer_name : '-',
                             raw: sale
                         });
                     }
