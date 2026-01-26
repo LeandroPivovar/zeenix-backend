@@ -59,17 +59,17 @@ const ZEUS_V4_CONFIGS = {
 const ZEUS_V4_RISK_MANAGEMENT = {
     CONSERVADOR: {
         maxRecoveryLevel: 5, // ✅ Doc: Recupera até M5
-        profitFactor: 1.0,  // ✅ Doc: Break-even (Recupera perdas)
+        profitFactor: 1.01,  // ✅ User: Recupera perdas + 1%
         useStopBlindado: false
     },
     MODERADO: {
         maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
-        profitFactor: 1.15, // ✅ Doc: Recupera + 15%
+        profitFactor: 1.15, // ✅ User: Recupera + 15%
         useStopBlindado: true
     },
     AGRESSIVO: {
         maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
-        profitFactor: 1.30, // ✅ Doc: Recupera + 30%
+        profitFactor: 1.30, // ✅ User: Recupera + 30%
         useStopBlindado: true
     },
 };
