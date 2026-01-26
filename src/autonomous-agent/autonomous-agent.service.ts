@@ -1604,24 +1604,22 @@ export class AutonomousAgentService implements OnModuleInit {
         dayMap.set(dateKey, (dayMap.get(dateKey) || 0) + profit);
       }
 
-      // Converter map para pontos do gráfico CUMULATIVOS para o gráfico de linha
+      // Converter map para pontos do gráfico com lucros INDIVIDUAIS por dia
       const dailyPoints: { time: number, value: number }[] = [];
       const sortedKeys = Array.from(dayMap.keys()).sort();
 
-      // Adicionar ponto inicial em 0 para garantir que o gráfico tenha uma linha caso seja apenas um dia
-      // e para que a evolução comece do zero no início do range.
+      // Adicionar ponto inicial em 0 para estética do gráfico de linha
       dailyPoints.push({
         time: startDate.getTime() / 1000,
         value: Number(startingValue.toFixed(2))
       });
 
-      let cumulativeTotal = startingValue;
       for (const key of sortedKeys) {
         const d = new Date(key + 'T12:00:00'); // Meio do dia para evitar problemas de fuso
-        cumulativeTotal += dayMap.get(key)!;
+        const dailyProfit = dayMap.get(key)!;
         dailyPoints.push({
           time: d.getTime() / 1000,
-          value: Number(cumulativeTotal.toFixed(2))
+          value: Number(dailyProfit.toFixed(2))
         });
       }
 
