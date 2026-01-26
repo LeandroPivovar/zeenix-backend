@@ -919,5 +919,95 @@ export class DerivService {
 
   private generateVerificationCode(): string {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
+    /**
+   * Obtém detalhes de markup da conta via API
+   * Requer token da conta (normalmente do desenvolvedor ou do cliente para ver seus próprios dados)
+   */
+  async getAppMarkupDetails(token: string, options: {
+      date_from: string;
+      date_to: string;
+      limit?: number;
+      client_loginid?: string;
+      app_id?: number;
+    }): Promise < any > {
+      if(!token) throw new UnauthorizedException('Token ausente');
+      const appId = options.app_id || Number(process.env.DERIV_APP_ID || 1089);
+      const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket(url, { headers: { Origin: 'https://app.deriv.com' } });
+        let authorized = false;
+
+        const send = (msg: unknown) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg));
+          }
+        };
+
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('Timeout ao obter detalhes de markup'));
+        }, 30000);
+
+        ws.on('open', () => {
+          send({ authorize: token });
+        });
+
+        ws.on('message', (data: WebSocket.RawData) => {
+          try {
+            const msg = JSON.parse(data.toString());
+
+            if (msg.error) {
+              this.logger.error(`[DerivService] Erro API Markup:`, msg.error);
+              clearTimeout(timeout);
+              ws.close();
+              // Resolver com array vazio em caso de erro de permissão ou dados não encontrados para não quebrar o fluxo geral
+              if (msg.error.code === 'PermissionDenied' || msg.error.code === 'InputValidationFailed') {
+                this.logger.warn(`[DerivService] Erro tratável ao buscar markup: ${msg.error.message}`);
+                resolve({ transactions: [] });
+              } else {
+                reject(new Error(msg.error.message || 'Erro na API Deriv'));
+              }
+              return;
+            }
+
+            if (msg.msg_type === 'authorize') {
+              authorized = true;
+              this.logger.log(`[DerivService] Autorizado para markup. Solicitando detalhes...`);
+
+              const request: any = {
+                app_markup_details: 1,
+                date_from: options.date_from,
+                date_to: options.date_to,
+                limit: options.limit || 100,
+                description: 1,
+              };
+
+              if (options.client_loginid) {
+                request.client_loginid = options.client_loginid;
+              }
+
+              send(request);
+            } else if (msg.msg_type === 'app_markup_details') {
+              clearTimeout(timeout);
+              this.logger.log(`[DerivService] Dados de markup recebidos: ${msg.app_markup_details?.transactions?.length || 0} registros`);
+              resolve(msg.app_markup_details);
+              ws.close();
+            }
+          } catch (error) {
+            this.logger.error(`[DerivService] Erro ao processar mensagem: ${error}`);
+            clearTimeout(timeout);
+            reject(error);
+            ws.close();
+          }
+        });
+
+        ws.on('error', (error) => {
+          this.logger.error(`[DerivService] Erro WebSocket: ${error}`);
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+    }
   }
 }

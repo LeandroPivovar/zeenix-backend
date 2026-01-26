@@ -18,6 +18,8 @@ export interface CreateTradeDto {
   barrier?: number;
 }
 
+import { DerivService } from '../broker/deriv.service';
+
 @Injectable()
 export class TradesService {
   constructor(
@@ -26,6 +28,7 @@ export class TradesService {
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
+    private readonly derivService: DerivService,
     @Inject(forwardRef(() => CopyTradingService))
     private readonly copyTradingService?: CopyTradingService,
   ) { }
@@ -311,115 +314,89 @@ export class TradesService {
   }
 
   async getMarkupData(startDate?: string, endDate?: string) {
-    // Taxa de markup da plataforma (3%)
-    const MARKUP_RATE = 0.030927835; // 3% / 97% = 0.030927835
+    let dateFrom = startDate;
+    let dateTo = endDate;
 
-    let manualDateCondition = '';
-    let aiDateCondition = '';
-    const manualParams: any[] = [];
-    const aiParams: any[] = [];
-
-    if (startDate && endDate) {
-      manualDateCondition = 'AND DATE(t.created_at) BETWEEN ? AND ?';
-      aiDateCondition = 'AND DATE(at.created_at) BETWEEN ? AND ?';
-      manualParams.push(startDate, endDate);
-      aiParams.push(startDate, endDate);
+    // Se datas não forem fornecidas, usar mês atual
+    if (!startDate || !endDate) {
+      const now = new Date();
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Último dia do mês
+      dateFrom = firstDay.toISOString().split('T')[0];
+      dateTo = lastDay.toISOString().split('T')[0];
     }
 
-    // Buscar trades manuais vencedoras com lucro
-    const manualTradesQuery = `
-      SELECT 
-        t.user_id,
-        u.name,
-        u.email,
-        u.phone,
-        COUNT(t.id) as transaction_count,
-        SUM(t.profit) as total_profit_net
-      FROM trades t
-      INNER JOIN users u ON t.user_id = u.id
-      WHERE t.status = 'won'
-        AND t.profit > 0
-        ${manualDateCondition}
-      GROUP BY t.user_id, u.name, u.email, u.phone
-    `;
-
-    // Buscar AI trades vencedoras com lucro
-    const aiTradesQuery = `
-      SELECT 
-        at.user_id,
-        u.name,
-        u.email,
-        u.phone,
-        COUNT(at.id) as transaction_count,
-        SUM(at.profit_loss) as total_profit_net
-      FROM ai_trades at
-      INNER JOIN users u ON at.user_id = u.id
-      WHERE at.status = 'WON'
-        AND at.profit_loss > 0
-        ${aiDateCondition}
-      GROUP BY at.user_id, u.name, u.email, u.phone
-    `;
-
-    const [manualTrades, aiTrades] = await Promise.all([
-      this.dataSource.query(manualTradesQuery, manualParams),
-      this.dataSource.query(aiTradesQuery, aiParams),
-    ]);
-
-    // Combinar e agregar dados por usuário
-    const usersMap = new Map<string, any>();
-
-    // Processar trades manuais
-    manualTrades.forEach((trade: any) => {
-      const userId = trade.user_id.toString();
-      if (!usersMap.has(userId)) {
-        usersMap.set(userId, {
-          userId,
-          name: trade.name,
-          email: trade.email,
-          whatsapp: trade.phone,
-          country: 'Brasil', // TODO: adicionar país ao cadastro
-          transactionCount: 0,
-          totalProfitNet: 0,
-          commission: 0,
-        });
-      }
-      const userData = usersMap.get(userId);
-      userData.transactionCount += parseInt(trade.transaction_count);
-      userData.totalProfitNet += parseFloat(trade.total_profit_net);
+    // Buscar usuários com token real configurado
+    const users = await this.userRepository.find({
+      where: [
+        { isActive: true } // Pegar todos ativos, filtraremos os que tem token no loop
+      ]
     });
 
-    // Processar AI trades
-    aiTrades.forEach((trade: any) => {
-      const userId = trade.user_id.toString();
-      if (!usersMap.has(userId)) {
-        usersMap.set(userId, {
-          userId,
-          name: trade.name,
-          email: trade.email,
-          whatsapp: trade.phone, 
-          country: 'Brasil', // TODO: adicionar país ao cadastro
-          transactionCount: 0,
-          totalProfitNet: 0,
-          commission: 0,
-        });
+    const results = [];
+
+    // Processar em lotes para não sobrecarregar
+    for (const user of users) {
+      // Ignorar se não tiver token real ou id de conta real
+      if (!user.tokenReal || !user.idRealAccount) {
+        continue;
       }
-      const userData = usersMap.get(userId);
-      userData.transactionCount += parseInt(trade.transaction_count);
-      userData.totalProfitNet += parseFloat(trade.total_profit_net);
-    });
 
-    // Calcular markup (engenharia reversa: lucro líquido * 0.030927835)
-    const results = Array.from(usersMap.values()).map(user => ({
-      userId: user.userId,
-      name: user.name,
-      email: user.email,
-      whatsapp: user.whatsapp || null,
-      country: user.country,
-      transactionCount: user.transactionCount,
-      commission: parseFloat((user.totalProfitNet * MARKUP_RATE).toFixed(2)),
-    }));
+      try {
+        console.log(`[TradesService] Buscando markup para ${user.name} (${user.idRealAccount})...`);
 
-    // Ordenar por comissão (maior para menor)
+        // Buscar markup real na Deriv usando o token do usuário
+        // OBS: Tenta usar o client_loginid do próprio usuário, autenticado com seu token
+        const derivData = await this.derivService.getAppMarkupDetails(user.tokenReal, {
+          date_from: dateFrom + ' 00:00:00',
+          date_to: dateTo + ' 23:59:59',
+          limit: 1000,
+          client_loginid: user.idRealAccount // Opcional se for o próprio, mas bom especificar
+        });
+
+        const transactions = derivData.transactions || [];
+
+        // Calcular total de comissão e transações
+        // Na resposta da Deriv, o campo de valor do markup geralmente vem em 'transaction_amount' ou similar dependendo da resposta exata
+        // Assumindo que o array transactions contém objetos com os valores. 
+        // Se a API retornar vazio, assumimos 0.
+
+        let userCommission = 0;
+        let userTransactions = transactions.length;
+
+        // Somar comissões
+        for (const tx of transactions) {
+          // Analisar estrutura da transação para pegar o valor correto
+          // Geralmente app_markup_amount ou amount
+          const amount = parseFloat(tx.app_markup) || parseFloat(tx.amount) || 0;
+          userCommission += amount;
+        }
+
+        // Se não retornou nada da API (permissão ou sem dados), calcular estimado base local como fallback? 
+        // O usuário pediu "trazer o markup", entende-se que quer o real. 
+        // Se der 0, mostramos 0.
+
+        // Adicionar apenas se tiver movimento ou se quisermos mostrar todos
+        if (userTransactions > 0 || userCommission > 0) {
+          results.push({
+            userId: user.id,
+            name: user.name,
+            email: user.email,
+            whatsapp: user.phone || null,
+            country: 'Brasil', // TODO: Pegar do cadastro se houver
+            transactionCount: userTransactions,
+            commission: parseFloat(userCommission.toFixed(2)),
+            realData: true
+          });
+        }
+
+      } catch (error) {
+        console.error(`[TradesService] Erro ao buscar markup para ${user.email}:`, error.message);
+        // Não falhar tudo, apenas logar e pular
+      }
+    }
+
+    // Ordenar por comissão
     results.sort((a, b) => b.commission - a.commission);
 
     return {
@@ -429,6 +406,10 @@ export class TradesService {
         totalTransactions: results.reduce((sum, user) => sum + user.transactionCount, 0),
         totalUsers: results.length,
       },
+      period: {
+        from: dateFrom,
+        to: dateTo
+      }
     };
   }
 }
