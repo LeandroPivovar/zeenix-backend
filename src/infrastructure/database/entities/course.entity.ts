@@ -75,6 +75,9 @@ export class CourseEntity {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
+  @Column({ type: 'json', nullable: true, name: 'plan_ids' })
+  planIds?: string[] | null;
+
   @OneToMany(() => LessonEntity, lesson => lesson.course)
   lessons?: LessonEntity[];
 }

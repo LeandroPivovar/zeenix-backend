@@ -69,5 +69,10 @@ export class UpdateCourseDto {
   @IsOptional()
   @IsEnum(['public', 'private', 'restricted'])
   visibility?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  planIds?: string[];
 }
 
