@@ -9,27 +9,27 @@ export class EmailService {
   constructor() {
     // Configuração SMTP do Gmail
     const smtpSecure = process.env.SMTP_SECURE || 'tls';
-    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+    const smtpPort = parseInt(process.env.SMTP_PORT || '465');
 
     this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      host: process.env.SMTP_HOST || 'smtpout.secureserver.net',
       port: smtpPort,
       secure: smtpSecure === 'ssl', // true para SSL (porta 465), false para TLS (porta 587)
       auth: {
-        user: process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com',
-        pass: process.env.SMTP_PASSWORD || 'zgri migf nurw hmqy',
+        user: process.env.SMTP_USERNAME || 'suporte@iazenix.com',
+        pass: process.env.SMTP_PASSWORD || 'o4g*ppUA572(',
       },
     });
   }
 
   async sendPasswordResetEmail(email: string, resetToken: string, resetUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: 'Recuperação de Senha - ZENIX Academy',
+      subject: 'Recuperação de Senha - ZENIX',
       html: `
         <!DOCTYPE html>
         <html>
