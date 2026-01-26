@@ -1,4 +1,3 @@
-```typescript
 import { Module } from '@nestjs/common';
 import { KiwifyService } from './kiwify.service';
 import { KiwifyController } from './kiwify.controller';
@@ -12,8 +11,7 @@ import { UserEntity } from '../infrastructure/database/entities/user.entity';
     TypeOrmModule.forFeature([UserEntity])
   ],
   controllers: [KiwifyController],
-    providers: [KiwifyService],
-    exports: [KiwifyService],
+  providers: [KiwifyService],
+  exports: [KiwifyService],
 })
 export class KiwifyModule { }
-```
