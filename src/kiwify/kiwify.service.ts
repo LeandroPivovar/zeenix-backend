@@ -64,8 +64,6 @@ export class KiwifyService {
         }
 
         try {
-            this.logger.log('Buscando usuários (vendas) na Kiwify...');
-
             // Definir datas: hoje e 30 dias atrás (formato YYYY-MM-DD para evitar problemas)
             const endDate = new Date();
             const startDate = new Date();
@@ -76,51 +74,80 @@ export class KiwifyService {
             const startDateStr = formatDate(startDate);
             const endDateStr = formatDate(endDate);
 
-            const url = `${this.baseUrl}/v1/sales?page_size=100&start_date=${startDateStr}&end_date=${endDateStr}`;
-            this.logger.log(`Consultando URL: ${url}`);
-
-            // Buscar vendas (sales) - page_size de 100
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`,
-                    'x-kiwify-account-id': accountId,
-                    'Accept': 'application/json'
-                },
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
-                // Retornar o erro original para facilitar debug no frontend
-                throw new HttpException(`Kiwify Error: ${response.status} ${errorText}`, HttpStatus.BAD_GATEWAY);
-            }
-
-            const data = await response.json();
-            const sales = data.data || [];
-
-            this.logger.log(`Encontradas ${sales.length} vendas. Processando usuários únicos...`);
-
-            // Extrair usuários únicos das vendas
+            let page = 1;
+            const pageSize = 100;
+            let hasMore = true;
             const uniqueUsersMap = new Map<string, any>();
 
-            for (const sale of sales) {
-                const customer = sale.customer;
-                if (customer && customer.email) {
-                    // Usar email como chave para unicidade
-                    if (!uniqueUsersMap.has(customer.email)) {
-                        uniqueUsersMap.set(customer.email, {
-                            name: customer.name || 'Sem nome',
-                            email: customer.email,
-                            phone: customer.mobile || customer.phone || '',
-                            lastPurchaseDate: sale.created_at
-                        });
+            this.logger.log(`Iniciando busca de vendas (Paginação ativa, 30 dias)...`);
+
+            while (hasMore) {
+                const url = `${this.baseUrl}/v1/sales?page_size=${pageSize}&page=${page}&start_date=${startDateStr}&end_date=${endDateStr}`;
+                this.logger.log(`Consultando página ${page}...`);
+
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${this.accessToken}`,
+                        'x-kiwify-account-id': accountId,
+                        'Accept': 'application/json'
+                    },
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    this.logger.error(`Erro ao buscar vendas Kiwify (Página ${page}): ${response.status} ${errorText}`);
+                    throw new HttpException(`Kiwify Error: ${response.status} ${errorText}`, HttpStatus.BAD_GATEWAY);
+                }
+
+                const data = await response.json();
+                const sales = data.data || [];
+
+                if (sales.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                for (const sale of sales) {
+                    const customer = sale.customer;
+                    const productName = sale.product ? sale.product.name : 'Produto Desconhecido';
+
+                    if (customer && customer.email) {
+                        if (!uniqueUsersMap.has(customer.email)) {
+                            uniqueUsersMap.set(customer.email, {
+                                name: customer.name || 'Sem nome',
+                                email: customer.email,
+                                phone: customer.mobile || customer.phone || '',
+                                lastPurchaseDate: sale.created_at,
+                                products: [productName]
+                            });
+                        } else {
+                            // Se o usuário já existe, adiciona o produto à lista se não estiver lá
+                            const existingUser = uniqueUsersMap.get(customer.email);
+                            if (!existingUser.products.includes(productName)) {
+                                existingUser.products.push(productName);
+                            }
+                        }
                     }
+                }
+
+                // Se a paginação retornou menos itens que o tamanho da página, chegamos ao fim
+                if (sales.length < pageSize) {
+                    hasMore = false;
+                } else {
+                    page++;
+                    // Pequeno delay para evitar rate limit agressivo
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 }
             }
 
-            const users = Array.from(uniqueUsersMap.values());
-            this.logger.log(`${users.length} usuários únicos processados.`);
+            // Converter o Set de produtos para string (ex: "Curso A, Curso B")
+            const users = Array.from(uniqueUsersMap.values()).map(user => ({
+                ...user,
+                products: user.products.join(', ')
+            }));
+
+            this.logger.log(`Busca finalizada. Total de usuários únicos encontrados: ${users.length}`);
 
             return {
                 count: users.length,
