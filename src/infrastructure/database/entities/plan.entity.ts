@@ -12,6 +12,9 @@ export class PlanEntity {
   @Column({ type: 'varchar', length: 50, unique: true })
   slug: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true, name: 'external_id' })
+  externalId?: string;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   price: number;
 

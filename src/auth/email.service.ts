@@ -19,6 +19,9 @@ export class EmailService {
         user: process.env.SMTP_USERNAME || 'suporte@iazenix.com',
         pass: process.env.SMTP_PASSWORD || 'o4g*ppUA572(',
       },
+      tls: {
+        rejectUnauthorized: false
+      }
     });
   }
 
@@ -99,8 +102,8 @@ export class EmailService {
   }
 
   async sendAccountActivationEmail(email: string, name: string, resetToken: string, resetUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
@@ -223,8 +226,8 @@ export class EmailService {
     this.logger.log(`[sendWelcomeEmail] Iniciando envio de email de boas-vindas para ${email}`);
     this.logger.log(`[sendWelcomeEmail] Parâmetros: name=${name}, platformUrl=${platformUrl}`);
 
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
 
     this.logger.log(`[sendWelcomeEmail] Configuração SMTP: fromEmail=${fromEmail}, fromName=${fromName}`);
 
@@ -349,8 +352,8 @@ export class EmailService {
   }
 
   async sendConfirmationEmail(email: string, name: string, confirmationToken: string, confirmationUrl: string): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte.zenix.academy@gmail.com';
-    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX Academy';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
 
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
