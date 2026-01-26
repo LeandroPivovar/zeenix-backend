@@ -332,6 +332,7 @@ export class TradesService {
         t.user_id,
         u.name,
         u.email,
+        u.phone,
         COUNT(t.id) as transaction_count,
         SUM(t.profit) as total_profit_net
       FROM trades t
@@ -339,7 +340,7 @@ export class TradesService {
       WHERE t.status = 'won'
         AND t.profit > 0
         ${manualDateCondition}
-      GROUP BY t.user_id, u.name, u.email
+      GROUP BY t.user_id, u.name, u.email, u.phone
     `;
 
     // Buscar AI trades vencedoras com lucro
@@ -348,6 +349,7 @@ export class TradesService {
         at.user_id,
         u.name,
         u.email,
+        u.phone,
         COUNT(at.id) as transaction_count,
         SUM(at.profit_loss) as total_profit_net
       FROM ai_trades at
@@ -355,7 +357,7 @@ export class TradesService {
       WHERE at.status = 'WON'
         AND at.profit_loss > 0
         ${aiDateCondition}
-      GROUP BY at.user_id, u.name, u.email
+      GROUP BY at.user_id, u.name, u.email, u.phone
     `;
 
     const [manualTrades, aiTrades] = await Promise.all([
