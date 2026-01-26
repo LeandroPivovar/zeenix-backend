@@ -111,6 +111,7 @@ export class CoursesController {
   @Get()
   async findAll(@Req() req: any) {
     let userPlanId: string | null = null;
+    let isAdmin = false;
 
     // Tentar identificar o usuário para filtrar por plano
     try {
@@ -119,11 +120,10 @@ export class CoursesController {
         const token = authHeader.substring(7);
         const payload = this.jwtService.decode(token) as { sub: string; email: string; role?: string } | null;
         if (payload?.sub) {
-          // Se for admin, não filtra por plano (vê tudo)
-          if (payload.role !== 'admin') {
+          isAdmin = payload.role === 'admin';
+          if (!isAdmin) {
             // Buscar o plano do usuário
-            const userProgress = await this.coursesService.getUserPlanId(payload.sub);
-            userPlanId = userProgress;
+            userPlanId = await this.coursesService.getUserPlanId(payload.sub);
           }
         }
       }
@@ -131,7 +131,7 @@ export class CoursesController {
       console.warn('Erro ao identificar usuário no findAll:', err);
     }
 
-    return this.coursesService.findAll(userPlanId);
+    return this.coursesService.findAll(userPlanId, isAdmin);
   }
 
   // Modules CRUD - rotas específicas antes das genéricas
@@ -178,31 +178,47 @@ export class CoursesController {
   // Rota genérica de curso deve vir por último
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() req: any) {
-    const course = await this.coursesService.findOne(id);
+    let userPlanId: string | null = null;
+    let userId: string | null = null;
+    let isAdmin = false;
 
-    // Se houver token no header, tentar extrair userId e buscar progresso
+    // Identificar usuário via JWT para visibilidade e progresso
     try {
       const authHeader = req.headers?.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
-        const payload = this.jwtService.decode(token) as { sub: string; email: string } | null;
+        const payload = this.jwtService.decode(token) as { sub: string; email: string; role?: string } | null;
         if (payload?.sub) {
-          const progress = await this.coursesService.getProgressForCourse(payload.sub, id);
-          // Adicionar informação de progresso às aulas
-          if (course.modules) {
-            course.modules.forEach(module => {
-              if (module.lessons) {
-                module.lessons.forEach((lesson: any) => {
-                  lesson.completed = progress[lesson.id] || false;
-                });
-              }
-            });
+          userId = payload.sub;
+          isAdmin = payload.role === 'admin';
+          if (!isAdmin) {
+            userPlanId = await this.coursesService.getUserPlanId(userId);
           }
         }
       }
     } catch (err) {
-      // Se houver erro na autenticação, continua sem progresso
-      console.warn('Erro ao buscar progresso:', err);
+      console.warn('Erro ao identificar usuário no findOne:', err);
+    }
+
+    // Buscar curso já com filtro de visibilidade
+    const course = await this.coursesService.findOne(id, userPlanId, isAdmin);
+
+    // Se for estudante e houver userId, carregar progresso
+    if (!isAdmin && userId) {
+      try {
+        const progress = await this.coursesService.getProgressForCourse(userId, id);
+        if (course.modules) {
+          course.modules.forEach(module => {
+            if (module.lessons) {
+              module.lessons.forEach((lesson: any) => {
+                lesson.completed = progress[lesson.id] || false;
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Erro ao buscar progresso:', err);
+      }
     }
 
     return course;
