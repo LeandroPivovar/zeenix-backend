@@ -875,9 +875,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 if (state.mode === 'VELOZ' && state.consecutiveMainLosses >= 2) {
                     this.logger.log(`[Zeus][${userId}] 🔻 Downgrade de Modo: VELOZ -> NORMAL (2 Losses)`);
                     state.mode = 'NORMAL';
-                    // Reset count? Doc implies "followed by X losses". 
-                    // Usually we reset to count specifically for the new mode's rule.
-                    state.consecutiveMainLosses = 0;
+                    // ✅ Não resetar perdas aqui para permitir que a lógica de recuperação (M1) seja ativada logo em seguida
                 }
                 // NORMAL -> após 4 perdas seguidas -> PRECISO
                 else if (state.mode === 'NORMAL' && state.consecutiveMainLosses >= 4) {
