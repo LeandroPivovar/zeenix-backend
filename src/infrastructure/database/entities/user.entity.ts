@@ -63,6 +63,12 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'id_demo_account' })
   idDemoAccount?: string | null;
 
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'kiwify_offer_id' })
+  kiwifyOfferId?: string | null;
+
+  @Column({ type: 'datetime', nullable: true, name: 'plan_expiration_date' })
+  planExpirationDate?: Date | null;
+
   // suportar cripto (ex.: BTC com muitas casas decimais)
   @Column({ type: 'decimal', precision: 36, scale: 18, nullable: true, name: 'deriv_balance' })
   derivBalance?: string | null;

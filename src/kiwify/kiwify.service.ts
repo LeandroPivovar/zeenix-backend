@@ -1,5 +1,6 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 @Injectable()
 export class KiwifyService {
@@ -8,7 +9,11 @@ export class KiwifyService {
     private accessToken: string | null = null;
     private tokenExpiresAt: number = 0;
 
-    constructor(private configService: ConfigService) { }
+    constructor(
+        private configService: ConfigService,
+        @InjectRepository(UserEntity)
+        private readonly userRepository: Repository<UserEntity>
+    ) { }
 
     private async authenticate() {
         // Verificar se o token atual ainda é válido (com margem de 5 minutos)
@@ -107,7 +112,52 @@ export class KiwifyService {
             for (const sale of sales) {
                 const customer = sale.customer;
                 if (customer && customer.email) {
-                    // Usar email como chave para unicidade
+                    // Sincronizar com o banco de dados
+                    try {
+                        const user = await this.userRepository.findOne({ where: { email: customer.email } });
+                        if (user) {
+                            let updated = false;
+
+                            // Atualizar telefone se necessário
+                            const phone = customer.mobile || customer.phone;
+                            if (phone && user.phone !== phone) {
+                                user.phone = phone;
+                                updated = true;
+                            }
+
+                            // Lógica de Expiração do Plano
+                            if (sale.product) {
+                                const offerId = sale.product.offer_id;
+                                if (offerId && sale.created_at) {
+                                    let monthsToAdd = 0;
+
+                                    // Mapeamento de duração
+                                    if (offerId === '0586b2f0-cda1-45ae-af6b-46a089e0a598') monthsToAdd = 12; // 1 Ano
+                                    else if (offerId === '28d36658-7a03-465a-8ae4-daa705493526') monthsToAdd = 60; // 5 Anos
+                                    else if (offerId === 'aebd4173-e860-4c16-ac72-1843574f0dd4') monthsToAdd = 6; // 6 Meses
+
+                                    if (monthsToAdd > 0) {
+                                        const purchaseDate = new Date(sale.created_at);
+                                        const expirationDate = new Date(purchaseDate);
+                                        expirationDate.setMonth(expirationDate.getMonth() + monthsToAdd);
+
+                                        user.kiwifyOfferId = offerId;
+                                        user.planExpirationDate = expirationDate;
+                                        updated = true;
+                                    }
+                                }
+                            }
+
+                            if (updated) {
+                                await this.userRepository.save(user);
+                                this.logger.log(`Usuário ${user.email} sincronizado via Kiwify.`);
+                            }
+                        }
+                    } catch (dbError) {
+                        this.logger.error(`Erro ao sincronizar usuário ${customer.email} no banco`, dbError);
+                    }
+
+                    // Usar email como chave para unicidade map do retorno (visualização)
                     if (!uniqueUsersMap.has(customer.email)) {
                         uniqueUsersMap.set(customer.email, {
                             name: customer.name || 'Sem nome',
