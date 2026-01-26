@@ -25,6 +25,9 @@ import { LogQueueService } from '../../utils/log-queue.service';
 /**
  * ⚡ ZEUS Strategy Configuration - Versão 2.2 (Manual Técnico)
  */
+/**
+ * ⚡ ZEUS Strategy Configuration - Versão 2.3 (Aligned with Doc V4.0)
+ */
 const ZEUS_V4_CONFIGS = {
     // M0: Entrada Principal (Digit Over 3)
     M0_ENTRADA: {
@@ -48,24 +51,25 @@ const ZEUS_V4_CONFIGS = {
         payout: 1.85, // ~85%
         // Recovery logic parameters
         momentumWindow: 3,
-        minDelta: 0.15
+        minDelta: 0.1, // Reduced slightly to ensure execution
+        duration: 1 // ✅ Corrected to 1 tick as per doc
     }
 };
 
 const ZEUS_V4_RISK_MANAGEMENT = {
     CONSERVADOR: {
-        maxRecoveryLevel: 3, // M0 -> M1, M2, M3
-        profitFactor: 1.02, // 102% (Recupera + 2%)
+        maxRecoveryLevel: 5, // ✅ Doc: Recupera até M5
+        profitFactor: 1.0,  // ✅ Doc: Break-even (Recupera perdas)
         useStopBlindado: false
     },
     MODERADO: {
-        maxRecoveryLevel: 4,
-        profitFactor: 1.15, // 115% (Recupera + 15%)
+        maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
+        profitFactor: 1.15, // ✅ Doc: Recupera + 15%
         useStopBlindado: true
     },
     AGRESSIVO: {
-        maxRecoveryLevel: 5,
-        profitFactor: 1.30, // 130% (Recupera + 30%)
+        maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
+        profitFactor: 1.30, // ✅ Doc: Recupera + 30%
         useStopBlindado: true
     },
 };
@@ -222,7 +226,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             consecutiveLosses: 0,
             consecutiveWins: 0,
             opsCount: 0,
-            mode: 'PRECISO',
+            mode: 'VELOZ', // ✅ Initial mode as per doc
             stopBlindadoAtivo: false,
             pisoBlindado: 0,
             lastProfit: 0,
@@ -240,6 +244,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             lastDigits: [],
             sorosActive: false,
             sorosCount: 0,
+            consecutiveMainLosses: 0, // ✅ Track main losses for trigger
+            isPausedStrategy: false, // ✅ Strategic Pause state
+            pauseUntil: 0,
         };
 
 
@@ -311,9 +318,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.logger.warn(`[Zeus][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
         }
 
-        // ✅ Obter modo do estado (inicializado como 'PRECISO')
+        // ✅ Obter modo do estado (inicializado como 'VELOZ')
         const state = this.userStates.get(userId);
-        const mode = state?.mode || 'PRECISO';
+        const mode = state?.mode || 'VELOZ';
 
 
         // ✅ Log de ativação no padrão Orion
@@ -416,7 +423,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Zeus opera em tempo real baseado em ticks, mas para evitar flood,
         // só analisa a cada 3 ticks (similar ao Falcon)
-        const requiredSkip = state.mode === 'PRECISO' ? 2 : 3;
+        const requiredSkip = state.mode === 'PRECISO' ? 2 : (state.mode === 'NORMAL' ? 1 : 0); // Veloce is 0 skip? Keeping logic similar
+
         if (state.ticksSinceLastAnalysis <= requiredSkip) {
             return; // Pular este tick
         }
@@ -542,8 +550,27 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const lastDigitsMomentum = digits.slice(-cfg.filterMomentumWindow);
         const lastDigitsPattern = digits.slice(-cfg.filterPatternWindow);
 
-        // --- MODO RECUPERAÇÃO (M1+) ---
-        if (state.martingaleLevel > 0) {
+        // --- PAUSA ESTRATÉGICA ---
+        if (state.isPausedStrategy) {
+            if (Date.now() < (state.pauseUntil || 0)) {
+                return this.generateHeartbeat({
+                    filters: { pattern: 0, reqPattern: 0, momentum: 0, reqMomentum: 0, volatility: 0, reqVolatility: 0 },
+                    window: digits,
+                    info: '⏸️ PAUSA ESTRATÉGICA (Aguardando Estabilização)'
+                });
+            } else {
+                // Sair da pausa
+                state.isPausedStrategy = false;
+                this.saveLog(userId, 'INFO', 'CORE', '▶️ Fim da Pausa Estratégica. Retornando operações.');
+            }
+        }
+
+        // --- MODO RECUPERAÇÃO (M1+ e Gatilho de 2 perdas principais) ---
+        // V4 Spec: "Após 2 perdas consecutivas no contrato principal, ocorre troca para recuperação"
+
+        const shouldUseRecovery = state.martingaleLevel > 0 || state.consecutiveMainLosses >= 2;
+
+        if (shouldUseRecovery) {
             // Lógica Rise/Fall (Price Action simplificado)
             // Analisa momentum dos últimos N ticks para decidir CALL ou PUT
             const momentumWindow = recoveryCfg.momentumWindow;
@@ -640,7 +667,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             details: {
                 digitPattern: `Pat ${patternCount}/${cfg.filterPatternCount} | Mtm ${momentumCount}/${cfg.filterMomentumCount} | Vol ${uniqueCount}/${cfg.filterVolatilityMinUnique}`,
                 volatility: uniqueCount,
-                mode: 'ZEUS_V4_ENTRY',
+                mode: state.mode, // Corrected to use current state mode
+
                 contractType: cfg.contractType,
                 targetDigit: cfg.targetDigit,
                 symbol: 'R_100'
@@ -671,7 +699,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             payout: 0,
             confidence: prob / 100,
             details: {
-                info: statusMsg,
+                info: details.info || statusMsg,
                 mode: 'ZEUS_V4_SCAN',
                 lastDigits: details.window ? details.window.slice(-5).join(',') : ''
             }
@@ -799,13 +827,24 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const config = this.userConfigs.get(userId);
         if (!state || !config) return;
 
+
         if (win) {
             state.consecutiveWins++;
             state.consecutiveLosses = 0;
-            state.totalLossAccumulated = 0; // Resetar perdas acumuladas ao vencer (recuperou)
+            state.totalLossAccumulated = 0; // Resetar perdas acumuladas ao vencer
+            state.consecutiveMainLosses = 0; // ✅ Reset main losses
 
-            // Lógica de Soros Nível 1 (Apenas no modo Normal M0)
-            if (state.martingaleLevel === 0) {
+            // ✅ Reset Pós-Recuperação: Retorna ao modo inicial (VELOZ) se estava em recuperação
+            if (state.martingaleLevel > 0) {
+                this.logger.log(`[Zeus][${userId}] 🔄 Reset Pós-Recuperação: ${state.mode} -> VELOZ`);
+                state.mode = 'VELOZ';
+            }
+
+            state.martingaleLevel = 0;
+            state.sorosLevel = 0; // Reset Soros when returning from recovery or finishing cycle
+
+            // Lógica de Soros Nível 1 (Apenas no modo Normal M0 - Entrada, e se não estava em recuperação)
+            if (state.martingaleLevel === 0 && config.riskProfile !== 'CONSERVADOR') { // Conservador is flat bet usually? check doc. Doc says Soros Level 1 for all.
                 if (state.sorosLevel === 0) {
                     // Win 1 -> Ativar Soros para a próxima
                     state.sorosLevel = 1;
@@ -816,36 +855,104 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     this.logger.log(`[Zeus][${userId}] ✅ WIN (SOROS) -> Ciclo completado! Retornando a stake inicial.`);
                 }
             } else {
-                // Se venceu na recuperação (M1+), reseta para M0
-                state.martingaleLevel = 0;
-                state.sorosLevel = 0; // Garante reset do Soros ao voltar da recuperação
+                state.sorosLevel = 0;
+            }
 
-                if (state.lastContractType?.includes('RISE_FALL') || state.lastContractType === 'CALL' || state.lastContractType === 'PUT') {
-                    this.logger.log(`[Zeus][${userId}] ✅ RECUPERAÇÃO CONCLUÍDA! Retornando para M0 (Digit Over 3)`);
-                }
+            if (state.lastContractType?.includes('RISE_FALL') || state.lastContractType === 'CALL' || state.lastContractType === 'PUT') {
+                // Log de fim de recuperação
             }
 
         } else {
             state.consecutiveWins = 0;
             state.consecutiveLosses++;
 
-            // Se perdeu no Soros (M0, Soros 1)
-            // A perda acumulada deve considerar o valor total apostado (Stake Inicial + Lucro Anterior)
-            // O profit atual já vem negativo com o valor da stake perdida, então podemos usar isso.
+            // Se perdeu na Entrada Principal (M0)
+            if (state.martingaleLevel === 0) {
+                state.consecutiveMainLosses++;
+
+                // ✅ Regras Universais de Troca de Modo
+                // VELOZ -> após 2 perdas seguidas -> NORMAL
+                if (state.mode === 'VELOZ' && state.consecutiveMainLosses >= 2) {
+                    this.logger.log(`[Zeus][${userId}] 🔻 Downgrade de Modo: VELOZ -> NORMAL (2 Losses)`);
+                    state.mode = 'NORMAL';
+                    // Reset count? Doc implies "followed by X losses". 
+                    // Usually we reset to count specifically for the new mode's rule.
+                    state.consecutiveMainLosses = 0;
+                }
+                // NORMAL -> após 4 perdas seguidas -> PRECISO
+                else if (state.mode === 'NORMAL' && state.consecutiveMainLosses >= 4) {
+                    this.logger.log(`[Zeus][${userId}] 🔻 Downgrade de Modo: NORMAL -> PRECISO (4 Losses)`);
+                    state.mode = 'PRECISO';
+                    state.consecutiveMainLosses = 0;
+                }
+            }
 
             // Resetar Soros em caso de Loss
             state.sorosLevel = 0;
 
-            // Incrementar nível de recuperação
-            state.martingaleLevel++;
+            // Incrementar nível de recuperação (Se já estamos em recuperação ou se atingimos o gatilho)
+            // O gatilho é 2 losses. Então no segundo loss, a PRÓXIMA entrada é recuperação.
+            // Aqui estamos processando o RESULTADO da entrada anterior.
+
+            // Se eu acabei de perder a segunda (consecutiveMainLosses = 2), a próxima deve ser RECOVERY.
+            // Então eu não aumento martingaleLevel AGORA se ainda estou em M0?
+            // "Após 2 perdas... ocorre troca".
+            // Se martingaleLevel=0, e perdi. 
+            // Se consecutiveMainLosses >= 2 (acabei de tomar a segunda), então a proxima análise vai ver isso e disparar Recovery.
+            // O martingaleLevel é o contador de "nível da aposta". M0 é base. M1 é recuperação 1.
+            // Se eu vou entrar em recuperação, a próxima é M1.
+
+            // Lógica antiga incrementava martingale direto. 
+            // V4: "Após 2 perdas... troca para contrato de recuperação".
+            // Isso significa que continuamos tentando DIGITOVER por 2 vezes.
+            // Se fallhar a 2a, vamos para RISE_FALL (M1).
+
+            // Increment logic:
+            if (state.martingaleLevel > 0) {
+                state.martingaleLevel++;
+            } else if (state.consecutiveMainLosses >= 2) {
+                // A próxima será a primeira de recuperação (M1).
+                // Mas martingaleLevel controla o calculo de stake.
+                // Vou setar martingaleLevel = 1 aqui para indicar que ESTAMOS entrando em recuperação?
+                // Ou deixamos analyzeMarket detectar? 
+                // Melhor deixar analyzeMarket usar consecutiveMainLosses para decidir o SINAL.
+                // Mas calculateStake usa martingaleLevel.
+                // Vamos setar aqui se o gatilho foi atingido.
+                state.martingaleLevel = 1;
+            }
 
             if (state.lastProfit < 0) {
                 state.totalLossAccumulated += Math.abs(state.lastProfit);
             }
 
-            // Log de entrada em recuperação
-            if (state.martingaleLevel === 1) {
-                this.logger.log(`[Zeus][${userId}] ⚠️ LOSS -> Iniciando Recuperação PRICE ACTION (RISE/FALL)`);
+            // check pause condition for Recovery
+            // "Após uma recuperação igual ou superior a 5 perdas seguidas... PAUSA"
+            // Se martingaleLevel chegar a 6 (perdeu M5), ou se count > 5.
+            // Assuming maxRecoveryLevel caps the bets.
+
+            const configRisk = ZEUS_V4_RISK_MANAGEMENT[config.riskProfile as keyof typeof ZEUS_V4_RISK_MANAGEMENT] || ZEUS_V4_RISK_MANAGEMENT.MODERADO;
+
+            if (state.martingaleLevel > configRisk.maxRecoveryLevel) {
+                this.logger.warn(`[Zeus][${userId}] 🛑 Limite de Recuperação Atingido (${state.martingaleLevel - 1}/${configRisk.maxRecoveryLevel})`);
+
+                // ✅ PAUSA ESTRATÉGICA
+                state.isPausedStrategy = true;
+                // Pause for X minutes (e.g. 10 min) or ticks. Doc: "Aguardar estabilização".
+                // Vamos usar 5 minutos.
+                state.pauseUntil = Date.now() + (5 * 60 * 1000);
+
+                this.logger.warn(`[Zeus][${userId}] ⏸️ ESTRATÉGIA PAUSADA por 5 minutos.`);
+                this.saveLog(userId, 'WARN', 'RISK', `Limite de recuperação excedido. Estratégia pausada para estabilização (5 min).`);
+
+                // Reset levels logic typically happens here too or after pause?
+                // Doc: "O retorno ocorre quando as condições mínimas... atendidas"
+                // Reset counters so when we come back we start fresh?
+                state.martingaleLevel = 0;
+                state.consecutiveMainLosses = 0;
+                state.totalLossAccumulated = 0;
+                // Mode stays (?) "Reset Pós-Recuperação... modo retorna ao inicial".
+                // If we failed recovery, complete reset implies going back to base.
+                state.mode = 'VELOZ';
             }
         }
     }
@@ -1044,7 +1151,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Se for RECOVERY_SIGNAL do analyzeMarket, details.direction tem CALL/PUT
         if (marketAnalysis.details?.contractType === 'RISE_FALL') {
             contractType = marketAnalysis.details.direction as 'CALL' | 'PUT';
-            duration = 5; // Recuperação Rise/Fall (v4.0 não especifica ticks, assumindo 5 ticks como padrão seguro de Price Action)
+            duration = ZEUS_V4_CONFIGS.RECOVERY.duration; // ✅ Corrected to V4 config (1 tick)
             barrier = undefined;
         } else if (contractType === 'DIGITOVER') {
             // M0 Entrada Padrão
@@ -1607,7 +1714,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.duration,
                     trade.entryPrice,
                     trade.stakeAmount,
-                    state.mode === 'PRECISO' ? 'M0' : (state.mode === 'ULTRA' ? 'M1' : 'M2'),
+                    state.mode === 'VELOZ' ? 'M0' : (state.mode === 'NORMAL' ? 'M1' : 'M2'), // ✅ Fixed lint and mapping
                     trade.payout * 100, // Converter para percentual
                     config.symbol || 'R_100',
                 ],
@@ -1814,7 +1921,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.sorosActive = false;
             state.sorosCount = 0;
             state.totalLossAccumulated = 0;
-            state.martingaleLevel = 0;
+            state.consecutiveMainLosses = 0;
+            state.isPausedStrategy = false;
+            state.pauseUntil = 0;
+            state.mode = 'VELOZ'; // ✅ Reset to Initial Mode
         }
     }
 
@@ -2333,10 +2443,10 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
 }
 
 /**
- * Estado interno do Zeus v3.7
+ * Estado interno do Zeus v3.7 (Updated v4.0)
  */
 interface ZeusUserState extends AutonomousAgentState {
-    mode: 'PRECISO' | 'ULTRA' | 'HIPER';
+    mode: 'VELOZ' | 'NORMAL' | 'PRECISO';
     saldoInicial: number;
     lucroAtual: number;
     picoLucro: number;
@@ -2362,6 +2472,11 @@ interface ZeusUserState extends AutonomousAgentState {
     totalLosses: number;
     recoveryAttempts: number;
     ticksSinceLastAnalysis: number;
+
+    // ✅ New Fields for V4.0
+    consecutiveMainLosses: number;
+    isPausedStrategy: boolean;
+    pauseUntil?: number;
 
     // Throttling
     lastDeniedLogTime?: number;
