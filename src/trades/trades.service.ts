@@ -326,88 +326,129 @@ export class TradesService {
       dateTo = lastDay.toISOString().split('T')[0];
     }
 
-    // Buscar usuários com token real configurado
-    const allUsers = await this.userRepository.findAll();
-    const users = allUsers.filter(u => u.isActive);
+    try {
+      // Buscar token principal/admin para consulta consolidada
+      // Pode ser configurado via variável de ambiente ou buscar de um usuário admin específico
+      const adminToken = process.env.DERIV_ADMIN_TOKEN || process.env.DERIV_APP_TOKEN;
 
-    const results: any[] = [];
-
-    // Processar em lotes para não sobrecarregar
-    for (const user of users) {
-      // Ignorar se não tiver token real ou id de conta real
-      if (!user.tokenReal || !user.idRealAccount) {
-        continue;
+      if (!adminToken) {
+        console.error('[TradesService] Token de admin não configurado. Não é possível buscar markup consolidado.');
+        return {
+          users: [],
+          summary: {
+            totalCommission: 0,
+            totalTransactions: 0,
+            totalUsers: 0,
+          },
+          period: {
+            from: dateFrom,
+            to: dateTo
+          }
+        };
       }
 
-      try {
-        console.log(`[TradesService] Buscando markup para ${user.name} (${user.idRealAccount})...`);
+      console.log(`[TradesService] Buscando markup consolidado de ${dateFrom} até ${dateTo}...`);
 
-        // Buscar markup real na Deriv usando o token do usuário
-        // OBS: Tenta usar o client_loginid do próprio usuário, autenticado com seu token
-        const derivData = await this.derivService.getAppMarkupDetails(user.tokenReal, {
-          date_from: dateFrom + ' 00:00:00',
-          date_to: dateTo + ' 23:59:59',
-          limit: 1000,
-          client_loginid: user.idRealAccount // Opcional se for o próprio, mas bom especificar
-        });
+      // Buscar markup consolidado de TODOS os usuários (sem client_loginid)
+      const derivData = await this.derivService.getAppMarkupDetails(adminToken, {
+        date_from: dateFrom + ' 00:00:00',
+        date_to: dateTo + ' 23:59:59',
+        limit: 10000, // Limite alto para pegar todas as transações
+        // SEM client_loginid - isso retorna dados de todos os usuários
+      });
 
-        const transactions = derivData.transactions || [];
+      const transactions = derivData.transactions || [];
+      console.log(`[TradesService] Total de transações encontradas: ${transactions.length}`);
 
-        // Calcular total de comissão e transações
-        // Na resposta da Deriv, o campo de valor do markup geralmente vem em 'transaction_amount' ou similar dependendo da resposta exata
-        // Assumindo que o array transactions contém objetos com os valores. 
-        // Se a API retornar vazio, assumimos 0.
+      // Agrupar por usuário (client_loginid) para exibir breakdown
+      const userMap = new Map<string, {
+        loginid: string;
+        transactionCount: number;
+        commission: number;
+      }>();
 
-        let userCommission = 0;
-        let userTransactions = transactions.length;
+      let totalCommission = 0;
 
-        // Somar comissões
-        for (const tx of transactions) {
-          // Analisar estrutura da transação para pegar o valor correto
-          // Geralmente app_markup_amount ou amount
-          const amount = parseFloat(tx.app_markup) || parseFloat(tx.amount) || 0;
-          userCommission += amount;
-        }
+      for (const tx of transactions) {
+        const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
+        const clientLoginid = tx.client_loginid || 'unknown';
 
-        // Se não retornou nada da API (permissão ou sem dados), calcular estimado base local como fallback? 
-        // O usuário pediu "trazer o markup", entende-se que quer o real. 
-        // Se der 0, mostramos 0.
+        totalCommission += markup;
 
-        // Adicionar apenas se tiver movimento ou se quisermos mostrar todos
-        if (userTransactions > 0 || userCommission > 0) {
-          results.push({
-            userId: user.id,
-            name: user.name,
-            email: user.email,
-            whatsapp: user.phone || null,
-            country: 'Brasil', // TODO: Pegar do cadastro se houver
-            transactionCount: userTransactions,
-            commission: parseFloat(userCommission.toFixed(2)),
-            realData: true
+        // Agrupar por cliente
+        if (!userMap.has(clientLoginid)) {
+          userMap.set(clientLoginid, {
+            loginid: clientLoginid,
+            transactionCount: 0,
+            commission: 0,
           });
         }
 
-      } catch (error) {
-        console.error(`[TradesService] Erro ao buscar markup para ${user.email}:`, error.message);
-        // Não falhar tudo, apenas logar e pular
+        const userData = userMap.get(clientLoginid);
+        if (userData) {
+          userData.transactionCount += 1;
+          userData.commission += markup;
+        }
       }
+
+      // Buscar informações dos usuários no banco para enriquecer os dados
+      const allUsers = await this.userRepository.findAll();
+      const usersByLoginId = new Map(
+        allUsers
+          .filter(u => u.idRealAccount)
+          .map(u => [u.idRealAccount, u])
+      );
+
+      // Converter map para array e enriquecer com dados do banco
+      const results: any[] = [];
+      for (const [loginid, data] of userMap.entries()) {
+        const dbUser = usersByLoginId.get(loginid);
+
+        results.push({
+          userId: dbUser?.id || null,
+          name: dbUser?.name || loginid,
+          email: dbUser?.email || null,
+          whatsapp: dbUser?.phone || null,
+          country: 'Brasil',
+          transactionCount: data.transactionCount,
+          commission: parseFloat(data.commission.toFixed(2)),
+          realData: true,
+          loginid: loginid,
+        });
+      }
+
+      // Ordenar por comissão
+      results.sort((a, b) => b.commission - a.commission);
+
+      return {
+        users: results,
+        summary: {
+          totalCommission: parseFloat(totalCommission.toFixed(2)),
+          totalTransactions: transactions.length,
+          totalUsers: userMap.size,
+        },
+        period: {
+          from: dateFrom,
+          to: dateTo
+        }
+      };
+
+    } catch (error) {
+      console.error(`[TradesService] Erro ao buscar markup consolidado:`, error.message);
+      return {
+        users: [],
+        summary: {
+          totalCommission: 0,
+          totalTransactions: 0,
+          totalUsers: 0,
+        },
+        period: {
+          from: dateFrom,
+          to: dateTo
+        },
+        error: error.message
+      };
     }
-
-    // Ordenar por comissão
-    results.sort((a, b) => b.commission - a.commission);
-
-    return {
-      users: results,
-      summary: {
-        totalCommission: parseFloat(results.reduce((sum, user) => sum + user.commission, 0).toFixed(2)),
-        totalTransactions: results.reduce((sum, user) => sum + user.transactionCount, 0),
-        totalUsers: results.length,
-      },
-      period: {
-        from: dateFrom,
-        to: dateTo
-      }
-    };
   }
 }
 
