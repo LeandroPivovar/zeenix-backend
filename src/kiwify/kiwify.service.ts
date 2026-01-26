@@ -76,10 +76,10 @@ export class KiwifyService {
             const startDateStr = formatDate(startDate);
             const endDateStr = formatDate(endDate);
 
-            const url = `${this.baseUrl}/v1/sales?limit=100&start_date=${startDateStr}&end_date=${endDateStr}`;
+            const url = `${this.baseUrl}/v1/sales?page_size=100&start_date=${startDateStr}&end_date=${endDateStr}`;
             this.logger.log(`Consultando URL: ${url}`);
 
-            // Buscar vendas (sales) - Limite de 100 por página
+            // Buscar vendas (sales) - page_size de 100
             const response = await fetch(url, {
                 method: 'GET',
                 headers: {
