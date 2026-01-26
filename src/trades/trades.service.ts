@@ -326,129 +326,103 @@ export class TradesService {
       dateTo = lastDay.toISOString().split('T')[0];
     }
 
+    // Buscar TODOS os usuários ativos do banco primeiro
+    const allUsers = await this.userRepository.findAll();
+    const activeUsers = allUsers.filter(u => u.isActive);
+
+    console.log(`[TradesService] Total de usuários ativos: ${activeUsers.length}`);
+
+    // Criar mapa de markup por loginid
+    const markupMap = new Map<string, {
+      transactionCount: number;
+      commission: number;
+    }>();
+
+    let totalCommission = 0;
+    let totalTransactions = 0;
+
+    // Tentar buscar dados de markup da API (se token configurado)
     try {
-      // Buscar token principal/admin para consulta consolidada
-      // Pode ser configurado via variável de ambiente ou buscar de um usuário admin específico
       const adminToken = process.env.DERIV_ADMIN_TOKEN || process.env.DERIV_APP_TOKEN;
 
-      if (!adminToken) {
-        console.error('[TradesService] Token de admin não configurado. Não é possível buscar markup consolidado.');
-        return {
-          users: [],
-          summary: {
-            totalCommission: 0,
-            totalTransactions: 0,
-            totalUsers: 0,
-          },
-          period: {
-            from: dateFrom,
-            to: dateTo
-          }
-        };
-      }
+      if (adminToken) {
+        console.log(`[TradesService] Buscando markup consolidado de ${dateFrom} até ${dateTo}...`);
 
-      console.log(`[TradesService] Buscando markup consolidado de ${dateFrom} até ${dateTo}...`);
-
-      // Buscar markup consolidado de TODOS os usuários (sem client_loginid)
-      const derivData = await this.derivService.getAppMarkupDetails(adminToken, {
-        date_from: dateFrom + ' 00:00:00',
-        date_to: dateTo + ' 23:59:59',
-        limit: 10000, // Limite alto para pegar todas as transações
-        // SEM client_loginid - isso retorna dados de todos os usuários
-      });
-
-      const transactions = derivData.transactions || [];
-      console.log(`[TradesService] Total de transações encontradas: ${transactions.length}`);
-
-      // Agrupar por usuário (client_loginid) para exibir breakdown
-      const userMap = new Map<string, {
-        loginid: string;
-        transactionCount: number;
-        commission: number;
-      }>();
-
-      let totalCommission = 0;
-
-      for (const tx of transactions) {
-        const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
-        const clientLoginid = tx.client_loginid || 'unknown';
-
-        totalCommission += markup;
-
-        // Agrupar por cliente
-        if (!userMap.has(clientLoginid)) {
-          userMap.set(clientLoginid, {
-            loginid: clientLoginid,
-            transactionCount: 0,
-            commission: 0,
-          });
-        }
-
-        const userData = userMap.get(clientLoginid);
-        if (userData) {
-          userData.transactionCount += 1;
-          userData.commission += markup;
-        }
-      }
-
-      // Buscar informações dos usuários no banco para enriquecer os dados
-      const allUsers = await this.userRepository.findAll();
-      const usersByLoginId = new Map(
-        allUsers
-          .filter(u => u.idRealAccount)
-          .map(u => [u.idRealAccount, u])
-      );
-
-      // Converter map para array e enriquecer com dados do banco
-      const results: any[] = [];
-      for (const [loginid, data] of userMap.entries()) {
-        const dbUser = usersByLoginId.get(loginid);
-
-        results.push({
-          userId: dbUser?.id || null,
-          name: dbUser?.name || loginid,
-          email: dbUser?.email || null,
-          whatsapp: dbUser?.phone || null,
-          country: 'Brasil',
-          transactionCount: data.transactionCount,
-          commission: parseFloat(data.commission.toFixed(2)),
-          realData: true,
-          loginid: loginid,
+        const derivData = await this.derivService.getAppMarkupDetails(adminToken, {
+          date_from: dateFrom + ' 00:00:00',
+          date_to: dateTo + ' 23:59:59',
+          limit: 10000,
         });
-      }
 
-      // Ordenar por comissão
-      results.sort((a, b) => b.commission - a.commission);
+        const transactions = derivData.transactions || [];
+        console.log(`[TradesService] Total de transações encontradas: ${transactions.length}`);
 
-      return {
-        users: results,
-        summary: {
-          totalCommission: parseFloat(totalCommission.toFixed(2)),
-          totalTransactions: transactions.length,
-          totalUsers: userMap.size,
-        },
-        period: {
-          from: dateFrom,
-          to: dateTo
+        // Processar transações e agrupar por loginid
+        for (const tx of transactions) {
+          const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
+          const clientLoginid = tx.client_loginid || 'unknown';
+
+          totalCommission += markup;
+          totalTransactions++;
+
+          if (!markupMap.has(clientLoginid)) {
+            markupMap.set(clientLoginid, {
+              transactionCount: 0,
+              commission: 0,
+            });
+          }
+
+          const userData = markupMap.get(clientLoginid);
+          if (userData) {
+            userData.transactionCount += 1;
+            userData.commission += markup;
+          }
         }
-      };
-
+      } else {
+        console.warn('[TradesService] Token de admin não configurado. Exibindo usuários sem dados de markup.');
+      }
     } catch (error) {
-      console.error(`[TradesService] Erro ao buscar markup consolidado:`, error.message);
-      return {
-        users: [],
-        summary: {
-          totalCommission: 0,
-          totalTransactions: 0,
-          totalUsers: 0,
-        },
-        period: {
-          from: dateFrom,
-          to: dateTo
-        },
-        error: error.message
-      };
+      console.error(`[TradesService] Erro ao buscar markup da API:`, error.message);
+      console.warn('[TradesService] Continuando com dados de usuários do banco...');
     }
+
+    // Montar resultado com TODOS os usuários ativos
+    const results: any[] = [];
+
+    for (const user of activeUsers) {
+      const loginid = user.idRealAccount || 'N/A';
+      const markupData = markupMap.get(loginid);
+
+      results.push({
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        whatsapp: user.phone || null,
+        country: 'Brasil',
+        loginid: loginid,
+        transactionCount: markupData?.transactionCount || 0,
+        commission: markupData ? parseFloat(markupData.commission.toFixed(2)) : 0,
+        realData: !!markupData, // true se tiver dados da API, false se for só do banco
+      });
+    }
+
+    // Ordenar por comissão (maior primeiro)
+    results.sort((a, b) => b.commission - a.commission);
+
+    return {
+      users: results,
+      summary: {
+        totalCommission: parseFloat(totalCommission.toFixed(2)),
+        totalTransactions: totalTransactions,
+        totalUsers: results.length,
+        usersWithMarkup: markupMap.size,
+        usersWithoutMarkup: results.length - markupMap.size,
+      },
+      period: {
+        from: dateFrom,
+        to: dateTo
+      }
+    };
   }
 }
 

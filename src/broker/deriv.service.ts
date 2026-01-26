@@ -978,6 +978,7 @@ export class DerivService {
 
             const request: any = {
               app_markup_details: 1,
+              app_id: appId, // Incluindo app_id explicitamente na requisição
               date_from: options.date_from,
               date_to: options.date_to,
               limit: options.limit || 100,
