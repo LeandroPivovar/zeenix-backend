@@ -48,6 +48,10 @@ class CreatePlanDto {
   @IsNumber()
   @IsOptional()
   displayOrder?: number;
+
+  @IsString()
+  @IsOptional()
+  externalId?: string;
 }
 
 class UpdatePlanDto {
@@ -90,11 +94,15 @@ class UpdatePlanDto {
   @IsNumber()
   @IsOptional()
   displayOrder?: number;
+
+  @IsString()
+  @IsOptional()
+  externalId?: string;
 }
 
 @Controller('plans')
 export class PlansController {
-  constructor(private readonly plansService: PlansService) {}
+  constructor(private readonly plansService: PlansService) { }
 
   @Get()
   async getAllPlans() {
@@ -163,11 +171,7 @@ export class PlansController {
     const userId = req.user.userId;
     const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
+
     return await this.plansService.activatePlan(userId, body.planId, ipAddress, userAgent);
   }
 }
-
-
-
-
