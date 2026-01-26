@@ -4081,6 +4081,65 @@ export class AiService implements OnModuleInit {
       ? null // Orion processa em tempo real, não precisa de agendamento
       : new Date(Date.now() + 60000); // Outros modos: 1 minuto a partir de agora
 
+    // ✅ Buscar informações da conta padrão do usuário (token_deriv e amount_deriv)
+    let tokenDeriv: string | null = null;
+    let amountDeriv: number | null = null;
+
+    try {
+      const accountInfo = await this.dataSource.query(
+        `SELECT 
+          s.trade_currency, 
+          u.token_demo, 
+          u.token_real, 
+          u.demo_amount,
+          u.real_amount,
+          u.deriv_raw
+         FROM users u
+         LEFT JOIN user_settings s ON u.id = s.user_id
+         WHERE u.id = ?`,
+        [userId]
+      );
+
+      if (accountInfo && accountInfo.length > 0) {
+        const tradeCurrency = (accountInfo[0]?.trade_currency || 'USD').toUpperCase();
+
+        // Determinar token e amount baseado na conta padrão
+        if (tradeCurrency === 'DEMO') {
+          tokenDeriv = accountInfo[0]?.token_demo;
+          amountDeriv = parseFloat(accountInfo[0]?.demo_amount || 0);
+        } else {
+          // Para USD, BTC ou outras contas reais
+          tokenDeriv = accountInfo[0]?.token_real;
+          amountDeriv = parseFloat(accountInfo[0]?.real_amount || 0);
+
+          // Se o deriv_raw estiver disponível, pegar o amount específico da moeda
+          try {
+            const derivRaw = typeof accountInfo[0]?.deriv_raw === 'string'
+              ? JSON.parse(accountInfo[0].deriv_raw)
+              : accountInfo[0]?.deriv_raw;
+
+            if (derivRaw?.authorize?.account_list) {
+              const defaultAccount = derivRaw.authorize.account_list.find(
+                (acc: any) => acc.currency === tradeCurrency && !acc.is_virtual
+              );
+              if (defaultAccount) {
+                amountDeriv = parseFloat(defaultAccount.balance || 0);
+              }
+            }
+          } catch (parseError) {
+            this.logger.warn(`[ActivateAI] ⚠️ Erro ao processar deriv_raw:`, parseError);
+          }
+        }
+
+        this.logger.log(
+          `[ActivateAI] 💰 Conta padrão: currency=${tradeCurrency}, token=${tokenDeriv ? tokenDeriv.substring(0, 8) + '...' : 'null'}, amount=${amountDeriv}`
+        );
+      }
+    } catch (accountError) {
+      this.logger.warn(`[ActivateAI] ⚠️ Erro ao buscar conta padrão do usuário:`, accountError);
+      // Continuar mesmo se não conseguir buscar os dados da conta padrão
+    }
+
     // 2. Criar nova sessão (sempre INSERT)
     // ✅ ZENIX v2.0: Stop-Loss Blindado - se ativado, usar 50% (padrão da documentação)
     const stopBlindadoPercent = stopLossBlindado === true ? 50.00 : null; // null = desativado, 50.00 = ativado
@@ -4089,9 +4148,9 @@ export class AiService implements OnModuleInit {
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
-         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
-         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
+         (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, token_deriv, amount_deriv, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
+         VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
+        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, tokenDeriv, amountDeriv, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
