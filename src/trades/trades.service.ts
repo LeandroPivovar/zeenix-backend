@@ -376,7 +376,7 @@ export class TradesService {
           userId,
           name: trade.name,
           email: trade.email,
-          whatsapp: null, // TODO: adicionar campo whatsapp na tabela users
+          whatsapp: trade.phone,
           country: 'Brasil', // TODO: adicionar país ao cadastro
           transactionCount: 0,
           totalProfitNet: 0,
@@ -396,7 +396,7 @@ export class TradesService {
           userId,
           name: trade.name,
           email: trade.email,
-          whatsapp: null, // TODO: adicionar campo whatsapp na tabela users
+          whatsapp: trade.phone, 
           country: 'Brasil', // TODO: adicionar país ao cadastro
           transactionCount: 0,
           totalProfitNet: 0,
