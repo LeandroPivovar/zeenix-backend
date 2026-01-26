@@ -59,41 +59,6 @@ export class KiwifyService {
         await this.authenticate();
 
         const accountId = this.configService.get<string>('KIWIFY_ACCOUNT_ID');
-        if (!accountId) {
-            throw new HttpException('KIWIFY_ACCOUNT_ID não configurado', HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        this.logger.log('Buscando usuários (vendas) na Kiwify...');
-
-        // Definir datas: hoje e 90 dias atrás
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(endDate.getDate() - 90);
-
-        const startDateStr = startDate.toISOString();
-        const endDateStr = endDate.toISOString();
-
-        // Buscar vendas (sales) - Limite de 100 por página
-        const response = await fetch(`${this.baseUrl}/v1/sales?limit=100&start_date=${startDateStr}&end_date=${endDateStr}`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${this.accessToken}`,
-                'x-kiwify-account-id': accountId,
-                'Accept': 'application/json'
-            },
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
-            throw new HttpException('Erro ao buscar dados da Kiwify para rota de vendas', HttpStatus.BAD_GATEWAY);
-        }
-
-        const data = await response.json();
-        const sales = data.data || [];
-
-        this.logger.log(`Encontradas ${sales.length} vendas. Processando usuários únicos...`);
-
         // Extrair usuários únicos das vendas
         const uniqueUsersMap = new Map<string, any>();
 
