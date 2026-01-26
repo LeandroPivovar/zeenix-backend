@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class KiwifyService {
     private readonly logger = new Logger(KiwifyService.name);
-    private readonly baseUrl = 'https://public-api.kiwify.com.br';
+    private readonly baseUrl = 'https://public-api.kiwify.com';
     private accessToken: string | null = null;
     private tokenExpiresAt: number = 0;
 
@@ -65,9 +65,8 @@ export class KiwifyService {
 
         try {
             this.logger.log('Buscando usuários (vendas) na Kiwify...');
-            // Buscar vendas (orders) - Limite de 100 por página (ajuste conforme necessidade ou implemente paginação total)
-            // Para simplificar, buscaremos os últimos 100 registros. Se precisar de todos, precisa de um loop.
-            const response = await fetch(`${this.baseUrl}/v1/orders?limit=100`, {
+            // Buscar vendas (sales) - Limite de 100 por página
+            const response = await fetch(`${this.baseUrl}/v1/sales?limit=100`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.accessToken}`,
@@ -79,19 +78,19 @@ export class KiwifyService {
             if (!response.ok) {
                 const errorText = await response.text();
                 this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
-                throw new HttpException('Erro ao buscar dados da Kiwify', HttpStatus.BAD_GATEWAY);
+                throw new HttpException('Erro ao buscar dados da Kiwify para rota de vendas', HttpStatus.BAD_GATEWAY);
             }
 
             const data = await response.json();
-            const orders = data.data || [];
+            const sales = data.data || [];
 
-            this.logger.log(`Encontradas ${orders.length} vendas. Processando usuários únicos...`);
+            this.logger.log(`Encontradas ${sales.length} vendas. Processando usuários únicos...`);
 
             // Extrair usuários únicos das vendas
             const uniqueUsersMap = new Map<string, any>();
 
-            for (const order of orders) {
-                const customer = order.customer;
+            for (const sale of sales) {
+                const customer = sale.customer;
                 if (customer && customer.email) {
                     // Usar email como chave para unicidade
                     if (!uniqueUsersMap.has(customer.email)) {
@@ -99,8 +98,7 @@ export class KiwifyService {
                             name: customer.name || 'Sem nome',
                             email: customer.email,
                             phone: customer.mobile || customer.phone || '',
-                            // Adicionar info extra se útil
-                            lastPurchaseDate: order.created_at
+                            lastPurchaseDate: sale.created_at
                         });
                     }
                 }
