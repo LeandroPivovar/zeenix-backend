@@ -181,6 +181,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.idRealAccount,
       entity.idDemoAccount,
       entity.role,
+      entity.isActive,
     );
   }
 
@@ -202,6 +203,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.demoAmount = domain.demoAmount;
     entity.idRealAccount = domain.idRealAccount ?? null;
     entity.idDemoAccount = domain.idDemoAccount ?? null;
+    entity.isActive = domain.isActive;
     return entity;
   }
 }
