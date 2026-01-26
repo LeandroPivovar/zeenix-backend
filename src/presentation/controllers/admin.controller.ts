@@ -5,7 +5,7 @@ import { AdminService } from '../services/admin.service';
 @Controller('admin')
 @UseGuards(AuthGuard('jwt'))
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(private readonly adminService: AdminService) { }
 
   @Get('stats')
   async getAdminStats() {
@@ -15,6 +15,11 @@ export class AdminController {
   @Get('users/non-demo')
   async getNonDemoUsers() {
     return this.adminService.getNonDemoUsers();
+  }
+
+  @Get('users/all')
+  async getAllUsers() {
+    return this.adminService.getAllUsers();
   }
 
   @Get('managed-volume')
