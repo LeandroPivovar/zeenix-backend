@@ -58,6 +58,7 @@ export class KiwifyService {
     async getUsers() {
         await this.authenticate();
 
+        const accountId = this.configService.get<string>('KIWIFY_ACCOUNT_ID');
         if (!accountId) {
             throw new HttpException('KIWIFY_ACCOUNT_ID não configurado', HttpStatus.INTERNAL_SERVER_ERROR);
         }
