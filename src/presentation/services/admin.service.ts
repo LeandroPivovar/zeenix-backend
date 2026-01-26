@@ -101,6 +101,9 @@ export class AdminService {
         'user.derivBalance',
         'user.planId',
         'user.planActivatedAt',
+        'user.role',
+        'user.traderMestre',
+        'user.isActive',
         'user.createdAt',
         'plan.name'
       ]);
@@ -156,32 +159,32 @@ export class AdminService {
     planId?: string;
     role?: string;
     traderMestre?: boolean;
-    isActive?: boolean;
+    isActive?: boolean | number;
   }) {
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) {
-      throw new NotFoundException('Usuário não encontrado');
-    }
+    const updateData: any = {};
 
     if (data.planId !== undefined) {
-      user.planId = data.planId;
-      // Ao mudar o plano pelo admin, consideramos ativação imediata
-      user.planActivatedAt = new Date();
+      updateData.planId = data.planId;
+      updateData.planActivatedAt = new Date();
     }
 
     if (data.role !== undefined) {
-      user.role = data.role;
+      updateData.role = data.role;
     }
 
     if (data.traderMestre !== undefined) {
-      user.traderMestre = data.traderMestre;
+      updateData.traderMestre = data.traderMestre;
     }
 
     if (data.isActive !== undefined) {
-      user.isActive = data.isActive;
+      updateData.isActive = !!data.isActive;
     }
 
-    await this.userRepository.save(user);
+    const result = await this.userRepository.update(id, updateData);
+
+    if (result.affected === 0) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
 
     return { message: 'Usuário atualizado com sucesso' };
   }
