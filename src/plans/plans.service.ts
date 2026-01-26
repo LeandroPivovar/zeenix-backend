@@ -19,18 +19,18 @@ export class PlansService {
     private readonly userRepository: Repository<UserEntity>,
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepo: UserRepository,
     private readonly settingsService: SettingsService,
-  ) {}
+  ) { }
 
   async getAllPlans() {
     this.logger.log('[GetAllPlans] Buscando planos ativos...');
-    
+
     const plans = await this.planRepository.find({
       where: { isActive: 1 as any },  // Banco usa 0 ou 1, não boolean
       order: { displayOrder: 'ASC' },
     });
 
     this.logger.log(`[GetAllPlans] Encontrados ${plans.length} planos`);
-    
+
     if (plans.length === 0) {
       this.logger.warn('[GetAllPlans] Nenhum plano ativo encontrado! Verifique is_active no banco.');
     }
@@ -47,6 +47,7 @@ export class PlansService {
       isRecommended: plan.isRecommended,
       isActive: plan.isActive,
       displayOrder: plan.displayOrder,
+      externalId: plan.externalId,
     }));
   }
 
@@ -144,6 +145,7 @@ export class PlansService {
       isRecommended: plan.isRecommended,
       isActive: plan.isActive,
       displayOrder: plan.displayOrder,
+      externalId: plan.externalId,
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
     }));
@@ -160,6 +162,7 @@ export class PlansService {
     isRecommended?: boolean;
     isActive?: boolean;
     displayOrder?: number;
+    externalId?: string;
   }) {
     // Verificar se slug já existe
     const existingSlug = await this.planRepository.findOne({
@@ -182,6 +185,7 @@ export class PlansService {
       isRecommended: data.isRecommended || false,
       isActive: data.isActive !== undefined ? data.isActive : true,
       displayOrder: data.displayOrder || 0,
+      externalId: data.externalId || null,
     });
 
     const savedPlan = await this.planRepository.save(plan);
@@ -198,6 +202,7 @@ export class PlansService {
       isRecommended: savedPlan.isRecommended,
       isActive: savedPlan.isActive,
       displayOrder: savedPlan.displayOrder,
+      externalId: savedPlan.externalId,
       createdAt: savedPlan.createdAt,
       updatedAt: savedPlan.updatedAt,
     };
@@ -214,6 +219,7 @@ export class PlansService {
     isRecommended?: boolean;
     isActive?: boolean;
     displayOrder?: number;
+    externalId?: string;
   }) {
     const plan = await this.planRepository.findOne({ where: { id } });
 
@@ -243,6 +249,7 @@ export class PlansService {
     if (data.isRecommended !== undefined) plan.isRecommended = data.isRecommended;
     if (data.isActive !== undefined) plan.isActive = data.isActive;
     if (data.displayOrder !== undefined) plan.displayOrder = data.displayOrder;
+    if (data.externalId !== undefined) plan.externalId = data.externalId;
 
     const updatedPlan = await this.planRepository.save(plan);
 
@@ -258,6 +265,7 @@ export class PlansService {
       isRecommended: updatedPlan.isRecommended,
       isActive: updatedPlan.isActive,
       displayOrder: updatedPlan.displayOrder,
+      externalId: updatedPlan.externalId,
       createdAt: updatedPlan.createdAt,
       updatedAt: updatedPlan.updatedAt,
     };
