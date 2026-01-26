@@ -66,3 +66,17 @@ export class UpdateSupportItemDto {
   imagePath?: string | null;
 }
 
+export class UpdateStudentGroupConfigDto {
+  @IsString()
+  @IsNotEmpty()
+  buttonText: string;
+
+  @IsString()
+  @IsNotEmpty()
+  buttonLink: string;
+
+  @IsString()
+  @IsOptional()
+  iconPath?: string | null;
+}
+

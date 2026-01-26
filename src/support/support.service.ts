@@ -4,7 +4,8 @@ import { Repository } from 'typeorm';
 import { FaqEntity } from '../infrastructure/database/entities/faq.entity';
 import { SystemStatusEntity, SystemStatusType } from '../infrastructure/database/entities/system-status.entity';
 import { SupportItemEntity } from '../infrastructure/database/entities/support-item.entity';
-import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto } from '../presentation/dto/support.dto';
+import { AppConfigEntity } from '../infrastructure/database/entities/app-config.entity';
+import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto, UpdateStudentGroupConfigDto } from '../presentation/dto/support.dto';
 
 @Injectable()
 export class SupportService {
@@ -15,7 +16,9 @@ export class SupportService {
     private readonly statusRepository: Repository<SystemStatusEntity>,
     @InjectRepository(SupportItemEntity)
     private readonly supportItemRepository: Repository<SupportItemEntity>,
-  ) {}
+    @InjectRepository(AppConfigEntity)
+    private readonly appConfigRepository: Repository<AppConfigEntity>,
+  ) { }
 
   async findAllFaqs(search?: string) {
     const queryBuilder = this.faqRepository.createQueryBuilder('faq');
@@ -47,7 +50,7 @@ export class SupportService {
 
     // Determinar status geral: se todos estão operacionais, retorna operacional
     const allOperational = statuses.every(s => s.status === SystemStatusType.OPERATIONAL);
-    
+
     return {
       overall: allOperational ? 'operational' : 'degraded',
       message: allOperational ? 'Todos os sistemas operacionais.' : 'Alguns serviços podem estar com problemas.',
@@ -178,6 +181,29 @@ export class SupportService {
       throw new NotFoundException(`Item de suporte com ID ${id} não encontrado`);
     }
     await this.supportItemRepository.remove(item);
+  }
+
+  // ========== App Config Methods ==========
+  async getAppConfig(key: string) {
+    const config = await this.appConfigRepository.findOne({ where: { key } });
+    if (!config) {
+      // Retornar null ou objeto padrão se não existir, sem erro 404
+      return null;
+    }
+    return config.value;
+  }
+
+  async saveAppConfig(key: string, value: any, description?: string) {
+    let config = await this.appConfigRepository.findOne({ where: { key } });
+    if (!config) {
+      config = this.appConfigRepository.create({ key, value, description });
+    } else {
+      config.value = value;
+      if (description) {
+        config.description = description;
+      }
+    }
+    return await this.appConfigRepository.save(config);
   }
 }
 

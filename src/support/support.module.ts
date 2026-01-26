@@ -4,11 +4,12 @@ import { DataSource } from 'typeorm';
 import { FaqEntity } from '../infrastructure/database/entities/faq.entity';
 import { SystemStatusEntity } from '../infrastructure/database/entities/system-status.entity';
 import { SupportItemEntity } from '../infrastructure/database/entities/support-item.entity';
+import { AppConfigEntity } from '../infrastructure/database/entities/app-config.entity';
 import { SupportService } from './support.service';
 import { SupportController } from './support.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([FaqEntity, SystemStatusEntity, SupportItemEntity])],
+  imports: [TypeOrmModule.forFeature([FaqEntity, SystemStatusEntity, SupportItemEntity, AppConfigEntity])],
   controllers: [SupportController],
   providers: [SupportService],
   exports: [SupportService],

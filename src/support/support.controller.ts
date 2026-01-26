@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, HttpCode, HttpStatus, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { SupportService } from './support.service';
-import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto } from '../presentation/dto/support.dto';
+import { CreateFaqDto, UpdateFaqDto, CreateSupportItemDto, UpdateSupportItemDto, UpdateStudentGroupConfigDto } from '../presentation/dto/support.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -36,7 +36,7 @@ const createImageUploadOptions = () => {
 
 @Controller('support')
 export class SupportController {
-  constructor(private readonly supportService: SupportService) {}
+  constructor(private readonly supportService: SupportService) { }
 
   @Get('faqs')
   async getFaqs(@Query('search') search?: string) {
@@ -114,6 +114,28 @@ export class SupportController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteSupportItem(@Param('id') id: string) {
     await this.supportService.deleteSupportItem(id);
+  }
+
+  // ========== App Config Endpoints ==========
+
+  @Get('config/:key')
+  async getAppConfig(@Param('key') key: string) {
+    const value = await this.supportService.getAppConfig(key);
+    return { key, value };
+  }
+
+  @Put('config/student-group')
+  @UseGuards(AuthGuard('jwt'))
+  async updateStudentGroupConfig(@Body() dto: UpdateStudentGroupConfigDto) {
+    const key = 'student_group_button';
+    const value = {
+      text: dto.buttonText,
+      link: dto.buttonLink,
+      icon: dto.iconPath // Pode ser null
+    };
+
+    await this.supportService.saveAppConfig(key, value, 'Configuração do botão Grupo de Alunos');
+    return { key, value };
   }
 }
 
