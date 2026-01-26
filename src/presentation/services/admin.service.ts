@@ -22,7 +22,7 @@ export class AdminService {
     private readonly expertRepository: Repository<ExpertEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
-  ) {}
+  ) { }
 
   /**
    * Retorna estatísticas gerais para o painel de admin
@@ -31,8 +31,8 @@ export class AdminService {
     // Buscar total de usuários ativos (que têm plano)
     const totalUsers = await this.userRepository.count();
     const activeUsersCount = await this.userRepository.count({
-      where: { 
-        planId: Not(IsNull() as any) 
+      where: {
+        planId: Not(IsNull() as any)
       },
     });
 
@@ -58,9 +58,9 @@ export class AdminService {
 
     // Buscar usuários com planos ativos
     const usersWithActivePlans = await this.userRepository.count({
-      where: { 
-        planId: Not(IsNull() as any), 
-        planActivatedAt: Not(IsNull() as any) 
+      where: {
+        planId: Not(IsNull() as any),
+        planActivatedAt: Not(IsNull() as any)
       },
     });
 
@@ -78,6 +78,41 @@ export class AdminService {
       totalCommission: managedVolume.estimatedCommission,
       totalCommissionFormatted: managedVolume.estimatedCommissionFormatted,
     };
+  }
+
+  /**
+   * Retorna lista de TODOS os usuários cadastrados na plataforma
+   */
+  async getAllUsers() {
+    const users = await this.userRepository.find({
+      relations: ['plan'],
+      select: [
+        'id',
+        'name',
+        'email',
+        'derivLoginId',
+        'derivCurrency',
+        'derivBalance',
+        'planId',
+        'planActivatedAt',
+        'createdAt',
+      ],
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+
+    return users.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      derivLoginId: user.derivLoginId || 'N/A',
+      currency: user.derivCurrency || 'USD',
+      balance: user.derivBalance ? parseFloat(user.derivBalance) : 0,
+      plan: user.plan?.name || 'Sem plano',
+      planActivatedAt: user.planActivatedAt,
+      createdAt: user.createdAt,
+    }));
   }
 
   /**
@@ -109,10 +144,10 @@ export class AdminService {
       // Se derivRaw existir, verificar se é demo
       if (user.derivRaw) {
         try {
-          const rawData = typeof user.derivRaw === 'string' 
-            ? JSON.parse(user.derivRaw) 
+          const rawData = typeof user.derivRaw === 'string'
+            ? JSON.parse(user.derivRaw)
             : user.derivRaw;
-          
+
           // Verificar se é conta demo no derivRaw
           if (rawData.isDemo === true || rawData.demo_account === 1) {
             return false;
@@ -161,10 +196,10 @@ export class AdminService {
       let isDemo = false;
       if (user.derivRaw) {
         try {
-          const rawData = typeof user.derivRaw === 'string' 
-            ? JSON.parse(user.derivRaw) 
+          const rawData = typeof user.derivRaw === 'string'
+            ? JSON.parse(user.derivRaw)
             : user.derivRaw;
-          
+
           if (rawData.isDemo === true || rawData.demo_account === 1) {
             isDemo = true;
           }
@@ -182,7 +217,7 @@ export class AdminService {
         const balance = parseFloat(user.derivBalance);
         if (!isNaN(balance) && balance > 0) {
           const currency = user.derivCurrency.toUpperCase();
-          
+
           // Adicionar ao total por moeda
           if (!volumeByCurrency[currency]) {
             volumeByCurrency[currency] = 0;
@@ -542,7 +577,7 @@ export class AdminService {
     if (description && description.length > action.length) {
       return description;
     }
-    
+
     // Mapear ações comuns para descrições amigáveis
     const actionMap: Record<string, string> = {
       'LOGIN': 'Login no sistema',
