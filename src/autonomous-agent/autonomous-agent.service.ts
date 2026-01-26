@@ -106,6 +106,21 @@ export class AutonomousAgentService implements OnModuleInit {
       await createIndex(`CREATE INDEX idx_ai_trades_stats_query ON ai_trades(user_id, status, created_at, profit_loss)`, 'idx_ai_trades_stats_query');
       await createIndex(`CREATE INDEX idx_ai_trades_created_status ON ai_trades(created_at, status)`, 'idx_ai_trades_created_status');
 
+      // 3. Adicionar coluna strategy em autonomous_agent_trades
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE autonomous_agent_trades 
+          ADD COLUMN strategy VARCHAR(50) DEFAULT NULL
+        `);
+        this.logger.log('[CreateStatsIndexes] ✅ Coluna strategy adicionada em autonomous_agent_trades');
+      } catch (error) {
+        if (error.errno === 1060 || error.code === 'ER_DUP_FIELDNAME') {
+          // Coluna já existe
+        } else {
+          this.logger.error('[CreateStatsIndexes] Erro ao adicionar coluna strategy em autonomous_agent_trades:', error);
+        }
+      }
+
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
@@ -1147,23 +1162,49 @@ export class AutonomousAgentService implements OnModuleInit {
     // Implementação similar à da IA
     return { updated: 0, deleted: 0, errors: 0 };
   }
-  async getDailyStats(userId: string, days: number = 30): Promise<any> {
+  async getDailyStats(userId: string, days: number = 30, agent?: string, startDateStr?: string, endDateStr?: string): Promise<any> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - days);
-    startDate.setHours(0, 0, 0, 0);
+
+    let effectiveStartDate: Date;
+    let effectiveEndDate: Date = new Date();
+    effectiveEndDate.setHours(23, 59, 59, 999);
+
+    if (startDateStr && endDateStr) {
+      effectiveStartDate = new Date(startDateStr);
+      effectiveStartDate.setHours(0, 0, 0, 0);
+      effectiveEndDate = new Date(endDateStr);
+      effectiveEndDate.setHours(23, 59, 59, 999);
+    } else {
+      effectiveStartDate = new Date(today);
+      effectiveStartDate.setDate(today.getDate() - days);
+      effectiveStartDate.setHours(0, 0, 0, 0);
+    }
 
     // Buscar config para obter DATA DA SESSÃO e filtrar
     const config = await this.getAgentConfig(userId);
     const initialBalance = parseFloat(config?.initial_balance) || 0;
-    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+    // const sessionDate = config?.session_date ? new Date(config.session_date) : null;
 
-    // Se tiver sessao ativa, não mostrar dados anteriores a ela
-    let effectiveStartDate = startDate;
-    if (sessionDate && sessionDate > startDate) {
-      effectiveStartDate = sessionDate;
-    }
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    const params: any[] = [userId, effectiveStartDate.toISOString(), effectiveEndDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
+
+    // ✅ CORREÇÃO: Calcular lucro acumulado ANTES do periodo filtrado por estratégia
+    const prevParams = [userId, effectiveStartDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
+
+    const prevTrades = await this.dataSource.query(
+      `SELECT SUM(profit_loss) as total
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
+      prevParams
+    );
+    const prevProgress = parseFloat(prevTrades[0]?.total) || 0;
 
     const trades = await this.dataSource.query(
       `SELECT 
@@ -1176,14 +1217,16 @@ export class AutonomousAgentService implements OnModuleInit {
          MAX(created_at) as last_op
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND created_at >= ?
+         AND created_at BETWEEN ? AND ?
          AND status IN ('WON', 'LOST')
+         ${strategyFilter}
        GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '-03:00'))
        ORDER BY date ASC`, // ASC para calcular acumulado corretamente
-      [userId, effectiveStartDate.toISOString()]
+      params
     );
 
-    let cumulativeProfit = 0;
+
+    let cumulativeProfit = prevProgress;
     const dailyData = trades.map((day: any) => {
       const profit = parseFloat(day.profit) || 0;
       const loss = parseFloat(day.loss) || 0;
@@ -1209,7 +1252,7 @@ export class AutonomousAgentService implements OnModuleInit {
         profit: Number(netProfit.toFixed(2)),
         ops,
         winRate: Number(winRate.toFixed(2)),
-        capital: Number((initialBalance + cumulativeProfit).toFixed(2)),
+        capital: Number(cumulativeProfit.toFixed(2)),
         avgTime,
         badge: ''
       };
@@ -1218,81 +1261,120 @@ export class AutonomousAgentService implements OnModuleInit {
     return dailyData.reverse(); // Volta para DESC para o frontend
   }
 
-  async getWeeklyStats(userId: string, weeks: number = 10): Promise<any[]> {
+  async getSummaryStats(userId: string, groupBy: 'week' | 'month' | 'semester' | 'year' = 'week', agent?: string): Promise<any[]> {
     // Buscar config para obter DATA DA SESSÃO e Saldo Inicial
     const config = await this.getAgentConfig(userId);
-    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
     const initialBalance = parseFloat(config?.initial_balance) || 0;
 
     const today = new Date();
     const startDate = new Date(today);
-    startDate.setDate(today.getDate() - (weeks * 7)); // Look back X weeks
 
-    // Se tiver sessao ativa, não mostrar dados anteriores a ela
-    let effectiveStartDate = startDate;
-    // REMOVIDO: Permitir histórico completo
-    /*
-    if (sessionDate && sessionDate > startDate) {
-      effectiveStartDate = sessionDate;
-    }
-    */
+    // Determine lookback period based on grouping
+    if (groupBy === 'week') startDate.setDate(today.getDate() - (26 * 7)); // 6 months of weeks
+    else if (groupBy === 'month') startDate.setMonth(today.getMonth() - 24); // 2 years of months
+    else if (groupBy === 'semester') startDate.setMonth(today.getMonth() - 60); // 5 years of semesters
+    else if (groupBy === 'year') startDate.setFullYear(today.getFullYear() - 10); // 10 years
 
-    // Query grouping by Year-Week
-    // Note: SQL syntax for week depends on DB. Assuming compatible/standard function or using DATE formatting.
-    // For universal support, we might fetch all trades and aggregate in JS, but let's try SQL grouping first.
-    // SQLite: strftime('%Y-%W', created_at)
-    // MySQL: DATE_FORMAT(created_at, '%Y-%u')
-    // We will use JS aggregation for safety across DB types if we want to be safe, 
-    // but the existing code uses Date(created_at), implying standard SQL or simple mapping.
-    // Let's fetch daily stats and aggregate weekly in JS to be safe and accurate with calendar weeks.
+    // Se tiver sessao ativa, não mostrar dados anteriores a ela (Isso limita a visualização histórica?)
+    // O comentário original dizia "Se tiver sessao ativa, não mostrar dados anteriores a ela".
+    // Mas para relatórios "Anuais", precisamos ver tudo. Vamos relaxar isso se groupBy != week
+    // Ou manter effectiveStartDate apenas se quisermos filtrar pela sessão atual?
+    // User pediu "Resumo Semanal deve ter para selecionar...", isso implica ver histórico.
+    // Vamos ignorar effectiveStartDate vinculado a sessão e usar startDate calculado.
+
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    const params: any[] = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
 
     // Fetch trades for the period
     const trades = await this.dataSource.query(
       `SELECT 
             created_at,
             profit_loss,
-            status
+            status,
+            strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND created_at >= ?
            AND status IN ('WON', 'LOST')
+           ${strategyFilter}
          ORDER BY created_at ASC`,
-      [userId, effectiveStartDate.toISOString()]
+      params
     );
 
-    // Group by Week (Sunday-Saturday or similar)
-    const weeklyMap = new Map<string, {
+    // Grouping Map
+    const groupMap = new Map<string, {
       start: Date,
       end: Date,
       profit: number,
       wins: number,
-      ops: number
+      ops: number,
+      keyLabel: string // For display if needed
     }>();
 
     for (const trade of trades) {
       const date = new Date(trade.created_at);
-      // Get start of week (Sunday)
-      const day = date.getDay(); // 0 is Sunday
-      const diff = date.getDate() - day; // adjust when day is sunday
-      const startOfWeek = new Date(date);
-      startOfWeek.setDate(diff);
-      startOfWeek.setHours(0, 0, 0, 0);
+      let key = '';
+      let startOfGroup = new Date(date);
+      let endOfGroup = new Date(date);
+      let label = '';
 
-      const key = startOfWeek.toISOString().split('T')[0];
+      if (groupBy === 'week') {
+        const day = date.getDay();
+        const diff = date.getDate() - day;
+        startOfGroup.setDate(diff);
+        startOfGroup.setHours(0, 0, 0, 0);
+        key = startOfGroup.toISOString().split('T')[0];
 
-      if (!weeklyMap.has(key)) {
-        const endOfWeek = new Date(startOfWeek);
-        endOfWeek.setDate(startOfWeek.getDate() + 6);
-        weeklyMap.set(key, {
-          start: startOfWeek,
-          end: endOfWeek,
+        endOfGroup = new Date(startOfGroup);
+        endOfGroup.setDate(startOfGroup.getDate() + 6);
+        endOfGroup.setHours(23, 59, 59, 999);
+      } else if (groupBy === 'month') {
+        startOfGroup.setDate(1);
+        startOfGroup.setHours(0, 0, 0, 0);
+        key = `${startOfGroup.getFullYear()}-${startOfGroup.getMonth()}`; // unique key
+
+        endOfGroup = new Date(startOfGroup);
+        endOfGroup.setMonth(startOfGroup.getMonth() + 1);
+        endOfGroup.setDate(0); // Last day of month
+        endOfGroup.setHours(23, 59, 59, 999);
+      } else if (groupBy === 'semester') {
+        const month = date.getMonth();
+        const semesterStartMonth = month < 6 ? 0 : 6;
+        startOfGroup.setMonth(semesterStartMonth, 1);
+        startOfGroup.setHours(0, 0, 0, 0);
+        key = `${startOfGroup.getFullYear()}-S${month < 6 ? 1 : 2}`;
+
+        endOfGroup = new Date(startOfGroup);
+        endOfGroup.setMonth(startOfGroup.getMonth() + 6);
+        endOfGroup.setDate(0);
+        endOfGroup.setHours(23, 59, 59, 999);
+      } else if (groupBy === 'year') {
+        startOfGroup.setMonth(0, 1);
+        startOfGroup.setHours(0, 0, 0, 0);
+        key = `${startOfGroup.getFullYear()}`;
+
+        endOfGroup = new Date(startOfGroup);
+        endOfGroup.setFullYear(startOfGroup.getFullYear() + 1);
+        endOfGroup.setDate(0); // Dec 31 likely fails with setFullYear+1 setDate(0)? No, setFullYear+1 jan 1, setDate(0) -> Dec 31
+        // Wait. new Date(2024, 0, 1) -> setFullYear(2025) -> 2025-01-01 -> setDate(0) -> 2024-12-31. Correct.
+        // However, let's be explicit.
+        endOfGroup = new Date(startOfGroup.getFullYear(), 11, 31, 23, 59, 59, 999);
+      }
+
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          start: startOfGroup,
+          end: endOfGroup,
           profit: 0,
           wins: 0,
-          ops: 0
+          ops: 0,
+          keyLabel: key
         });
       }
 
-      const stats = weeklyMap.get(key)!;
+      const stats = groupMap.get(key)!;
       const profit = parseFloat(trade.profit_loss) || 0;
       stats.profit += profit;
       stats.ops += 1;
@@ -1300,39 +1382,60 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     // Convert to array and calculate cumulative capital
-    const weeksList = Array.from(weeklyMap.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
+    const groupsList = Array.from(groupMap.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    let currentCapital = initialBalance;
+    // Precisamos do saldo inicial ANTES do primeiro grupo para calcular corretamente (Lucro Acumulado)
+    // Query saldo anterior ao startDate filtrado por agente
+    const prevParams = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
+
+    const prevTrades = await this.dataSource.query(
+      `SELECT SUM(profit_loss) as total
+         FROM autonomous_agent_trades 
+         WHERE user_id = ? 
+           AND created_at < ?
+           AND status IN ('WON', 'LOST')
+           ${strategyFilter}`,
+      prevParams
+    );
+    const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
+
+    let currentCapital = prevProfit;
     const result: any[] = [];
 
-    for (const week of weeksList) {
-      // Formataçao da data: DD/MM - DD/MM
-      const startStr = week.start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      const endStr = week.end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      const period = `${startStr} - ${endStr}`;
+    for (const group of groupsList) {
+      let periodLabel = '';
+      if (groupBy === 'week') {
+        const startStr = group.start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const endStr = group.end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        periodLabel = `${startStr} - ${endStr}`;
+      } else if (groupBy === 'month') {
+        periodLabel = group.start.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+      } else if (groupBy === 'semester') {
+        const sem = group.start.getMonth() < 6 ? '1º Sem' : '2º Sem';
+        periodLabel = `${sem} ${group.start.getFullYear()}`;
+      } else if (groupBy === 'year') {
+        periodLabel = `${group.start.getFullYear()}`;
+      }
 
       // Atualiza capital
-      currentCapital += week.profit;
+      currentCapital += group.profit;
 
-      // Percentual de lucro da semana sobre o capital inicial da sessão? 
-      // Ou sobre o capital no inicio da semana? Usually over initial balance or current capital.
-      // The UI shows % likely relative to initial balance or weekly ROI. 
-      // Let's assume ROI relative to initial balance for consistency with other metrics, 
-      // OR relative to the capital at start of week. 
-      // Let's use relative to initialBalance as it's a "total growth" typically, or simply Week Profit / Start Week Capital.
-      // Given the example showed +3% etc, it looks like weekly yield. 
-      // Let's calculate: (Profit / (CurrentCapital - Profit)) * 100
-      const startWeekCapital = currentCapital - week.profit;
-      const percent = startWeekCapital > 0 ? (week.profit / startWeekCapital) * 100 : 0;
-
-      const winRate = week.ops > 0 ? (week.wins / week.ops) * 100 : 0;
+      // Yield relative to capital at start of group
+      const startGroupCapital = currentCapital - group.profit;
+      const percent = startGroupCapital > 0 ? (group.profit / startGroupCapital) * 100 : 0;
+      const winRate = group.ops > 0 ? (group.wins / group.ops) * 100 : 0;
 
       result.push({
-        period,
-        profit: Number(week.profit.toFixed(2)),
+        period: periodLabel,
+        // Helper fields for Frontend Click-to-Filter
+        startDate: group.start.toISOString().split('T')[0],
+        endDate: group.end.toISOString().split('T')[0],
+
+        profit: Number(group.profit.toFixed(2)),
         finalCapital: Number(currentCapital.toFixed(2)),
         percent: Number(percent.toFixed(2)),
-        ops: week.ops,
+        ops: group.ops,
         winRate: Number(winRate.toFixed(1))
       });
     }
@@ -1341,171 +1444,105 @@ export class AutonomousAgentService implements OnModuleInit {
     return result.reverse();
   }
 
-  async getProfitEvolution(userId: string, days: number = 30): Promise<any[]> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Reset time to start of today for consistent filtering
-    const startDate = new Date(today);
-
-    // Adjust start date based on days parameter
-    if (days <= 1) {
-      // days=1 treated as "Today" (since midnight)
-      startDate.setTime(today.getTime());
-    } else {
-      startDate.setDate(today.getDate() - days);
-    }
-
-    // ✅ Filtro de sessão: REMOVIDO para permitir ver histórico completo independente da sessão atual
-    /*
+  async getProfitEvolution(userId: string, days: number = 30, agent?: string, startDateStr?: string, endDateStr?: string): Promise<any[]> {
     const config = await this.getAgentConfig(userId);
-    const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+    const initialBalance = parseFloat(config?.initial_balance) || 0;
 
-    if (sessionDate && sessionDate > startDate) {
-      startDate.setTime(sessionDate.getTime());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let startDate = new Date(today);
+    let endDate: Date = new Date(); // now
+
+    if (startDateStr && endDateStr) {
+      startDate = new Date(startDateStr);
+      // Se for data YYYY-MM-DD apenas, ajustar hora
+      if (startDateStr.length === 10) startDate.setHours(0, 0, 0, 0);
+
+      endDate = new Date(endDateStr);
+      if (endDateStr.length === 10) endDate.setHours(23, 59, 59, 999);
+    } else {
+      // Adjust start date based on days parameter
+      if (days <= 1) {
+        startDate.setTime(today.getTime());
+      } else {
+        startDate.setDate(today.getDate() - days);
+      }
     }
-    */
+
+    // Filter logic
+    const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+    // Use BETWEEN for range
+    const params: any[] = [userId, startDate.toISOString(), endDate.toISOString()];
+    if (strategyFilter && agent) params.push(agent);
 
     // Select trades in the period
     const trades = await this.dataSource.query(
       `SELECT 
          created_at,
-         profit_loss
+         profit_loss,
+         strategy
        FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND created_at >= ?
+         AND created_at BETWEEN ? AND ?
          AND status IN ('WON', 'LOST')
+         ${strategyFilter}
        ORDER BY created_at ASC`,
-      [userId, startDate.toISOString()]
+      params
     );
 
-    // ✅ NOVO: Se days <= 1 (Sessão de hoje), retornar evolução POR TRADE para melhor visualização
-    if (days <= 1) {
-      const dataPoints: { time: number, value: number }[] = [];
-      let cumulativeProfit = 0;
-
-      // Adicionar ponto inicial (zero) no início da sessão ou hoje
-      dataPoints.push({
-        time: startDate.getTime() / 1000,
-        value: 0
-      });
-
-      for (const trade of trades) {
-        cumulativeProfit += parseFloat(trade.profit_loss) || 0;
-        dataPoints.push({
-          time: new Date(trade.created_at).getTime() / 1000,
-          value: Number(cumulativeProfit.toFixed(2))
-        });
-      }
-
-      // Adicionar ponto final (agora) para manter a linha até o presente
-      if (dataPoints.length > 0) {
-        dataPoints.push({
-          time: Date.now() / 1000,
-          value: Number(cumulativeProfit.toFixed(2))
-        });
-      }
-
-      return dataPoints;
-    }
-
-    // Map trades to their bucket timestamps
-    const tradesMap = new Map<number, number>(); // timestamp (ms) -> profit sum
-
-    for (const trade of trades) {
-      const tradeDate = new Date(trade.created_at);
-      let bucketTime: number;
-
-      if (days <= 1) {
-        // 1 day: Hourly (1h)
-        tradeDate.setMinutes(0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else if (days <= 2) {
-        // 2 days: Every 6 hours (0, 6, 12, 18)
-        const hour = tradeDate.getHours();
-        const block = Math.floor(hour / 6) * 6;
-        tradeDate.setHours(block, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else if (days <= 3) {
-        // 3 days: Every 12 hours (0, 12)
-        const hour = tradeDate.getHours();
-        const block = Math.floor(hour / 12) * 12;
-        tradeDate.setHours(block, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      } else {
-        // 4+ days: Daily (24h) - Use YYYY-MM-DD (normalized to midnight)
-        tradeDate.setHours(0, 0, 0, 0);
-        bucketTime = tradeDate.getTime();
-      }
-
-      const profit = parseFloat(trade.profit_loss) || 0;
-      const current = tradesMap.get(bucketTime) || 0;
-      tradesMap.set(bucketTime, current + profit);
-    }
-
-    // Generate continuous sequence of buckets
-    const dataPoints: { time: string | number, value: number }[] = [];
+    // ✅ NOVO: Sempre retornar evolução POR TRADE para melhor visualização (Requisito "Todas as trades")
+    const dataPoints: { time: number, value: number }[] = [];
     let cumulativeProfit = 0;
 
-    // Determine interval in ms
-    let intervalMs: number;
-    if (days <= 1) intervalMs = 60 * 60 * 1000; // 1 hour
-    else if (days <= 2) intervalMs = 6 * 60 * 60 * 1000; // 6 hours
-    else if (days <= 3) intervalMs = 12 * 60 * 60 * 1000; // 12 hours
-    else intervalMs = 24 * 60 * 60 * 1000; // 24 hours
+    // Calcular lucro acumulado ANTES do periodo para este agente/filtro
+    // Se quisermos o balanço TOTAL (Capital), somamos o initialBalance.
+    // Mas se o objetivo for a PERFORMANCE do periodo (conforme mockup com 0 no eixo),
+    // vamos iniciar em 0 no início do range ou no lucro acumulado relativo.
 
-    // Generate buckets from startDate to Now (or end of today for wider ranges)
-    const endTime = Date.now();
-    let currentBucketTime = startDate.getTime();
+    // Para bater com o mockup (eixo 0, -40, -80), o gráfico deve ser o lucro RELATIVO do período.
+    const prevParams = [userId, startDate.toISOString()];
+    if (strategyFilter && agent) prevParams.push(agent);
 
-    // Round start bucket down to match interval alignment if needed
-    // (startDate is already normalized to midnight or session start, but session start might be mid-interval)
-    // For simplicity, we just iterate from startDate. If startDate is 10:15 and interval is 1h, next is 11:15?
-    // User requested "divisions", explicitly "00:00, 01:00".
-    // So we should align currentBucketTime to the grid.
+    const prevTrades = await this.dataSource.query(
+      `SELECT SUM(profit_loss) as total
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
+      prevParams
+    );
 
-    if (days <= 1) {
-      const d = new Date(currentBucketTime);
-      d.setMinutes(0, 0, 0);
-      currentBucketTime = d.getTime();
-    } else if (days <= 2) {
-      const d = new Date(currentBucketTime);
-      const h = d.getHours();
-      const block = Math.floor(h / 6) * 6;
-      d.setHours(block, 0, 0, 0);
-      currentBucketTime = d.getTime();
-    } else if (days <= 3) {
-      const d = new Date(currentBucketTime);
-      const h = d.getHours();
-      const block = Math.floor(h / 12) * 12;
-      d.setHours(block, 0, 0, 0);
-      currentBucketTime = d.getTime();
-    } else {
-      const d = new Date(currentBucketTime);
-      d.setHours(0, 0, 0, 0);
-      currentBucketTime = d.getTime();
-    }
+    const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
 
-    while (currentBucketTime <= endTime) {
-      // Add profit from this bucket if any
-      if (tradesMap.has(currentBucketTime)) {
-        cumulativeProfit += tradesMap.get(currentBucketTime)!;
-      }
+    // Decisão: Iniciar o gráfico em 0 no startDate para mostrar a "Performance do Período Selecionado"
+    // Ou iniciar em prevProfit se quisermos a "Performance Acumulada de Todo o Tempo".
+    // Como o mockup mostra valores negativos e 0 no centro, a performance RELATIVA é mais provável.
+    // Para permitir que o usuário veja o lucro ACUMULADO de hj, começamos em 0.
+    const startingValue = 0;
 
-      // Determine output time format
-      let timeValue: string | number;
-      if (days < 4) {
-        // Sub-daily: Unix timestamp (seconds)
-        timeValue = currentBucketTime / 1000;
-      } else {
-        // Daily: YYYY-MM-DD string
-        timeValue = new Date(currentBucketTime).toISOString().split('T')[0];
-      }
+    dataPoints.push({
+      time: startDate.getTime() / 1000,
+      value: Number(startingValue.toFixed(2))
+    });
 
+    cumulativeProfit = startingValue;
+
+    for (const trade of trades) {
+      cumulativeProfit += parseFloat(trade.profit_loss) || 0;
       dataPoints.push({
-        time: timeValue,
+        time: new Date(trade.created_at).getTime() / 1000,
         value: Number(cumulativeProfit.toFixed(2))
       });
+    }
 
-      currentBucketTime += intervalMs;
+    // Adicionar ponto final (agora) para manter a linha até o presente
+    if (dataPoints.length > 0) {
+      dataPoints.push({
+        time: Date.now() / 1000,
+        value: Number(cumulativeProfit.toFixed(2))
+      });
     }
 
     return dataPoints;
@@ -1538,11 +1575,11 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string): Promise<any[]> {
+  async getDailyTrades(userId: string, date: string, agent?: string): Promise<any[]> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
-      const sessionDate = config?.session_date ? new Date(config.session_date) : null;
+      // const sessionDate = config?.session_date ? new Date(config.session_date) : null; // Unused now
 
       // Validar formato da data YYYY-MM-DD
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -1553,14 +1590,15 @@ export class AutonomousAgentService implements OnModuleInit {
         targetDateStr = new Date().toISOString().split('T')[0];
       }
 
-      // Se a data solicitada for HOJE, filtra pela SESSÃO ATUAL (se existir)
-      const todayStr = new Date().toISOString().split('T')[0];
-      const isToday = targetDateStr === todayStr;
+      // Filter logic
+      const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
+      const params: any[] = [userId, targetDateStr];
+      if (strategyFilter && agent) params.push(agent);
 
       // Definir início e fim do dia para compatibilidade com qualquer DB (SQLite, Postgres, etc)
       // Assumindo UTC strings
-      const startOfDayStr = `${targetDateStr}T00:00:00.000Z`;
-      const endOfDayStr = `${targetDateStr}T23:59:59.999Z`;
+      // const startOfDayStr = `${targetDateStr}T00:00:00.000Z`; // Unused
+      // const endOfDayStr = `${targetDateStr}T23:59:59.999Z`; // Unused
 
       let query = `
          SELECT 
@@ -1571,31 +1609,25 @@ export class AutonomousAgentService implements OnModuleInit {
            profit_loss,
            status,
            entry_price,
-           exit_price
+           exit_price,
+           strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
            AND status IN ('WON', 'LOST')
+           ${strategyFilter}
       `;
 
-      const params: any[] = [userId, targetDateStr];
-
-      // Adicionar filtro de sessão se for HOJE e tiver sessionDate
-      /* NOVO: Comentado para análise. O usuário pediu "APENAS operações dentro da sessão atual"
-         Se filtrarmos aqui, a tabela mostrará apenas a sessão.
-         Mas o "Relatório Diário" implica dia todo.
-         Se a sessão começou ontem, "Sessão Atual" pode incluir ontem?
-         Session Date é timestamp.
-         
-         Vou assumir que o usuário quer ver TUDO do DIA, mas limitar estatísticas à sessão?
-         Ou ver apenas SESSÃO no relatório?
-         O prompt diz: "mostre aqui APENAS operações dentro da sessão atual"
-         Vou aplicar o filtro de sessão se for hoje.
-      */
+      // REMOVIDO: Filtro de sessão para HOJE
+      // O usuário relatou sumiço de operações.
+      // O correto é mostrar TUDO do dia selecionado, a "Sessão" é apenas um conceito de controle de risco.
+      // Se ele pausou e iniciou 3 sessões hoje, quer ver todas no relatório de hoje.
+      /*
       if (isToday && sessionDate) {
-        query += ` AND created_at >= ?`;
-        params.push(sessionDate.toISOString());
+        // query += ` AND created_at >= ?`;
+        // params.push(sessionDate.toISOString());
       }
+      */
 
       query += ` ORDER BY created_at DESC`;
 
