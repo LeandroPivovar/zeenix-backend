@@ -81,38 +81,115 @@ export class AdminService {
   }
 
   /**
-   * Retorna lista de TODOS os usuários cadastrados na plataforma
+   * Retorna lista de TODOS os usuários cadastrados na plataforma com paginação
    */
-  async getAllUsers() {
-    const users = await this.userRepository.find({
-      relations: ['plan'],
-      select: [
-        'id',
-        'name',
-        'email',
-        'derivLoginId',
-        'derivCurrency',
-        'derivBalance',
-        'planId',
-        'planActivatedAt',
-        'createdAt',
-      ],
-      order: {
-        createdAt: 'DESC',
+  async getAllUsers(page: number = 1, limit: number = 10, search?: string) {
+    // Garantir valores mínimos
+    page = Math.max(1, page);
+    limit = Math.min(Math.max(1, limit), 100);
+    const skip = (page - 1) * limit;
+
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.plan', 'plan')
+      .select([
+        'user.id',
+        'user.name',
+        'user.email',
+        'user.phone',
+        'user.derivLoginId',
+        'user.derivCurrency',
+        'user.derivBalance',
+        'user.planId',
+        'user.planActivatedAt',
+        'user.createdAt',
+        'plan.name'
+      ]);
+
+    if (search) {
+      queryBuilder.where(
+        '(LOWER(user.name) LIKE LOWER(:search) OR LOWER(user.email) LIKE LOWER(:search) OR user.derivLoginId LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    queryBuilder.orderBy('user.createdAt', 'DESC');
+
+    const [users, total] = await queryBuilder
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data: users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || 'N/A',
+        derivLoginId: user.derivLoginId || 'N/A',
+        currency: user.derivCurrency || 'USD',
+        balance: user.derivBalance ? parseFloat(user.derivBalance) : 0,
+        plan: user.plan?.name || 'Sem plano',
+        planActivatedAt: user.planActivatedAt,
+        createdAt: user.createdAt,
+      })),
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        totalRecords: total,
+        recordsPerPage: limit,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
       },
+    };
+  }
+
+  /**
+   * Cria um novo usuário manualmente pelo admin
+   */
+  async createUser(data: {
+    name: string;
+    email: string;
+    phone: string;
+    planId: string;
+  }) {
+    // Verificar se email já existe
+    const existing = await this.userRepository.findOne({
+      where: { email: data.email },
     });
 
-    return users.map((user) => ({
+    if (existing) {
+      throw new ConflictException('Email já está em uso');
+    }
+
+    // Gerar senha aleatória
+    const password = this.generateRandomPassword();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = this.userRepository.create({
+      id: uuidv4(),
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      password: hashedPassword,
+      role: 'user',
+      isActive: true,
+      planId: data.planId,
+      planActivatedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await this.userRepository.save(user);
+
+    return {
       id: user.id,
       name: user.name,
       email: user.email,
-      derivLoginId: user.derivLoginId || 'N/A',
-      currency: user.derivCurrency || 'USD',
-      balance: user.derivBalance ? parseFloat(user.derivBalance) : 0,
-      plan: user.plan?.name || 'Sem plano',
-      planActivatedAt: user.planActivatedAt,
-      createdAt: user.createdAt,
-    }));
+      tempPassword: password,
+      message: 'Usuário criado com sucesso'
+    };
   }
 
   /**
