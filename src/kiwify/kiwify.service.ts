@@ -1,0 +1,123 @@
+import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class KiwifyService {
+    private readonly logger = new Logger(KiwifyService.name);
+    private readonly baseUrl = 'https://public-api.kiwify.com.br';
+    private accessToken: string | null = null;
+    private tokenExpiresAt: number = 0;
+
+    constructor(private configService: ConfigService) { }
+
+    private async authenticate() {
+        // Verificar se o token atual ainda é válido (com margem de 5 minutos)
+        if (this.accessToken && Date.now() < this.tokenExpiresAt - 5 * 60 * 1000) {
+            return;
+        }
+
+        const clientId = this.configService.get<string>('KIWIFY_CLIENT_ID');
+        const clientSecret = this.configService.get<string>('KIWIFY_CLIENT_SECRET');
+
+        if (!clientId || !clientSecret) {
+            this.logger.error('Credenciais da Kiwify não configuradas (KIWIFY_CLIENT_ID, KIWIFY_CLIENT_SECRET)');
+            throw new HttpException('Configuração da Kiwify incompleta no servidor', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        try {
+            this.logger.log('Autenticando na API da Kiwify...');
+            const response = await fetch(`${this.baseUrl}/v1/oauth/token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                this.logger.error(`Falha na autenticação Kiwify: ${response.status} ${errorText}`);
+                throw new HttpException('Falha na autenticação com Kiwify', HttpStatus.BAD_GATEWAY);
+            }
+
+            const data = await response.json();
+            this.accessToken = data.access_token;
+            // Expires in é em segundos, converter para ms e adicionar ao now
+            this.tokenExpiresAt = Date.now() + (data.expires_in * 1000);
+            this.logger.log('Autenticação Kiwify realizada com sucesso');
+        } catch (error) {
+            this.logger.error('Erro ao conectar com Kiwify', error);
+            if (error instanceof HttpException) throw error;
+            throw new HttpException('Erro de conexão com Kiwify', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    async getUsers() {
+        await this.authenticate();
+
+        const accountId = this.configService.get<string>('KIWIFY_ACCOUNT_ID');
+        if (!accountId) {
+            throw new HttpException('KIWIFY_ACCOUNT_ID não configurado', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        try {
+            this.logger.log('Buscando usuários (vendas) na Kiwify...');
+            // Buscar vendas (orders) - Limite de 100 por página (ajuste conforme necessidade ou implemente paginação total)
+            // Para simplificar, buscaremos os últimos 100 registros. Se precisar de todos, precisa de um loop.
+            const response = await fetch(`${this.baseUrl}/v1/orders?limit=100`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`,
+                    'x-kiwify-account-id': accountId,
+                    'Accept': 'application/json'
+                },
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
+                throw new HttpException('Erro ao buscar dados da Kiwify', HttpStatus.BAD_GATEWAY);
+            }
+
+            const data = await response.json();
+            const orders = data.data || [];
+
+            this.logger.log(`Encontradas ${orders.length} vendas. Processando usuários únicos...`);
+
+            // Extrair usuários únicos das vendas
+            const uniqueUsersMap = new Map<string, any>();
+
+            for (const order of orders) {
+                const customer = order.customer;
+                if (customer && customer.email) {
+                    // Usar email como chave para unicidade
+                    if (!uniqueUsersMap.has(customer.email)) {
+                        uniqueUsersMap.set(customer.email, {
+                            name: customer.name || 'Sem nome',
+                            email: customer.email,
+                            phone: customer.mobile || customer.phone || '',
+                            // Adicionar info extra se útil
+                            lastPurchaseDate: order.created_at
+                        });
+                    }
+                }
+            }
+
+            const users = Array.from(uniqueUsersMap.values());
+            this.logger.log(`${users.length} usuários únicos processados.`);
+
+            return {
+                count: users.length,
+                users: users
+            };
+
+        } catch (error) {
+            this.logger.error('Erro ao processar usuários Kiwify', error);
+            if (error instanceof HttpException) throw error;
+            throw new HttpException('Erro ao processar dados da Kiwify', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+}

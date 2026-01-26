@@ -21,21 +21,22 @@ import { WebhookModule } from './webhook/webhook.module';
 import { AutonomousAgentModule } from './autonomous-agent/autonomous-agent.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { UtilsModule } from './utils/utils.module';
+import { KiwifyModule } from './kiwify/kiwify.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     DatabaseModule,
     UtilsModule, // Módulo global para utilitários (LogQueueService) 
-    UserModule, 
-    AuthModule, 
-    BrokerModule, 
-    CoursesModule, 
-    SupportModule, 
-    SettingsModule, 
-    PlansModule, 
-    TradesModule, 
-    GeminiModule, 
+    UserModule,
+    AuthModule,
+    BrokerModule,
+    CoursesModule,
+    SupportModule,
+    SettingsModule,
+    PlansModule,
+    TradesModule,
+    GeminiModule,
     AiModule,
     CopyTradingModule,
     ClientsModule,
@@ -44,8 +45,9 @@ import { UtilsModule } from './utils/utils.module';
     WebhookModule,
     AutonomousAgentModule,
     NotificationsModule,
+    KiwifyModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }
