@@ -130,7 +130,10 @@ export class AdminService {
         derivLoginId: user.derivLoginId || 'N/A',
         currency: user.derivCurrency || 'USD',
         balance: user.derivBalance ? parseFloat(user.derivBalance) : 0,
+        planId: user.planId,
         plan: user.plan?.name || 'Sem plano',
+        role: user.role,
+        traderMestre: user.traderMestre,
         planActivatedAt: user.planActivatedAt,
         createdAt: user.createdAt,
       })),
@@ -143,6 +146,43 @@ export class AdminService {
         hasPreviousPage: page > 1,
       },
     };
+  }
+
+  /**
+   * Atualiza dados de um usuário pelo admin
+   */
+  async updateUser(id: string, data: {
+    planId?: string;
+    role?: string;
+    traderMestre?: boolean;
+    isActive?: boolean;
+  }) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+
+    if (data.planId !== undefined) {
+      user.planId = data.planId;
+      // Ao mudar o plano pelo admin, consideramos ativação imediata
+      user.planActivatedAt = new Date();
+    }
+
+    if (data.role !== undefined) {
+      user.role = data.role;
+    }
+
+    if (data.traderMestre !== undefined) {
+      user.traderMestre = data.traderMestre;
+    }
+
+    if (data.isActive !== undefined) {
+      user.isActive = data.isActive;
+    }
+
+    await this.userRepository.save(user);
+
+    return { message: 'Usuário atualizado com sucesso' };
   }
 
   /**

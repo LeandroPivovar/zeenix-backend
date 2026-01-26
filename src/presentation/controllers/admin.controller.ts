@@ -33,6 +33,11 @@ export class AdminController {
     return this.adminService.createUser(data);
   }
 
+  @Put('users/:id')
+  async updateUser(@Param('id') id: string, @Body() data: any) {
+    return this.adminService.updateUser(id, data);
+  }
+
   @Get('managed-volume')
   async getManagedVolume() {
     return this.adminService.getManagedVolume();
