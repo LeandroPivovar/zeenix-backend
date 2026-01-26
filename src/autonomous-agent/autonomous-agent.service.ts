@@ -641,6 +641,62 @@ export class AutonomousAgentService implements OnModuleInit {
       config.derivToken = resolvedToken;
       config.currency = resolvedCurrency;
 
+      // ✅ Buscar informações adicionais da conta padrão (token_deriv e amount_deriv)
+      let tokenDeriv: string | null = null;
+      let amountDeriv: number | null = null;
+
+      if (userSettings && userSettings.length > 0) {
+        const { trade_currency, token_demo, token_real } = userSettings[0];
+        const tradeCurrency = (trade_currency || 'USD').toUpperCase();
+
+        // Determinar token e amount baseado na conta padrão
+        if (tradeCurrency === 'DEMO') {
+          tokenDeriv = token_demo;
+
+          // Buscar saldo demo
+          const demoBalance = await this.dataSource.query(
+            `SELECT demo_amount FROM users WHERE id = ?`,
+            [userId]
+          );
+          amountDeriv = demoBalance && demoBalance.length > 0 ? parseFloat(demoBalance[0].demo_amount || 0) : 0;
+        } else {
+          // Para USD, BTC ou outras contas reais
+          tokenDeriv = token_real;
+
+          // Buscar saldo real e deriv_raw para obter o saldo específico da moeda
+          const realData = await this.dataSource.query(
+            `SELECT real_amount, deriv_raw FROM users WHERE id = ?`,
+            [userId]
+          );
+
+          if (realData && realData.length > 0) {
+            amountDeriv = parseFloat(realData[0].real_amount || 0);
+
+            // Se deriv_raw estiver disponível, pegar o saldo específico da moeda
+            try {
+              const derivRaw = typeof realData[0].deriv_raw === 'string'
+                ? JSON.parse(realData[0].deriv_raw)
+                : realData[0].deriv_raw;
+
+              if (derivRaw?.authorize?.account_list) {
+                const defaultAccount = derivRaw.authorize.account_list.find(
+                  (acc: any) => acc.currency === tradeCurrency && !acc.is_virtual
+                );
+                if (defaultAccount) {
+                  amountDeriv = parseFloat(defaultAccount.balance || 0);
+                }
+              }
+            } catch (parseError) {
+              this.logger.warn(`[ActivateAgent] ⚠️ Erro ao processar deriv_raw:`, parseError);
+            }
+          }
+        }
+
+        this.logger.log(
+          `[ActivateAgent] 💰 Conta padrão: currency=${tradeCurrency}, token=${tokenDeriv ? tokenDeriv.substring(0, 8) + '...' : 'null'}, amount=${amountDeriv}`
+        );
+      }
+
       // ✅ [ZENIX v2.0] GARANTIR EXCLUSIVIDADE: Desativar qualquer estratégia anterior antes de iniciar a nova
       // Isso resolve o problema de múltiplos agentes rodando simultaneamente (ex: Sentinel e Falcon juntos)
       try {
@@ -697,6 +753,8 @@ export class AutonomousAgentService implements OnModuleInit {
                daily_profit_target = ?,
                daily_loss_limit = ?,
                deriv_token = ?,
+               token_deriv = ?,
+               amount_deriv = ?,
                currency = ?,
                symbol = ?,
                agent_type = ?,
@@ -713,6 +771,8 @@ export class AutonomousAgentService implements OnModuleInit {
             config.dailyProfitTarget,
             config.dailyLossLimit,
             config.derivToken,
+            tokenDeriv,
+            amountDeriv,
             config.currency || 'USD',
             config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
@@ -731,15 +791,17 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            deriv_token, currency, symbol, agent_type, trading_mode, initial_balance,
+            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, initial_balance,
             session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
             config.dailyProfitTarget,
             config.dailyLossLimit,
             config.derivToken,
+            tokenDeriv,
+            amountDeriv,
             config.currency || 'USD',
             config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
