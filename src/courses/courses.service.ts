@@ -166,6 +166,7 @@ export class CoursesService {
           orderIndex: l.orderIndex,
           createdAt: l.createdAt,
           updatedAt: l.updatedAt,
+          isDerivTutorial: l.isDerivTutorial,
         })),
     }));
 
@@ -326,6 +327,11 @@ export class CoursesService {
       updateData.contentLink = this.normalizeMediaPath(updateLessonDto.contentLink);
     }
 
+    // Se for marcado como tutorial da Deriv, desmarcar todos os outros
+    if (updateLessonDto.isDerivTutorial) {
+      await this.lessonEntityRepository.update({}, { isDerivTutorial: false });
+    }
+
     Object.assign(lesson, updateData);
     return await this.lessonEntityRepository.save(lesson);
   }
@@ -440,6 +446,22 @@ export class CoursesService {
     });
 
     return progressMap;
+  }
+
+
+  async getDerivTutorialVideo() {
+    const lesson = await this.lessonEntityRepository.findOne({
+      where: { isDerivTutorial: true, isActive: true },
+    });
+
+    if (!lesson) return null;
+
+    return {
+      videoUrl: lesson.videoUrl,
+      contentLink: lesson.contentLink,
+      contentType: lesson.contentType,
+      title: lesson.title
+    };
   }
 }
 

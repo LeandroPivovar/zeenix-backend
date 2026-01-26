@@ -101,6 +101,12 @@ export class CoursesController {
     return this.handleUploadedFile(file, ['lessons', 'materials']);
   }
 
+  // Deriv Tutorial
+  @Get('deriv-tutorial-video')
+  getDerivTutorialVideo() {
+    return this.coursesService.getDerivTutorialVideo();
+  }
+
   // Courses CRUD
   @Get()
   findAll() {

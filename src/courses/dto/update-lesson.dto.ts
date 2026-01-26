@@ -48,5 +48,9 @@ export class UpdateLessonDto {
   @IsOptional()
   @IsNumber()
   orderIndex?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isDerivTutorial?: boolean;
 }
 
