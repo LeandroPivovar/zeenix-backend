@@ -4083,7 +4083,7 @@ export class AiService implements OnModuleInit {
 
     // ✅ Buscar informações da conta padrão do usuário (token_deriv e amount_deriv)
     let tokenDeriv: string | null = null;
-    let amountDeriv: number | null = null;
+    let initialAmountDeriv: number | null = null;
 
     try {
       const accountInfo = await this.dataSource.query(
@@ -4106,11 +4106,11 @@ export class AiService implements OnModuleInit {
         // Determinar token e amount baseado na conta padrão
         if (tradeCurrency === 'DEMO') {
           tokenDeriv = accountInfo[0]?.token_demo;
-          amountDeriv = parseFloat(accountInfo[0]?.demo_amount || 0);
+          initialAmountDeriv = parseFloat(accountInfo[0]?.demo_amount || 0);
         } else {
           // Para USD, BTC ou outras contas reais
           tokenDeriv = accountInfo[0]?.token_real;
-          amountDeriv = parseFloat(accountInfo[0]?.real_amount || 0);
+          initialAmountDeriv = parseFloat(accountInfo[0]?.real_amount || 0);
 
           // Se o deriv_raw estiver disponível, pegar o amount específico da moeda
           try {
@@ -4123,7 +4123,7 @@ export class AiService implements OnModuleInit {
                 (acc: any) => acc.currency === tradeCurrency && !acc.is_virtual
               );
               if (defaultAccount) {
-                amountDeriv = parseFloat(defaultAccount.balance || 0);
+                initialAmountDeriv = parseFloat(defaultAccount.balance || 0);
               }
             }
           } catch (parseError) {
@@ -4132,7 +4132,7 @@ export class AiService implements OnModuleInit {
         }
 
         this.logger.log(
-          `[ActivateAI] 💰 Conta padrão: currency=${tradeCurrency}, token=${tokenDeriv ? tokenDeriv.substring(0, 8) + '...' : 'null'}, amount=${amountDeriv}`
+          `[ActivateAI] 💰 Conta padrão: currency=${tradeCurrency}, token=${tokenDeriv ? tokenDeriv.substring(0, 8) + '...' : 'null'}, amount=${initialAmountDeriv}`
         );
       }
     } catch (accountError) {
@@ -4150,7 +4150,7 @@ export class AiService implements OnModuleInit {
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, token_deriv, amount_deriv, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
          VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, tokenDeriv, amountDeriv, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
+        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, tokenDeriv, initialAmountDeriv, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -4214,6 +4214,37 @@ export class AiService implements OnModuleInit {
       `[ActivateAI] ✅ Nova sessão criada | userId=${userId} | stake=${stakeAmount} | currency=${normalizedCurrency}`,
     );
 
+    // ✅ Buscar token_deriv e amount_deriv da conta padrão salva no banco
+    let tokenToUse = finalToken; // Default: usar token resolvido
+
+    try {
+      const savedConfig = await this.dataSource.query(
+        `SELECT token_deriv, amount_deriv FROM ai_user_config 
+         WHERE user_id = ? AND is_active = TRUE 
+         LIMIT 1`,
+        [userId]
+      );
+
+      if (savedConfig && savedConfig.length > 0) {
+        const tokenDeriv = savedConfig[0].token_deriv;
+        const savedAmountDeriv = savedConfig[0].amount_deriv;
+
+        if (tokenDeriv) {
+          tokenToUse = tokenDeriv;
+          this.logger.log(
+            `[ActivateAI] 🔑 Usando token_deriv (conta padrão): ${tokenDeriv.substring(0, 8)}... | Saldo: ${savedAmountDeriv}`
+          );
+        } else {
+          this.logger.log(
+            `[ActivateAI] 🔑 token_deriv não disponível, usando deriv_token: ${finalToken.substring(0, 8)}...`
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`[ActivateAI] ⚠️ Erro ao buscar token_deriv do banco:`, error);
+      // Continuar com finalToken
+    }
+
     if ((mode || '').toLowerCase() === 'veloz') {
       this.logger.log(
         `[ActivateAI] Sincronizando estado Veloz | stake=${stakeAmount} | entryValue=${entryValue || getMinStakeByCurrency(normalizedCurrency)}`,
@@ -4222,7 +4253,7 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
-        derivToken: finalToken,
+        derivToken: tokenToUse, // ✅ Usar token_deriv se disponível
         currency: normalizedCurrency,
       });
       this.removeModeradoUserState(userId);
@@ -4235,7 +4266,7 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
-        derivToken: finalToken,
+        derivToken: tokenToUse, // ✅ Usar token_deriv se disponível
         currency: normalizedCurrency,
       });
       this.removeVelozUserState(userId);
@@ -4248,7 +4279,7 @@ export class AiService implements OnModuleInit {
         userId,
         stakeAmount,
         entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
-        derivToken: finalToken,
+        derivToken: tokenToUse, // ✅ Usar token_deriv se disponível
         currency: normalizedCurrency,
       });
       this.removeVelozUserState(userId);
@@ -4267,7 +4298,7 @@ export class AiService implements OnModuleInit {
           mode: mode || 'veloz',
           stakeAmount, // Capital total da conta
           entryValue: entryValue || getMinStakeByCurrency(normalizedCurrency), // ✅ Moeda dinâmica
-          derivToken: finalToken, // ✅ USAR TOKEN RESOLVIDO (finalToken) e não o argumento (derivToken)
+          derivToken: tokenToUse, // ✅ USAR token_deriv se disponível (conta padrão)
           currency: normalizedCurrency,
           modoMartingale: modoMartingale || 'conservador',
           profitTarget: profitTarget || null,

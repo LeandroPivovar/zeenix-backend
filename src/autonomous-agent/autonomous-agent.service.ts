@@ -487,7 +487,7 @@ export class AutonomousAgentService implements OnModuleInit {
             initialStake: parseFloat(agent.initial_stake),
             dailyProfitTarget: parseFloat(agent.daily_profit_target),
             dailyLossLimit: parseFloat(agent.daily_loss_limit),
-            derivToken: agent.deriv_token,
+            derivToken: agent.token_deriv || agent.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback para deriv_token
             currency: agent.currency,
             symbol: agent.symbol || 'R_100',
             tradingMode: agent.trading_mode || 'normal',
@@ -571,7 +571,7 @@ export class AutonomousAgentService implements OnModuleInit {
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
             dailyLossLimit: parseFloat(agentConfig.daily_loss_limit),
-            derivToken: agentConfig.deriv_token,
+            derivToken: agentConfig.token_deriv || agentConfig.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback
             currency: agentConfig.currency,
             symbol: agentConfig.symbol || 'R_100',
             tradingMode: agentConfig.trading_mode || 'normal',
@@ -852,12 +852,18 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Ativar agente na estratégia
       try {
+        // ✅ Log para confirmar qual token está sendo usado
+        const tokenToUse = tokenDeriv || config.derivToken;
+        this.logger.log(
+          `[ActivateAgent] 🔑 Token a ser usado: ${tokenDeriv ? 'token_deriv (conta padrão)' : 'deriv_token (fornecido)'} | Token: ${tokenToUse ? tokenToUse.substring(0, 8) + '...' : 'N/A'}`
+        );
+
         await this.strategyManager.activateUser(strategy, userId, {
           userId: userId,
           initialStake: config.initialStake,
           dailyProfitTarget: config.dailyProfitTarget,
           dailyLossLimit: config.dailyLossLimit,
-          derivToken: config.derivToken,
+          derivToken: tokenDeriv || config.derivToken, // ✅ Usar token_deriv (conta padrão) com fallback
           currency: config.currency || 'USD',
           symbol: agentSymbol,
           tradingMode: config.tradingMode || 'normal',
