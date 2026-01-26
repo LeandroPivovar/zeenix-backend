@@ -306,11 +306,13 @@ export class AutonomousAgentController {
     @Query('days') days?: string,
     @Query('agent') agent?: string,
     @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string
+    @Query('endDate') endDate?: string,
+    @Query('aggregateBy') aggregateBy?: 'trade' | 'day'
   ) {
     try {
       const daysNum = days ? parseInt(days, 10) : 30;
-      const evolution = await this.agentService.getProfitEvolution(userId, daysNum, agent, startDate, endDate);
+      const agg = aggregateBy || 'trade';
+      const evolution = await this.agentService.getProfitEvolution(userId, daysNum, agent, startDate, endDate, agg);
 
       return {
         success: true,

@@ -1512,7 +1512,7 @@ export class AutonomousAgentService implements OnModuleInit {
     return result.reverse();
   }
 
-  async getProfitEvolution(userId: string, days: number = 30, agent?: string, startDateStr?: string, endDateStr?: string): Promise<any[]> {
+  async getProfitEvolution(userId: string, days: number = 30, agent?: string, startDateStr?: string, endDateStr?: string, aggregateBy: 'trade' | 'day' = 'trade'): Promise<any[]> {
     const config = await this.getAgentConfig(userId);
     const initialBalance = parseFloat(config?.initial_balance) || 0;
 
@@ -1590,6 +1590,44 @@ export class AutonomousAgentService implements OnModuleInit {
     // Para permitir que o usuário veja o lucro ACUMULADO de hj, começamos em 0.
     const startingValue = 0;
 
+    if (aggregateBy === 'day') {
+      // Agrupar por dia (fuso horário local -03:00)
+      const dayMap = new Map<string, number>();
+
+      for (const trade of trades) {
+        const date = new Date(trade.created_at);
+        // Ajustar para fuso -03:00 para agrupar corretamente conforme o dia do usuário
+        const localDate = new Date(date.getTime() - (3 * 60 * 60 * 1000));
+        const dateKey = localDate.toISOString().split('T')[0];
+
+        const profit = parseFloat(trade.profit_loss) || 0;
+        dayMap.set(dateKey, (dayMap.get(dateKey) || 0) + profit);
+      }
+
+      // Converter map para pontos do gráfico CUMULATIVOS para o gráfico de linha
+      const dailyPoints: { time: number, value: number }[] = [];
+      const sortedKeys = Array.from(dayMap.keys()).sort();
+
+      // Adicionar ponto inicial em 0 para garantir que o gráfico tenha uma linha caso seja apenas um dia
+      // e para que a evolução comece do zero no início do range.
+      dailyPoints.push({
+        time: startDate.getTime() / 1000,
+        value: Number(startingValue.toFixed(2))
+      });
+
+      let cumulativeTotal = startingValue;
+      for (const key of sortedKeys) {
+        const d = new Date(key + 'T12:00:00'); // Meio do dia para evitar problemas de fuso
+        cumulativeTotal += dayMap.get(key)!;
+        dailyPoints.push({
+          time: d.getTime() / 1000,
+          value: Number(cumulativeTotal.toFixed(2))
+        });
+      }
+
+      return dailyPoints;
+    }
+
     dataPoints.push({
       time: startDate.getTime() / 1000,
       value: Number(startingValue.toFixed(2))
@@ -1630,13 +1668,21 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Determinar lógica de agrupamento baseada na duração da sessão
     let daysForLogic = 1;
-    if (diffDays <= 1) daysForLogic = 1;
-    else if (diffDays <= 2) daysForLogic = 2;
-    else if (diffDays <= 3) daysForLogic = 3;
-    else daysForLogic = 4;
+    let aggregateBy: 'trade' | 'day' = 'trade';
+
+    if (diffDays <= 1) {
+      daysForLogic = 1;
+      aggregateBy = 'trade'; // Para sessões curtas, mostrar trade a trade
+    } else if (diffDays <= 7) {
+      daysForLogic = 7;
+      aggregateBy = 'trade';
+    } else {
+      daysForLogic = Math.ceil(diffDays);
+      aggregateBy = 'day'; // Para sessões muito longas, agrupar por dia
+    }
 
     // Reutilizar lógica de buckets com o número de dias calculado
-    return this.getProfitEvolution(userId, daysForLogic);
+    return this.getProfitEvolution(userId, daysForLogic, 'all', undefined, undefined, aggregateBy);
   }
 
   /**
