@@ -18,8 +18,24 @@ export class AdminController {
   }
 
   @Get('users/all')
-  async getAllUsers() {
-    return this.adminService.getAllUsers();
+  async getAllUsers(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search: string = '',
+  ) {
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    return this.adminService.getAllUsers(pageNum, limitNum, search);
+  }
+
+  @Post('users')
+  async createUser(@Body() data: any) {
+    return this.adminService.createUser(data);
+  }
+
+  @Put('users/:id')
+  async updateUser(@Param('id') id: string, @Body() data: any) {
+    return this.adminService.updateUser(id, data);
   }
 
   @Get('managed-volume')
