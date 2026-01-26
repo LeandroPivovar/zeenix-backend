@@ -63,59 +63,67 @@ export class KiwifyService {
             throw new HttpException('KIWIFY_ACCOUNT_ID não configurado', HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-        try {
-            this.logger.log('Buscando usuários (vendas) na Kiwify...');
-            // Buscar vendas (sales) - Limite de 100 por página
-            const response = await fetch(`${this.baseUrl}/v1/sales?limit=100`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`,
-                    'x-kiwify-account-id': accountId,
-                    'Accept': 'application/json'
-                },
-            });
+        this.logger.log('Buscando usuários (vendas) na Kiwify...');
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
-                throw new HttpException('Erro ao buscar dados da Kiwify para rota de vendas', HttpStatus.BAD_GATEWAY);
-            }
+        // Definir datas: hoje e 90 dias atrás
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(endDate.getDate() - 90);
 
-            const data = await response.json();
-            const sales = data.data || [];
+        const startDateStr = startDate.toISOString();
+        const endDateStr = endDate.toISOString();
 
-            this.logger.log(`Encontradas ${sales.length} vendas. Processando usuários únicos...`);
+        // Buscar vendas (sales) - Limite de 100 por página
+        const response = await fetch(`${this.baseUrl}/v1/sales?limit=100&start_date=${startDateStr}&end_date=${endDateStr}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'x-kiwify-account-id': accountId,
+                'Accept': 'application/json'
+            },
+        });
 
-            // Extrair usuários únicos das vendas
-            const uniqueUsersMap = new Map<string, any>();
+        if (!response.ok) {
+            const errorText = await response.text();
+            this.logger.error(`Erro ao buscar vendas Kiwify: ${response.status} ${errorText}`);
+            throw new HttpException('Erro ao buscar dados da Kiwify para rota de vendas', HttpStatus.BAD_GATEWAY);
+        }
 
-            for (const sale of sales) {
-                const customer = sale.customer;
-                if (customer && customer.email) {
-                    // Usar email como chave para unicidade
-                    if (!uniqueUsersMap.has(customer.email)) {
-                        uniqueUsersMap.set(customer.email, {
-                            name: customer.name || 'Sem nome',
-                            email: customer.email,
-                            phone: customer.mobile || customer.phone || '',
-                            lastPurchaseDate: sale.created_at
-                        });
-                    }
+        const data = await response.json();
+        const sales = data.data || [];
+
+        this.logger.log(`Encontradas ${sales.length} vendas. Processando usuários únicos...`);
+
+        // Extrair usuários únicos das vendas
+        const uniqueUsersMap = new Map<string, any>();
+
+        for (const sale of sales) {
+            const customer = sale.customer;
+            if (customer && customer.email) {
+                // Usar email como chave para unicidade
+                if (!uniqueUsersMap.has(customer.email)) {
+                    uniqueUsersMap.set(customer.email, {
+                        name: customer.name || 'Sem nome',
+                        email: customer.email,
+                        phone: customer.mobile || customer.phone || '',
+                        lastPurchaseDate: sale.created_at
+                    });
                 }
             }
-
-            const users = Array.from(uniqueUsersMap.values());
-            this.logger.log(`${users.length} usuários únicos processados.`);
-
-            return {
-                count: users.length,
-                users: users
-            };
-
-        } catch (error) {
-            this.logger.error('Erro ao processar usuários Kiwify', error);
-            if (error instanceof HttpException) throw error;
-            throw new HttpException('Erro ao processar dados da Kiwify', HttpStatus.INTERNAL_SERVER_ERROR);
         }
+
+        const users = Array.from(uniqueUsersMap.values());
+        this.logger.log(`${users.length} usuários únicos processados.`);
+
+        return {
+            count: users.length,
+            users: users
+        };
+
+    } catch(error) {
+        this.logger.error('Erro ao processar usuários Kiwify', error);
+        if (error instanceof HttpException) throw error;
+        throw new HttpException('Erro ao processar dados da Kiwify', HttpStatus.INTERNAL_SERVER_ERROR);
     }
+}
 }
