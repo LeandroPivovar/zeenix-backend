@@ -134,6 +134,7 @@ export class AdminService {
         plan: user.plan?.name || 'Sem plano',
         role: user.role,
         traderMestre: user.traderMestre,
+        isActive: user.isActive,
         planActivatedAt: user.planActivatedAt,
         createdAt: user.createdAt,
       })),
