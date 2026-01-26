@@ -327,13 +327,10 @@ export class TradesService {
     }
 
     // Buscar usuários com token real configurado
-    const users = await this.userRepository.find({
-      where: [
-        { isActive: true } // Pegar todos ativos, filtraremos os que tem token no loop
-      ]
-    });
+    const allUsers = await this.userRepository.findAll();
+    const users = allUsers.filter(u => u.isActive);
 
-    const results = [];
+    const results: any[] = [];
 
     // Processar em lotes para não sobrecarregar
     for (const user of users) {
