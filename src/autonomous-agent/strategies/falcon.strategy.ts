@@ -350,10 +350,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
     // }
 
-    // ✅ Processar para todos os usuários ativos (sempre 1HZ10V)
+    // ✅ Processar para todos os usuários ativos
     for (const [userId, config] of this.userConfigs.entries()) {
-      // Sempre processar se o tick for 1HZ10V (todos os agentes autônomos usam 1HZ10V na V2)
-      if (tickSymbol === '1HZ10V') {
+      // ✅ Verificar se o símbolo coincide (com suporte a sinônimos)
+      if (this.isSymbolMatch(tickSymbol, config.symbol || '1HZ10V')) {
         promises.push(this.processTickForUser(userId, tick).catch((error) => {
           this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
         }));
@@ -1449,17 +1449,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     await this.updateUserStateInDb(userId, state);
 
     // ✅ Logs detalhados do resultado (formato igual à Orion)
-    const status = result.win ? 'WON' : 'LOST';
-    const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
-    const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
-
     // ✅ Log de resultado no padrão Orion
     await this.logTradeResultV2(userId, {
       status: result.win ? 'WIN' : 'LOSS',
       profit: result.profit,
       stake: result.stake,
-      balance: config.initialBalance + state.lucroAtual // Approximation of current balance? state.lucroAtual is profit relative to start.
-      // initialBalance + lucroAtual should be current balance.
+      balance: config.initialBalance + state.lucroAtual
     });
 
     // Verificar se atingiu meta ou stop
@@ -1468,6 +1463,37 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     } else if (state.lucroAtual <= -config.dailyLossLimit) {
       await this.handleStopCondition(userId, 'STOP_LOSS');
     }
+  }
+
+  /**
+   * ✅ HELPER: Normaliza e compara símbolos de mercado
+   */
+  private isSymbolMatch(tickSymbol: string, configSymbol: string): boolean {
+    if (!tickSymbol || !configSymbol) return false;
+
+    const s1 = tickSymbol.toUpperCase();
+    const s2 = configSymbol.toUpperCase();
+
+    if (s1 === s2) return true;
+
+    // Mapeamento de sinônimos (Deriv API vs Interno Zenix)
+    const synonyms: Record<string, string[]> = {
+      'R_100': ['1HZ100V', 'VOLATILITY 100 INDEX'],
+      'R_50': ['1HZ50V', 'VOLATILITY 50 INDEX'],
+      'R_10': ['1HZ10V', 'VOLATILITY 10 INDEX'],
+      'R_25': ['1HZ25V', 'VOLATILITY 25 INDEX'],
+      'R_75': ['1HZ75V', 'VOLATILITY 75 INDEX'],
+      '1HZ100V': ['R_100'],
+      '1HZ50V': ['R_50'],
+      '1HZ10V': ['R_10'],
+      '1HZ25V': ['R_25'],
+      '1HZ75V': ['R_75'],
+    };
+
+    if (synonyms[s1]?.includes(s2)) return true;
+    if (synonyms[s2]?.includes(s1)) return true;
+
+    return false;
   }
 
   /**
