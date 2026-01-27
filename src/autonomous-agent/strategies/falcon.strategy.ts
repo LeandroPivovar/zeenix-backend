@@ -444,11 +444,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const requiredTicks = settings.windowSize;
 
     if (userTicks.length < requiredTicks) {
-      this.logDataCollection(userId, {
-        targetCount: requiredTicks,
-        currentCount: userTicks.length,
-        mode: state.mode
-      });
+      // ✅ Log de progresso a cada 3 ticks (igual Zeus)
+      if (userTicks.length % 3 === 0) {
+        this.logDataCollection(userId, {
+          targetCount: requiredTicks,
+          currentCount: userTicks.length,
+          mode: state.mode
+        });
+      }
       return;
     }
 

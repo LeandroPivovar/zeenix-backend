@@ -82,10 +82,10 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ FALCON: Processa R_100
+    // ✅ FALCON: Processa R_100, 1HZ10V e 1HZ100V
     const falconStrategy = this.strategies.get('falcon');
     if (falconStrategy && typeof (falconStrategy as any).processTick === 'function') {
-      if (tickSymbol === 'R_100') {
+      if (['R_100', '1HZ10V', '1HZ100V'].includes(tickSymbol)) {
         promises.push(
           (falconStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
