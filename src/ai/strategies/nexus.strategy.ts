@@ -1308,12 +1308,13 @@ export class NexusStrategy implements IStrategy {
         stopLoss: number;
         stopBlindadoEnabled: boolean;
     }) {
-        const message = `❄️ NEXUS | ⚙️ Configurações Iniciais
-• Modo: ${config.operationMode}
-• Perfil: ${config.riskProfile}
-• Meta: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
-• Stop Loss: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}
-• Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+        const message = `CONFIGURAÇÕES INICIAIS
+IA: NEXUS 3.0
+Modo: ${config.operationMode.toUpperCase()}
+Perfil Corretora: ${config.riskProfile.toUpperCase()}
+Meta de Lucro: ${config.profitTarget > 0 ? '$' + config.profitTarget.toFixed(2) : 'N/A'}
+Limite de Perda: ${config.stopLoss > 0 ? '$' + config.stopLoss.toFixed(2) : 'N/A'}
+Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1326,10 +1327,11 @@ export class NexusStrategy implements IStrategy {
         mode: string;
         strategyName: string;
     }) {
-        const message = `❄️ NEXUS | 📡 Início de Sessão
-• Saldo Inicial: $${session.initialBalance.toFixed(2)}
-• Meta do Dia: $${session.profitTarget.toFixed(2)}
-• Status: Monitorando Mercado`;
+        const message = `INÍCIO DE SESSÃO
+Saldo Inicial: $${session.initialBalance.toFixed(2)}
+Meta do Dia: $${session.profitTarget.toFixed(2)}
+IA Ativa: NEXUS 3.0
+Status: Monitorando Mercado`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
@@ -1339,13 +1341,21 @@ export class NexusStrategy implements IStrategy {
         currentCount: number;
         mode?: string;
     }) {
-        const message = `❄️ NEXUS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+        const message = `COLETA DE DADOS
+Coleta de Dados em Andamento
+Meta de Coleta: ${data.targetCount} ticks
+Progresso: ${data.currentCount} / ${data.targetCount}
+Status: aguardando ticks suficientes`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message = `❄️  NEXUS | 🧠 Analisando Mercado (${mode})`;
+        const message = `ANÁLISE INICIADA
+Análise de Mercado
+Tipo de Análise: PRINCIPAL
+Modo Ativo: ${mode.toUpperCase()}
+Contrato Avaliado: Price Action (1 tick)`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
     }
@@ -1360,9 +1370,11 @@ export class NexusStrategy implements IStrategy {
         direction?: 'CALL' | 'PUT';
     }) {
         const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-        const message = `NEXUS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+        const message = `SINAL DETECTADO
+Direção: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
-• Força: ${signal.probability}%`;
+Força: ${signal.probability}%
+Tipo de Contrato: Price Action`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'sinal', message);
     }
@@ -1373,10 +1385,11 @@ ${filtersText}
         stake: number;
         balance: number;
     }) {
-        const emoji = result.status === 'WIN' ? '✅' : '❌';
-        const message = `❄️ NEXUS | ${emoji} Resultado: ${result.status}
-• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
-• Saldo: $${result.balance.toFixed(2)}`;
+        const message = `RESULTADO DA OPERAÇÃO
+Status: ${result.status}
+Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
+Saldo Atual: $${result.balance.toFixed(2)}
+Estado: Operação Finalizada`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
     }
@@ -1389,9 +1402,11 @@ ${filtersText}
         profitPercentage: number;
         contractType: string;
     }) {
-        const message = `❄️ NEXUS | 🔄 Martingale Nível ${martingale.level}
-• Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
-• Objetivo: Recuperação`;
+        const message = `MARTINGALE NÍVEL ${martingale.level}
+Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
+Objetivo: Recuperação de Capital
+Investimento: Inteligência Artificial
+Status: Aguardando Próximo Ciclo`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'alerta', message);
     }
@@ -1428,9 +1443,11 @@ ${filtersText}
         profitPercentage: number;
         stakeBase: number;
     }) {
-        const message = `❄️ NEXUS | 🛡️ Recuperação Concluída
-• Recuperado: $${recovery.recoveredLoss.toFixed(2)}
-• Ação: Retornando à Stake Base`;
+        const message = `RECUPERAÇÃO CONCLUÍDA
+Recuperação Bem-Sucedida
+Recuperado: $${recovery.recoveredLoss.toFixed(2)}
+Ação: Retornando à Stake Base
+Status: Sessão Equilibrada`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
     }

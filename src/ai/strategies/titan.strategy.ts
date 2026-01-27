@@ -1358,42 +1358,54 @@ export class TitanStrategy implements IStrategy {
     // ============================================
 
     private logInitialConfigV2(userId: string, mode: string, riskManager: RiskManager) {
-        const message = `❄️ TITAN | ⚙️ Configurações Iniciais
-• Modo: ${mode}
-• Perfil: ${riskManager['riskMode']}
-• Meta: $${riskManager['profitTarget'].toFixed(2)}
-• Stop Loss: $${riskManager['stopLossLimit'].toFixed(2)}
-• Blindado: ${riskManager['useBlindado'] ? 'ATIVADO' : 'DESATIVADO'}`;
+        const message = `CONFIGURAÇÕES INICIAIS
+IA: TITAN MASTER
+Modo: ${mode.toUpperCase()}
+Perfil Corretora: ${riskManager['riskMode'].toUpperCase()}
+Meta de Lucro: $${riskManager['profitTarget'].toFixed(2)}
+Limite de Perda: $${riskManager['stopLossLimit'].toFixed(2)}
+Stop Blindado: ${riskManager['useBlindado'] ? 'ATIVADO' : 'DESATIVADO'}`;
 
         this.saveTitanLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logSessionStart(userId: string, initialBalance: number, meta: number) {
-        const message = `❄️ TITAN | 📡 Início de Sessão
-• Saldo Inicial: $${initialBalance.toFixed(2)}
-• Meta do Dia: $${meta.toFixed(2)}
-• Status: Monitorando Mercado`;
+        const message = `INÍCIO DE SESSÃO
+Saldo Inicial: $${initialBalance.toFixed(2)}
+Meta do Dia: $${meta.toFixed(2)}
+IA Ativa: TITAN MASTER
+Status: Monitorando Mercado`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logDataCollection(userId: string, current: number, target: number) {
-        const message = `❄️ TITAN | 📡 Coletando dados... (${current}/${target})`;
+        const message = `COLETA DE DADOS
+Coleta de Dados em Andamento
+Meta de Coleta: ${target} ticks
+Progresso: ${current} / ${target}
+Status: aguardando ticks suficientes`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
-        const message = `❄️ TITAN | 🧠 Analisando Mercado (${mode})`;
+        const message = `ANÁLISE INICIADA
+Análise de Mercado
+Tipo de Análise: PRINCIPAL
+Modo Ativo: ${mode.toUpperCase()}
+Contrato Avaliado: Digits (1 tick)`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
         const filtersText = filters.map(f => `• ${f}`).join('\n');
-        const message = `❄️ TITAN | 🎯 Sinal Detectado: ${signal}
+        const message = `SINAL DETECTADO
+Direção: ${signal}
 ${filtersText}
-• Força: ${probability}%`;
+Força: ${probability}%
+Tipo de Contrato: Digits`;
 
         this.saveTitanLog(userId, this.symbol, 'sinal', message);
     }
@@ -1405,18 +1417,21 @@ ${filtersText}
         balance: number,
         contractInfo?: { exitDigit?: string }
     ) {
-        const emoji = result === 'WIN' ? '✅' : '❌';
-        const message = `❄️ TITAN | ${emoji} Resultado: ${result}
-• Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
-• Saldo: $${balance.toFixed(2)}`;
+        const message = `RESULTADO DA OPERAÇÃO
+Status: ${result}
+Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
+Saldo Atual: $${balance.toFixed(2)}
+Estado: Operação Finalizada`;
 
         this.saveTitanLog(userId, this.symbol, 'resultado', message, contractInfo);
     }
 
     private logMartingaleLevelV2(userId: string, level: number, stake: number) {
-        const message = `❄️ TITAN | 🔄 Martingale Nível ${level}
-• Próxima Stake: $${stake.toFixed(2)}
-• Objetivo: Recuperação`;
+        const message = `MARTINGALE NÍVEL ${level}
+Próxima Stake: $${stake.toFixed(2)}
+Objetivo: Recuperação de Capital
+Investimento: Inteligência Artificial
+Status: Aguardando Próximo Ciclo`;
 
         this.saveTitanLog(userId, this.symbol, 'alerta', message);
     }
@@ -1437,9 +1452,11 @@ ${filtersText}
     }
 
     private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
-        const message = `❄️ TITAN | 🛡️ Recuperação Concluída
-• Recuperado: $${totalLoss.toFixed(2)}
-• Ação: Retornando à Stake Base`;
+        const message = `RECUPERAÇÃO CONCLUÍDA
+Recuperação Bem-Sucedida
+Recuperado: $${totalLoss.toFixed(2)}
+Ação: Retornando à Stake Base
+Status: Sessão Equilibrada`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }

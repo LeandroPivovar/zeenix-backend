@@ -477,12 +477,13 @@ export class OrionStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    const message = `ORION | ⚙️ Configurações Iniciais
-• Modo: ${config.operationMode}
-• Perfil: ${config.riskProfile}
-• Meta: $${config.profitTarget.toFixed(2)}
-• Stop Loss: $${config.stopLoss.toFixed(2)}
-• Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+    const message = `CONFIGURAÇÕES INICIAIS
+IA: ${config.strategyName}
+Modo: ${config.operationMode}
+Perfil Corretora: ${config.riskProfile}
+Meta de Lucro: $${config.profitTarget.toFixed(2)}
+Limite de Perda: $${config.stopLoss.toFixed(2)}
+Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
     this.saveOrionLog(userId, this.symbol, 'config', message);
   }
@@ -495,10 +496,11 @@ export class OrionStrategy implements IStrategy {
     mode: string;
     strategyName: string;
   }) {
-    const message = `❄️ ORION | 📡 Início de Sessão
-• Saldo Inicial: $${session.initialBalance.toFixed(2)}
-• Meta do Dia: $${session.profitTarget.toFixed(2)}
-• Status: Monitorando Mercado`;
+    const message = `INÍCIO DE SESSÃO
+Saldo Inicial: $${session.initialBalance.toFixed(2)}
+Meta do Dia: $${session.profitTarget.toFixed(2)}
+IA Ativa: ${session.strategyName}
+Status: Monitorando Mercado`;
 
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
@@ -510,12 +512,20 @@ export class OrionStrategy implements IStrategy {
     currentCount: number;
     mode?: string;
   }) {
-    const message = `❄️ ORION | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+    const message = `COLETA DE DADOS
+Coleta de Dados em Andamento
+Meta de Coleta: ${data.targetCount} ticks
+Progresso: ${data.currentCount} / ${data.targetCount}
+Status: aguardando ticks suficientes`;
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `❄️ ORION | 🧠 Analisando Mercado (${mode})`;
+    const message = `ANÁLISE INICIADA
+Análise de Mercado
+Tipo de Análise: PRINCIPAL
+Modo Ativo: ${mode.toUpperCase()}
+Contrato Avaliado: Digits/Price Action (1 tick)`;
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
@@ -563,9 +573,11 @@ export class OrionStrategy implements IStrategy {
     direction?: 'CALL' | 'PUT';
   }) {
     const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `❄️ ORION | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+    const message = `SINAL DETECTADO
+Direção: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
-• Força: ${signal.probability}%`;
+Força: ${signal.probability}%
+Tipo de Contrato: Zenix Hybrid`;
 
     this.saveOrionLog(userId, this.symbol, 'sinal', message);
   }
@@ -578,10 +590,11 @@ ${filtersText}
     stake: number;
     balance: number;
   }) {
-    const emoji = result.status === 'WIN' ? '✅' : '❌';
-    const message = `❄️ ORION | ${emoji} Resultado: ${result.status}
-• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
-• Saldo: $${result.balance.toFixed(2)}`;
+    const message = `RESULTADO DA OPERAÇÃO
+Status: ${result.status}
+Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
+Saldo Atual: $${result.balance.toFixed(2)}
+Estado: Operação Finalizada`;
 
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }
@@ -594,9 +607,11 @@ ${filtersText}
     const level = soros.level || 1;
     const newStake = soros.stakeBase + soros.previousProfit;
 
-    const message = `❄️ ORION | 🚀 Soros Nível ${level}
-• Lucro Anterior: $${soros.previousProfit.toFixed(2)}
-• Nova Stake: $${newStake.toFixed(2)}`;
+    const message = `SOROS NÍVEL ${level}
+Ativação: Soros Alavancagem
+Lucro Anterior: $${soros.previousProfit.toFixed(2)}
+Nova Stake: $${newStake.toFixed(2)}
+Objetivo: Lucro Exponencial`;
 
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
@@ -637,9 +652,11 @@ ${filtersText}
     profitPercentage: number;
     contractType: string;
   }) {
-    const message = `❄️ ORION | 🔄 Martingale Nível ${martingale.level}
-• Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
-• Objetivo: Recuperação`;
+    const message = `MARTINGALE NÍVEL ${martingale.level}
+Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
+Objetivo: Recuperação de Capital
+Perda Acumulada: $${martingale.accumulatedLoss.toFixed(2)}
+Status: Aguardando Próximo Ciclo`;
 
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
@@ -673,9 +690,11 @@ ${filtersText}
     profitPercentage: number;
     stakeBase: number;
   }) {
-    const message = `❄️ ORION | 🛡️ Recuperação Concluída
-• Recuperado: $${recovery.recoveredLoss.toFixed(2)}
-• Ação: Retornando à Stake Base`;
+    const message = `RECUPERAÇÃO CONCLUÍDA
+Recuperação Bem-Sucedida
+Recuperado: $${recovery.recoveredLoss.toFixed(2)}
+Ação: Retornando à Stake Base
+Status: Sessão Equilibrada`;
 
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }

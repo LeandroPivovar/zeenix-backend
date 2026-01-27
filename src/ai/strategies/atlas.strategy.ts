@@ -1515,6 +1515,11 @@ Ação: IA DESATIVADA`
         state.virtualLossCount = (state.virtualLossCount || 0) + 1;
       }
 
+      // ✅ [ZENIX v3.5] Log de Troca para Recuperação (Price Action)
+      if (state.martingaleStep === 2) {
+        this.logContractSwitchRecovery(state.userId, symbol, 2);
+      }
+
       const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
       const maxLosses = requiredLosses[state.mode as keyof typeof requiredLosses] || 0;
 
@@ -2290,6 +2295,16 @@ Nova Stake: ${formatCurrency(reset.stakeBase, currency)}
 Status: Proteção Ativada`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logContractSwitchRecovery(userId: string, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA', martingaleLevel: number) {
+    const message = `TROCA PARA RECUPERAÇÃO
+Foco em Price Action
+Motivo: ${martingaleLevel} perdas consecutivas
+Contrato: Rise/Fall (1 tick)
+Ação: Aguardando sinal de tendência`;
+
+    this.saveAtlasLog(userId, symbol, 'alerta', message);
   }
 
   private async saveAtlasLogsBatch(
