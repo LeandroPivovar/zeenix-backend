@@ -125,10 +125,11 @@ export class ClientsService {
     maxBalance?: number,
     noRealBalance?: boolean,
     sortBy?: string,
-    sortOrder?: 'ASC' | 'DESC'
+    sortOrder?: 'ASC' | 'DESC',
+    activityPeriod?: string
   ): Promise<ClientListResponseDto> {
     const isRealAccountFilterActive = onlyRealAccount || (minBalance !== undefined) || (maxBalance !== undefined) || noRealBalance;
-    console.log('GetClients Query:', { search, balanceFilter, onlyRealAccount, minBalance, maxBalance, noRealBalance, sortBy, sortOrder });
+    console.log('GetClients Query:', { search, balanceFilter, onlyRealAccount, minBalance, maxBalance, noRealBalance, sortBy, sortOrder, activityPeriod });
 
     let query = this.userRepository
       .createQueryBuilder('user')
@@ -333,9 +334,15 @@ export class ClientsService {
       })
     );
 
+    // Apply Activity Period Filter in memory
+    let filteredClients = clients;
+    if (activityPeriod) {
+      filteredClients = clients.filter(c => c.activityPeriod === activityPeriod);
+    }
+
     return {
-      clients,
-      total: clients.length,
+      clients: filteredClients,
+      total: filteredClients.length,
     };
   }
 

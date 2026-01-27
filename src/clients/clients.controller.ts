@@ -24,6 +24,7 @@ export class ClientsController {
     @Query('noRealBalance') noRealBalance?: string,
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    @Query('activityPeriod') activityPeriod?: string,
   ): Promise<ClientListResponseDto> {
     return this.clientsService.getClients(
       search,
@@ -33,7 +34,8 @@ export class ClientsController {
       maxBalance ? parseFloat(maxBalance) : undefined,
       noRealBalance === 'true',
       sortBy,
-      sortOrder
+      sortOrder,
+      activityPeriod,
     );
   }
 
