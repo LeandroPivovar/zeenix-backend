@@ -127,10 +127,10 @@ export class TypeOrmUserRepository implements UserRepository {
     await this.userRepository.update(userId, updateData);
   }
 
-  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number; tokenRealCurrency: string | null; tokenDemoCurrency: string | null; idRealAccount: string | null; idDemoAccount: string | null } | null> {
+  async getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number; tokenReal: string | null; tokenDemo: string | null; tokenRealCurrency: string | null; tokenDemoCurrency: string | null; idRealAccount: string | null; idDemoAccount: string | null } | null> {
     const userEntity = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw', 'realAmount', 'demoAmount', 'tokenRealCurrency', 'tokenDemoCurrency', 'idRealAccount', 'idDemoAccount']
+      select: ['id', 'derivLoginId', 'derivCurrency', 'derivBalance', 'derivRaw', 'realAmount', 'demoAmount', 'tokenReal', 'tokenDemo', 'tokenRealCurrency', 'tokenDemoCurrency', 'idRealAccount', 'idDemoAccount']
     });
     if (!userEntity) return null;
     return {
@@ -140,6 +140,8 @@ export class TypeOrmUserRepository implements UserRepository {
       raw: userEntity.derivRaw ?? null,
       realAmount: userEntity.realAmount ?? 0,
       demoAmount: userEntity.demoAmount ?? 0,
+      tokenReal: userEntity.tokenReal ?? null,
+      tokenDemo: userEntity.tokenDemo ?? null,
       tokenRealCurrency: userEntity.tokenRealCurrency ?? null,
       tokenDemoCurrency: userEntity.tokenDemoCurrency ?? null,
       idRealAccount: userEntity.idRealAccount ?? null,

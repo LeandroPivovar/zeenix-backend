@@ -9,6 +9,6 @@ export interface UserRepository {
   update(user: User): Promise<User>;
   delete(id: string): Promise<void>;
   updateDerivInfo(userId: string, info: { loginId?: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string; realAmount?: number; demoAmount?: number; idRealAccount?: string; idDemoAccount?: string }): Promise<void>;
-  getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number; tokenRealCurrency: string | null; tokenDemoCurrency: string | null; idRealAccount: string | null; idDemoAccount: string | null } | null>;
+  getDerivInfo(userId: string): Promise<{ loginId: string | null; currency: string | null; balance: string | null; raw: any; realAmount: number; demoAmount: number; tokenReal: string | null; tokenDemo: string | null; tokenRealCurrency: string | null; tokenDemoCurrency: string | null; idRealAccount: string | null; idDemoAccount: string | null } | null>;
   clearDerivInfo(userId: string): Promise<void>;
 }

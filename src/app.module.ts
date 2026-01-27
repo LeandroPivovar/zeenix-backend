@@ -22,6 +22,7 @@ import { AutonomousAgentModule } from './autonomous-agent/autonomous-agent.modul
 import { NotificationsModule } from './notifications/notifications.module';
 import { UtilsModule } from './utils/utils.module';
 import { KiwifyModule } from './kiwify/kiwify.module';
+import { MarkupModule } from './markup/markup.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { KiwifyModule } from './kiwify/kiwify.module';
     AutonomousAgentModule,
     NotificationsModule,
     KiwifyModule,
+    MarkupModule,
   ],
   controllers: [AppController],
   providers: [AppService],
