@@ -412,6 +412,8 @@ export class TradesService {
         transactionCount: markupData?.transactionCount || 0,
         commission: markupData ? parseFloat(markupData.commission.toFixed(2)) : 0,
         realData: !!markupData, // true se tiver dados da API, false se for só do banco
+        role: user.role,
+        traderMestre: user.traderMestre,
       });
     }
 
