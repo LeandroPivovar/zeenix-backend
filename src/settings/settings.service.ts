@@ -459,7 +459,7 @@ export class SettingsService {
     try {
       this.logger.log(`[SettingsService] Gerenciando desativação de serviços para ${userId} (Contexto: ${activeContext || 'ALL'})`);
 
-      const promises = [];
+      const promises: Promise<void>[] = [];
 
       // Se contexto for 'ai', desativar APENAS IA (Agente continua rodando na conta antiga)
       if (activeContext === 'ai') {
