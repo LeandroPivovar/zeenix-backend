@@ -1,5 +1,5 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import * as WebSocket from 'ws';
+import WebSocket from 'ws';
 
 export interface MarkupStatisticsOptions {
     date_from: string;
