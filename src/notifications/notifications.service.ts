@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, MoreThan } from 'typeorm';
 import { NotificationEntity } from '../infrastructure/database/entities/notification.entity';
+import { UserBalanceEntity } from '../infrastructure/database/entities/user-balance.entity';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface AgentSummary {
   isActive: boolean;
@@ -48,7 +51,9 @@ export class NotificationsService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(NotificationEntity)
-    private readonly notificationRepository: Repository<NotificationEntity>
+    private readonly notificationRepository: Repository<NotificationEntity>,
+    @InjectRepository(UserBalanceEntity)
+    private readonly balanceRepository: Repository<UserBalanceEntity>
   ) { }
 
   /**
@@ -106,6 +111,11 @@ export class NotificationsService {
   async getLoginSummary(userId: string): Promise<LoginNotificationSummary> {
     this.logger.log(`[Notifications] Buscando resumo de login para usuário ${userId}`);
 
+    // ✅ Registrar saldo do usuário ao logar
+    this.logUserBalance(userId).catch(err =>
+      this.logger.error(`[Notifications] Erro ao registrar saldo: ${err.message}`)
+    );
+
     const [agentSummary, aiSummary, systemNotifications] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
@@ -129,6 +139,34 @@ export class NotificationsService {
     this.logSummaryToTerminal(userId, summary);
 
     return summary;
+  }
+
+  /**
+   * Registra o saldo atual do usuário na tabela de histórico
+   */
+  private async logUserBalance(userId: string): Promise<void> {
+    try {
+      // Buscar saldos atuais do usuário
+      const user = await this.dataSource.getRepository(UserEntity).findOne({
+        where: { id: userId },
+        select: ['demoAmount', 'realAmount', 'derivCurrency']
+      });
+
+      if (!user) return;
+
+      const balanceRecord = this.balanceRepository.create({
+        id: uuidv4(),
+        userId: userId,
+        demoBalance: user.demoAmount || 0,
+        realBalance: user.realAmount || 0,
+        currency: user.derivCurrency || 'USD'
+      });
+
+      await this.balanceRepository.save(balanceRecord);
+      this.logger.log(`[Notifications] Saldo registrado para usuário ${userId}: Real=$${balanceRecord.realBalance}, Demo=$${balanceRecord.demoBalance}`);
+    } catch (error) {
+      this.logger.error(`[Notifications] Erro ao registrar saldo do usuário: ${error.message}`);
+    }
   }
 
   // ... (keep existing private methods: getAgentSummary, getAISummary)
