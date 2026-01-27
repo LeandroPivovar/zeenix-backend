@@ -2,9 +2,14 @@ import { Controller, Get, Post, UseGuards, Req } from '@nestjs/common';
 import { NotificationsService, LoginNotificationSummary } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
+import { DailySummaryService } from './daily-summary.service';
+
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) { }
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly dailySummaryService: DailySummaryService
+  ) { }
 
   /**
    * GET /notifications/login-summary
@@ -50,7 +55,18 @@ export class NotificationsController {
     return this.notificationsService.getLoginSummary(userId);
   }
 
+  /**
+   * POST /notifications/trigger-test-email
+   * Permite que o usuário (especialmente admins no front) disparem um e-mail de teste
+   */
+  @Post('trigger-test-email')
+  @UseGuards(JwtAuthGuard)
+  async triggerTestEmail(@Req() req: any) {
+    const userId = req.user?.userId;
+    if (!userId) throw new Error('Não autorizado');
 
+    return this.dailySummaryService.triggerManualSummary(userId);
+  }
 }
 
 
