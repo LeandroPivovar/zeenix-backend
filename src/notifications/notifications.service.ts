@@ -60,6 +60,21 @@ export class NotificationsService {
   }
 
   /**
+   * Atualiza uma notificação existente (Admin)
+   */
+  /**
+   * Atualiza uma notificação existente (Admin)
+   */
+  async update(id: string, data: Partial<NotificationEntity>): Promise<NotificationEntity> {
+    await this.notificationRepository.update(id, data);
+    const updated = await this.notificationRepository.findOne({ where: { id } });
+    if (!updated) {
+      throw new Error(`Notification with ID ${id} not found`);
+    }
+    return updated;
+  }
+
+  /**
    * Lista todas as notificações (Admin)
    */
   async findAll(): Promise<NotificationEntity[]> {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards, Req, Body } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, UseGuards, Req, Body } from '@nestjs/common';
 import { NotificationsService, LoginNotificationSummary } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DailySummaryService } from './daily-summary.service';
@@ -20,6 +20,17 @@ export class NotificationsController {
   async create(@Req() req: any, @Body() data: Partial<NotificationEntity>): Promise<NotificationEntity> {
     // TODO: Adicionar verificação de admin se JwtAuthGuard não lidar com roles
     return this.notificationsService.create(data);
+  }
+
+  /**
+   * PATCH /notifications/:id
+   * Atualiza uma notificação (Admin)
+   */
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard)
+  async update(@Param('id') id: string, @Body() data: Partial<NotificationEntity>): Promise<NotificationEntity> {
+    // TODO: Adicionar verificação de admin
+    return this.notificationsService.update(id, data);
   }
 
   /**
