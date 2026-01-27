@@ -30,14 +30,14 @@ class CreateTradeRequestDto implements CreateTradeDto {
 @Controller('trades')
 @UseGuards(AuthGuard('jwt'))
 export class TradesController {
-  constructor(private readonly tradesService: TradesService) {}
+  constructor(private readonly tradesService: TradesService) { }
 
   @Post()
   async createTrade(@Req() req: any, @Body() body: CreateTradeRequestDto) {
     const userId = req.user.userId;
     const ipAddress = req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.connection?.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
+
     return await this.tradesService.createTrade(userId, body, ipAddress, userAgent);
   }
 
@@ -61,10 +61,14 @@ export class TradesController {
 
   @Get('markup')
   async getMarkupData(
+    @Req() req: any,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('targetUserId') targetUserId?: string,
   ) {
-    return await this.tradesService.getMarkupData(startDate, endDate);
+    // Se targetUserId for fornecido, usa ele. Senão, usa o ID do usuário logado (token)
+    const contextUserId = targetUserId || req.user.userId;
+    return await this.tradesService.getMarkupData(contextUserId, startDate, endDate);
   }
 }
 

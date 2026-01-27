@@ -313,7 +313,7 @@ export class TradesService {
     };
   }
 
-  async getMarkupData(startDate?: string, endDate?: string) {
+  async getMarkupData(userId: string, startDate?: string, endDate?: string) {
     let dateFrom = startDate;
     let dateTo = endDate;
 
@@ -325,6 +325,14 @@ export class TradesService {
       dateFrom = firstDay.toISOString().split('T')[0];
       dateTo = lastDay.toISOString().split('T')[0];
     }
+
+    // Buscar o usuário "dono" do token (Admin ou usuário selecionado)
+    const contextUser = await this.userRepository.findById(userId);
+    if (!contextUser) {
+      throw new NotFoundException('Usuário contexto não encontrado');
+    }
+
+    console.log(`[TradesService] Buscando markup no contexto do usuário: ${contextUser.name} (${contextUser.id})`);
 
     // Buscar TODOS os usuários ativos do banco primeiro
     const allUsers = await this.userRepository.findAll();
@@ -341,12 +349,13 @@ export class TradesService {
     let totalCommission = 0;
     let totalTransactions = 0;
 
-    // Tentar buscar dados de markup da API (se token configurado)
+    // Tentar buscar dados de markup da API (usando token do usuário)
     try {
-      const adminToken = process.env.DERIV_ADMIN_TOKEN || process.env.DERIV_APP_TOKEN;
+      // Prioridade: Token do usuário > Token Admin ENV > Token App ENV
+      const adminToken = contextUser.tokenReal || process.env.DERIV_ADMIN_TOKEN || process.env.DERIV_APP_TOKEN;
 
       if (adminToken) {
-        console.log(`[TradesService] Buscando markup consolidado de ${dateFrom} até ${dateTo}...`);
+        console.log(`[TradesService] Usando token iniciad com: ${adminToken.substring(0, 4)}... para buscar markup de ${dateFrom} até ${dateTo}`);
 
         const derivData = await this.derivService.getAppMarkupDetails(adminToken, {
           date_from: dateFrom + ' 00:00:00',
