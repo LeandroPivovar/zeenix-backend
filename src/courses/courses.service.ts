@@ -78,6 +78,7 @@ export class CoursesService {
 
     // Buscar o plano do usuário para saber a ordem
     const userPlan = await this.plansRepository.findOne({ where: { id: userPlanId } });
+    console.log(`[CoursesService] Found UserPlan for ID ${userPlanId}:`, userPlan);
     if (!userPlan) return [];
 
     // Buscar todos os planos com displayOrder <= plano do usuário
@@ -113,7 +114,11 @@ export class CoursesService {
           // Abordagem compatível: (visibility = public) OR (visibility = restricted AND (course.plan_ids REGEXP 'id1|id2|id3...'))
           // Ou usar múltiplos JSON_CONTAINS OR
 
+          // Log para debug
           const checks = accessibleIds.map(id => `JSON_CONTAINS(course.plan_ids, '"${id}"')`).join(' OR ');
+          console.log(`[CoursesService] UserPlanId: ${userPlanId}`);
+          console.log(`[CoursesService] Accessible Plan IDs:`, accessibleIds);
+          console.log(`[CoursesService] Generated Checks: ${checks}`);
 
           query.where(`(course.visibility = :public OR (course.visibility = :restricted AND (${checks})))`, {
             public: 'public',
