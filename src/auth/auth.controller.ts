@@ -109,11 +109,14 @@ export class AuthController {
     if (!user) {
       throw new Error('Usuário não encontrado');
     }
+    const userAny = user as any;
     return {
       id: user.id,
       name: user.name,
       email: user.email,
-      firstAccess: user.firstAccess
+      firstAccess: user.firstAccess,
+      planId: userAny.planId,
+      role: user.role
     };
   }
 }
