@@ -152,11 +152,4 @@ export class DailySummaryService {
             stats
         };
     }
-
-        return {
-    success: true,
-    message: `Resumo manual enviado para ${user[0].email}`,
-    stats
-};
-    }
 }
