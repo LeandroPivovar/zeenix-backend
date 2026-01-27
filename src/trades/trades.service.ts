@@ -7,6 +7,7 @@ import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { SettingsService } from '../settings/settings.service';
 import { CopyTradingService } from '../copy-trading/copy-trading.service';
+import { Observable, Subject } from 'rxjs';
 
 export interface CreateTradeDto {
   contractType: string;
