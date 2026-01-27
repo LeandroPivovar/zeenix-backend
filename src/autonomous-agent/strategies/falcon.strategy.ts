@@ -455,11 +455,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    // ✅ Log de início de análise
-    this.logAnalysisStarted(userId, state.mode, userTicks.length);
-
-    // ✅ Log inicial de análise (menos frequente)
-    if (userTicks.length % 50 === 0) {
+    // ✅ Log de início de análise (Heartbeat a cada 10 ticks de análise sem sinal)
+    // state.ticksSinceLastAnalysis já é incrementado acima
+    if (state.ticksSinceLastAnalysis >= 10) {
+      state.ticksSinceLastAnalysis = 0;
       this.logAnalysisStarted(userId, state.mode, userTicks.length);
     }
 
@@ -501,7 +500,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
           `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
-        this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
+        // Throttled: Apenas logar análise completa se houver sinal ou a cada 10 ticks
+        if (marketAnalysis.signal || state.ticksSinceLastAnalysis === 0) {
+          this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
+        }
       }
 
       if (marketAnalysis && marketAnalysis.signal) {
