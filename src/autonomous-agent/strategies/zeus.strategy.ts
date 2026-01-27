@@ -362,7 +362,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Proteção contra reset de estado pelo Sync (5min)
         if (this.userConfigs.has(userId)) {
-            this.logger.log(`[Zeus][${userId}] 🔄 Atualizando configuração (Usuário já ativo).`);
+            const existingConfig = this.userConfigs.get(userId);
+            const hasSignificantChange = existingConfig && (
+                existingConfig.riskProfile !== zeusConfig.riskProfile ||
+                existingConfig.dailyProfitTarget !== zeusConfig.dailyProfitTarget ||
+                existingConfig.dailyLossLimit !== zeusConfig.dailyLossLimit ||
+                existingConfig.initialStake !== zeusConfig.initialStake
+            );
+
+            if (!hasSignificantChange) {
+                // Se não mudou nada importante, apenas mantém e retorna sem logar sessão de novo
+                this.userConfigs.set(userId, zeusConfig);
+                return;
+            }
+
+            this.logger.log(`[Zeus][${userId}] 🔄 Atualizando configuração (Usuário já ativo - Mudança detectada).`);
             this.userConfigs.set(userId, zeusConfig);
 
             // Apenas garantir que está ativo (se não estiver pausado por stop)
@@ -378,7 +392,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 operationMode: mode,
                 riskProfile: zeusConfig.riskProfile || 'MODERADO',
                 profitTarget: zeusConfig.dailyProfitTarget,
-
                 stopLoss: zeusConfig.dailyLossLimit,
                 stopBlindadoEnabled: zeusConfig.stopLossType === 'blindado'
             });
@@ -391,7 +404,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 mode: mode,
                 agentName: 'Zeus'
             });
-
 
             return;
         }
