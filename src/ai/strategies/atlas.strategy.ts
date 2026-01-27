@@ -94,6 +94,9 @@ export interface AtlasUserState {
 
   // Buffer de dígitos (análise ultrarrápida)
   digitBuffer: number[]; // Últimos dígitos para análise
+
+  // Rastreamento para logs
+  ultimaDirecaoOp?: string;
 }
 
 @Injectable()
@@ -206,13 +209,21 @@ export class AtlasStrategy implements IStrategy {
       if (state.tickCounter >= 100) {
         state.tickCounter = 0;
         this.saveAtlasLog(state.userId, assetSymbol, 'info',
-          `💓 IA ATLAS OPERA\n` +
-          `• Mercado: ${assetSymbol}\n` +
-          `• Status: Analisando padrões...`);
+          `IA ATLAS EM OPERAÇÃO
+Mercado: ${assetSymbol}
+Status: Analisando padrões...`);
       }
 
       await this.processAtlasStrategies(tick, state);
     }
+  }
+
+  private setUltimaDirecaoOp(state: AtlasUserState, operation: string) {
+    if (operation === 'OVER') state.ultimaDirecaoOp = 'DIGIT OVER';
+    else if (operation === 'UNDER') state.ultimaDirecaoOp = 'DIGIT UNDER';
+    else if (operation === 'CALL') state.ultimaDirecaoOp = 'CALL';
+    else if (operation === 'PUT') state.ultimaDirecaoOp = 'PUT';
+    else state.ultimaDirecaoOp = operation;
   }
 
   async activateUser(userId: string, config: any): Promise<void> {
@@ -436,9 +447,6 @@ export class AtlasStrategy implements IStrategy {
     const requiredLosses = { veloz: 0, normal: 1, lento: 2 };
     const requiredLossCount = requiredLosses[normalizedMode as keyof typeof requiredLosses] || 0;
 
-    let analysis = `🔍 [ANÁLISE ATLAS ${normalizedMode.toUpperCase()}]\n`;
-    analysis += ` • Gatilho Virtual: ${state.virtualLossCount}/${requiredLossCount} ${state.virtualLossCount >= requiredLossCount ? '✅' : '❌'}\n`;
-
     // Lógica de Bypass de Virtual Loss (Primeira operação ou Win recente)
     const isFirstOperation = state.lastOperationTimestamp === null;
     const hasRecentWin = state.virtualLossCount === 0 && state.lastOperationTimestamp !== null;
@@ -449,29 +457,42 @@ export class AtlasStrategy implements IStrategy {
     const canBypassVirtualLoss = isFirstOperation || (hasRecentWin && intervalPassed);
 
     if (!canBypassVirtualLoss && state.virtualLossCount < requiredLossCount) {
-      if (hasRecentWin && !intervalPassed) {
-        analysis += ` • Aguardando intervalo: ${timeSinceLastOp.toFixed(1)}s / ${modeConfig.intervaloSegundos}s ⏱️\n`;
-      }
-      return { canTrade: false, analysis };
+      return {
+        canTrade: false,
+        analysis: `ENTRADA BLOQUEADA
+Motivo: filtro não atendido
+Critério Avaliado: gatilho virtual
+Detectado: ${state.virtualLossCount} de ${requiredLossCount}
+Exigido: ${requiredLossCount} de ${requiredLossCount}
+Ação: aguardar próximo ciclo`
+      };
     }
 
     const lastDigit = state.digitBuffer[state.digitBuffer.length - 1];
 
-    analysis += `\n🧠 ANÁLISE INICIADA...\n`;
-    analysis += `• Verificando condições para o modo: ${normalizedMode.toUpperCase()}\n`;
-
     // ✅ 1. MODO VELOZ: Esperar 1 dígito perdedor (<= 2)
     if (normalizedMode === 'veloz') {
       if (lastDigit <= 2) {
-        analysis += `✅ FILTRO: Último Dígito (${lastDigit}) <= 2 (Dígito Perdedor)\n`;
-        analysis += `✅ GATILHO: Espera Concluída\n`;
-        analysis += `💪 FORÇA DO SINAL: 70%\n`;
-        analysis += `📊 ENTRADA: DIGITOVER 2`;
-        return { canTrade: true, analysis };
+        return {
+          canTrade: true,
+          analysis: `ANÁLISE INICIADA
+Análise de Mercado
+Tipo: VELOZ
+Filtro: ÚLTIMO DÍGITO (${lastDigit}) <= 2
+Gatilho: CONCLUÍDO
+Força do Sinal: 70%
+Entrada: DIGIT OVER 2`
+        };
       } else {
-        analysis += `❌ FILTRO: Último Dígito (${lastDigit}) > 2 (Dígito Vencedor)\n`;
-        analysis += `⏳ AGUARDANDO: 1 Dígito Perdedor...`;
-        return { canTrade: false, analysis };
+        return {
+          canTrade: false,
+          analysis: `ENTRADA BLOQUEADA
+Motivo: filtro não atendido
+Critério Avaliado: dígito perdedor
+Detectado: ${lastDigit}
+Exigido: <= 2
+Ação: aguardar próximo tick`
+        };
       }
     }
 
@@ -481,16 +502,27 @@ export class AtlasStrategy implements IStrategy {
       const allUnderOrEqual2 = window.length === 3 && window.every(d => d <= 2);
 
       if (allUnderOrEqual2) {
-        analysis += `✅ GATILHO: 3 dígitos consecutively <= 2 (Exaustão)\n`;
-        analysis += `✅ PADRÃO: Reversão Esperada Confirmada\n`;
-        analysis += `💪 FORÇA DO SINAL: 72%\n`;
-        analysis += `📊 ENTRADA: DIGITOVER 2`;
-        return { canTrade: true, analysis };
+        return {
+          canTrade: true,
+          analysis: `ANÁLISE INICIADA
+Análise de Mercado
+Tipo: NORMAL
+Filtro: EXAUSTÃO (3 DÍGITOS <= 2)
+Gatilho: CONCLUÍDO
+Força do Sinal: 72%
+Entrada: DIGIT OVER 2`
+        };
       } else {
         const countUnder = window.filter(d => d <= 2).length;
-        analysis += `❌ FILTRO: Aguardando Sequência (${countUnder}/3 <= 2)\n`;
-        analysis += `⏳ STATUS: Monitorando Exaustão...`;
-        return { canTrade: false, analysis };
+        return {
+          canTrade: false,
+          analysis: `ENTRADA BLOQUEADA
+Motivo: filtro não atendido
+Critério Avaliado: exaustão
+Detectado: ${countUnder} de 3
+Exigido: 3 de 3
+Ação: monitorando sequência`
+        };
       }
     }
 
@@ -500,20 +532,36 @@ export class AtlasStrategy implements IStrategy {
       const allUnderOrEqual2 = window.length === 5 && window.every(d => d <= 2);
 
       if (allUnderOrEqual2) {
-        analysis += `✅ GATILHO: 5 dígitos consecutively <= 2 (Exaustão Extrema)\n`;
-        analysis += `✅ PADRÃO: Reversão Sniper Confirmada\n`;
-        analysis += `💪 FORÇA DO SINAL: 85%\n`;
-        analysis += `📊 ENTRADA: DIGITOVER 2`;
-        return { canTrade: true, analysis };
+        return {
+          canTrade: true,
+          analysis: `ANÁLISE INICIADA
+Análise de Mercado
+Tipo: SNAPPER
+Filtro: EXAUSTÃO EXTREMA (5 DÍGITOS <= 2)
+Gatilho: CONCLUÍDO
+Força do Sinal: 85%
+Entrada: DIGIT OVER 2`
+        };
       } else {
         const countUnder = window.filter(d => d <= 2).length;
-        analysis += `❌ FILTRO: Aguardando Sequência (${countUnder}/5 <= 2)\n`;
-        analysis += `⏳ STATUS: Monitorando Estabilidade...`;
-        return { canTrade: false, analysis };
+        return {
+          canTrade: false,
+          analysis: `ENTRADA BLOQUEADA
+Motivo: filtro não atendido
+Critério Avaliado: estabilidade
+Detectado: ${countUnder} de 5
+Exigido: 5 de 5
+Ação: monitorando próximo ciclo`
+        };
       }
     }
 
-    return { canTrade: false, analysis };
+    return {
+      canTrade: false,
+      analysis: `ENTRADA BLOQUEADA
+Motivo: filtro não atendido
+Status: monitorando força...`
+    };
   }
 
   /**
@@ -558,10 +606,12 @@ export class AtlasStrategy implements IStrategy {
       const key = `${symbol}_${state.userId}_recovery_rejection`;
       if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 5 === 0) {
         this.saveAtlasLog(state.userId, symbol, 'analise',
-          `🛡️ [RECUPERAÇÃO ${normalizedMode.toUpperCase()}] Aguardando força.\n` +
-          `• Movimento: ${absDiff.toFixed(2)}\n` +
-          `• Mínimo Exigido: ${threshold.toFixed(2)}\n` +
-          `• Status: Delta Insuficiente ⏳`);
+          `ENTRADA BLOQUEADA
+Motivo: força insuficiente
+Critério Avaliado: delta (movimento)
+Detectado: ${absDiff.toFixed(2)}
+Exigido: ${threshold.toFixed(2)}
+Ação: aguardar força de tendência`);
         this.intervaloLogsEnviados.set(key, true);
         if ((state.tickCounter || 0) % 5 === 0) {
           this.intervaloLogsEnviados.delete(key);
@@ -636,6 +686,8 @@ export class AtlasStrategy implements IStrategy {
       direction: operation === 'CALL' ? 'CALL' : (operation === 'PUT' ? 'PUT' : undefined)
     });
 
+    this.setUltimaDirecaoOp(state, operation);
+
     try {
       // ✅ [ORION PARALLEL CHECK] - Buscar limites frescos do banco antes de qualquer aposta
       const stopLossConfig = await this.dataSource.query(
@@ -677,7 +729,11 @@ export class AtlasStrategy implements IStrategy {
       // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
         this.saveAtlasLog(state.userId, symbol, 'info',
-          `🎯 META DE LUCRO ATINGIDA! Lucro: ${formatCurrency(lucroAtual, state.currency)} | Meta: ${formatCurrency(profitTarget, state.currency)} - IA DESATIVADA`
+          `META DE LUCRO ATINGIDA
+Status: Meta Alcançada
+Lucro: ${formatCurrency(lucroAtual, state.currency)}
+Meta: ${formatCurrency(profitTarget, state.currency)}
+Ação: IA DESATIVADA`
         );
 
         await this.dataSource.query(
@@ -711,7 +767,10 @@ export class AtlasStrategy implements IStrategy {
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
             this.saveAtlasLog(state.userId, symbol, 'info',
-              `🛡️ Proteção de Lucro: Ativado | Lucro atual ${formatCurrency(currentPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
+              `PROTEÇÃO DE LUCRO ATIVADA
+Status: Lucro Blindado
+Lucro Atual: ${formatCurrency(currentPeak, state.currency)}
+Blindagem (${stopBlindadoPercent}%): ${formatCurrency(protectedAmount, state.currency)}`
             );
           }
         }
@@ -723,7 +782,10 @@ export class AtlasStrategy implements IStrategy {
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
             this.saveAtlasLog(state.userId, symbol, 'info',
-              `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
+              `STOP BLINDADO ATINGIDO
+Status: Lucro Garantido
+Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
+Ação: IA DESATIVADA`
             );
 
             await this.dataSource.query(
@@ -752,7 +814,11 @@ export class AtlasStrategy implements IStrategy {
       const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
       if (lossLimit > 0 && perdaAtual >= lossLimit) {
         this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `🛑 STOP LOSS ATINGIDO! Perda: ${formatCurrency(perdaAtual, state.currency)} | Limite: ${formatCurrency(lossLimit, state.currency)} - IA DESATIVADA`
+          `STOP LOSS ATINGIDO
+Status: Limite de Perda
+Perda: ${formatCurrency(perdaAtual, state.currency)}
+Limite: ${formatCurrency(lossLimit, state.currency)}
+Ação: IA DESATIVADA`
         );
 
         await this.dataSource.query(
@@ -1553,7 +1619,11 @@ export class AtlasStrategy implements IStrategy {
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
       this.saveAtlasLog(state.userId, symbol, 'info',
-        `🎯 META DE LUCRO ATINGIDA! Lucro: ${formatCurrency(lucroAtual, state.currency)} | Meta: ${formatCurrency(profitTarget, state.currency)} - IA DESATIVADA`
+        `META DE LUCRO ATINGIDA
+Status: Meta Alcançada
+Lucro: ${formatCurrency(lucroAtual, state.currency)}
+Meta: ${formatCurrency(profitTarget, state.currency)}
+Ação: IA DESATIVADA`
       );
 
       await this.dataSource.query(
@@ -1589,7 +1659,10 @@ export class AtlasStrategy implements IStrategy {
         if (capitalSessao <= stopBlindado + 0.01) { // Added tolerance again just in case
           const lucroFinal = capitalSessao - capitalInicial;
           this.saveAtlasLog(state.userId, symbol, 'info',
-            `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
+            `STOP BLINDADO ATINGIDO
+Status: Lucro Protegido
+Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
+Ação: IA DESATIVADA`
           );
 
           await this.dataSource.query(
@@ -1618,7 +1691,11 @@ export class AtlasStrategy implements IStrategy {
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
       this.saveAtlasLog(state.userId, symbol, 'alerta',
-        `🛑 STOP LOSS ATINGIDO! Perda: ${formatCurrency(perdaAtual, state.currency)} | Limite: ${formatCurrency(lossLimit, state.currency)} - IA DESATIVADA`
+        `STOP LOSS ATINGIDO
+Status: Limite de Perda
+Perda: ${formatCurrency(perdaAtual, state.currency)}
+Limite: ${formatCurrency(lossLimit, state.currency)}
+Ação: IA DESATIVADA`
       );
 
       await this.dataSource.query(
@@ -2014,12 +2091,15 @@ export class AtlasStrategy implements IStrategy {
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | ⚙️ Configurações Iniciais
-• Modo: ${config.operationMode}
-• Perfil: ${config.riskProfile}
-• Meta: ${config.profitTarget > 0 ? formatCurrency(config.profitTarget, currency) : 'N/A'}
-• Stop Loss: ${config.stopLoss > 0 ? formatCurrency(config.stopLoss, currency) : 'N/A'}
-• Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+    const message = `INÍCIO DE SESSÃO DIÁRIA
+Início de Sessão
+Saldo Inicial: ${formatCurrency(state?.capital || 0, currency)}
+Meta de Lucro: ${config.profitTarget > 0 ? formatCurrency(config.profitTarget, currency) : 'N/A'}
+Stop Loss: ${config.stopLoss > 0 ? formatCurrency(config.stopLoss, currency) : 'N/A'}
+Estratégia: ATLAS
+Símbolo: ${state?.symbol || 'N/A'}
+Modo Inicial: ${config.operationMode.toUpperCase()}
+Ação: iniciar coleta de dados`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
@@ -2034,10 +2114,15 @@ export class AtlasStrategy implements IStrategy {
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | 📡 Início de Sessão
-• Saldo Inicial: ${formatCurrency(session.initialBalance, currency)}
-• Meta do Dia: ${formatCurrency(session.profitTarget, currency)}
-• Status: Monitorando Mercado`;
+    const message = `INÍCIO DE SESSÃO DIÁRIA
+Início de Sessão
+Saldo Inicial: ${formatCurrency(session.initialBalance, currency)}
+Meta de Lucro: ${formatCurrency(session.profitTarget, currency)}
+Stop Loss: ${formatCurrency(session.stopLoss, currency)}
+Estratégia: ATLAS
+Símbolo: ${state?.symbol || 'N/A'}
+Modo Inicial: ${session.mode.toUpperCase()}
+Ação: iniciar coleta de dados`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
@@ -2047,13 +2132,21 @@ export class AtlasStrategy implements IStrategy {
     currentCount: number;
     mode?: string;
   }) {
-    const message = `ATLAS | 📡 Coletando dados... (${data.currentCount}/${data.targetCount})`;
+    const message = `COLETA DE DADOS
+Coleta de Dados em Andamento
+Meta de Coleta: ${data.targetCount} ticks
+Progresso: ${data.currentCount} / ${data.targetCount}
+Status: aguardando ticks suficientes`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `❄️ ATLAS | 🧠 Analisando Mercado (${mode})`;
+    const message = `ANÁLISE INICIADA
+Análise de Mercado
+Tipo de Análise: PRINCIPAL
+Modo Ativo: ${mode.toUpperCase()}
+Contrato Avaliado: Digits Over 2 (1 tick)`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
@@ -2067,10 +2160,16 @@ export class AtlasStrategy implements IStrategy {
     contractType: string;
     direction?: 'CALL' | 'PUT';
   }) {
-    const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `ATLAS | 🎯 Sinal Detectado: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
-${filtersText}
-• Força: ${signal.probability}%`;
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `SINAL GERADO
+Sinal de Entrada
+Análise: PRINCIPAL
+Modo: ${signal.mode.toUpperCase()}
+Direção: ${signal.direction || (signal.contractType === 'DIGIT OVER' ? 'CALL' : signal.contractType)}
+Força do Sinal: ${signal.probability}%
+Contrato: ${signal.contractType} (1 tick)
+Stake Calculada: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'sinal', message);
   }
@@ -2083,12 +2182,16 @@ ${filtersText}
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const emoji = result.status === 'WIN' ? '✅' : '❌';
-    const message = `❄️ ATLAS | ${emoji} Resultado: ${result.status}
-• Lucro/Perda: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
-• Saldo: ${formatCurrency(result.balance, currency)}`;
+    const type = result.status === 'WIN' ? 'vitoria' : 'derrota';
+    const message = `RESULTADO DA OPERAÇÃO
+Status: ${result.status}
+Direção: ${state?.ultimaDirecaoOp || 'CALL'}
+Contrato: Digits Over 2 (1 tick)
+Resultado Financeiro: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
+Saldo Atual: ${formatCurrency(result.balance, currency)}
+Estado: Operação Normal`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
+    this.saveAtlasLog(userId, 'SISTEMA', type as any, message);
   }
 
   private logMartingaleLevelV2(userId: string, martingale: {
@@ -2101,9 +2204,11 @@ ${filtersText}
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | 🔄 Martingale Nível ${martingale.level}
-• Próxima Stake: ${formatCurrency(martingale.calculatedStake, currency)}
-• Objetivo: Recuperação`;
+    const message = `MARTINGALE NÍVEL ${martingale.level}
+Próxima Stake: ${formatCurrency(martingale.calculatedStake, currency)}
+Objetivo: Recuperação de Capital
+Nível Atual: ${martingale.level}
+Perda Acumulada: ${formatCurrency(martingale.accumulatedLoss, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
@@ -2118,9 +2223,12 @@ ${filtersText}
     const level = soros.level || 1;
     const newStake = soros.stakeBase + soros.previousProfit;
 
-    const message = `❄️ ATLAS | 🚀 Soros Nível ${level}
-• Lucro Anterior: ${formatCurrency(soros.previousProfit, currency)}
-• Nova Stake: ${formatCurrency(newStake, currency)}`;
+    const message = `SOROS NÍVEL ${level}
+Soros Nível ${level} Aplicado
+Lucro Anterior: +${formatCurrency(soros.previousProfit, currency)}
+Stake Base: ${formatCurrency(soros.stakeBase, currency)}
+Nova Stake: ${formatCurrency(newStake, currency)}
+Objetivo: potencializar sequência positiva`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
   }
@@ -2132,8 +2240,11 @@ ${filtersText}
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
-• Lucro Acumulado: ${formatCurrency(streak.accumulatedProfit, currency)}`;
+    const message = `SEQUÊNCIA DE VITÓRIAS
+Status: Meta de Soros
+Vitórias: ${streak.consecutiveWins}
+Lucro Acumulado: ${formatCurrency(streak.accumulatedProfit, currency)}
+Ação: monitorando próximo ciclo`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
@@ -2146,9 +2257,11 @@ ${filtersText}
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | 🛡️ Recuperação Concluída
-• Recuperado: ${formatCurrency(recovery.recoveredLoss, currency)}
-• Ação: Retornando à Stake Base`;
+    const message = `RECUPERAÇÃO CONCLUÍDA
+Recuperação Bem-Sucedida
+Recuperado: ${formatCurrency(recovery.recoveredLoss, currency)}
+Lucro Extra: ${formatCurrency(recovery.additionalProfit, currency)}
+Ação: Retornando à Stake Base`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
@@ -2158,8 +2271,11 @@ ${filtersText}
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `❄️ ATLAS | ⚠️ Limite de Recuperação (Conservador)
-• Ação: Resetando para Stake Base (${formatCurrency(reset.stakeBase, currency)})`;
+    const message = `LIMITE DE SEGURANÇA
+Limite Conservador Atingido
+Ação: Resetando para Stake Base
+Nova Stake: ${formatCurrency(reset.stakeBase, currency)}
+Status: Proteção Ativada`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
