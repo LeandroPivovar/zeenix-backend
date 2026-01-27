@@ -18,6 +18,7 @@ import { TradeEntity } from './infrastructure/database/entities/trade.entity';
 import { ExpertEntity } from './infrastructure/database/entities/expert.entity';
 import { SupportItemEntity } from './infrastructure/database/entities/support-item.entity';
 import { MaterialEntity } from './infrastructure/database/entities/material.entity';
+import { NotificationEntity } from './infrastructure/database/entities/notification.entity';
 import { AppConfigEntity } from './infrastructure/database/entities/app-config.entity';
 
 class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrategyInterface {
@@ -50,7 +51,7 @@ class SnakeNamingStrategy extends DefaultNamingStrategy implements NamingStrateg
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity, ExpertEntity, SupportItemEntity, MaterialEntity, AppConfigEntity],
+        entities: [UserEntity, CourseEntity, ModuleEntity, LessonEntity, UserLessonProgressEntity, FaqEntity, SystemStatusEntity, UserSettingsEntity, UserActivityLogEntity, UserSessionEntity, PlanEntity, TradeEntity, ExpertEntity, SupportItemEntity, MaterialEntity, AppConfigEntity, NotificationEntity],
         synchronize: false, // Desabilitado porque as tabelas são gerenciadas manualmente via SQL
         logging: configService.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),

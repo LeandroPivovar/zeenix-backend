@@ -1,8 +1,8 @@
-import { Controller, Get, Post, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Req, Body } from '@nestjs/common';
 import { NotificationsService, LoginNotificationSummary } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-
 import { DailySummaryService } from './daily-summary.service';
+import { NotificationEntity } from '../infrastructure/database/entities/notification.entity';
 
 @Controller('notifications')
 export class NotificationsController {
@@ -10,6 +10,28 @@ export class NotificationsController {
     private readonly notificationsService: NotificationsService,
     private readonly dailySummaryService: DailySummaryService
   ) { }
+
+  /**
+   * POST /notifications
+   * Cria nova notificação (Admin)
+   */
+  @Post()
+  @UseGuards(JwtAuthGuard)
+  async create(@Req() req: any, @Body() data: Partial<NotificationEntity>): Promise<NotificationEntity> {
+    // TODO: Adicionar verificação de admin se JwtAuthGuard não lidar com roles
+    return this.notificationsService.create(data);
+  }
+
+  /**
+   * GET /notifications/admin
+   * Lista todas as notificações para o Admin
+   */
+  @Get('admin')
+  @UseGuards(JwtAuthGuard)
+  async findAllAdmin(@Req() req: any): Promise<NotificationEntity[]> {
+    // TODO: Adicionar verificação de admin
+    return this.notificationsService.findAll();
+  }
 
   /**
    * GET /notifications/login-summary
@@ -54,7 +76,6 @@ export class NotificationsController {
 
     return this.notificationsService.getLoginSummary(userId);
   }
-
 }
 
 

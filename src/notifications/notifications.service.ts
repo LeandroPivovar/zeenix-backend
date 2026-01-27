@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository, MoreThan } from 'typeorm';
+import { NotificationEntity } from '../infrastructure/database/entities/notification.entity';
 
 export interface AgentSummary {
   isActive: boolean;
@@ -35,7 +36,7 @@ export interface LoginNotificationSummary {
     type: 'success' | 'warning' | 'error' | 'info';
     title: string;
     message: string;
-    source: 'agent' | 'ai';
+    source: 'agent' | 'ai' | 'system';
     timestamp: Date;
   }>;
 }
@@ -44,7 +45,44 @@ export interface LoginNotificationSummary {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(NotificationEntity)
+    private readonly notificationRepository: Repository<NotificationEntity>
+  ) { }
+
+  /**
+   * Cria uma nova notificação do sistema (Admin)
+   */
+  async create(data: Partial<NotificationEntity>): Promise<NotificationEntity> {
+    const notification = this.notificationRepository.create(data);
+    return this.notificationRepository.save(notification);
+  }
+
+  /**
+   * Lista todas as notificações (Admin)
+   */
+  async findAll(): Promise<NotificationEntity[]> {
+    return this.notificationRepository.find({
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+  }
+
+  /**
+   * Busca notificações ativas do sistema
+   */
+  async findActiveSystemNotifications(): Promise<NotificationEntity[]> {
+    return this.notificationRepository.find({
+      where: {
+        displayUntil: MoreThan(new Date()),
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+  }
 
   /**
    * Busca resumo de notificações ao fazer login
@@ -53,14 +91,16 @@ export class NotificationsService {
   async getLoginSummary(userId: string): Promise<LoginNotificationSummary> {
     this.logger.log(`[Notifications] Buscando resumo de login para usuário ${userId}`);
 
-    const [agentSummary, aiSummary] = await Promise.all([
+    const [agentSummary, aiSummary, systemNotifications] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
+      this.findActiveSystemNotifications(),
     ]);
 
     const notifications = this.buildNotifications(
       agentSummary,
-      aiSummary
+      aiSummary,
+      systemNotifications
     );
 
     const summary: LoginNotificationSummary = {
@@ -75,6 +115,8 @@ export class NotificationsService {
 
     return summary;
   }
+
+  // ... (keep existing private methods: getAgentSummary, getAISummary)
 
   /**
    * Busca resumo do Agente Autônomo
@@ -180,7 +222,7 @@ export class NotificationsService {
       }
 
       const config = result[0];
-      const capitalInicial = parseFloat(config.stake_amount) || 0;
+      // const capitalInicial = parseFloat(config.stake_amount) || 0; // Unused
 
       // ✅ Calcular lucro/perda da sessão: sessionBalance atual - capital inicial
       // O session_balance no banco armazena o LUCRO/PERDA da sessão (não o saldo total)
@@ -232,14 +274,29 @@ export class NotificationsService {
   private buildNotifications(
     agent: AgentSummary | null,
     ai: AISummary | null,
+    systemNotifications: NotificationEntity[] = []
   ): LoginNotificationSummary['notifications'] {
     const notifications: LoginNotificationSummary['notifications'] = [];
     const now = new Date();
 
     // Sempre mostra notificações (sem filtro de data de limpeza)
     const isNew = (timestamp: Date | null) => {
+      // return (now.getTime() - timestamp.getTime()) < 24 * 60 * 60 * 1000;
       return true; // Sempre considera como nova
     };
+
+    // System Notifications
+    if (systemNotifications && systemNotifications.length > 0) {
+      systemNotifications.forEach(notif => {
+        notifications.push({
+          type: 'info',
+          title: notif.name,
+          message: notif.description,
+          source: 'system',
+          timestamp: notif.createdAt,
+        });
+      });
+    }
 
     // Notificações do Agente Autônomo
     if (agent) {
@@ -350,6 +407,16 @@ export class NotificationsService {
     console.log(`║  Usuário: ${userId.substring(0, 30).padEnd(30)}                    ║`);
     console.log('╠══════════════════════════════════════════════════════════════════╣');
 
+    // System Notifications
+    const systemNotifs = summary.notifications.filter(n => n.source === 'system');
+    if (systemNotifs.length > 0) {
+      console.log('║  📢 AVISOS DO SISTEMA:                                            ║');
+      systemNotifs.forEach(notif => {
+        console.log(`║     • ${notif.title.padEnd(59)} ║`);
+      });
+      console.log('╠══════════════════════════════════════════════════════════════════╣');
+    }
+
     // Agente Autônomo
     console.log('║  🤖 AGENTE AUTÔNOMO:                                              ║');
     if (summary.agent) {
@@ -408,7 +475,6 @@ export class NotificationsService {
     console.log('╚══════════════════════════════════════════════════════════════════╝');
     console.log('\n');
   }
-
 
 }
 
