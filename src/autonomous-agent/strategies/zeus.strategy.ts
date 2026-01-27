@@ -464,8 +464,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Processar para todos os usuários ativos
         for (const [userId, config] of this.userConfigs.entries()) {
-            // Processar se o símbolo do tick coincidir com o configurado para o usuário (ex: R_50)
-            if (tickSymbol === config.symbol) {
+            // ✅ Processar se o símbolo coincidir (com suporte a sinônimos de mercado)
+            if (this.isSymbolMatch(tickSymbol, config.symbol)) {
                 promises.push(this.processTickForUser(userId, tick).catch((error) => {
                     this.logger.error(`[Zeus][${userId}] Erro ao processar tick:`, error);
                 }));
@@ -625,7 +625,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.lastDigits.push(lastDigit);
         if (state.lastDigits.length > 50) state.lastDigits.shift();
 
-        // 1. Can we operate?
+        // 1. Coleta de dados e progresso inicial
+        const requiredTicks = config.dataCollectionTicks;
+        if (userTicks.length < requiredTicks) {
+            // Log de progresso a cada 3 ticks
+            if (userTicks.length % 3 === 0) {
+                this.logDataCollection(userId, {
+                    targetCount: requiredTicks,
+                    currentCount: userTicks.length,
+                    mode: state.mode
+                });
+            }
+            return;
+        }
+
+        // 2. Can we operate?
         if (!this.canOperate(userId, config, state)) return;
 
         // 2. Are we waiting for contract?
@@ -634,7 +648,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // 3. Analyze Market
         this.processingLocks.set(userId, true);
         try {
-            const analysis = this.analyzeMarket(config, state, userTicks, state.lastDigits);
+            const analysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
 
             if (analysis && analysis.signal) {
                 const stake = this.computeNextStake(config, state);
@@ -660,7 +674,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * ✅ CORE: Análise de Mercado (Substitui analyzeMarket antigo)
      */
-    private analyzeMarket(config: ZeusUserConfig, state: ZeusState, pricesObj: Tick[], digits: number[]): MarketAnalysis | null {
+    private analyzeMarket(userId: string, config: ZeusUserConfig, state: ZeusState, pricesObj: Tick[], digits: number[]): MarketAnalysis | null {
         // Converter ticks objects para array de numbers
         const prices = pricesObj.map(t => t.value);
         if (prices.length < config.dataCollectionTicks) return null;
@@ -711,7 +725,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
-        // Heartbeat para log (opcional, manter null para não spammar)
+        // Heartbeat para log a cada 10 ticks de análise sem sinal
+        state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
+        if (state.ticksSinceLastAnalysis >= 10) {
+            state.ticksSinceLastAnalysis = 0;
+            this.logAnalysisStarted(userId, state.mode, prices.length);
+        }
+
         return null;
     }
 
@@ -1401,6 +1421,37 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Verificar Fim de Sessão
         this.canOperate(userId, config, state); // Chama apenas para verificar flags e trigger stop se necessário
+    }
+
+    /**
+     * ✅ HELPER: Normaliza e compara símbolos de mercado
+     */
+    private isSymbolMatch(tickSymbol: string, configSymbol: string): boolean {
+        if (!tickSymbol || !configSymbol) return false;
+
+        const s1 = tickSymbol.toUpperCase();
+        const s2 = configSymbol.toUpperCase();
+
+        if (s1 === s2) return true;
+
+        // Mapeamento de sinônimos (Deriv API vs Interno Zenix)
+        const synonyms: Record<string, string[]> = {
+            'R_100': ['1HZ100V', 'VOLATILITY 100 INDEX'],
+            'R_50': ['1HZ50V', 'VOLATILITY 50 INDEX'],
+            'R_10': ['1HZ10V', 'VOLATILITY 10 INDEX'],
+            'R_25': ['1HZ25V', 'VOLATILITY 25 INDEX'],
+            'R_75': ['1HZ75V', 'VOLATILITY 75 INDEX'],
+            '1HZ100V': ['R_100'],
+            '1HZ50V': ['R_50'],
+            '1HZ10V': ['R_10'],
+            '1HZ25V': ['R_25'],
+            '1HZ75V': ['R_75'],
+        };
+
+        if (synonyms[s1]?.includes(s2)) return true;
+        if (synonyms[s2]?.includes(s1)) return true;
+
+        return false;
     }
 
     /**
