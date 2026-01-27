@@ -413,8 +413,15 @@ export class SettingsService {
     );
   }
 
-  async updateDerivToken(userId: string, derivToken: string, tradeCurrency: string, ipAddress?: string, userAgent?: string) {
-    this.logger.log(`[SettingsService] updateDerivToken para usuário ${userId}, currency: ${tradeCurrency}`);
+  async updateDerivToken(
+    userId: string,
+    derivToken: string,
+    tradeCurrency: string,
+    ipAddress?: string,
+    userAgent?: string,
+    activeContext?: 'ai' | 'agent' | 'all'
+  ) {
+    this.logger.log(`[SettingsService] updateDerivToken para usuário ${userId}, currency: ${tradeCurrency}, context: ${activeContext || 'all'}`);
 
     const isDemo = tradeCurrency === 'DEMO';
     const updateData: any = {};
@@ -448,13 +455,34 @@ export class SettingsService {
       this.derivService.clearSession(userId);
     }
 
-    // ✅ Desativar IA e Agente Autônomo ao atualizar token (muda o contexto operacional)
+    // ✅ Desativar serviços de forma condicional
     try {
-      this.logger.log(`[SettingsService] Desativando IA e Agente Autônomo para o usuário ${userId} devido à atualização de token.`);
-      await Promise.all([
-        this.aiService.deactivateUserAI(userId).catch(e => this.logger.error(`Erro ao desativar IA: ${e.message}`)),
-        this.autonomousAgentService.deactivateAgent(userId).catch(e => this.logger.error(`Erro ao desativar Agente: ${e.message}`))
-      ]);
+      this.logger.log(`[SettingsService] Gerenciando desativação de serviços para ${userId} (Contexto: ${activeContext || 'ALL'})`);
+
+      const promises = [];
+
+      // Se contexto for 'ai', desativar APENAS IA (Agente continua rodando na conta antiga)
+      if (activeContext === 'ai') {
+        promises.push(
+          this.aiService.deactivateUserAI(userId).catch(e => this.logger.error(`Erro ao desativar IA: ${e.message}`))
+        );
+      }
+      // Se contexto for 'agent', desativar APENAS Agente (IA continua rodando na conta antiga)
+      else if (activeContext === 'agent') {
+        promises.push(
+          this.autonomousAgentService.deactivateAgent(userId).catch(e => this.logger.error(`Erro ao desativar Agente: ${e.message}`))
+        );
+      }
+      // Fallback: Se não especificar contexto ou for 'all', desativar TUDO (Comportamento padrão/seguro)
+      else {
+        promises.push(
+          this.aiService.deactivateUserAI(userId).catch(e => this.logger.error(`Erro ao desativar IA: ${e.message}`)),
+          this.autonomousAgentService.deactivateAgent(userId).catch(e => this.logger.error(`Erro ao desativar Agente: ${e.message}`))
+        );
+      }
+
+      await Promise.all(promises);
+
     } catch (e) {
       this.logger.error(`[SettingsService] Erro ao desativar serviços: ${e.message}`);
     }

@@ -72,6 +72,10 @@ class UpdateDerivTokenDto {
 
   @IsString()
   tradeCurrency: string;
+
+  @IsOptional()
+  @IsString()
+  activeContext?: 'ai' | 'agent' | 'all';
 }
 
 @Controller('settings')
@@ -214,7 +218,8 @@ export class SettingsController {
       body.token,
       body.tradeCurrency,
       this.getIpAddress(req),
-      this.getUserAgent(req)
+      this.getUserAgent(req),
+      body.activeContext
     );
   }
 
