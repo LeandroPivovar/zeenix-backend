@@ -64,6 +64,10 @@ class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   showDollarSign?: boolean;
+
+  @IsOptional()
+  @IsString()
+  activeContext?: 'ai' | 'agent' | 'all';
 }
 
 class UpdateDerivTokenDto {
@@ -206,7 +210,8 @@ export class SettingsController {
       userId,
       body,
       this.getIpAddress(req),
-      this.getUserAgent(req)
+      this.getUserAgent(req),
+      body.activeContext
     );
   }
 
