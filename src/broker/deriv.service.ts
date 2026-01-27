@@ -959,14 +959,18 @@ export class DerivService {
           const msg = JSON.parse(data.toString());
 
           if (msg.error) {
-            this.logger.error(`[DerivService] Erro API Markup:`, msg.error);
             clearTimeout(timeout);
             ws.close();
-            // Resolver com array vazio em caso de erro de permissão ou dados não encontrados para não quebrar o fluxo geral
-            if (msg.error.code === 'PermissionDenied' || msg.error.code === 'InputValidationFailed') {
-              this.logger.warn(`[DerivService] Erro tratável ao buscar markup: ${msg.error.message}`);
+
+            // Tratamento de erros conhecidos/esperados
+            if (msg.error.code === 'PermissionDenied' ||
+              msg.error.code === 'InputValidationFailed' ||
+              msg.error.code === 'InvalidAppID') {
+              this.logger.warn(`[DerivService] Erro tratável ao buscar markup: ${msg.error.message} (${msg.error.code})`);
               resolve({ transactions: [] });
             } else {
+              // Erros inesperados
+              this.logger.error(`[DerivService] Erro API Markup:`, msg.error);
               reject(new Error(msg.error.message || 'Erro na API Deriv'));
             }
             return;
