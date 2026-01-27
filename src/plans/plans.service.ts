@@ -43,6 +43,7 @@ export class PlansService {
       currency: plan.currency,
       billingPeriod: plan.billingPeriod,
       features: plan.features || {},
+      benefits: plan.benefits || [],
       isPopular: plan.isPopular,
       isRecommended: plan.isRecommended,
       isActive: plan.isActive,
@@ -64,6 +65,7 @@ export class PlansService {
       currency: plan.currency,
       billingPeriod: plan.billingPeriod,
       features: plan.features || {},
+      benefits: plan.benefits || [],
       isPopular: plan.isPopular,
       isRecommended: plan.isRecommended,
     };
@@ -91,6 +93,7 @@ export class PlansService {
       currency: user.plan.currency,
       billingPeriod: user.plan.billingPeriod,
       features: user.plan.features || {},
+      benefits: user.plan.benefits || [],
       activatedAt: user.planActivatedAt,
     };
   }
@@ -140,12 +143,13 @@ export class PlansService {
       price: Number(plan.price),
       currency: plan.currency,
       billingPeriod: plan.billingPeriod,
-      features: plan.features || {},
       isPopular: plan.isPopular,
       isRecommended: plan.isRecommended,
       isActive: plan.isActive,
       displayOrder: plan.displayOrder,
       externalId: plan.externalId,
+      features: plan.features || {},
+      benefits: plan.benefits || [],
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
     }));
@@ -158,6 +162,7 @@ export class PlansService {
     currency?: string;
     billingPeriod?: string;
     features?: any;
+    benefits?: any;
     isPopular?: boolean;
     isRecommended?: boolean;
     isActive?: boolean;
@@ -181,6 +186,7 @@ export class PlansService {
       currency: data.currency || 'BRL',
       billingPeriod: data.billingPeriod || 'month',
       features: data.features || {},
+      benefits: data.benefits || [],
       isPopular: data.isPopular || false,
       isRecommended: data.isRecommended || false,
       isActive: data.isActive !== undefined ? data.isActive : true,
@@ -198,6 +204,7 @@ export class PlansService {
       currency: savedPlan.currency,
       billingPeriod: savedPlan.billingPeriod,
       features: savedPlan.features || {},
+      benefits: savedPlan.benefits || [],
       isPopular: savedPlan.isPopular,
       isRecommended: savedPlan.isRecommended,
       isActive: savedPlan.isActive,
@@ -215,6 +222,7 @@ export class PlansService {
     currency?: string;
     billingPeriod?: string;
     features?: any;
+    benefits?: any;
     isPopular?: boolean;
     isRecommended?: boolean;
     isActive?: boolean;
@@ -245,6 +253,7 @@ export class PlansService {
     if (data.currency !== undefined) plan.currency = data.currency;
     if (data.billingPeriod !== undefined) plan.billingPeriod = data.billingPeriod;
     if (data.features !== undefined) plan.features = data.features;
+    if (data.benefits !== undefined) plan.benefits = data.benefits;
     if (data.isPopular !== undefined) plan.isPopular = data.isPopular;
     if (data.isRecommended !== undefined) plan.isRecommended = data.isRecommended;
     if (data.isActive !== undefined) plan.isActive = data.isActive;
@@ -261,6 +270,7 @@ export class PlansService {
       currency: updatedPlan.currency,
       billingPeriod: updatedPlan.billingPeriod,
       features: updatedPlan.features || {},
+      benefits: updatedPlan.benefits || [],
       isPopular: updatedPlan.isPopular,
       isRecommended: updatedPlan.isRecommended,
       isActive: updatedPlan.isActive,

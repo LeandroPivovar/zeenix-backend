@@ -27,6 +27,9 @@ export class PlanEntity {
   @Column({ type: 'json', nullable: true })
   features?: any;
 
+  @Column({ type: 'json', nullable: true })
+  benefits?: any;
+
   @Column({ type: 'boolean', default: false, name: 'is_popular' })
   isPopular: boolean;
 
