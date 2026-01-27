@@ -7,6 +7,8 @@ export class ClientDto {
   createdAt: string;
   lastActivity: string;
   whatsapp: boolean;
+  whatsappNumber?: string;
+  activityPeriod?: string;
   userId: string;
   role: string;
 }

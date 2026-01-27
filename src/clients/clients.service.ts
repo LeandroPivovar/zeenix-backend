@@ -142,7 +142,8 @@ export class ClientsService {
         'user.createdAt as createdAt',
         'user.role as userRole',
         'user.idRealAccount as idRealAccount',
-        'user.tokenReal as tokenReal'
+        'user.tokenReal as tokenReal',
+        'user.phone as userPhone'
       ]);
 
     // Filtro de busca por nome, email ou login ID
@@ -266,6 +267,55 @@ export class ClientsService {
           ? parseFloat(user.realAmount || '0')
           : parseFloat(user.derivBalance || '0');
 
+        // ---- Activity Period Calculation ----
+        let activityPeriod = 'Indefinido';
+        try {
+          const params = [user.userId];
+          const aiConfigsPrompt = `SELECT created_at FROM ai_user_config WHERE user_id = ?`;
+          const tradesPrompt = `SELECT created_at FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`;
+
+          const [aiConfigs, trades] = await Promise.all([
+            this.userRepository.query(aiConfigsPrompt, params).catch(() => []),
+            this.userRepository.query(tradesPrompt, params).catch(() => [])
+          ]);
+
+          const timestamps: Date[] = [
+            ...(Array.isArray(aiConfigs) ? aiConfigs.map(c => new Date(c.created_at)) : []),
+            ...(Array.isArray(trades) ? trades.map(t => new Date(t.created_at)) : [])
+          ];
+
+          if (timestamps.length > 0) {
+            const periods = {
+              'Manhã': 0,
+              'Tarde': 0,
+              'Noite': 0,
+              'Madrugada': 0
+            };
+
+            timestamps.forEach(date => {
+              if (isNaN(date.getTime())) return;
+              const utcDate = new Date(date);
+              const brazilDate = new Date(utcDate.getTime() - (3 * 60 * 60 * 1000));
+              const hour = brazilDate.getUTCHours();
+
+              if (hour >= 6 && hour < 12) periods['Manhã']++;
+              else if (hour >= 12 && hour < 18) periods['Tarde']++;
+              else if (hour >= 18 && hour < 24) periods['Noite']++;
+              else periods['Madrugada']++;
+            });
+
+            let max = -1;
+            let bestPeriod = 'Indefinido';
+            for (const [period, count] of Object.entries(periods)) {
+              if (count > max && count > 0) {
+                max = count;
+                bestPeriod = period;
+              }
+            }
+            activityPeriod = bestPeriod;
+          }
+        } catch (e) { }
+
         return {
           userId: user.userId,
           name: user.userName,
@@ -275,7 +325,9 @@ export class ClientsService {
           timeSpent,
           createdAt: new Date(user.createdAt).toISOString().split('T')[0],
           lastActivity,
-          whatsapp: false, // Pode ser adicionado posteriormente
+          whatsapp: !!user.userPhone,
+          whatsappNumber: user.userPhone || null,
+          activityPeriod,
           role: user.userRole || 'user',
         };
       })
