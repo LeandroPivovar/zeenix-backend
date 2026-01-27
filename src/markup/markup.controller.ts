@@ -29,6 +29,7 @@ export class MarkupController {
      * 
      * Retorna estatísticas de markup da Deriv para o período especificado
      * 
+     * @param userId - ID do usuário para buscar markup
      * @param dateFrom - Data de início (formato YYYY-MM-DD)
      * @param dateTo - Data de fim (formato YYYY-MM-DD)
      * @param req - Request object contendo informações do usuário autenticado
@@ -36,13 +37,16 @@ export class MarkupController {
      */
     @Get('statistics')
     async getMarkupStatistics(
+        @Query('userId') userId: string,
         @Query('dateFrom') dateFrom: string,
         @Query('dateTo') dateTo: string,
         @Req() req: any,
     ) {
-        const userId = req.user.userId as string;
-
         // Validar parâmetros
+        if (!userId) {
+            throw new BadRequestException('Parâmetro userId é obrigatório');
+        }
+
         if (!dateFrom || !dateTo) {
             throw new BadRequestException(
                 'Parâmetros dateFrom e dateTo são obrigatórios',
