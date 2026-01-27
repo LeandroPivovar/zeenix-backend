@@ -124,6 +124,7 @@ export class CoursesController {
           if (!isAdmin) {
             // Buscar o plano do usuário
             userPlanId = await this.coursesService.getUserPlanId(payload.sub);
+            console.log(`[CoursesController] Identified UserID: ${payload.sub}, PlanID: ${userPlanId}`);
           }
         }
       }
