@@ -23,6 +23,8 @@ import { DerivService } from '../broker/deriv.service';
 
 @Injectable()
 export class TradesService {
+  private markupCache = new Map<string, { timestamp: number, data: any[] }>();
+
   constructor(
     @InjectRepository(TradeEntity)
     private readonly tradeRepository: Repository<TradeEntity>,
@@ -413,6 +415,8 @@ export class TradesService {
     };
   }
 
+  private markupCache = new Map<string, { timestamp: number; data: any[] }>();
+
   getMarkupDataStream(startDate?: string, endDate?: string): Observable<MessageEvent> {
     const subject = new Subject<MessageEvent>();
 
@@ -429,12 +433,40 @@ export class TradesService {
         dateTo = lastDay.toISOString().split('T')[0];
       }
 
+      const cacheKey = `markup_${dateFrom}_${dateTo}`;
+      const cached = this.markupCache.get(cacheKey);
+      const CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 horas
+
+      if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+        console.log(`[TradesService] Stream Markup: Usando cache para ${dateFrom} - ${dateTo}`);
+
+        // Emitir evento de início
+        subject.next({
+          data: { type: 'start', totalUsers: cached.data.length, period: { from: dateFrom, to: dateTo } }
+        } as MessageEvent);
+
+        // Emitir dados cacheados em chunks rápidos para não travar event loop se for muito grande
+        const chunkSize = 50;
+        for (let i = 0; i < cached.data.length; i += chunkSize) {
+          const chunk = cached.data.slice(i, i + chunkSize);
+          for (const user of chunk) {
+            subject.next({ data: { type: 'user_data', user } } as MessageEvent);
+          }
+          await new Promise(resolve => setTimeout(resolve, 0)); // Yield
+        }
+
+        subject.next({ data: { type: 'done', totalProcessed: cached.data.length } } as MessageEvent);
+        subject.complete();
+        return;
+      }
+
       console.log(`[TradesService] Stream Markup: Iniciando busca de ${dateFrom} até ${dateTo}`);
 
       try {
         const allUsers = await this.userRepository.findAll();
         const activeUsers = allUsers.filter(u => u.isActive);
         const totalUsers = activeUsers.length;
+        const accumulatedData: any[] = [];
 
         // Emitir evento de início com metadata
         subject.next({
@@ -492,8 +524,9 @@ export class TradesService {
           // Aguardar o chunk
           const chunkResults = await Promise.all(chunkPromises);
 
-          // Emitir cada usuário processado
+          // Emitir cada usuário processado e acumular
           for (const result of chunkResults) {
+            accumulatedData.push(result);
             subject.next({
               data: { type: 'user_data', user: result }
             } as MessageEvent);
@@ -503,13 +536,19 @@ export class TradesService {
           // Opcional: sleep pequeno se necessário
         }
 
+        // Salvar no cache
+        this.markupCache.set(cacheKey, {
+          timestamp: Date.now(),
+          data: accumulatedData
+        });
+
         // Emitir evento de fim
         subject.next({
           data: { type: 'done', totalProcessed: processedCount }
         } as MessageEvent);
 
         subject.complete();
-        console.log('[TradesService] Stream Markup: Concluído.');
+        console.log('[TradesService] Stream Markup: Concluído e cacheado.');
 
       } catch (error) {
         console.error('[TradesService] Stream Error:', error);
