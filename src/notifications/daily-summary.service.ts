@@ -152,4 +152,45 @@ export class DailySummaryService {
             stats
         };
     }
+
+    /**
+     * Ciclo Automático para ADMINS (Teste)
+     * Roda a cada minuto enviando o resumo de HOJE apenas para quem é admin
+     */
+    @Cron('* * * * *')
+    async handleAdminAutoTest() {
+        this.logger.debug('[DailySummary] Iniciando ciclo de teste automático para Admins...');
+
+        const now = new Date();
+        const startOfDay = new Date(now);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(now);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        try {
+            // Buscar apenas administradores com notificações ativas
+            const admins = await this.dataSource.query(
+                `SELECT u.id, u.name, u.email 
+                 FROM users u
+                 JOIN user_settings s ON u.id = s.user_id
+                 WHERE s.email_notifications = true AND u.role = 'admin'`
+            );
+
+            if (!admins || admins.length === 0) return;
+
+            for (const admin of admins) {
+                try {
+                    const stats = await this.getUserStats(admin.id, startOfDay, endOfDay);
+                    if (stats.totalTrades > 0) {
+                        await this.emailService.sendDailySummary(admin.email, admin.name, stats);
+                        this.logger.log(`[DailySummary] Auto-teste enviado para Admin: ${admin.email}`);
+                    }
+                } catch (e) {
+                    this.logger.error(`[DailySummary] Erro no auto-teste para admin ${admin.id}: ${e.message}`);
+                }
+            }
+        } catch (error) {
+            this.logger.error(`[DailySummary] Erro no ciclo handleAdminAutoTest: ${error.message}`);
+        }
+    }
 }
