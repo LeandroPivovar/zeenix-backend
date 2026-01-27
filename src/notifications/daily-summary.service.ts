@@ -17,13 +17,13 @@ export class DailySummaryService {
      * Dispara o envio de relatórios diários
      * Agendado para meia-noite (00:00)
      */
-    @Cron('* * * * *')
+    @Cron('0 0 * * *')
     async handleDailySummary() {
-        this.logger.log('[DailySummary] TESTE: Iniciando processamento imediato (cada minuto)...');
+        this.logger.log('[DailySummary] Iniciando processamento de resumos diários...');
 
-        // TESTE: Usando data de hoje para o resumo imediato
+        // Período: dia anterior completo (00:00:00 às 23:59:59)
         const yesterday = new Date();
-        // yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setDate(yesterday.getDate() - 1);
 
         // Configurar para o fuso America/Sao_Paulo (UTC-3 geralmente)
         // Para simplificar e garantir precisão, vamos usar o início e fim do dia no calendário local
