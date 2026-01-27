@@ -12,6 +12,14 @@ export interface WeeklyStats {
         copy: number;
         manual: number;
     };
+    initialBalances: {
+        real: number;
+        demo: number;
+    };
+    currentBalances: {
+        real: number;
+        demo: number;
+    };
     totalProfit: number;
     netResult: number;
 }
@@ -28,7 +36,13 @@ export class PerformanceService {
     async getWeeklyStats(userId: string): Promise<WeeklyStats> {
         const endDate = new Date();
         const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 7);
+
+        // Ajustar para o início da semana atual (Segunda-feira)
+        //getDay() retorna 0 para Domingo, 1 para Segunda, etc.
+        const day = startDate.getDay();
+        const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para Segunda
+        startDate.setDate(diff);
+        startDate.setHours(0, 0, 0, 0);
 
         const startDateStr = startDate.toISOString().split('T')[0];
         const endDateStr = endDate.toISOString().split('T')[0];
@@ -77,6 +91,30 @@ export class PerformanceService {
 
             const netResult = aiProfit + agentProfit + copyProfit + manualProfit;
 
+            // 5. Weekly Balance History (user_balances) - Get the FIRST record of the week
+            // This is used to calculate the percentage accurately as requested
+            const balanceHistory = await this.dataSource.query(`
+                SELECT real_balance, demo_balance, created_at
+                FROM user_balances
+                WHERE user_id = ?
+                  AND created_at BETWEEN ? AND ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            `, [userId, startDate.toISOString(), endDate.toISOString()]);
+
+            // 6. Current Balance from user table
+            const currentUser = await this.dataSource.query(`
+                SELECT real_amount, demo_amount
+                FROM users
+                WHERE id = ?
+            `, [userId]);
+
+            const initialReal = parseFloat(balanceHistory[0]?.real_balance) || parseFloat(currentUser[0]?.real_amount) || 0;
+            const initialDemo = parseFloat(balanceHistory[0]?.demo_balance) || parseFloat(currentUser[0]?.demo_amount) || 0;
+
+            const currentReal = parseFloat(currentUser[0]?.real_amount) || 0;
+            const currentDemo = parseFloat(currentUser[0]?.demo_amount) || 0;
+
             return {
                 period: {
                     start: startDate.toLocaleDateString('pt-BR'),
@@ -88,7 +126,15 @@ export class PerformanceService {
                     copy: Number(copyProfit.toFixed(2)),
                     manual: Number(manualProfit.toFixed(2)),
                 },
-                totalProfit: Number(netResult.toFixed(2)), // For simplicity, using net as total profit here
+                initialBalances: {
+                    real: initialReal,
+                    demo: initialDemo
+                },
+                currentBalances: {
+                    real: currentReal,
+                    demo: currentDemo
+                },
+                totalProfit: Number(netResult.toFixed(2)),
                 netResult: Number(netResult.toFixed(2)),
             };
         } catch (error) {
