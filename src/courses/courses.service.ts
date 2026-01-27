@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThanOrEqual } from 'typeorm';
 import type { CourseRepository } from '../domain/repositories/course.repository';
@@ -207,28 +207,38 @@ export class CoursesService {
     const query = this.courseEntityRepository.createQueryBuilder('course')
       .where('course.id = :id', { id });
 
-    // Aplicar as mesmas travas de visibilidade indicadas no findAll
-    if (!isAdmin) {
-      if (userPlanId) {
-        // Obter hierarquia de planos acessíveis
-        const accessibleIds = await this.getAccessiblePlanIds(userPlanId);
+    // Verificação de acesso feita na aplicação para diferenciar 403 de 404
+    const course = await query.getOne();
 
-        if (accessibleIds.length > 0) {
-          const checks = accessibleIds.map(pid => `JSON_CONTAINS(course.plan_ids, '"${pid}"')`).join(' OR ');
-          query.andWhere(`(course.visibility = :public OR (course.visibility = :restricted AND (${checks})))`, {
-            public: 'public',
-            restricted: 'restricted'
-          });
-        } else {
-          query.andWhere('course.visibility = :public', { public: 'public' });
-        }
-      } else {
-        query.andWhere('course.visibility = :public', { public: 'public' });
-      }
+    if (!course) {
+      throw new NotFoundException('Curso não encontrado');
     }
 
-    const course = await query.getOne();
-    if (!course) throw new NotFoundException('Curso não encontrado ou você não tem permissão para acessá-lo');
+    if (!isAdmin) {
+      // 1. Se for privado, retorna 404 (finge que não existe)
+      if (course.visibility === 'private') {
+        throw new NotFoundException('Curso não encontrado');
+      }
+
+      // 2. Se for restrito, verifica os planos
+      if (course.visibility === 'restricted') {
+        if (!userPlanId) {
+          // Usuário sem plano tentando acessar conteúdo restrito
+          throw new ForbiddenException('Este curso é exclusivo para painos superiores. Por favor, verifique sua assinatura.');
+        }
+
+        const accessibleIds = await this.getAccessiblePlanIds(userPlanId);
+
+        // Verifica se algum plano do curso está na lista de planos acessíveis do usuário
+        // course.planIds é um array de strings guardado via JSON
+        const hasAccess = course.planIds && course.planIds.some(pid => accessibleIds.includes(pid));
+
+        if (!hasAccess) {
+          throw new ForbiddenException('Seu plano atual não possui acesso a este curso.');
+        }
+      }
+      // Se for public, passa direto
+    }
 
     const modules = await this.moduleRepository.find({
       where: { courseId: id },
