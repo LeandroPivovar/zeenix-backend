@@ -346,7 +346,7 @@ export class TradesService {
           const derivData = await this.derivService.getAppMarkupDetails(token, {
             date_from: dateFrom + ' 00:00:00',
             date_to: dateTo + ' 23:59:59',
-            limit: 10000,
+            limit: 1000,
           });
 
           const transactions = derivData.transactions || [];

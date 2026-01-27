@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
 import { TradesService, CreateTradeDto } from './trades.service';
@@ -69,6 +70,13 @@ export class TradesController {
     // Se targetUserId for fornecido, usa ele. Senão, usa o ID do usuário logado (token)
     const contextUserId = targetUserId || req.user.userId;
     return await this.tradesService.getMarkupData(contextUserId, startDate, endDate);
+  }
+  @Sse('markup/stream')
+  sse(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ): Observable<MessageEvent> {
+    return this.tradesService.getMarkupDataStream(startDate, endDate);
   }
 }
 
