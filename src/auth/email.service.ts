@@ -438,7 +438,15 @@ export class EmailService {
     const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
     const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
     const winRate = stats.totalTrades > 0 ? ((stats.wins / stats.totalTrades) * 100).toFixed(1) : '0.0';
-    const profitColor = stats.netProfit >= 0 ? '#22C55E' : '#EF4444';
+
+    // Novas cores premium
+    const bgMain = '#121826';
+    const bgCard = '#1C2539';
+    const colorSuccess = '#00C853';
+    const colorError = '#FF5252';
+
+    const profitColor = stats.netProfit >= 0 ? colorSuccess : colorError;
+    const profitBg = stats.netProfit >= 0 ? 'rgba(0, 200, 83, 0.05)' : 'rgba(255, 82, 82, 0.05)';
     const profitSign = stats.netProfit >= 0 ? '+' : '';
 
     const mailOptions = {
@@ -451,65 +459,133 @@ export class EmailService {
         <head>
           <meta charset="UTF-8">
           <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #E5E7EB; background-color: #0f172a; margin: 0; padding: 0; }
-            .container { max-width: 600px; margin: 20px auto; padding: 0; background-color: #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-            .header { background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white; padding: 40px 20px; text-align: center; }
-            .content { padding: 40px 30px; }
-            .stat-grid { display: flex; flex-wrap: wrap; gap: 15px; margin: 25px 0; }
-            .stat-card { flex: 1; min-width: 120px; background-color: #334155; padding: 20px; border-radius: 8px; text-align: center; border-bottom: 3px solid #475569; }
-            .stat-value { font-size: 24px; font-weight: bold; margin-bottom: 5px; color: #fff; }
-            .stat-label { font-size: 13px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; }
-            .profit-section { text-align: center; background-color: #0f172a; padding: 30px; border-radius: 8px; margin-top: 20px; border: 1px solid #334155; }
-            .profit-value { font-size: 36px; font-weight: bold; color: ${profitColor}; }
-            .footer { text-align: center; padding: 20px; color: #64748B; font-size: 12px; background-color: #0f172a; }
-            .button { display: inline-block; padding: 14px 30px; background-color: #22C55E; color: white; text-decoration: none; border-radius: 6px; margin-top: 25px; font-weight: bold; }
+            body { font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #E5E7EB; background-color: ${bgMain}; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+            .wrapper { background-color: ${bgMain}; padding: 40px 20px; }
+            .container { max-width: 600px; margin: 0 auto; background-color: #161e2e; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.05); }
+            
+            .header { 
+              background: linear-gradient(135deg, #166534 0%, #00C853 100%); 
+              color: white; 
+              padding: 50px 30px; 
+              text-align: center; 
+              position: relative;
+            }
+            .header-logo { font-weight: 800; letter-spacing: 2px; font-size: 14px; opacity: 0.8; margin-bottom: 20px; display: block; }
+            .header-title { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+            .header-subtitle { margin: 10px 0 0 0; opacity: 0.7; font-size: 14px; font-weight: 400; }
+
+            .content { padding: 40px 35px; }
+            .welcome-text { font-size: 20px; margin-bottom: 8px; color: #ffffff; font-weight: 700; }
+            .welcome-sub { font-size: 14px; color: #94A3B8; margin-bottom: 30px; }
+            
+            .stat-grid { display: flex; flex-wrap: wrap; gap: 16px; margin: 30px 0; }
+            .stat-card { 
+              flex: 1; 
+              min-width: 120px; 
+              background-color: ${bgCard}; 
+              padding: 24px 15px; 
+              border-radius: 12px; 
+              text-align: center; 
+              border: 1px solid rgba(255,255,255,0.03);
+              transition: transform 0.2s ease;
+            }
+            .stat-value { font-size: 26px; font-weight: 800; margin-bottom: 4px; color: #ffffff; display: block; }
+            .stat-label { font-size: 11px; color: #64748B; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
+            
+            /* Efeito de brilho para vitórias */
+            .stat-card-success { 
+              border: 1px solid rgba(0, 200, 83, 0.2);
+              box-shadow: inset 0 0 20px rgba(0, 200, 83, 0.05);
+            }
+            .stat-card-success .stat-value { color: ${colorSuccess}; text-shadow: 0 0 15px rgba(0, 200, 83, 0.3); }
+
+            .profit-box { 
+              text-align: center; 
+              background-color: ${profitBg}; 
+              padding: 40px 30px; 
+              border-radius: 16px; 
+              margin-top: 25px; 
+              border: 1px solid ${stats.netProfit >= 0 ? 'rgba(0, 200, 83, 0.1)' : 'rgba(255, 82, 82, 0.1)'};
+            }
+            .profit-label { font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; display: block; }
+            .profit-value { 
+              font-size: 42px; 
+              font-weight: 900; 
+              color: ${profitColor}; 
+              font-family: 'Courier New', Courier, monospace; /* Tabular fallback */
+              font-variant-numeric: tabular-nums;
+              letter-spacing: -1px;
+            }
+
+            .footer { text-align: center; padding: 30px; color: #4B5563; font-size: 12px; background-color: #0f172a; }
+            .button-container { text-align: center; margin-top: 35px; }
+            .button { 
+              display: inline-block; 
+              padding: 16px 36px; 
+              background: linear-gradient(135deg, #00C853 0%, #00a846 100%);
+              color: white; 
+              text-decoration: none; 
+              border-radius: 8px; 
+              font-weight: 800;
+              font-size: 14px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              box-shadow: 0 10px 20px rgba(0, 200, 83, 0.2);
+            }
+            
+            .support-text { margin-top: 40px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 25px; color: #4B5563; font-size: 13px; text-align: center; }
           </style>
         </head>
         <body>
-          <div class="container">
-            <div class="header">
-              <h1 style="margin:0; font-size: 24px;">📊 Resumo de Hoje</h1>
-              <p style="margin:5px 0 0 0; opacity: 0.9;">Confira seu desempenho nas últimas 24h</p>
-            </div>
-            <div class="content">
-              <p style="font-size: 18px; margin-bottom: 10px; color: #fff;"><strong>Olá, ${name}</strong></p>
-              <p>Aqui estão as estatísticas consolidadas das suas operações de hoje no sistema ZENIX.</p>
+          <div class="wrapper">
+            <div class="container">
+              <div class="header">
+                <span class="header-logo">ZENIX PLATFORM</span>
+                <h1 class="header-title">Resumo de Hoje 📈</h1>
+                <p class="header-subtitle">Confira seu desempenho detalhado nas últimas 24h</p>
+              </div>
               
-              <div class="stat-grid">
-                <div class="stat-card">
-                  <div class="stat-value">${stats.totalTrades}</div>
-                  <div class="stat-label">Operações</div>
+              <div class="content">
+                <div class="welcome-text">Olá, ${name}</div>
+                <div class="welcome-sub">Aqui está a análise consolidada da sua inteligência de trading.</div>
+                
+                <div class="stat-grid">
+                  <div class="stat-card">
+                    <span class="stat-value">${stats.totalTrades}</span>
+                    <span class="stat-label">Operações</span>
+                  </div>
+                  <div class="stat-card stat-card-success">
+                    <span class="stat-value">${stats.wins}</span>
+                    <span class="stat-label">Vitórias</span>
+                  </div>
+                  <div class="stat-card">
+                    <span class="stat-value" style="color: ${colorError}; opacity: 0.9;">${stats.losses}</span>
+                    <span class="stat-label">Derrotas</span>
+                  </div>
+                  <div class="stat-card">
+                    <span class="stat-value" style="color: #3B82F6;">${winRate}%</span>
+                    <span class="stat-label">Eficiência</span>
+                  </div>
                 </div>
-                <div class="stat-card">
-                  <div class="stat-value" style="color: #22C55E;">${stats.wins}</div>
-                  <div class="stat-label">Vitórias</div>
+
+                <div class="profit-box">
+                  <span class="profit-label">Resultado Líquido Consolidado</span>
+                  <div class="profit-value">${profitSign}$${Math.abs(stats.netProfit).toFixed(2)}</div>
                 </div>
-                <div class="stat-card">
-                  <div class="stat-value" style="color: #EF4444;">${stats.losses}</div>
-                  <div class="stat-label">Derrotas</div>
+
+                <div class="button-container">
+                  <a href="https://iazenix.com/dashboard" class="button">Acessar Painel Completo</a>
                 </div>
-                <div class="stat-card">
-                  <div class="stat-value" style="color: #3B82F6;">${winRate}%</div>
-                  <div class="stat-label">Win Rate</div>
+
+                <div class="support-text">
+                  Continue operando com estratégia. Nosso suporte especializado está pronto para te ajudar a qualquer momento.
                 </div>
               </div>
-
-              <div class="profit-section">
-                <div class="stat-label">Resultado Consolidado</div>
-                <div class="profit-value">${profitSign}$${Math.abs(stats.netProfit).toFixed(2)}</div>
+              
+              <div class="footer">
+                <p>© 2026 ZENIX. Tecnologia de ponta em trading inteligente.</p>
+                <p style="opacity: 0.6;">Você está recebendo este resumo diário automático. <br> Configure suas preferências no menu de perfil.</p>
               </div>
-
-              <div style="text-align: center;">
-                <a href="https://iazenix.com/dashboard" class="button">Ver Detalhes no Painel</a>
-              </div>
-
-              <p style="margin-top: 40px; border-top: 1px solid #334155; padding-top: 20px; color: #94A3B8; font-size: 14px;">
-                Continue operando com inteligência. Se tiver qualquer dúvida, nosso suporte está à disposição.
-              </p>
-            </div>
-            <div class="footer">
-              <p>© 2026 ZENIX. Todos os direitos reservados.</p>
-              <p>Você recebeu este e-mail porque optou por receber resumos diários. <br> Você pode desativar esta opção nas configurações do seu perfil.</p>
             </div>
           </div>
         </body>
@@ -529,7 +605,7 @@ export class EmailService {
 
         Resultado Final: ${profitSign}$${Math.abs(stats.netProfit).toFixed(2)}
 
-        Acesse seu painel em: https://iazenix.com/dashboard
+        Acesse seu painel completo em: https://iazenix.com/dashboard
 
         Equipe ZENIX
       `,
@@ -537,9 +613,9 @@ export class EmailService {
 
     try {
       await this.transporter.sendMail(mailOptions);
-      this.logger.log(`Relatório diário enviado para ${email}`);
+      this.logger.log(`Relatório diário premium enviado para ${email}`);
     } catch (error) {
-      this.logger.error(`Erro ao enviar relatório diário para ${email}: ${error.message}`);
+      this.logger.error(`Erro ao enviar relatório diário premium para ${email}: ${error.message}`);
     }
   }
 }
