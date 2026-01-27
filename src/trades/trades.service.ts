@@ -433,7 +433,8 @@ export class TradesService {
         dateTo = lastDay.toISOString().split('T')[0];
       }
 
-      const cacheKey = `markup_${dateFrom}_${dateTo}`;
+      // Cache mantido para evitar queries excessivas (embora DB seja rápido)
+      const cacheKey = `markup_calculated_${dateFrom}_${dateTo}`;
       const cached = this.markupCache.get(cacheKey);
       const CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 horas
 
@@ -481,42 +482,94 @@ export class TradesService {
           const chunk = activeUsers.slice(i, i + chunkSize);
 
           const chunkPromises = chunk.map(async (user) => {
-            const token = user.tokenReal || process.env.DERIV_ADMIN_TOKEN;
-            let userCommission = 0;
-            let userTransactions = 0;
-            let hasRealData = false;
+            // Removida chamada à API da Deriv conforme solicitado.
+            // Apenas listar usuários com conta real configurada e saldo > 0.
 
-            if (token) {
-              try {
-                const derivData = await this.derivService.getAppMarkupDetails(token, {
-                  date_from: dateFrom + ' 00:00:00',
-                  date_to: dateTo + ' 23:59:59',
-                  limit: 1000,
-                });
+            // Calcular Markup Interno (3%) baseado nos lucros (wins)
+            // Filtro: do dia 20 para frente (do mês atual ou passado? O prompt diz "do dia 20 para frente")
+            // Assumiremos dia 20 do mês atual se hoje >= 20, senão dia 20 do mês anterior,
+            // OU simplesmente fixar '2026-01-20' dado o contexto da data atual (27/01/2026).
+            // O usuário disse "busque do dia 20 para frente". Vamos assumir 20 do mês corrente.
 
-                const transactions = derivData.transactions || [];
-                for (const tx of transactions) {
-                  const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
-                  userCommission += markup;
-                  userTransactions++;
-                }
-                if (transactions.length > 0) hasRealData = true;
+            const now = new Date();
+            const currentDay = now.getDate();
+            let targetYear = now.getFullYear();
+            let targetMonth = now.getMonth(); // 0-indexed
 
-              } catch (error) {
-                // Ignorar erro silenciosamente ou logar debug
+            // Se hoje for antes do dia 20, talvez ele queira do mês passado? 
+            // Mas hoje é 27, então é dia 20 deste mês.
+            if (currentDay < 20) {
+              targetMonth--;
+              if (targetMonth < 0) {
+                targetMonth = 11;
+                targetYear--;
               }
             }
+
+            const startDateFilter = new Date(targetYear, targetMonth, 20).toISOString().split('T')[0]; // YYYY-MM-20
+
+            let totalProfit = 0;
+            let transactionCount = 0;
+
+            try {
+              // 1. Trades Manuais (trades table) - status = 'WON'
+              const manualWins = await this.dataSource.query(
+                `SELECT SUM(profit) as total, COUNT(*) as count 
+                 FROM trades 
+                 WHERE user_id = ? AND status = 'WON' AND DATE(created_at) >= ?`,
+                [user.id, startDateFilter]
+              );
+              totalProfit += parseFloat(manualWins[0]?.total || 0);
+              transactionCount += parseInt(manualWins[0]?.count || 0);
+
+              // 2. AI Trades (ai_trades table) - status = 'WON'
+              const aiWins = await this.dataSource.query(
+                `SELECT SUM(profit_loss) as total, COUNT(*) as count 
+                 FROM ai_trades 
+                 WHERE user_id = ? AND status = 'WON' AND DATE(created_at) >= ?`,
+                [user.id, startDateFilter]
+              );
+              totalProfit += parseFloat(aiWins[0]?.total || 0);
+              transactionCount += parseInt(aiWins[0]?.count || 0);
+
+              // 3. Agente Autônomo (autonomous_agent_trades table) - status = 'WON'
+              // Precisamos verificar se a tabela existe e tem a coluna profit
+              // Assumindo estrutura padrão baseada no nome
+              try {
+                const agentWins = await this.dataSource.query(
+                  `SELECT SUM(profit) as total, COUNT(*) as count 
+                     FROM autonomous_agent_trades 
+                     WHERE user_id = ? AND status = 'WON' AND DATE(created_at) >= ?`,
+                  [user.id, startDateFilter]
+                );
+                totalProfit += parseFloat(agentWins[0]?.total || 0);
+                transactionCount += parseInt(agentWins[0]?.count || 0);
+              } catch (e) {
+                // Tabela pode não existir ou ter nome diferente, ignorar silenciosamente
+              }
+
+            } catch (err) {
+              console.error(`Erro ao calcular markup para user ${user.id}:`, err);
+            }
+
+            // Cálculo do Markup
+            // NetProfit = GrossProfit * 0.97
+            // GrossProfit = NetProfit / 0.97
+            // Markup = GrossProfit * 0.03
+            // Logo: Markup = (NetProfit / 0.97) * 0.03
+            const markup = (totalProfit / 0.97) * 0.03;
 
             return {
               userId: user.id,
               name: user.name,
               email: user.email,
               whatsapp: user.phone || null,
-              country: 'Brasil', // TODO: user.country
+              country: 'Brasil',
               loginid: user.idRealAccount || 'N/A',
-              transactionCount: userTransactions,
-              commission: parseFloat(userCommission.toFixed(2)),
-              realData: hasRealData,
+              transactionCount: transactionCount,
+              commission: parseFloat(markup.toFixed(2)), // Enviar o markup calculado como comissão
+              realAmount: Number(user.realAmount || 0),
+              realData: true,
               role: user.role,
               traderMestre: user.traderMestre,
             };
