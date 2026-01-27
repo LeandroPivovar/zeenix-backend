@@ -266,22 +266,49 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // ✅ Proteção contra reset de estado pelo Sync (5min)
     if (this.userConfigs.has(userId)) {
-      this.logger.log(`[Falcon][${userId}] 🔄 Atualizando configuração (Usuário já ativo).`);
+      const existingConfig = this.userConfigs.get(userId);
+      const hasSignificantChange = existingConfig && (
+        existingConfig.riskProfile !== falconConfig.riskProfile ||
+        existingConfig.dailyProfitTarget !== falconConfig.dailyProfitTarget ||
+        existingConfig.dailyLossLimit !== falconConfig.dailyLossLimit ||
+        existingConfig.initialStake !== falconConfig.initialStake
+      );
+
+      if (!hasSignificantChange) {
+        // Se não mudou nada importante, apenas mantém e retorna sem logar sessão de novo
+        this.userConfigs.set(userId, falconConfig);
+        return;
+      }
+
+      this.logger.log(`[Falcon][${userId}] 🔄 Atualizando configuração (Usuário já ativo - Mudança detectada).`);
       this.userConfigs.set(userId, falconConfig);
 
       // Apenas garantir que está ativo (se não estiver pausado por stop)
-      // Mas se estiver pausado na memória, não deveríamos reativar?
-      // O syncActiveUsersFromDb FILTRA os stopped. Se chegou aqui, é porque deve estar ativo.
-      // E se foi um "Start" manual? Deve resetar?
-      // Se for start manual, o controller provavelmente chamou deactivate antes? Não.
-      // Vamos assumir que se chamou activateUser, é para estar ativo.
       const state = this.userStates.get(userId);
       if (state && !state.isActive) {
-        // Se estava inativo em memória, reativar flag (ex: reinício de servidor após pausa?)
-        // Mas cuidado com o stop do dia. 
-        // Se o sync chamou, o status não é stopped. Então pode reativar.
         state.isActive = true;
       }
+
+      // ✅ Log de reativação com configs atualizadas
+      const mode = state?.mode || 'NORMAL';
+      this.logInitialConfigV2(userId, {
+        agentName: 'FALCON',
+        operationMode: mode,
+        riskProfile: falconConfig.riskProfile || 'MODERADO',
+        profitTarget: falconConfig.dailyProfitTarget,
+        stopLoss: falconConfig.dailyLossLimit,
+        stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+      });
+
+      this.logSessionStart(userId, {
+        date: new Date(),
+        initialBalance: falconConfig.initialBalance,
+        profitTarget: falconConfig.dailyProfitTarget,
+        stopLoss: falconConfig.dailyLossLimit,
+        mode: mode,
+        agentName: 'FALCON'
+      });
+
       return;
     }
 
@@ -417,12 +444,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const requiredTicks = settings.windowSize;
 
     if (userTicks.length < requiredTicks) {
-      if (userTicks.length % 3 === 0) {
-        // Log menos frequente para não floodar
-        // ...
-      }
+      this.logDataCollection(userId, {
+        targetCount: requiredTicks,
+        currentCount: userTicks.length,
+        mode: state.mode
+      });
       return;
     }
+
+    // ✅ Log de início de análise
+    this.logAnalysisStarted(userId, state.mode, userTicks.length);
 
     // ✅ Log inicial de análise (menos frequente)
     if (userTicks.length % 50 === 0) {
