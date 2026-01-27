@@ -415,7 +415,7 @@ export class TradesService {
     };
   }
 
-  private markupCache = new Map<string, { timestamp: number; data: any[] }>();
+
 
   getMarkupDataStream(startDate?: string, endDate?: string): Observable<MessageEvent> {
     const subject = new Subject<MessageEvent>();
@@ -464,7 +464,8 @@ export class TradesService {
 
       try {
         const allUsers = await this.userRepository.findAll();
-        const activeUsers = allUsers.filter(u => u.isActive);
+        // Filtrar apenas usuários ativos E com saldo na conta real > 0
+        const activeUsers = allUsers.filter(u => u.isActive && Number(u.realAmount) > 0);
         const totalUsers = activeUsers.length;
         const accumulatedData: any[] = [];
 
