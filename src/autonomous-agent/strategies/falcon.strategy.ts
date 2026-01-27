@@ -419,11 +419,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
       this.ticks.set(userId, userTicks);
 
-      // Se está aguardando resultado de contrato, interromper AQUI (após coletar)
+      // 2. Se está aguardando resultado de contrato, realizar análise apenas para detectar entrada bloqueada
       if (state.isWaitingContract) {
-        // Apenas logar heartbeat ocasional para saber que está vivo e coletando
+        const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+        if (marketAnalysis?.signal) {
+          this.logBlockedEntry(userId, {
+            reason: 'OPERAÇÃO EM ANDAMENTO',
+            details: `Sinal ${marketAnalysis.signal} detectado durante contrato ${state.currentContractId || 'ativo'}`
+          });
+        }
+
+        // Heartbeat ocasional
         if (userTicks.length % 10 === 0) {
-          this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados em background: ${userTicks.length})`);
+          this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados: ${userTicks.length})`);
         }
         return;
       }
@@ -509,15 +517,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
   }
 
-  /**
-   * Análise de mercado FALCON v1.0 - Digit Over 3 (Statistical Pattern Analysis)
-   * 
-   * Implementa os filtros do documento oficial ZENIX:
-   * - Hn (Entropia Normalizada): Mede a aleatoriedade dos dígitos
-   * - p_over3: Probabilidade de dígitos >= 4
-   * - strength: Força do padrão estatístico
-   * - volatility: Volatilidade dos dígitos finais
-   */
   /**
    * Análise de mercado FALCON v2.0 - Pattern Matching IPI
    * 
@@ -772,10 +771,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (state.mode !== 'NORMAL' || state.totalLossAccumulated > 0) {
         const recoveredLoss = state.totalLossAccumulated;
 
-        // Se recuperou tudo (totalLossAccumulated zerado), resetar para normal
-        // Na prática, se win, a lógica de martingale deve ter coberto o loss
-        // Vamos resetar para NORMAL se win
-
         if (state.mode !== 'NORMAL') {
           this.logSuccessfulRecoveryV2(userId, {
             recoveredLoss: recoveredLoss,
@@ -786,6 +781,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           state.mode = 'NORMAL';
         }
 
+        // ✅ RESETAR sequência após qualquer recuperação para evitar Soros imediato com lucro alto
+        state.consecutiveWins = 0;
         state.totalLossAccumulated = 0;
         state.martingaleLevel = 0;
       }
@@ -2172,15 +2169,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     reason: string;
     details?: string;
   }) {
-    // ⏸️ ENTRADA BLOQUEADA
+    // ⏸️ ENTRADA BLOQUEADA (Yellow/WARN)
     const message = `⏸️ ENTRADA BLOQUEADA\n` +
       `• Motivo: ${blocked.reason}\n` +
       (blocked.details ? `• Detalhes: ${blocked.details}` : '');
 
-    // Log debug only
-    // this.logger.debug(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
-    // Throttled log logic handled by caller usually, but here we just save
-    this.saveLog(userId, 'INFO', 'ANALYZER', message);
+    this.saveLog(userId, 'WARN', 'ANALYZER', message);
   }
 
   private logSignalGenerated(userId: string, signal: {
