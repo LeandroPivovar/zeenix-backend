@@ -401,18 +401,18 @@ export class EmailService {
       `,
       text: `
         Confirme sua conta - ZENIX
-        
+
         Olá ${name},
-        
+
         Obrigado por se cadastrar na plataforma ZENIX!
-        
+
         Para ativar sua conta, acesse o link abaixo:
         ${confirmationUrl}
-        
+
         Este link expira em 24 horas.
-        
+
         Se você não se cadastrou nesta plataforma, ignore este e-mail.
-        
+
         Atenciosamente,
         Equipe ZENIX
       `,
@@ -431,6 +431,115 @@ export class EmailService {
       this.logger.error(`[sendConfirmationEmail] Stack: ${error.stack}`);
       this.logger.error(`[sendConfirmationEmail] Erro completo: ${JSON.stringify(error, Object.getOwnPropertyNames(error))}`);
       throw new Error('Falha ao enviar email de confirmação');
+    }
+  }
+
+  async sendDailySummary(email: string, name: string, stats: { totalTrades: number, wins: number, losses: number, netProfit: number }): Promise<void> {
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'suporte@iazenix.com';
+    const fromName = process.env.SMTP_FROM_NAME || 'ZENIX';
+    const winRate = stats.totalTrades > 0 ? ((stats.wins / stats.totalTrades) * 100).toFixed(1) : '0.0';
+    const profitColor = stats.netProfit >= 0 ? '#22C55E' : '#EF4444';
+    const profitSign = stats.netProfit >= 0 ? '+' : '';
+
+    const mailOptions = {
+      from: `"${fromName}" <${fromEmail}>`,
+      to: email,
+      subject: `📊 Resumo Diário de Operações - ZENIX`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #E5E7EB; background-color: #0f172a; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 20px auto; padding: 0; background-color: #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            .header { background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%); color: white; padding: 40px 20px; text-align: center; }
+            .content { padding: 40px 30px; }
+            .stat-grid { display: flex; flex-wrap: wrap; gap: 15px; margin: 25px 0; }
+            .stat-card { flex: 1; min-width: 120px; background-color: #334155; padding: 20px; border-radius: 8px; text-align: center; border-bottom: 3px solid #475569; }
+            .stat-value { font-size: 24px; font-weight: bold; margin-bottom: 5px; color: #fff; }
+            .stat-label { font-size: 13px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; }
+            .profit-section { text-align: center; background-color: #0f172a; padding: 30px; border-radius: 8px; margin-top: 20px; border: 1px solid #334155; }
+            .profit-value { font-size: 36px; font-weight: bold; color: ${profitColor}; }
+            .footer { text-align: center; padding: 20px; color: #64748B; font-size: 12px; background-color: #0f172a; }
+            .button { display: inline-block; padding: 14px 30px; background-color: #22C55E; color: white; text-decoration: none; border-radius: 6px; margin-top: 25px; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1 style="margin:0; font-size: 24px;">📊 Resumo de Hoje</h1>
+              <p style="margin:5px 0 0 0; opacity: 0.9;">Confira seu desempenho nas últimas 24h</p>
+            </div>
+            <div class="content">
+              <p style="font-size: 18px; margin-bottom: 10px; color: #fff;"><strong>Olá, ${name}</strong></p>
+              <p>Aqui estão as estatísticas consolidadas das suas operações de hoje no sistema ZENIX.</p>
+              
+              <div class="stat-grid">
+                <div class="stat-card">
+                  <div class="stat-value">${stats.totalTrades}</div>
+                  <div class="stat-label">Operações</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value" style="color: #22C55E;">${stats.wins}</div>
+                  <div class="stat-label">Vitórias</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value" style="color: #EF4444;">${stats.losses}</div>
+                  <div class="stat-label">Derrotas</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value" style="color: #3B82F6;">${winRate}%</div>
+                  <div class="stat-label">Win Rate</div>
+                </div>
+              </div>
+
+              <div class="profit-section">
+                <div class="stat-label">Resultado Consolidado</div>
+                <div class="profit-value">${profitSign}$${Math.abs(stats.netProfit).toFixed(2)}</div>
+              </div>
+
+              <div style="text-align: center;">
+                <a href="https://iazenix.com/dashboard" class="button">Ver Detalhes no Painel</a>
+              </div>
+
+              <p style="margin-top: 40px; border-top: 1px solid #334155; padding-top: 20px; color: #94A3B8; font-size: 14px;">
+                Continue operando com inteligência. Se tiver qualquer dúvida, nosso suporte está à disposição.
+              </p>
+            </div>
+            <div class="footer">
+              <p>© 2026 ZENIX. Todos os direitos reservados.</p>
+              <p>Você recebeu este e-mail porque optou por receber resumos diários. <br> Você pode desativar esta opção nas configurações do seu perfil.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+      text: `
+        📊 Resumo Diário de Operações - ZENIX
+
+        Olá ${name},
+        
+        Aqui estão as estatísticas das suas operações de hoje:
+
+        Total de Operações: ${stats.totalTrades}
+        Vitórias: ${stats.wins}
+        Derrotas: ${stats.losses}
+        Win Rate: ${winRate}%
+
+        Resultado Final: ${profitSign}$${Math.abs(stats.netProfit).toFixed(2)}
+
+        Acesse seu painel em: https://iazenix.com/dashboard
+
+        Equipe ZENIX
+      `,
+    };
+
+    try {
+      await this.transporter.sendMail(mailOptions);
+      this.logger.log(`Relatório diário enviado para ${email}`);
+    } catch (error) {
+      this.logger.error(`Erro ao enviar relatório diário para ${email}: ${error.message}`);
     }
   }
 }
