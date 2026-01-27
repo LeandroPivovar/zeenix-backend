@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { EmailService } from './email.service';
+import { CoursesModule } from '../courses/courses.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { EmailService } from './email.service';
     TypeOrmModule,
     UserModule,
     SettingsModule,
+    CoursesModule,
     PassportModule,
     forwardRef(() => NotificationsModule),
     JwtModule.registerAsync({
@@ -35,6 +37,6 @@ import { EmailService } from './email.service';
   providers: [AuthService, JwtStrategy, EmailService],
   exports: [AuthService, EmailService],
 })
-export class AuthModule {}
+export class AuthModule { }
 
 

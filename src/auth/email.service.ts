@@ -7,7 +7,7 @@ export class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
-    // Configuração SMTP do Gmail
+    // Configuração SMTP
     const smtpSecure = process.env.SMTP_SECURE || 'tls';
     const smtpPort = parseInt(process.env.SMTP_PORT || '465');
 
@@ -64,7 +64,7 @@ export class EmailService {
               <div class="token">${resetUrl}</div>
               <p><strong>Este link expira em 1 hora.</strong></p>
               <p>Se você não solicitou esta recuperação de senha, ignore este e-mail.</p>
-              <p>Atenciosamente,<br>Equipe ZENIX Academy</p>
+              <p>Atenciosamente,<br>Equipe ZENIX</p>
             </div>
             <div class="footer">
               <p>Este é um e-mail automático, por favor não responda.</p>
@@ -74,7 +74,7 @@ export class EmailService {
         </html>
       `,
       text: `
-        Recuperação de Senha - ZENIX Academy
+        Recuperação de Senha - ZENIX
         
         Olá,
         
@@ -88,7 +88,7 @@ export class EmailService {
         Se você não solicitou esta recuperação de senha, ignore este e-mail.
         
         Atenciosamente,
-        Equipe ZENIX Academy
+        Equipe ZENIX
       `,
     };
 
@@ -108,7 +108,7 @@ export class EmailService {
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ZENIX Academy',
+      subject: '🎉 Bem-vindo! Complete seu cadastro como Expert - ZENIX',
       html: `
         <!DOCTYPE html>
         <html>
@@ -130,7 +130,7 @@ export class EmailService {
         <body>
           <div class="container">
             <div class="header">
-              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX Academy!</h1>
+              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX!</h1>
               <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.95;">Sua jornada como Expert começa agora</p>
             </div>
             <div class="content">
@@ -138,7 +138,7 @@ export class EmailService {
               
               <div class="welcome-box">
                 <p style="margin: 0; font-size: 16px; color: #2E7D32;">
-                  <strong>É um prazer tê-lo conosco!</strong> Sua conta de <span class="highlight">Expert</span> foi criada com sucesso na plataforma ZENIX Academy.
+                  <strong>É um prazer tê-lo conosco!</strong> Sua conta de <span class="highlight">Expert</span> foi criada com sucesso na plataforma ZENIX.
                 </p>
               </div>
  
@@ -170,7 +170,7 @@ export class EmailService {
  
               <p style="margin-top: 30px;">
                 Bem-vindo e sucesso em sua jornada!<br>
-                <strong>Equipe ZENIX Academy</strong>
+                <strong>Equipe ZENIX</strong>
               </p>
             </div>
             <div class="footer">
@@ -182,11 +182,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        🎉 Bem-vindo à ZENIX Academy!
+        🎉 Bem-vindo à ZENIX!
         
         Olá ${name},
         
-        É um prazer tê-lo conosco! Sua conta de Expert foi criada com sucesso na plataforma ZENIX Academy.
+        É um prazer tê-lo conosco! Sua conta de Expert foi criada com sucesso na plataforma ZENIX.
         
         Estamos muito felizes em tê-lo como parte da nossa comunidade de traders especializados. Como Expert, você terá acesso a recursos exclusivos para compartilhar suas estratégias e ajudar outros traders a alcançarem seus objetivos.
         
@@ -205,7 +205,7 @@ export class EmailService {
         Estamos ansiosos para ver suas contribuições na comunidade!
         
         Bem-vindo e sucesso em sua jornada!
-        Equipe ZENIX Academy
+        Equipe ZENIX
         
         ---
         Este é um e-mail automático, por favor não responda.
@@ -234,7 +234,7 @@ export class EmailService {
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: '🎉 Bem-vindo à ZENIX Academy!',
+      subject: 'ZENIX | Acesso liberado ao painel',
       html: `
         <!DOCTYPE html>
         <html>
@@ -257,7 +257,7 @@ export class EmailService {
         <body>
           <div class="container">
             <div class="header">
-              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX Academy!</h1>
+              <h1 style="margin: 0; font-size: 28px;">🎉 Bem-vindo à ZENIX!</h1>
               <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.95;">Sua conta foi criada com sucesso</p>
             </div>
             <div class="content">
@@ -265,7 +265,7 @@ export class EmailService {
               
               <div class="welcome-box">
                 <p style="margin: 0; font-size: 16px; color: #2E7D32;">
-                  <strong>É um prazer tê-lo conosco!</strong> Sua conta foi criada com sucesso na plataforma ZENIX Academy.
+                  <strong>É um prazer tê-lo conosco!</strong> Sua conta foi criada com sucesso na plataforma ZENIX.
                 </p>
               </div>
  
@@ -295,7 +295,7 @@ export class EmailService {
  
               <p style="margin-top: 30px;">
                 Bem-vindo e sucesso em sua jornada!<br>
-                <strong>Equipe ZENIX Academy</strong>
+                <strong>Equipe ZENIX</strong>
               </p>
             </div>
             <div class="footer">
@@ -307,11 +307,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        🎉 Bem-vindo à ZENIX Academy!
+        🎉 Bem-vindo à ZENIX!
         
         Olá ${name},
         
-        É um prazer tê-lo conosco! Sua conta foi criada com sucesso na plataforma ZENIX Academy.
+        É um prazer tê-lo conosco! Sua conta foi criada com sucesso na plataforma ZENIX.
         
         Estamos muito felizes em tê-lo como parte da nossa comunidade. Agora você tem acesso completo à plataforma e pode começar a usar todos os recursos disponíveis.
         
@@ -327,7 +327,7 @@ export class EmailService {
         Estamos ansiosos para ver você usando a plataforma!
         
         Bem-vindo e sucesso em sua jornada!
-        Equipe ZENIX Academy
+        Equipe ZENIX
         
         ---
         Este é um e-mail automático, por favor não responda.
@@ -358,7 +358,7 @@ export class EmailService {
     const mailOptions = {
       from: `"${fromName}" <${fromEmail}>`,
       to: email,
-      subject: 'Confirme sua conta - ZENIX Academy',
+      subject: 'ZENIX | Confirme sua conta',
       html: `
         <!DOCTYPE html>
         <html>
@@ -381,7 +381,7 @@ export class EmailService {
             </div>
             <div class="content">
               <p>Olá ${name},</p>
-              <p>Obrigado por se cadastrar na plataforma ZENIX Academy!</p>
+              <p>Obrigado por se cadastrar na plataforma ZENIX!</p>
               <p>Para ativar sua conta, clique no botão abaixo:</p>
               <p style="text-align: center;">
                 <a href="${confirmationUrl}" class="button">Confirmar Conta</a>
@@ -390,7 +390,7 @@ export class EmailService {
               <div class="token">${confirmationUrl}</div>
               <p><strong>Este link expira em 24 horas.</strong></p>
               <p>Se você não se cadastrou nesta plataforma, ignore este e-mail.</p>
-              <p>Atenciosamente,<br>Equipe ZENIX Academy</p>
+              <p>Atenciosamente,<br>Equipe ZENIX</p>
             </div>
             <div class="footer">
               <p>Este é um e-mail automático, por favor não responda.</p>
@@ -400,11 +400,11 @@ export class EmailService {
         </html>
       `,
       text: `
-        Confirme sua conta - ZENIX Academy
+        Confirme sua conta - ZENIX
         
         Olá ${name},
         
-        Obrigado por se cadastrar na plataforma ZENIX Academy!
+        Obrigado por se cadastrar na plataforma ZENIX!
         
         Para ativar sua conta, acesse o link abaixo:
         ${confirmationUrl}
@@ -414,13 +414,13 @@ export class EmailService {
         Se você não se cadastrou nesta plataforma, ignore este e-mail.
         
         Atenciosamente,
-        Equipe ZENIX Academy
+        Equipe ZENIX
       `,
     };
 
     try {
       this.logger.log(`[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`);
-      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`);
+      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST}, user=${process.env.SMTP_USERNAME}`);
       this.logger.log(`[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`);
 
       await this.transporter.sendMail(mailOptions);
