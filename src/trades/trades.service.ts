@@ -411,5 +411,112 @@ export class TradesService {
       }
     };
   }
+
+  getMarkupDataStream(startDate?: string, endDate?: string): Observable<MessageEvent> {
+    const subject = new Subject<MessageEvent>();
+
+    // Executar processo em background para não bloquear o retorno do Observable
+    (async () => {
+      let dateFrom = startDate;
+      let dateTo = endDate;
+
+      if (!startDate || !endDate) {
+        const now = new Date();
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        dateFrom = firstDay.toISOString().split('T')[0];
+        dateTo = lastDay.toISOString().split('T')[0];
+      }
+
+      console.log(`[TradesService] Stream Markup: Iniciando busca de ${dateFrom} até ${dateTo}`);
+
+      try {
+        const allUsers = await this.userRepository.findAll();
+        const activeUsers = allUsers.filter(u => u.isActive);
+        const totalUsers = activeUsers.length;
+
+        // Emitir evento de início com metadata
+        subject.next({
+          data: { type: 'start', totalUsers, period: { from: dateFrom, to: dateTo } }
+        } as MessageEvent);
+
+        let processedCount = 0;
+        const chunkSize = 5; // Processar em pequenos lotes
+
+        for (let i = 0; i < activeUsers.length; i += chunkSize) {
+          const chunk = activeUsers.slice(i, i + chunkSize);
+
+          const chunkPromises = chunk.map(async (user) => {
+            const token = user.tokenReal || process.env.DERIV_ADMIN_TOKEN;
+            let userCommission = 0;
+            let userTransactions = 0;
+            let hasRealData = false;
+
+            if (token) {
+              try {
+                const derivData = await this.derivService.getAppMarkupDetails(token, {
+                  date_from: dateFrom + ' 00:00:00',
+                  date_to: dateTo + ' 23:59:59',
+                  limit: 1000,
+                });
+
+                const transactions = derivData.transactions || [];
+                for (const tx of transactions) {
+                  const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
+                  userCommission += markup;
+                  userTransactions++;
+                }
+                if (transactions.length > 0) hasRealData = true;
+
+              } catch (error) {
+                // Ignorar erro silenciosamente ou logar debug
+              }
+            }
+
+            return {
+              userId: user.id,
+              name: user.name,
+              email: user.email,
+              whatsapp: user.phone || null,
+              country: 'Brasil', // TODO: user.country
+              loginid: user.idRealAccount || 'N/A',
+              transactionCount: userTransactions,
+              commission: parseFloat(userCommission.toFixed(2)),
+              realData: hasRealData,
+              role: user.role,
+              traderMestre: user.traderMestre,
+            };
+          });
+
+          // Aguardar o chunk
+          const chunkResults = await Promise.all(chunkPromises);
+
+          // Emitir cada usuário processado
+          for (const result of chunkResults) {
+            subject.next({
+              data: { type: 'user_data', user: result }
+            } as MessageEvent);
+          }
+
+          processedCount += chunk.length;
+          // Opcional: sleep pequeno se necessário
+        }
+
+        // Emitir evento de fim
+        subject.next({
+          data: { type: 'done', totalProcessed: processedCount }
+        } as MessageEvent);
+
+        subject.complete();
+        console.log('[TradesService] Stream Markup: Concluído.');
+
+      } catch (error) {
+        console.error('[TradesService] Stream Error:', error);
+        subject.error(error);
+      }
+    })();
+
+    return subject.asObservable();
+  }
 }
 
