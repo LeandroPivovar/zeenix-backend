@@ -7,7 +7,7 @@ export class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
-    // Configuração SMTP do Gmail
+    // Configuração SMTP
     const smtpSecure = process.env.SMTP_SECURE || 'tls';
     const smtpPort = parseInt(process.env.SMTP_PORT || '465');
 
@@ -420,7 +420,7 @@ export class EmailService {
 
     try {
       this.logger.log(`[sendConfirmationEmail] Preparando para enviar email de confirmação para ${email}`);
-      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST || 'smtp.gmail.com'}, user=${process.env.SMTP_USERNAME || 'suporte.ultra.academy@gmail.com'}`);
+      this.logger.log(`[sendConfirmationEmail] Configuração SMTP: host=${process.env.SMTP_HOST}, user=${process.env.SMTP_USERNAME}`);
       this.logger.log(`[sendConfirmationEmail] URL de confirmação: ${confirmationUrl}`);
 
       await this.transporter.sendMail(mailOptions);
