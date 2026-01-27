@@ -405,129 +405,104 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (this.processingLocks.get(userId)) {
       return; // Já está processando, ignorar este tick
     }
-
-    // ✅ CORREÇÃO CRÍTICA: Coletar tick SEMPRE, mesmo aguardando contrato
-    // Isso garante que a janela de análise não tenha "buracos" (gaps) de dados
-    const userTicks = this.ticks.get(userId) || [];
-    userTicks.push(tick);
-
-    // Manter apenas os últimos maxTicks
-    if (userTicks.length > this.maxTicks) {
-      userTicks.shift();
-    }
-    this.ticks.set(userId, userTicks);
-
-    // Se está aguardando resultado de contrato, interromper AQUI (após coletar)
-    if (state.isWaitingContract) {
-      // Apenas logar heartbeat ocasional para saber que está vivo e coletando
-      if (userTicks.length % 10 === 0) {
-        this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados em background: ${userTicks.length})`);
-      }
-      return;
-    }
-
-    // ✅ TICK ADVANCE LÓGICA V2 (FREQUÊNCIA DE ANÁLISE)
-    // Incrementa contador de ticks
-    state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-
-    // Verificar estado (Principal ou Recuperação)
-    const isRecovery = state.mode !== 'NORMAL' || state.consecutiveLosses >= 2;
-    const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
-    const frequency = isRecovery ? settings.frequency.recovery : settings.frequency.principal;
-
-    // Se freq=1: analisa todo tick (mod 1 == 0)
-    // Se freq=2: analisa tick sim/tick não (mod 2 == 0)
-    if (state.ticksSinceLastAnalysis % frequency !== 0) {
-      return;
-    }
-
-    const requiredTicks = settings.windowSize;
-
-    if (userTicks.length < requiredTicks) {
-      // ✅ Log de progresso a cada 3 ticks (igual Zeus)
-      if (userTicks.length % 3 === 0) {
-        this.logDataCollection(userId, {
-          targetCount: requiredTicks,
-          currentCount: userTicks.length,
-          mode: state.mode
-        });
-      }
-      return;
-    }
-
-    // ✅ Log de início de análise (Heartbeat a cada 10 ticks de análise sem sinal)
-    // state.ticksSinceLastAnalysis já é incrementado acima
-    if (state.ticksSinceLastAnalysis >= 10) {
-      state.ticksSinceLastAnalysis = 0;
-      this.logAnalysisStarted(userId, state.mode, userTicks.length);
-    }
-
-    // ✅ Verificar novamente ANTES de fazer análise (evitar análise desnecessária)
-    if (state.isWaitingContract) {
-      return;
-    }
-
-    // ✅ Setar lock de processamento ANTES de fazer análise
     this.processingLocks.set(userId, true);
 
     try {
-      // Realizar análise de mercado
-      const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+      // ✅ CORREÇÃO CRÍTICA: Coletar tick SEMPRE, mesmo aguardando contrato
+      // Isso garante que a janela de análise não tenha "buracos" (gaps) de dados
+      const userTicks = this.ticks.get(userId) || [];
+      userTicks.push(tick);
 
-      // ✅ Resetar contador de avanço (usando a info do mercado se disponivel, ou apenas resetando)
-      // Se analisou, reseta o contador
-      state.ticksSinceLastAnalysis = 0;
+      // Manter apenas os últimos maxTicks
+      if (userTicks.length > this.maxTicks) {
+        userTicks.shift();
+      }
+      this.ticks.set(userId, userTicks);
 
-      // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
+      // Se está aguardando resultado de contrato, interromper AQUI (após coletar)
       if (state.isWaitingContract) {
-        this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+        // Apenas logar heartbeat ocasional para saber que está vivo e coletando
+        if (userTicks.length % 10 === 0) {
+          this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados em background: ${userTicks.length})`);
+        }
         return;
       }
 
-      // ✅ Log de debug da análise (Sempre logar se houver análise)
+      // ✅ TICK ADVANCE LÓGICA V2 (FREQUÊNCIA DE ANÁLISE)
+      // Incrementa contador de ticks
+      state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
+
+      // Verificar estado (Principal ou Recuperação)
+      const isRecovery = state.mode !== 'NORMAL' || state.consecutiveLosses >= 2;
+      const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
+      const frequency = isRecovery ? settings.frequency.recovery : settings.frequency.principal;
+
+      // Se freq=1: analisa todo tick (mod 1 == 0)
+      // Se freq=2: analisa tick sim/tick não (mod 2 == 0)
+      if (state.ticksSinceLastAnalysis % frequency !== 0) {
+        return;
+      }
+
+      const requiredTicks = settings.windowSize;
+
+      if (userTicks.length < requiredTicks) {
+        // ✅ Log de progresso a cada 3 ticks (igual Zeus)
+        if (userTicks.length % 3 === 0) {
+          this.logDataCollection(userId, {
+            targetCount: requiredTicks,
+            currentCount: userTicks.length,
+            mode: state.mode
+          });
+        }
+        return;
+      }
+
+      // ✅ Log de início de análise (Heartbeat a cada 30 ticks de análise sem sinal)
+      if (state.ticksSinceLastAnalysis >= 30) {
+        state.ticksSinceLastAnalysis = 0;
+        this.logAnalysisStarted(userId, state.mode, userTicks.length);
+      }
+
+      // Realizar análise de mercado
+      const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+
       if (marketAnalysis) {
         const { signal, probability, details } = marketAnalysis;
-        const ups = details?.ups || 0;
-        const downs = details?.downs || 0;
-        const total = details?.totalMoves || 0;
-
-        this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}, moves=${ups}^/${downs}v`);
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
         const cutoff = (state.mode as any) === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
         const message = `📊 ANÁLISE COMPLETA\n` +
-          `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
+          `• Sequência: ${details?.digitPattern || 'Processando...'}\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
           `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
-        // Throttled: Apenas logar análise completa se houver sinal ou a cada 10 ticks
+        // Throttled: Apenas logar análise completa se houver sinal ou a cada 30 ticks
         if (marketAnalysis.signal || state.ticksSinceLastAnalysis === 0) {
           this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
         }
-      }
 
-      if (marketAnalysis && marketAnalysis.signal) {
-        // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
-        if (state.isWaitingContract) {
-          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-          return;
-        }
+        if (signal) {
+          // Se chegamos aqui, temos um sinal! Reseta o contador
+          state.ticksSinceLastAnalysis = 0;
 
-        // Processar decisão de trade
-        const decision = await this.processAgent(userId, marketAnalysis);
+          // ✅ Verificar novamente antes de processar (pode ter mudado)
+          if (state.isWaitingContract) return;
 
-        // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
-        if (state.isWaitingContract) {
-          this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-          return;
-        }
+          // Processar decisão de trade
+          const decision = await this.processAgent(userId, marketAnalysis);
 
-        if (decision.action === 'BUY') {
-          await this.executeTrade(userId, decision, marketAnalysis);
-        } else if (decision.action === 'STOP') {
-          await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
+          // ✅ Verificar novamente antes de executar
+          if (state.isWaitingContract) return;
+
+          if (decision.action === 'BUY') {
+            await this.executeTrade(userId, decision, marketAnalysis);
+          } else if (decision.action === 'STOP') {
+            await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
+          }
         }
       }
+    } catch (error) {
+      this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
     } finally {
       // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
       this.processingLocks.set(userId, false);
@@ -601,15 +576,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Se não bateu padrão, retorna null (sem entrada)
     // O sistema de logs "Entrada Bloqueada" pode ser chamado aqui se quisermos verbosidade, 
     // mas em estratégia de padrão exato é melhor reduzir ruído.
-    return {
-      probability: 0,
-      signal: null,
-      payout: 0,
-      confidence: 0,
-      details: {
-        digits
-      }
-    };
+    return null;
   }
 
   /**
