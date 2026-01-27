@@ -188,6 +188,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.role,
       entity.isActive,
       entity.plan?.name || null,
+      entity.planExpirationDate || null,
     );
   }
 
@@ -210,6 +211,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.idRealAccount = domain.idRealAccount ?? null;
     entity.idDemoAccount = domain.idDemoAccount ?? null;
     entity.isActive = domain.isActive;
+    entity.planExpirationDate = domain.planExpirationDate ?? null;
     return entity;
   }
 }
