@@ -4,11 +4,12 @@ import { KiwifyController } from './kiwify.controller';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([UserEntity])
+    TypeOrmModule.forFeature([UserEntity, PlanEntity])
   ],
   controllers: [KiwifyController],
   providers: [KiwifyService],

@@ -1,4 +1,5 @@
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
@@ -14,7 +15,9 @@ export class KiwifyService {
     constructor(
         private configService: ConfigService,
         @InjectRepository(UserEntity)
-        private readonly userRepository: Repository<UserEntity>
+        private readonly userRepository: Repository<UserEntity>,
+        @InjectRepository(PlanEntity)
+        private readonly planRepository: Repository<PlanEntity>
     ) { }
 
     private async authenticate() {
@@ -146,6 +149,16 @@ export class KiwifyService {
                                         user.kiwifyOfferId = offerId;
                                         user.planExpirationDate = expirationDate;
                                         updated = true;
+                                    }
+
+                                    // Sincronizar plan_id se houver um plano correspondente
+                                    const plan = await this.planRepository.findOne({ where: { id: offerId } });
+                                    if (plan) {
+                                        if (user.planId !== plan.id) {
+                                            user.planId = plan.id;
+                                            updated = true;
+                                            this.logger.log(`Plano ${plan.name} (${plan.id}) vinculado ao usuário ${user.email}`);
+                                        }
                                     }
                                 }
                             }
