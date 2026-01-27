@@ -105,48 +105,45 @@ export class CoursesService {
   async findAll(userPlanId?: string | null, isAdmin?: boolean) {
     const query = this.courseEntityRepository.createQueryBuilder('course');
 
-    // Se for admin, não filtra nada, vê todos os cursos
-    if (isAdmin) {
-      // Sem filtros de visibilidade para admin
-    } else {
-      // Se NÃO for admin (estudante ou não logado)
-      if (userPlanId) {
-        // Obter hierarquia de planos acessíveis
-        const accessibleIds = await this.getAccessiblePlanIds(userPlanId);
-
-        // Logado com plano: vê públicos OU restritos a QUALQUER plano acessível (hierarquia)
-        if (accessibleIds.length > 0) {
-          // Usando LIKE para garantir compatibilidade se JSON_CONTAINS falhar ou dados estiverem estranhos
-          // Para cada ID, verificamos se ele existe na string do array JSON: "id"
-          const checks = accessibleIds.map((id, index) => `course.plan_ids LIKE :planId_${index}`).join(' OR ');
-
-          const params: any = {
-            public: 'public',
-            restricted: 'restricted'
-          };
-
-          accessibleIds.forEach((id, index) => {
-            params[`planId_${index}`] = `%"${id}"%`;
-          });
-
-          console.log(`[CoursesService] UserPlanId: ${userPlanId}`);
-          console.log(`[CoursesService] Accessible Plan IDs:`, accessibleIds);
-
-          query.where(`(course.visibility = :public OR (course.visibility = :restricted AND (${checks})))`, params);
-        } else {
-          // Fallback se não achou planos acessíveis
-          query.where('course.visibility = :public', { public: 'public' });
-        }
-      } else {
-        // Não logado ou sem plano: só vê cursos públicos
-        query.where('course.visibility = :public', { public: 'public' });
-      }
+    // 1. Filtragem Inicial de Visibilidade (Banco de Dados)
+    if (!isAdmin) {
+      // Usuários não admins só veem public ou restricted. Private é oculto.
+      query.where('course.visibility IN (:...visibilities)', { visibilities: ['public', 'restricted'] });
+      // Adicionalmente, verificar status de publicação? Por enquanto mantemos compatibilidade com lógica anterior (apenas visibilidade).
     }
 
-    const courses = await query
+    let courses = await query
       .orderBy('course.orderIndex', 'ASC')
       .addOrderBy('course.createdAt', 'DESC')
       .getMany();
+
+    // 2. Filtragem de Permissões (Aplicação)
+    if (!isAdmin) {
+      const accessibleIds = userPlanId ? await this.getAccessiblePlanIds(userPlanId) : [];
+      console.log(`[CoursesService] findAll - UserPlan: ${userPlanId}, Accessible:`, accessibleIds);
+
+      courses = courses.filter(course => {
+        // Cursos públicos são visíveis para todos
+        if (course.visibility === 'public') return true;
+
+        // Cursos restritos exigem verificação de plano
+        if (course.visibility === 'restricted') {
+          // Se não tem plano ou não tem planos acessíveis, não vê
+          if (!userPlanId || accessibleIds.length === 0) return false;
+
+          // Verifica se algum plano do curso está na lista de acessíveis do usuário
+          if (Array.isArray(course.planIds)) {
+            // Verifica interseção de arrays
+            const hasAccess = course.planIds.some(pid => accessibleIds.includes(pid));
+            return hasAccess;
+          }
+          // Se planIds não for array (null ou formato inesperado), nega acesso por segurança
+          return false;
+        }
+
+        return false;
+      });
+    }
     let lessonCountMap: Record<string, number> = {};
     let lessonDurationMap: Record<string, number> = {};
     if (courses.length) {
