@@ -22,6 +22,8 @@ export class ClientsController {
     @Query('minBalance') minBalance?: string,
     @Query('maxBalance') maxBalance?: string,
     @Query('noRealBalance') noRealBalance?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
   ): Promise<ClientListResponseDto> {
     return this.clientsService.getClients(
       search,
@@ -29,7 +31,9 @@ export class ClientsController {
       onlyRealAccount === 'true',
       minBalance ? parseFloat(minBalance) : undefined,
       maxBalance ? parseFloat(maxBalance) : undefined,
-      noRealBalance === 'true'
+      noRealBalance === 'true',
+      sortBy,
+      sortOrder
     );
   }
 

@@ -123,9 +123,12 @@ export class ClientsService {
     onlyRealAccount?: boolean,
     minBalance?: number,
     maxBalance?: number,
-    noRealBalance?: boolean
+    noRealBalance?: boolean,
+    sortBy?: string,
+    sortOrder?: 'ASC' | 'DESC'
   ): Promise<ClientListResponseDto> {
     const isRealAccountFilterActive = onlyRealAccount || (minBalance !== undefined) || (maxBalance !== undefined) || noRealBalance;
+    console.log('GetClients Query:', { search, balanceFilter, onlyRealAccount, minBalance, maxBalance, noRealBalance, sortBy, sortOrder });
 
     let query = this.userRepository
       .createQueryBuilder('user')
@@ -191,6 +194,34 @@ export class ClientsService {
       if (noRealBalance) {
         query = query.andWhere('user.realAmount = 0');
       }
+    }
+
+    // Ordenação (Sorting)
+    if (sortBy) {
+      let sortColumn = 'user.createdAt'; // Default
+
+      switch (sortBy) {
+        case 'name':
+          sortColumn = 'user.name';
+          break;
+        case 'loginId':
+          sortColumn = 'user.derivLoginId';
+          break;
+        case 'email':
+          sortColumn = 'user.email';
+          break;
+        case 'balance':
+          // Se filtro real ativo, ordena por realAmount, senão derivBalance
+          sortColumn = isRealAccountFilterActive ? 'user.realAmount' : 'user.derivBalance';
+          break;
+        case 'createdAt':
+          sortColumn = 'user.createdAt';
+          break;
+      }
+
+      query = query.orderBy(sortColumn, sortOrder || 'DESC');
+    } else {
+      query = query.orderBy('user.createdAt', 'DESC');
     }
 
     const users = await query.getRawMany();
