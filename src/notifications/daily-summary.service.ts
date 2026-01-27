@@ -117,4 +117,39 @@ export class DailySummaryService {
 
         return { totalTrades, wins, losses, netProfit };
     }
+
+    /**
+     * Dispara o envio de e-mail de teste para um usuário específico usando dados de hoje
+     */
+    async triggerManualSummary(userId: string) {
+        this.logger.log(`[DailySummary] Disparando resumo manual (teste) para o usuário ${userId}...`);
+
+        const user = await this.dataSource.query(
+            `SELECT u.name, u.email FROM users u WHERE u.id = ?`,
+            [userId]
+        );
+
+        if (!user || user.length === 0) {
+            throw new Error('Usuário não encontrado');
+        }
+
+        // Usar data de hoje para o teste manual imediato
+        const now = new Date();
+        const startOfDay = new Date(now);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(now);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const stats = await this.getUserStats(userId, startOfDay, endOfDay);
+
+        // Para teste manual, enviar mesmo se não houver trades (ou avisar se preferir)
+        // Vamos enviar para mostrar o template funcionando
+        await this.emailService.sendDailySummary(user[0].email, user[0].name, stats);
+
+        return {
+            success: true,
+            message: `Resumo manual enviado para ${user[0].email}`,
+            stats
+        };
+    }
 }
