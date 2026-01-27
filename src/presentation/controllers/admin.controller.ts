@@ -17,6 +17,11 @@ export class AdminController {
     return this.adminService.getNonDemoUsers();
   }
 
+  @Get('master-traders')
+  async getMasterTraders() {
+    return this.adminService.getMasterTraders();
+  }
+
   @Get('users/all')
   async getAllUsers(
     @Query('page') page: string = '1',

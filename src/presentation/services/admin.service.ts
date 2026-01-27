@@ -297,6 +297,22 @@ export class AdminService {
   }
 
   /**
+   * Retorna lista de usuários que são Master Traders
+   */
+  async getMasterTraders() {
+    const traders = await this.userRepository.find({
+      where: {
+        traderMestre: true,
+        isActive: true,
+      },
+      select: ['id', 'name', 'email'],
+    });
+
+    return traders;
+  }
+
+
+  /**
    * Calcula o volume total gerenciado (soma dos saldos das contas não-demo)
    */
   async getManagedVolume() {
