@@ -189,6 +189,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.isActive,
       entity.plan?.name || null,
       entity.planExpirationDate || null,
+      entity.plan?.features || null,
     );
   }
 

@@ -80,6 +80,7 @@ export class SettingsService {
       idDemoAccount: user.idDemoAccount,
       planName: user.planName,
       planExpirationDate: user.planExpirationDate,
+      planFeatures: user.planFeatures,
     };
   }
 
