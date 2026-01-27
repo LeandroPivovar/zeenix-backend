@@ -1,6 +1,6 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, LessThanOrEqual } from 'typeorm';
 import type { CourseRepository } from '../domain/repositories/course.repository';
 import { COURSE_REPOSITORY_TOKEN } from '../constants/tokens';
 import { TypeOrmLessonRepository } from '../infrastructure/database/repositories/lesson.repository';
@@ -10,6 +10,7 @@ import { ModuleEntity } from '../infrastructure/database/entities/module.entity'
 import { LessonEntity } from '../infrastructure/database/entities/lesson.entity';
 import { MaterialEntity } from '../infrastructure/database/entities/material.entity';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { CreateModuleDto } from './dto/create-module.dto';
@@ -37,6 +38,8 @@ export class CoursesService {
     private readonly materialRepository: Repository<MaterialEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly plansRepository: Repository<PlanEntity>,
   ) { }
 
   private normalizeMediaPath(path?: string | null): string | null {
@@ -70,6 +73,26 @@ export class CoursesService {
     return `${minutes} min`;
   }
 
+  async getAccessiblePlanIds(userPlanId: string): Promise<string[]> {
+    if (!userPlanId) return [];
+
+    // Buscar o plano do usuário para saber a ordem
+    const userPlan = await this.plansRepository.findOne({ where: { id: userPlanId } });
+    if (!userPlan) return [];
+
+    // Buscar todos os planos com displayOrder <= plano do usuário
+    // Isso assume que planos superiores têm displayOrder MAIOR
+    const accessiblePlans = await this.plansRepository.find({
+      where: {
+        displayOrder: LessThanOrEqual(userPlan.displayOrder),
+        isActive: true
+      },
+      select: ['id']
+    });
+
+    return accessiblePlans.map(p => p.id);
+  }
+
   async findAll(userPlanId?: string | null, isAdmin?: boolean) {
     const query = this.courseEntityRepository.createQueryBuilder('course');
 
@@ -79,12 +102,27 @@ export class CoursesService {
     } else {
       // Se NÃO for admin (estudante ou não logado)
       if (userPlanId) {
-        // Logado com plano: vê públicos OU restritos ao seu plano específico
-        query.where('(course.visibility = :public OR (course.visibility = :restricted AND (course.plan_ids IS NOT NULL AND JSON_CONTAINS(course.plan_ids, :planId))))', {
-          public: 'public',
-          restricted: 'restricted',
-          planId: `"${userPlanId}"`,
-        });
+        // Obter hierarquia de planos acessíveis
+        const accessibleIds = await this.getAccessiblePlanIds(userPlanId);
+
+        // Logado com plano: vê públicos OU restritos a QUALQUER plano acessível (hierarquia)
+        if (accessibleIds.length > 0) {
+          // Criar string para o JSON_CONTAINS ou ORs
+          // MySQL JSON_OVERLAPS seria ideal, mas JSON_CONTAINS funciona para 1 item. 
+          // Para lista x lista, precisamos verificar se ALGUM dos accessibleIds está em course.plan_ids
+          // Abordagem compatível: (visibility = public) OR (visibility = restricted AND (course.plan_ids REGEXP 'id1|id2|id3...'))
+          // Ou usar múltiplos JSON_CONTAINS OR
+
+          const checks = accessibleIds.map(id => `JSON_CONTAINS(course.plan_ids, '"${id}"')`).join(' OR ');
+
+          query.where(`(course.visibility = :public OR (course.visibility = :restricted AND (${checks})))`, {
+            public: 'public',
+            restricted: 'restricted'
+          });
+        } else {
+          // Fallback se não achou planos acessíveis
+          query.where('course.visibility = :public', { public: 'public' });
+        }
       } else {
         // Não logado ou sem plano: só vê cursos públicos
         query.where('course.visibility = :public', { public: 'public' });
@@ -155,14 +193,21 @@ export class CoursesService {
     const query = this.courseEntityRepository.createQueryBuilder('course')
       .where('course.id = :id', { id });
 
-    // Aplicar as mesmas travas de visibilidade se não for admin
+    // Aplicar as mesmas travas de visibilidade indicadas no findAll
     if (!isAdmin) {
       if (userPlanId) {
-        query.andWhere('(course.visibility = :public OR (course.visibility = :restricted AND (course.plan_ids IS NOT NULL AND JSON_CONTAINS(course.plan_ids, :planId))))', {
-          public: 'public',
-          restricted: 'restricted',
-          planId: `"${userPlanId}"`,
-        });
+        // Obter hierarquia de planos acessíveis
+        const accessibleIds = await this.getAccessiblePlanIds(userPlanId);
+
+        if (accessibleIds.length > 0) {
+          const checks = accessibleIds.map(pid => `JSON_CONTAINS(course.plan_ids, '"${pid}"')`).join(' OR ');
+          query.andWhere(`(course.visibility = :public OR (course.visibility = :restricted AND (${checks})))`, {
+            public: 'public',
+            restricted: 'restricted'
+          });
+        } else {
+          query.andWhere('course.visibility = :public', { public: 'public' });
+        }
       } else {
         query.andWhere('course.visibility = :public', { public: 'public' });
       }

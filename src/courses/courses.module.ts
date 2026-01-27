@@ -7,6 +7,7 @@ import { ModuleEntity } from '../infrastructure/database/entities/module.entity'
 import { MaterialEntity } from '../infrastructure/database/entities/material.entity';
 import { UserLessonProgressEntity } from '../infrastructure/database/entities/user-lesson-progress.entity';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 import { TypeOrmCourseRepository } from '../infrastructure/database/repositories/course.repository';
 import { TypeOrmLessonRepository } from '../infrastructure/database/repositories/lesson.repository';
 import { COURSE_REPOSITORY_TOKEN } from '../constants/tokens';
@@ -15,7 +16,7 @@ import { CoursesService } from './courses.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CourseEntity, LessonEntity, ModuleEntity, MaterialEntity, UserLessonProgressEntity, UserEntity]),
+    TypeOrmModule.forFeature([CourseEntity, LessonEntity, ModuleEntity, MaterialEntity, UserLessonProgressEntity, UserEntity, PlanEntity]),
     JwtModule,
   ],
   controllers: [CoursesController],
@@ -27,7 +28,7 @@ import { CoursesService } from './courses.service';
     TypeOrmLessonRepository,
     CoursesService,
   ],
-  exports: [COURSE_REPOSITORY_TOKEN, TypeOrmLessonRepository],
+  exports: [COURSE_REPOSITORY_TOKEN, TypeOrmLessonRepository, CoursesService],
 })
 export class CoursesModule { }
 
