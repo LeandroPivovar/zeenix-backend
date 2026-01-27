@@ -113,6 +113,7 @@ export class CoursesController {
   async findAll(@Req() req: any) {
     let userPlanId: string | null = null;
     let isAdmin = false;
+    let userDates = {};
 
     // Tentar identificar o usuário para filtrar por plano
     try {
@@ -123,9 +124,16 @@ export class CoursesController {
         if (payload?.sub) {
           isAdmin = payload.role === 'admin';
           if (!isAdmin) {
-            // Buscar o plano do usuário
-            userPlanId = await this.coursesService.getUserPlanId(payload.sub);
-            console.log(`[CoursesController] Identified UserID: ${payload.sub}, PlanID: ${userPlanId}`);
+            // Buscar contexto do usuário (plano e datas)
+            const userContext = await this.coursesService.getUserContext(payload.sub);
+            if (userContext) {
+              userPlanId = userContext.planId || null;
+              userDates = {
+                planActivatedAt: userContext.planActivatedAt,
+                createdAt: userContext.createdAt
+              };
+              console.log(`[CoursesController] Identified UserID: ${payload.sub}, PlanID: ${userPlanId}, Dates: ${JSON.stringify(userDates)}`);
+            }
           }
         }
       }
@@ -133,7 +141,7 @@ export class CoursesController {
       console.warn('Erro ao identificar usuário no findAll:', err);
     }
 
-    return this.coursesService.findAll(userPlanId, isAdmin);
+    return this.coursesService.findAll(userPlanId, isAdmin, userDates);
   }
 
   // Modules CRUD - rotas específicas antes das genéricas

@@ -72,6 +72,10 @@ export class CreateCourseDto {
   @IsArray()
   @IsString({ each: true })
   planIds?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  daysToUnlock?: number;
 }
 
 

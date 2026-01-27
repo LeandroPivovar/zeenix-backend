@@ -74,5 +74,9 @@ export class UpdateCourseDto {
   @IsArray()
   @IsString({ each: true })
   planIds?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  daysToUnlock?: number;
 }
 

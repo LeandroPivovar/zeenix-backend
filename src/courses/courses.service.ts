@@ -102,7 +102,14 @@ export class CoursesService {
     return userWrapper?.planId || null;
   }
 
-  async findAll(userPlanId?: string | null, isAdmin?: boolean) {
+  async getUserContext(userId: string) {
+    return this.userRepository.findOne({
+      where: { id: userId },
+      select: ['planId', 'planActivatedAt', 'createdAt']
+    });
+  }
+
+  async findAll(userPlanId?: string | null, isAdmin?: boolean, userDates?: { planActivatedAt?: Date | null, createdAt?: Date }) {
     const query = this.courseEntityRepository.createQueryBuilder('course');
 
     // 1. Filtragem Inicial de Visibilidade (Banco de Dados)
@@ -120,7 +127,10 @@ export class CoursesService {
     // 2. Filtragem de Permissões (Aplicação)
     if (!isAdmin) {
       const accessibleIds = userPlanId ? await this.getAccessiblePlanIds(userPlanId) : [];
-      console.log(`[CoursesService] findAll - UserPlan: ${userPlanId}, Accessible:`, accessibleIds);
+      console.log(`[CoursesService] findAll DEBUG - UserPlan: ${userPlanId}, IsAdmin: ${isAdmin}`);
+      // console.log(`[CoursesService] findAll DEBUG - Accessible IDs: ${JSON.stringify(accessibleIds)}`);
+
+      const now = new Date();
 
       courses = courses.filter(course => {
         // Cursos públicos são visíveis para todos
@@ -129,20 +139,44 @@ export class CoursesService {
         // Cursos restritos exigem verificação de plano
         if (course.visibility === 'restricted') {
           // Se não tem plano ou não tem planos acessíveis, não vê
-          if (!userPlanId || accessibleIds.length === 0) return false;
+          if (!userPlanId || accessibleIds.length === 0) {
+            // console.log(`[CoursesService] Hiding restricted course ${course.id} (${course.title}): No plan/access`);
+            return false;
+          }
 
           // Verifica se algum plano do curso está na lista de acessíveis do usuário
           if (Array.isArray(course.planIds)) {
             // Verifica interseção de arrays
             const hasAccess = course.planIds.some(pid => accessibleIds.includes(pid));
+
+            // Se tem acesso pelo plano, verificar Drip Content (dias após compra)
+            if (hasAccess && course.daysToUnlock > 0) {
+              // Data de referência: ativação do plano ou criação da conta (fallback)
+              const referenceDate = userDates?.planActivatedAt || userDates?.createdAt;
+
+              if (referenceDate) {
+                const diffTime = Math.abs(now.getTime() - new Date(referenceDate).getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays < course.daysToUnlock) {
+                  console.log(`[CoursesService] Locked Drip Content: Course ${course.title} requires ${course.daysToUnlock} days. User has ${diffDays} days.`);
+                  return false;
+                }
+              }
+            }
+
+            // console.log(`[CoursesService] Restricted course ${course.id} (${course.title}) access check: ${hasAccess}`);
             return hasAccess;
           }
           // Se planIds não for array (null ou formato inesperado), nega acesso por segurança
+          console.log(`[CoursesService] Hiding restricted course ${course.id}: planIds is not array`, course.planIds);
           return false;
         }
 
         return false;
       });
+    } else {
+      console.log('[CoursesService] findAll - Admin user, returning all courses');
     }
     let lessonCountMap: Record<string, number> = {};
     let lessonDurationMap: Record<string, number> = {};
