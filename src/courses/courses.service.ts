@@ -70,16 +70,25 @@ export class CoursesService {
     return `${minutes} min`;
   }
 
-  async findAll(userPlanId?: string | null) {
+  async findAll(userPlanId?: string | null, isAdmin?: boolean) {
     const query = this.courseEntityRepository.createQueryBuilder('course');
 
-    // Se houver um plano de usuário (não admin), filtrar
-    if (userPlanId) {
-      query.where('course.visibility = :public', { public: 'public' })
-        .orWhere('(course.visibility = :restricted AND (course.plan_ids IS NULL OR JSON_CONTAINS(course.plan_ids, :planId)))', {
+    // Se for admin, não filtra nada, vê todos os cursos
+    if (isAdmin) {
+      // Sem filtros de visibilidade para admin
+    } else {
+      // Se NÃO for admin (estudante ou não logado)
+      if (userPlanId) {
+        // Logado com plano: vê públicos OU restritos ao seu plano específico
+        query.where('(course.visibility = :public OR (course.visibility = :restricted AND (course.plan_ids IS NOT NULL AND JSON_CONTAINS(course.plan_ids, :planId))))', {
+          public: 'public',
           restricted: 'restricted',
           planId: `"${userPlanId}"`,
         });
+      } else {
+        // Não logado ou sem plano: só vê cursos públicos
+        query.where('course.visibility = :public', { public: 'public' });
+      }
     }
 
     const courses = await query
@@ -142,9 +151,25 @@ export class CoursesService {
     }));
   }
 
-  async findOne(id: string) {
-    const course = await this.courseEntityRepository.findOne({ where: { id } });
-    if (!course) throw new NotFoundException('Curso não encontrado');
+  async findOne(id: string, userPlanId?: string | null, isAdmin?: boolean) {
+    const query = this.courseEntityRepository.createQueryBuilder('course')
+      .where('course.id = :id', { id });
+
+    // Aplicar as mesmas travas de visibilidade se não for admin
+    if (!isAdmin) {
+      if (userPlanId) {
+        query.andWhere('(course.visibility = :public OR (course.visibility = :restricted AND (course.plan_ids IS NOT NULL AND JSON_CONTAINS(course.plan_ids, :planId))))', {
+          public: 'public',
+          restricted: 'restricted',
+          planId: `"${userPlanId}"`,
+        });
+      } else {
+        query.andWhere('course.visibility = :public', { public: 'public' });
+      }
+    }
+
+    const course = await query.getOne();
+    if (!course) throw new NotFoundException('Curso não encontrado ou você não tem permissão para acessá-lo');
 
     const modules = await this.moduleRepository.find({
       where: { courseId: id },
