@@ -208,7 +208,7 @@ export class AtlasStrategy implements IStrategy {
       state.tickCounter = (state.tickCounter || 0) + 1;
       if (state.tickCounter >= 100) {
         state.tickCounter = 0;
-        this.saveAtlasLog(state.userId, assetSymbol, 'info',
+        this.saveAtlasLog(state.userId, assetSymbol, 'analise',
           `IA ATLAS EM OPERAÇÃO
 Mercado: ${assetSymbol}
 Status: Analisando padrões...`);
@@ -728,7 +728,7 @@ Ação: aguardar força de tendência`);
 
       // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
-        this.saveAtlasLog(state.userId, symbol, 'info',
+        this.saveAtlasLog(state.userId, symbol, 'vitoria',
           `META DE LUCRO ATINGIDA
 Status: Meta Alcançada
 Lucro: ${formatCurrency(lucroAtual, state.currency)}
@@ -766,11 +766,12 @@ Ação: IA DESATIVADA`
 
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
-            this.saveAtlasLog(state.userId, symbol, 'info',
-              `PROTEÇÃO DE LUCRO ATIVADA
-Status: Lucro Blindado
-Lucro Atual: ${formatCurrency(currentPeak, state.currency)}
-Blindagem (${stopBlindadoPercent}%): ${formatCurrency(protectedAmount, state.currency)}`
+            this.saveAtlasLog(state.userId, symbol, 'vitoria',
+              `PROTEÇÃO DO BLINDADO
+Lucro Atual: +${formatCurrency(currentPeak, state.currency)}
+Piso Atual: +${formatCurrency(protectedAmount, state.currency)}
+Regra: travar entradas abaixo do piso
+Ação: entradas protegidas`
             );
           }
         }
@@ -781,7 +782,7 @@ Blindagem (${stopBlindadoPercent}%): ${formatCurrency(protectedAmount, state.cur
 
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
-            this.saveAtlasLog(state.userId, symbol, 'info',
+            this.saveAtlasLog(state.userId, symbol, 'vitoria',
               `STOP BLINDADO ATINGIDO
 Status: Lucro Garantido
 Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
@@ -1574,6 +1575,17 @@ Ação: IA DESATIVADA`
     // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
 
+    if (isWin) {
+      state.vitoriasConsecutivas += 1;
+      this.logWinStreak(state.userId, {
+        consecutiveWins: state.vitoriasConsecutivas,
+        accumulatedProfit: state.totalProfitLoss,
+        currentStake: stakeAmount
+      });
+    } else {
+      state.vitoriasConsecutivas = 0;
+    }
+
     // Atualizar trade
     if (tradeId) {
       await this.updateAtlasTrade(tradeId, state.userId, {
@@ -2101,7 +2113,7 @@ Símbolo: ${state?.symbol || 'N/A'}
 Modo Inicial: ${config.operationMode.toUpperCase()}
 Ação: iniciar coleta de dados`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private logSessionStart(userId: string, session: {
@@ -2124,7 +2136,7 @@ Símbolo: ${state?.symbol || 'N/A'}
 Modo Inicial: ${session.mode.toUpperCase()}
 Ação: iniciar coleta de dados`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private logDataCollection(userId: string, data: {
@@ -2138,7 +2150,7 @@ Meta de Coleta: ${data.targetCount} ticks
 Progresso: ${data.currentCount} / ${data.targetCount}
 Status: aguardando ticks suficientes`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
@@ -2230,7 +2242,7 @@ Stake Base: ${formatCurrency(soros.stakeBase, currency)}
 Nova Stake: ${formatCurrency(newStake, currency)}
 Objetivo: potencializar sequência positiva`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'info', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private logWinStreak(userId: string, streak: {
