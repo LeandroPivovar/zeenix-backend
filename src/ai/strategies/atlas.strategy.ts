@@ -2182,7 +2182,7 @@ Stake Calculada: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const type = result.status === 'WIN' ? 'vitoria' : 'derrota';
+    // ✅ [ZENIX v3.5] O banco reconhece apenas o tipo 'resultado' para operações finalizadas
     const message = `RESULTADO DA OPERAÇÃO
 Status: ${result.status}
 Direção: ${state?.ultimaDirecaoOp || 'CALL'}
@@ -2191,7 +2191,7 @@ Resultado Financeiro: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.pr
 Saldo Atual: ${formatCurrency(result.balance, currency)}
 Estado: Operação Normal`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', type as any, message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
 
   private logMartingaleLevelV2(userId: string, martingale: {
