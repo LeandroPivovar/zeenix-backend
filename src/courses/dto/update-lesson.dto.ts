@@ -50,7 +50,7 @@ export class UpdateLessonDto {
   orderIndex?: number;
 
   @IsOptional()
-  @IsBoolean()
-  isDerivTutorial?: boolean;
+  @IsNumber()
+  isDerivTutorial?: number;
 }
 
