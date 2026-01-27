@@ -25,8 +25,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private ticks: Tick[] = [];
   private readonly maxTicks = 100;
   private readonly appId: string;
-  private symbol = 'R_100';
-  private activeSymbols = new Set<string>(['R_100', 'R_50']); // ✅ Adicionado R_50
+  private symbol = 'R_100'; // Default
+  private activeSymbols = new Set<string>(['R_100', 'R_50', '1HZ10V', '1HZ100V']); // ✅ Adicionado Markets V2 (Zeus/Falcon)
   private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
@@ -419,8 +419,8 @@ export class AutonomousAgentService implements OnModuleInit {
    * Permite que o AiService compartilhe ticks de R_100 com o AutonomousAgentService
    */
   public receiveExternalTick(tick: Tick, symbol: string = 'R_100'): void {
-    if (symbol !== 'R_100') {
-      return; // Apenas processar R_100
+    if (!this.activeSymbols.has(symbol)) {
+      return; // Apenas processar símbolos ativos
     }
 
     // Processar o tick como se tivesse vindo do WebSocket próprio
@@ -774,7 +774,7 @@ export class AutonomousAgentService implements OnModuleInit {
             tokenDeriv,
             amountDeriv,
             config.currency || 'USD',
-            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
+            config.symbol || 'R_100', // Default fallback, but respects V2 symbols if provided
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.initialBalance || 0,

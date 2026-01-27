@@ -13,80 +13,62 @@ import { Tick, DigitParity } from '../../ai/ai.service';
 import { LogQueueService } from '../../utils/log-queue.service';
 
 /**
- * 🦅 FALCON Strategy para Agente Autônomo - Versão 1.0 (ZENIX OFICIAL)
+ * 🦅 FALCON Strategy para Agente Autônomo - Versão 2.0 (ZENIX OFICIAL)
  * 
- * CORE: Digit Over 3 (Statistical Pattern Analysis)
- * - Símbolo: R_100 (Volatility 100 Index - 1s)
- * - Contrato: Digit Over 3 (1 tick)
- * - WIN: Dígito final ∈ {4, 5, 6, 7, 8, 9}
- * - LOSS: Dígito final ∈ {0, 1, 2, 3}
+ * CORE: IPI Pattern (Ímpar-Par-Ímpar)
+ * - Símbolo: 1HZ10V (Volatility 10 (1s) Index)
+ * - Contrato: DIGITODD (Ímpar)
+ * - PADRÃO: Sequência {ÍMPAR, PAR, ÍMPAR} -> Aposta ÍMPAR
+ * - WIN RATE ESPERADO: 57.34%
  * 
- * MODOS:
- * - VELOZ: Hn>=0.78, p_over3>=0.58, strength>=0.56 (Alto volume, menor precisão)
- * - NORMAL: Hn>=0.80, p_over3>=0.60, strength>=0.58 (Equilíbrio)
- * - PRECISO: Hn>=0.86, p_over3>=0.64, strength>=0.62 (Máxima precisão)
+ * MODOS (Defesa Automática):
+ * - NORMAL: Análise a cada 1 tick (Principal) ou 2 ticks (Recuperação)
+ * - PRECISO: Análise a cada 2 ticks (Principal) ou 3 ticks (Recuperação)
+ *   * Ativa PRECISO após 4 perdas consecutivas (Defesa Automática)
  * 
  * GESTÃO:
  * - Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = Reset
- * - Martingale: Conservador (break-even), Moderado (+15%), Agressivo (+30%)
- * - Máximo 5 níveis de martingale para todos os perfis
+ * - Martingale Inteligente: Conservador, Moderado, Agressivo
+ * - Recuperação ativada após 2 perdas consecutivas
  * 
  * PROTEÇÃO:
- * - Stop Loss Normal: Limite definido pelo usuário
- * - Stop Blindado: Ativa aos 40% da meta, protege 50% do pico
- * - Pausa Estratégica: Após recuperação de 5+ perdas consecutivas
+ * - Stop Loss Normal e Blindado (Catraca)
+ * - Pausa Estratégica (5+ perdas recuperadas)
  */
 
 /**
- * Configurações dos Modos de Negociação FALCON v1.0
- * Baseado no documento oficial ZENIX
+ * Configurações dos Modos de Negociação FALCON v2.0
  */
 const FALCON_MODES = {
-  VELOZ: {
-    name: 'VELOZ',
-    windowSize: 20, // Janela fixa de 20 ticks
-    Hn_threshold: 0.78, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    p_over3_threshold: 0.58, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    strength_threshold: 0.56, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    volatility_max: 0.70, // Volatilidade máxima permitida
-    lossesToDowngrade: 2, // Após 2 perdas, muda para NORMAL
-  },
   NORMAL: {
     name: 'NORMAL',
-    windowSize: 20,
-    Hn_threshold: 0.80, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    p_over3_threshold: 0.60, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    strength_threshold: 0.58, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    volatility_max: 0.65,
+    windowSize: 3, // Padrão requer 3 ticks
+    frequency: { principal: 1, recovery: 2 }, // Ticks para pular (1 = todo tick, 2 = a cada 2)
     lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
   },
   PRECISO: {
     name: 'PRECISO',
-    windowSize: 20,
-    Hn_threshold: 0.86, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    p_over3_threshold: 0.64, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    strength_threshold: 0.62, // ✅ ALINHADO: Conforme Documento Oficial ZENIX
-    volatility_max: 0.60,
-    lossesToDowngrade: null, // Permanece até recuperar
+    windowSize: 3,
+    frequency: { principal: 2, recovery: 3 }, // Mais lento para maior precisão
+    lossesToDowngrade: null,
   },
 };
 
 /**
- * Perfis de Risco FALCON v1.0
- * Baseado no documento oficial ZENIX
+ * Perfis de Risco FALCON v2.0
  */
-const FALCON_V10_RISK = {
+const FALCON_V20_RISK = {
   CONSERVADOR: {
-    profitFactor: 1.0, // Break-even (recupera apenas o valor perdido)
-    maxMartingale: 5 // Máximo 5 níveis
+    profitFactor: 1.0, // Break-even
+    maxMartingale: 5
   },
   MODERADO: {
-    profitFactor: 1.15, // Recupera + 15% de lucro
-    maxMartingale: 5 // Máximo 5 níveis
+    profitFactor: 1.15, // Recupera + 15%
+    maxMartingale: 5
   },
   AGRESSIVO: {
-    profitFactor: 1.30, // Recupera + 30% de lucro
-    maxMartingale: 5 // Máximo 5 níveis
+    profitFactor: 1.30, // Recupera + 30%
+    maxMartingale: 5
   },
 };
 @Injectable()
@@ -209,7 +191,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           dailyLossLimit: parseFloat(user.daily_loss_limit),
           derivToken: resolvedToken, // ✅ Usa o token resolvido
           currency: user.currency,
-          symbol: 'R_100',
+          symbol: '1HZ10V', // ✅ V2: Volatility 10 (1s) Index
           initialBalance: parseFloat(user.initial_balance) || 0,
           stopLossType: 'normal',
           riskProfile: 'MODERADO',
@@ -246,7 +228,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       consecutiveLosses: 0,
       consecutiveWins: 0,
       opsCount: 0,
-      mode: 'VELOZ', // v1.0: Novo padrão inicial
+      mode: 'NORMAL', // v2.0: Inicia em NORMAL
       stopBlindadoAtivo: false,
       pisoBlindado: 0,
       lastProfit: 0,
@@ -276,7 +258,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: 'R_100',
+      symbol: '1HZ10V', // ✅ V2: Force 1HZ10V
       initialBalance: config.initialBalance || 0,
       stopLossType: (config as any).stopLossType || 'normal',
       riskProfile: (config as any).riskProfile || 'MODERADO',
@@ -360,7 +342,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    */
   async processTick(tick: Tick, symbol?: string): Promise<void> {
     const promises: Promise<void>[] = [];
-    const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
+    const tickSymbol = symbol || '1HZ10V';
 
     // ✅ Log de debug para verificar se está recebendo ticks
     // ✅ Log de debug para verificar se está recebendo ticks (Logar SEMPRE para debug)
@@ -368,10 +350,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.logger.debug(`[Falcon] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
     // }
 
-    // ✅ Processar para todos os usuários ativos (sempre R_100, ignorar símbolo do banco se for R_75)
+    // ✅ Processar para todos os usuários ativos (sempre 1HZ10V)
     for (const [userId, config] of this.userConfigs.entries()) {
-      // Sempre processar se o tick for R_100 (todos os agentes autônomos usam R_100)
-      if (tickSymbol === 'R_100') {
+      // Sempre processar se o tick for 1HZ10V (todos os agentes autônomos usam 1HZ10V na V2)
+      if (tickSymbol === '1HZ10V') {
         promises.push(this.processTickForUser(userId, tick).catch((error) => {
           this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
         }));
@@ -417,36 +399,33 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    // ✅ TICK ADVANCE LÓGICA
-    // Incrementa contador de ticks sem análise
+    // ✅ TICK ADVANCE LÓGICA V2 (FREQUÊNCIA DE ANÁLISE)
+    // Incrementa contador de ticks
     state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
-    // Verificar se precisa avançar (skip) ticks
-    // Normal: Avanço de 2 ticks (só analisa no 3º)
-    // Lento: Avanço de 3 ticks (só analisa no 4º)
-    const requiredSkip = state.mode === 'PRECISO' ? 2 : 3;
+    // Verificar estado (Principal ou Recuperação)
+    const isRecovery = state.mode !== 'NORMAL' || state.consecutiveLosses >= 2;
+    const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
+    const frequency = isRecovery ? settings.frequency.recovery : settings.frequency.principal;
 
-    if (state.ticksSinceLastAnalysis <= requiredSkip) {
-      return; // Pular este tick
+    // Se freq=1: analisa todo tick (mod 1 == 0)
+    // Se freq=2: analisa tick sim/tick não (mod 2 == 0)
+    if (state.ticksSinceLastAnalysis % frequency !== 0) {
+      return;
     }
 
-    // FALCON 2.2 PRECISO Settings
-    const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
     const requiredTicks = settings.windowSize;
 
     if (userTicks.length < requiredTicks) {
-      if (userTicks.length % 5 === 0) {
-        this.logDataCollection(userId, {
-          targetCount: requiredTicks,
-          currentCount: userTicks.length,
-          mode: settings.name
-        });
+      if (userTicks.length % 3 === 0) {
+        // Log menos frequente para não floodar
+        // ...
       }
       return;
     }
 
-    // ✅ Log inicial de análise ou heartbeat a cada X ticks
-    if (userTicks.length === requiredTicks || userTicks.length % 50 === 0) {
+    // ✅ Log inicial de análise (menos frequente)
+    if (userTicks.length % 50 === 0) {
       this.logAnalysisStarted(userId, state.mode, userTicks.length);
     }
 
@@ -482,7 +461,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.logger.debug(`[Falcon][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}, moves=${ups}^/${downs}v`);
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
-        const cutoff = state.mode === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
+        const cutoff = (state.mode as any) === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Padrão: ${ups} altas / ${downs} baixas (de ${total})\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
@@ -528,92 +507,72 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    * - strength: Força do padrão estatístico
    * - volatility: Volatilidade dos dígitos finais
    */
+  /**
+   * Análise de mercado FALCON v2.0 - Pattern Matching IPI
+   * 
+   * Implementa a lógica:
+   * Padrão: {ÍMPAR, PAR, ÍMPAR} nos últimos 3 ticks
+   * Sinal: DIGITODD (ÍMPAR)
+   */
   private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
     const state = this.userStates.get(userId);
     if (!state) return null;
 
-    const currentMode = state.mode as keyof typeof FALCON_MODES;
-    const settings = FALCON_MODES[currentMode];
-    const windowSize = settings.windowSize; // Sempre 20 ticks para v1.0
+    const windowSize = 3;
 
     if (ticks.length < windowSize) return null;
 
-    // Extrai os últimos 20 ticks
+    // Extrai os últimos 3 ticks
     const recent = ticks.slice(-windowSize);
     const digits = recent.map(t => parseInt(t.value.toString().slice(-1))); // Extrai último dígito
 
     // FILTRO 1: Horário de Operação (24/7 sempre ativo)
     if (!this.isValidTradingHour()) {
-      this.logBlockedEntry(userId, { reason: 'Horário', details: 'Aguardando horário operacional estável' });
       return null;
     }
 
-    // FILTRO 2: Calcular Hn (Entropia Normalizada)
-    const Hn = this.calculateHn(digits);
-    if (Hn < settings.Hn_threshold) {
-      this.logBlockedEntry(userId, {
-        reason: 'Entropia Baixa',
-        details: `Hn=${Hn.toFixed(3)} < ${settings.Hn_threshold} (padrão muito previsível ou muito caótico)`
-      });
-      return null;
+    // LOGICA V2: Padrão IPI (Odd-Even-Odd)
+    // Dígito 1 (Mais antigo): ÍMPAR
+    // Dígito 2: PAR
+    // Dígito 3 (Recente): ÍMPAR
+
+    const d1 = digits[0];
+    const d2 = digits[1];
+    const d3 = digits[2];
+
+    const isOdd = (n: number) => n % 2 !== 0;
+    const isEven = (n: number) => n % 2 === 0;
+
+    // Pattern: IPI
+    if (isOdd(d1) && isEven(d2) && isOdd(d3)) {
+      const signal = 'ODD';
+      const probability = 57.34; // Probabilidade estatística calculada
+
+      return {
+        probability,
+        signal: signal as any,
+        payout: 0.85, // ✅ Payout Líquido esperado (aprox)
+        confidence: probability / 100,
+        details: {
+          trend: 'IPI_PATTERN',
+          trendStrength: probability / 100,
+          digits,
+          digitPattern: `[${d1}, ${d2}, ${d3}] (I-P-I)`
+        },
+      };
     }
 
-    // FILTRO 3: Calcular p_over3 (Probabilidade de dígitos >= 4)
-    const p_over3 = this.calculateP_over3(digits);
-    if (p_over3 < settings.p_over3_threshold) {
-      this.logBlockedEntry(userId, {
-        reason: 'Probabilidade Baixa',
-        details: `p_over3=${p_over3.toFixed(3)} < ${settings.p_over3_threshold} (menos de ${(p_over3 * 100).toFixed(0)}% são >= 4)`
-      });
-      return null;
-    }
-
-    // FILTRO 4: Calcular strength (Força do padrão)
-    const strength = this.calculateDigitStrength(digits);
-    if (strength < settings.strength_threshold) {
-      this.logBlockedEntry(userId, {
-        reason: 'Força Insuficiente',
-        details: `strength=${strength.toFixed(3)} < ${settings.strength_threshold} (padrão fraco)`
-      });
-      return null;
-    }
-
-    // FILTRO 5: Calcular volatility (Volatilidade dos dígitos)
-    const volatility = this.calculateDigitVolatility(digits);
-    if (volatility > settings.volatility_max) {
-      this.logBlockedEntry(userId, {
-        reason: 'Volatilidade Alta',
-        details: `volatility=${volatility.toFixed(3)} > ${settings.volatility_max} (mercado muito caótico)`
-      });
-      return null;
-    }
-
-    // Se todos os filtros passaram, o sinal é ALWAYS 'DIGIT_OVER_3'
-    // (não há direção CALL/PUT, sempre apostamos que o próximo dígito será >= 4)
-    const signal = 'DIGIT_OVER_3';
-
-    // Calcular Score final (0-100) baseado nos 4 indicadores
-    // 30% Hn, 30% p_over3, 25% strength, 15% volatility (inverso)
-    const hnScore = Math.min((Hn / 1.0) * 30, 30);
-    const pScore = (p_over3 / 1.0) * 30;
-    const strengthScore = (strength / 1.0) * 25;
-    const volScore = Math.max(0, (1 - volatility / settings.volatility_max) * 15);
-    const probability = Math.round(hnScore + pScore + strengthScore + volScore);
-
+    // Se não bateu padrão, retorna null (sem entrada)
+    // O sistema de logs "Entrada Bloqueada" pode ser chamado aqui se quisermos verbosidade, 
+    // mas em estratégia de padrão exato é melhor reduzir ruído.
     return {
-      probability,
-      signal: signal as any, // Type cast para manter compatibilidade
-      payout: 0.635, // ✅ Payout REAL para Digit Over 3 (~63.5%) - Fix para Martingale
-      confidence: probability / 100,
+      probability: 0,
+      signal: null,
+      payout: 0,
+      confidence: 0,
       details: {
-        trend: signal,
-        trendStrength: probability / 100,
-        Hn,
-        p_over3,
-        strength,
-        volatility,
-        digits, // Para debugging
-      },
+        digits
+      }
     };
   }
 
@@ -743,16 +702,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return { action: 'STOP', reason: 'TAKE_PROFIT' };
     }
 
-    // B. Filtro de Precisão baseado no Modo (v1.0 thresholds)
-    const currentMode = state.mode as keyof typeof FALCON_MODES;
-    const settings = FALCON_MODES[currentMode];
+    // B. Filtro de Precisão baseado no Modo (v2.0)
+    // Na V2, o filtro é o Padrão IPI exato, então se o sinal existe, ele é válido.
 
-    // Thresholds de probabilidade por modo (Atualizados conforme v1.0 thresholds):
-    // VELOZ: 78%, NORMAL: 80%, PRECISO: 86%
-    const requiredProb = currentMode === 'VELOZ' ? 78 :
-      (currentMode === 'NORMAL' ? 80 : 86);
-
-    if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
+    if (marketAnalysis.signal) {
       // ✅ Calcular stake
       const stake = this.calculateStake(userId, marketAnalysis.payout);
 
@@ -769,71 +722,38 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // Usar stake ajustado se houver
       const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
 
-      // ✅ Log de sinal no padrão Zenix v1.0
+      const currentMode = state.mode as keyof typeof FALCON_MODES;
+      const settings = FALCON_MODES[currentMode];
+
+      // ✅ Log de sinal no padrão Zenix v2.0
       const details = marketAnalysis.details || {};
       this.logSignalGenerated(userId, {
         mode: settings.name,
-        isRecovery: state.mode !== 'VELOZ',
+        isRecovery: state.consecutiveLosses >= 2,
         filters: [
-          `Janela: ${settings.windowSize} ticks`,
-          `Hn: ${details.Hn?.toFixed(3)} (Min ${settings.Hn_threshold})`,
-          `p_over3: ${details.p_over3?.toFixed(3)} (Min ${settings.p_over3_threshold})`,
-          `Força: ${details.strength?.toFixed(3)} (Min ${settings.strength_threshold})`,
-          `Volatilidade: ${details.volatility?.toFixed(3)} (Max ${settings.volatility_max})`
+          `Padrão IPI: Detectado`,
+          `Sequência: ${marketAnalysis.details?.digitPattern}`
         ],
-        trigger: 'Padrão Estatístico Digit Over 3 🦅',
-        probability: marketAnalysis.probability,
-        contractType: 'DIGITOVER',
-        direction: 'DIGIT' as any
+        trigger: 'Padrão IPI (Ímpar-Par-Ímpar)',
+        probability: 57.34,
+        contractType: 'DIGITODD',
+        direction: 'ODD' as any
       });
 
       return {
         action: 'BUY',
         stake: finalStake,
-        contractType: 'DIGITOVER', // ✅ Mudança principal: DIGIT OVER ao invés de CALL/PUT
+        contractType: 'DIGITODD', // ✅ V2: Contract type
         mode: state.mode,
         reason: 'HIGH_PROBABILITY',
       };
-    } else {
-      // ✅ Log de motivo para não comprar
-      const missingProb = requiredProb - marketAnalysis.probability;
-      const reasonMsg = marketAnalysis.probability < requiredProb
-        ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
-        : 'Sinal indefinido';
-
-      // ✅ THROTTLING de logs (mesma lógica anterior)
-      const now = Date.now();
-      const lastLogTime = state.lastDeniedLogTime || 0;
-      const timeSinceLastLog = now - lastLogTime;
-      const lastLogData = state.lastDeniedLogData;
-
-      const probabilityChanged = !lastLogData ||
-        Math.abs(lastLogData.probability - marketAnalysis.probability) > 5;
-      const directionChanged = !lastLogData ||
-        lastLogData.signal !== marketAnalysis.signal;
-
-      const shouldLog = timeSinceLastLog > 30000 || probabilityChanged || directionChanged;
-
-      if (shouldLog) {
-        this.logBlockedEntry(userId, {
-          reason: reasonMsg,
-          details: `Score: ${marketAnalysis.probability.toFixed(1)}%`
-        });
-
-        state.lastDeniedLogTime = now;
-        state.lastDeniedLogData = {
-          probability: marketAnalysis.probability,
-          signal: marketAnalysis.signal
-        };
-      }
     }
 
     return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
   }
-
   /**
    * Atualiza o modo do agente baseado em vitória/derrota
-   * v1.0: VELOZ → NORMAL → PRECISO
+   * v2.0: NORMAL → PRECISO (após 4 perdas)
    */
   private updateMode(userId: string, win: boolean): void {
     const state = this.userStates.get(userId);
@@ -845,19 +765,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses = 0;
       state.consecutiveLossesSinceModeChange = 0;
 
-      // Se estava em modo de recuperação, volta para VELOZ
-      if (state.mode !== 'VELOZ') {
+      // Se estava em recuperação ou em PRECISO, volta para NORMAL
+      if (state.mode !== 'NORMAL' || state.totalLossAccumulated > 0) {
         const recoveredLoss = state.totalLossAccumulated;
 
-        this.logSuccessfulRecoveryV2(userId, {
-          recoveredLoss: recoveredLoss,
-          additionalProfit: state.lastProfit - recoveredLoss,
-          profitPercentage: 0, // Not easily calculated here
-          stakeBase: config.initialStake
-        });
+        // Se recuperou tudo (totalLossAccumulated zerado), resetar para normal
+        // Na prática, se win, a lógica de martingale deve ter coberto o loss
+        // Vamos resetar para NORMAL se win
 
-        state.mode = 'VELOZ';
-        state.totalLossAccumulated = 0; // Resetar acumulado
+        if (state.mode !== 'NORMAL') {
+          this.logSuccessfulRecoveryV2(userId, {
+            recoveredLoss: recoveredLoss,
+            additionalProfit: state.lastProfit - recoveredLoss,
+            profitPercentage: 0,
+            stakeBase: config.initialStake
+          });
+          state.mode = 'NORMAL';
+        }
+
+        state.totalLossAccumulated = 0;
         state.martingaleLevel = 0;
       }
 
@@ -870,21 +796,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses++;
       state.consecutiveLossesSinceModeChange++;
 
-      // Progressão de Modos conforme documento v1.0:
-      // VELOZ: após 2 perdas → NORMAL, após 3ª perda → PRECISO
+      // Progressão de Modos v2.0
       // NORMAL: após 4 perdas → PRECISO
-      if (state.mode === 'VELOZ') {
-        if (state.consecutiveLosses >= 3) {
-          state.mode = 'PRECISO';
-          this.logger.log(`[Falcon][${userId}] ⚠️ LOSS #${state.consecutiveLosses} (VELOZ) → Mudando para PRECISO (Máxima Precisão)`);
-        } else if (state.consecutiveLosses >= 2) {
-          state.mode = 'NORMAL';
-          this.logger.log(`[Falcon][${userId}] ⚠️ LOSS #${state.consecutiveLosses} (VELOZ) → Mudando para NORMAL(Filtros Médios)`);
-        }
-      } else if (state.mode === 'NORMAL') {
+      if (state.mode === 'NORMAL') {
         if (state.consecutiveLosses >= 4) {
           state.mode = 'PRECISO';
-          this.logger.log(`[Falcon][${userId}] ⚠️ LOSS #${state.consecutiveLosses} (NORMAL) → Mudando para PRECISO(Máxima Precisão)`);
+          this.logger.log(`[Falcon][${userId}] ⚠️ LOSS #${state.consecutiveLosses} (NORMAL) → Mudando para PRECISO (Defesa Automática)`);
         }
       }
       // PRECISO: Permanece até recuperar
@@ -901,6 +818,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   /**
    * Calcula o stake baseado no modo e situação
    */
+  /**
+   * Calcula o stake baseado no modo e situação
+   * V2.0: Híbrido (Soros N1 se Win Streak, Martingale Inteligente se Loss/Recovery)
+   */
   private calculateStake(userId: string, marketPayoutPercent: number): number {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
@@ -912,14 +833,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     let stake = config.initialStake;
     const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma);
 
-    // Lógica para Modos de Recuperação (NORMAL/PRECISO - Smart Martingale)
-    if (state.mode !== 'VELOZ') {
-      const riskSettings = FALCON_V10_RISK[config.riskProfile as keyof typeof FALCON_V10_RISK] || FALCON_V10_RISK.MODERADO;
+    // Lógica 1: Recuperação (Martingale)
+    // Se há perdas acumuladas, priorizar recuperação
+    if (state.totalLossAccumulated > 0 || state.consecutiveLosses > 0) {
+      const riskSettings = FALCON_V20_RISK[config.riskProfile as keyof typeof FALCON_V20_RISK] || FALCON_V20_RISK.MODERADO;
       const profitFactor = riskSettings.profitFactor;
 
       const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
 
-      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(${state.mode}): AccumLoss = ${state.totalLossAccumulated}, LossToRecover = ${lossToRecover}, Factor = ${profitFactor}, Payout = ${realPayout} `);
+      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(RECOVERY): AccumLoss = ${state.totalLossAccumulated}, LossToRecover = ${lossToRecover}, Factor = ${profitFactor}, Payout = ${realPayout} `);
 
       if (lossToRecover > 0) {
         const targetAmount = lossToRecover * profitFactor;
@@ -927,8 +849,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         const hasLimit = riskSettings.maxMartingale !== -1;
         if (hasLimit && state.consecutiveLosses > riskSettings.maxMartingale) {
-          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido.Resetando para modo VELOZ.`);
-          state.mode = 'VELOZ';
+          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido.Resetando para modo NORMAL.`);
+          state.mode = 'NORMAL';
           state.totalLossAccumulated = 0;
           state.consecutiveLosses = 0;
           state.consecutiveLossesSinceModeChange = 0;
@@ -944,17 +866,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           calculatedStake: stake,
           profitPercentage: Math.round((profitFactor - 1) * 100),
           maxLevel: riskSettings.maxMartingale,
-          contractType: state.lastContractType || 'DIGITOVER'
+          contractType: state.lastContractType || 'DIGITODD'
         });
       } else {
         stake = config.initialStake;
       }
     }
-    // Lógica para Modo VELOZ (Soros Nível 1)
+    // Lógica 2: Soros Nível 1 (Se Win Streak e sem perdas para recuperar)
     else {
-      // ✅ DEBUG LOG
-      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(VELOZ): Wins = ${state.consecutiveWins}, LastProfit = ${state.lastProfit}, Base = ${config.initialStake} `);
-
       // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
       if (state.consecutiveWins === 1) {
         // Win1: A próxima aposta é Base + Lucro Anterior
@@ -968,6 +887,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       } else {
         // Win0 (início), Win2 (já fez soros, ganhou, vai resetar), etc.
         stake = Math.round(config.initialStake * 100) / 100;
+        this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(NORMAL): Wins = ${state.consecutiveWins}, Stake = ${stake} `);
       }
     }
 
@@ -1127,7 +1047,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         },
       );
 
-      // ✅ CORREÇÃO DE RACE CONDITION: 
+      // ✅ CORREÇÃO DE RACE CONDITION:
       // Definir currentTradeId IMEDIATAMENTE, antes de chamar buyContract via API.
       state.currentTradeId = tradeId;
 
@@ -1224,17 +1144,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
   }
 
-  /**
-   * Pré-aquece conexão WebSocket para garantir que esteja pronta
-   * Envia um ping simples para forçar criação e autorização da conexão
-   */
-  async warmUpConnection(token: string): Promise<void> {
-    try {
-      await this.getOrCreateWebSocketConnection(token, 'warmup');
-    } catch (error: any) {
-      this.logger.warn(`[Falcon] Falha no warm - up: ${error.message} `);
-    }
-  }
+
 
   /**
    * Compra contrato na Deriv via WebSocket Pool Interno com retry automático
@@ -1281,10 +1191,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           symbol: symbol,
         };
 
-        // ✅ FALCON SPECIFIC: Adicionar prediction para DIGITOVER
-        if (contractType === 'DIGITOVER') {
-          proposalRequest.barrier = 3;
-        }
+        // ✅ FALCON SPECIFIC: Adicionar prediction para DIGITODD (não precisa barrier, mas prediction talvez se fosse matches/differs)
+        // Para DIGITODD/DIGITEVEN não precisa de barrier.
+        // if (contractType === 'DIGITOVER') {
+        //   proposalRequest.barrier = 3;
+        // }
 
         const proposalResponse = await connection.sendRequest(
           proposalRequest,
@@ -1846,7 +1757,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.consecutiveLosses = 0;
       state.consecutiveWins = 0;
       state.opsCount = 0;
-      state.mode = 'VELOZ';
+      state.mode = 'NORMAL';
       state.stopBlindadoAtivo = false;
       state.pisoBlindado = 0;
       state.lastProfit = 0;
@@ -2144,6 +2055,20 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       conn.subscriptions.delete(subId);
     }
   }
+
+  /**
+   * ✅ Pré-aquece a conexão WebSocket
+   */
+  private async warmUpConnection(token: string): Promise<void> {
+    try {
+      const { sendRequest } = await this.getOrCreateWebSocketConnection(token);
+      await sendRequest({ ping: 1 }, 5000);
+    } catch (error) {
+      this.logger.debug(`[Falcon] WarmUp failed for token ending in ...${token.slice(-4)}`);
+      // Não lançar erro, apenas logar
+    }
+  }
+
   // ============================================
   // LOGS PADRONIZADOS ZENIX v2.0 (Portado de Orion)
   // ============================================
@@ -2236,7 +2161,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     trigger: string;
     probability: number;
     contractType: string;
-    direction?: 'CALL' | 'PUT' | 'DIGIT';
+    direction?: 'CALL' | 'PUT' | 'DIGIT' | 'ODD' | 'EVEN';
   }) {
     let message = `🔍 ANÁLISE: MODO ${signal.mode}${signal.isRecovery ? ' (RECUPERAÇÃO)' : ''}\n`;
     signal.filters.forEach((filter, index) => {
@@ -2273,20 +2198,52 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     await this.saveLog(userId, 'INFO', 'EXECUTION', message);
   }
 
-  private logSorosActivation(userId: string, soros: {
+  private logSuccessfulRecoveryV2(userId: string, data: {
+    recoveredLoss: number;
+    additionalProfit: number;
+    profitPercentage: number;
+    stakeBase: number;
+  }) {
+    const message = `✅ RECUPERAÇÃO CONCLUÍDA\n` +
+      `• Prejuízo Recuperado: $${data.recoveredLoss.toFixed(2)}\n` +
+      `• Lucro Extra: $${data.additionalProfit.toFixed(2)}\n` +
+      `• Modo: Retornando para NORMAL`;
+
+    this.saveLog(userId, 'INFO', 'CORE', message);
+  }
+
+  private logMartingaleLevelV2(userId: string, data: {
+    level: number;
+    lossNumber: number;
+    accumulatedLoss: number;
+    calculatedStake: number;
+    profitPercentage: number;
+    maxLevel: number;
+    contractType: string;
+  }) {
+    const message = `🛡️ GESTÃO DE RISCO (MARTINGALE)\n` +
+      `• Nível: ${data.level}/${data.maxLevel}\n` +
+      `• Perda Acumulada: $${data.accumulatedLoss.toFixed(2)}\n` +
+      `• Próxima Stake: $${data.calculatedStake.toFixed(2)}\n` +
+      `• Fator Recuperação: ${data.profitPercentage}%`;
+
+    this.saveLog(userId, 'WARN', 'RISK', message);
+  }
+
+  private logSorosActivation(userId: string, data: {
     previousProfit: number;
     stakeBase: number;
-    level?: number;
+    level: number;
   }) {
-    const newStake = soros.stakeBase + soros.previousProfit;
-    const level = soros.level || 1;
-    const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
-      `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
-      `• Nova Stake: $${newStake.toFixed(2)}`;
+    const message = `📈 ALAVANCAGEM SOROS\n` +
+      `• Lucro Reinvestido: $${data.previousProfit.toFixed(2)}\n` +
+      `• Nova Stake: $${(data.stakeBase + data.previousProfit).toFixed(2)}`;
 
-    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveLog(userId, 'INFO', 'RISK', message);
   }
+
+
+
 
   private logWinStreak(userId: string, streak: {
     consecutiveWins: number;
@@ -2305,42 +2262,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
   // --- CATEGORIA 4: RECUPERAÇÃO E RISCO ---
 
-  private logMartingaleLevelV2(userId: string, martingale: {
-    level: number;
-    lossNumber: number;
-    accumulatedLoss: number;
-    calculatedStake: number;
-    profitPercentage: number;
-    maxLevel: number; // ✅ Adicionado em 2.1
-    contractType: string;
-  }) {
-    const message = `📊 NÍVEL DE RECUPERAÇÃO\n` +
-      `• Nível Atual: M${martingale.level} (${martingale.lossNumber}ª perda)\n` +
-      `• Perdas Acumuladas: $${martingale.accumulatedLoss.toFixed(2)}\n` +
-      `• Stake Calculada: $${martingale.calculatedStake.toFixed(2)}\n` +
-      `• Objetivo: Recuperar + ${martingale.profitPercentage}%\n` +
-      `• Limite Máximo: M${martingale.maxLevel}\n` +
-      `• Contrato: ${martingale.contractType}`;
 
-    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
-    this.saveLog(userId, 'WARN', 'RISK', message);
-  }
 
-  private logSuccessfulRecoveryV2(userId: string, recovery: {
-    recoveredLoss: number;
-    additionalProfit: number;
-    profitPercentage: number;
-    stakeBase: number;
-  }) {
-    const message = `✅ RECUPERAÇÃO BEM-SUCEDIDA!\n` +
-      `• Perdas Recuperadas: $${recovery.recoveredLoss.toFixed(2)}\n` +
-      `• Lucro Adicional: $${recovery.additionalProfit.toFixed(2)} (${recovery.profitPercentage}%)\n` +
-      `• Ação: Resetando sistema e voltando à entrada principal\n` +
-      `• Próxima Operação: Entrada Normal (Stake Base: $${recovery.stakeBase.toFixed(2)})`;
 
-    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
-    this.saveLog(userId, 'INFO', 'RISK', message);
-  }
 
   private logStopLossAdjustmentV2(userId: string, adjustment: {
     calculatedStake: number;
@@ -2368,7 +2292,7 @@ interface FalconUserConfig {
   dailyLossLimit: number;
   derivToken: string;
   currency: string;
-  symbol: 'R_100';
+  symbol: '1HZ10V';
   initialBalance: number;
   stopLossType?: 'normal' | 'blindado';
   riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
@@ -2386,7 +2310,7 @@ interface FalconUserState {
   consecutiveLosses: number;
   consecutiveWins: number;
   opsCount: number;
-  mode: 'VELOZ' | 'NORMAL' | 'PRECISO'; // v1.0 Modos
+  mode: 'NORMAL' | 'PRECISO'; // v2.0 Modos
   stopBlindadoAtivo: boolean;
   pisoBlindado: number;
   lastProfit: number;

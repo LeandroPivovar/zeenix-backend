@@ -28,50 +28,55 @@ import { LogQueueService } from '../../utils/log-queue.service';
 /**
  * ⚡ ZEUS Strategy Configuration - Versão 2.3 (Aligned with Doc V4.0)
  */
-const ZEUS_V4_CONFIGS = {
-    // M0: Entrada Principal (Digit Over 3)
-    M0_ENTRADA: {
-        name: 'ENTRADA',
-        contractType: 'DIGITOVER',
-        targetDigit: 3, // > 3 (4,5,6,7,8,9)
-        payout: 1.56, // ~56%
-        // Spec v4.0 Filters
-        filterPatternWindow: 6,
-        filterPatternCount: 5, // 5+ <= 3
-        filterConsecutiveMin: 2, // 2+ <= 3
-        filterMomentumWindow: 10,
-        filterMomentumCount: 6, // 60%
-        filterVolatilityWindow: 6,
-        filterVolatilityMinUnique: 3
-    },
-    // M1+: Recuperação (Rise/Fall)
-    RECOVERY: {
-        name: 'RECUPERACAO',
-        contractType: 'RISE_FALL', // Special internal type
-        payout: 1.85, // ~85%
-        // Recovery logic parameters
-        momentumWindow: 3,
-        minDelta: 0.1, // Reduced slightly to ensure execution
-        duration: 1 // ✅ Corrected to 1 tick as per doc
-    }
-};
+// ⚡ ZEUS V2 - TYPES
+export type NegotiationMode = "NORMAL" | "PRECISO";
+export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO";
+export type AnalysisType = "PRINCIPAL" | "RECUPERACAO";
+export type ContractKind = "DIGITS_OVER3" | "RISE_FALL";
 
-const ZEUS_V4_RISK_MANAGEMENT = {
-    CONSERVADOR: {
-        maxRecoveryLevel: 5, // ✅ Doc: Recupera até M5
-        profitFactor: 1.01,  // ✅ User: Recupera perdas + 1%
-        useStopBlindado: false
-    },
-    MODERADO: {
-        maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
-        profitFactor: 1.15, // ✅ User: Recupera + 15%
-        useStopBlindado: true
-    },
-    AGRESSIVO: {
-        maxRecoveryLevel: 5, // ✅ Doc implies recovery capability
-        profitFactor: 1.30, // ✅ User: Recupera + 30%
-        useStopBlindado: true
-    },
+export type LogColor = "green" | "red" | "blue" | "yellow" | "neutral";
+
+export type ZenixLogId =
+    | "LOG_01_SESSION_START"
+    | "LOG_02_DATA_COLLECTION"
+    | "LOG_03_ANALYSIS_START"
+    | "LOG_04_ENTRY_BLOCKED"
+    | "LOG_05_SIGNAL_FOUND"
+    | "LOG_06_WIN"
+    | "LOG_07_LOSS"
+    | "LOG_08_SOROS"
+    | "LOG_09_MARTINGALE"
+    | "LOG_10_MODE_SWITCH"
+    | "LOG_11_CONTRACT_SWITCH"
+    | "LOG_12_RECOVERY_START"
+    | "LOG_13_RECOVERY_SUCCESS"
+    | "LOG_14_STRATEGIC_PAUSE"
+    | "LOG_15_BLINDADO_STATUS"
+    | "LOG_16_BLINDADO_TRIGGER"
+    | "LOG_17_STOPLOSS_TRIGGER"
+    | "LOG_18_TARGET_REACHED"
+    | "LOG_19_SESSION_END"
+    | "LOG_20_API_ERROR";
+
+export interface ZeusLogEvent {
+    ts: number;
+    id: ZenixLogId;
+    title: string;
+    lines: Array<{ text: string; color?: LogColor }>;
+}
+
+export const ZEUS_SUBTITLE = "Agente Autônomo de Análise Tick a Tick em Volatility Indices";
+
+export const ZEUS_CONSTANTS = {
+    symbol: "1HZ100V", // R_100 (100V 1s)
+    payoutPrimary: 0.56,
+    payoutRecovery: 0.85,
+    martingaleMaxLevel: 5,
+    martingaleMultiplier: 2.0,
+    strategicPauseSeconds: 60,
+    cooldownWinSeconds: 20,
+    cooldownLossSeconds: 40,
+    dataCollectionTicks: 7,
 };
 @Injectable()
 export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -186,67 +191,124 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     // Mas para não floodar, deixamos quieto se não houve mudança.
                 }
 
-                const config: ZeusUserConfig = {
+                const zeusConfig: ZeusUserConfig = {
+                    // System
                     userId: userId,
                     initialStake: parseFloat(user.initial_stake),
                     dailyProfitTarget: parseFloat(user.daily_profit_target),
                     dailyLossLimit: parseFloat(user.daily_loss_limit),
-                    derivToken: resolvedToken, // ✅ Usa o token resolvido
+                    derivToken: resolvedToken,
                     currency: user.currency,
-                    symbol: 'R_100',
-                    initialBalance: parseFloat(user.initial_balance) || 0,
-                    stopLossType: 'normal',
-                    riskProfile: 'MODERADO',
+
+                    // Zeus V2 defaults
+                    strategyName: "ZEUS",
+                    subtitle: ZEUS_SUBTITLE,
+                    symbol: ZEUS_CONSTANTS.symbol,
+                    is24x7: true,
+
+                    initialCapital: parseFloat(user.initial_balance) || 0,
+                    profitTarget: parseFloat(user.daily_profit_target),
+                    stopLoss: parseFloat(user.daily_loss_limit),
+                    baseStake: parseFloat(user.initial_stake),
+
+                    riskProfile: ((user as any).riskProfile as RiskProfile) || 'MODERADO', // Use user.riskProfile if available, otherwise default
+
+                    enableStopLossBlindado: (user as any).stopLossType === 'blindado', // Use user.stopLossType
+                    blindadoTriggerPctOfTarget: 0.4,
+                    blindadoProtectPctOfPeak: 0.5,
+
+                    payoutPrimary: ZEUS_CONSTANTS.payoutPrimary,
+                    payoutRecovery: ZEUS_CONSTANTS.payoutRecovery,
+
+                    martingaleMaxLevel: ZEUS_CONSTANTS.martingaleMaxLevel,
+                    martingaleMultiplier: ZEUS_CONSTANTS.martingaleMultiplier,
+                    // Default recovery extra profit based on risk (simplified, will be overwritten by activateUser logic if needed)
+                    recoveryExtraProfitPct: 0.15,
+
+                    hasContractSwitch: true,
+                    strategicPauseEnabled: true,
+                    strategicPauseSeconds: ZEUS_CONSTANTS.strategicPauseSeconds,
+                    cooldownWinSeconds: ZEUS_CONSTANTS.cooldownWinSeconds,
+                    cooldownLossSeconds: ZEUS_CONSTANTS.cooldownLossSeconds,
+                    dataCollectionTicks: ZEUS_CONSTANTS.dataCollectionTicks
                 };
 
+                this.userConfigs.set(userId, zeusConfig);
 
-                this.userConfigs.set(userId, config);
-                this.initializeUserState(userId, config);
+                // ✅ Verificar se já tem estado inicializado
+                if (!this.userStates.has(userId)) {
+                    this.initializeUserState(userId, zeusConfig);
+                }
+
+                // ✅ Log de sucesso (apenas na primeira vez/reconexão)
+                this.logger.log(`[Zeus] ✅ Usuário sincronizado: ${userId} (${user.email || 'N/A'}) - Perfil: ${zeusConfig.riskProfile}`);
             }
-
-            this.logger.log(`[Zeus] Sincronizados ${activeUsers.length} usuários ativos`);
         } catch (error) {
-            this.logger.error('[Zeus] Erro ao sincronizar usuários:', error);
+            this.logger.error(`[Zeus] ❌ Erro ao sincronizar usuários: ${error.message}`);
         }
     }
 
     /**
      * Inicializa estado do usuário
      */
+    /**
+     * Inicializa estado do usuário para Zeus V2
+     */
     private initializeUserState(userId: string, config: ZeusUserConfig): void {
         const state: ZeusUserState = {
             userId,
-            isActive: true,
-            currentProfit: 0,
-            currentLoss: 0,
-            operationsCount: 0,
-            saldoInicial: config.initialBalance || 0,
-            lucroAtual: 0,
-            picoLucro: 0,
+            isActive: true, // System
+            balance: config.initialCapital,
+            profit: 0,
+            peakProfit: 0,
+
+            blindadoActive: false,
+            blindadoFloorProfit: 0,
+
+            inStrategicPauseUntilTs: 0,
+            sessionEnded: false,
+
+            // Automático
+            mode: "NORMAL",
+            analysis: "PRINCIPAL",
+            contract: "DIGITS_OVER3",
+
             consecutiveLosses: 0,
-            consecutiveWins: 0,
-            opsCount: 0,
-            mode: 'VELOZ', // ✅ Initial mode as per doc
-            stopBlindadoAtivo: false,
-            pisoBlindado: 0,
-            lastProfit: 0,
-            martingaleLevel: 0,
-            sorosLevel: 0,
-            totalLosses: 0,
-            recoveryAttempts: 0,
-            totalLossAccumulated: 0,
+            consecutiveLossesOnPrimaryContract: 0,
+
+            mgLevel: 0,
+            lossSum: 0,
+
+            recoveryStartBalance: config.initialCapital,
+            recoveryLossStreak: 0,
+            currentRecoveryLosses: 0,
+
+            sorosPending: false,
+            lastWinProfit: 0,
+            lastOpProfit: 0,
+
+            lastOpTs: 0,
+            cooldownUntilTs: 0,
+
+            opsTotal: 0,
+            wins: 0,
+            losses: 0,
+
             currentContractId: null,
             currentTradeId: null,
             isWaitingContract: false,
-            lastContractType: undefined,
             ticksSinceLastAnalysis: 0,
-            consecutiveLosingDigits: 0,
             lastDigits: [],
-            sorosActive: false,
-            sorosCount: 0,
-            consecutiveMainLosses: 0, // ✅ Track main losses for trigger
-            isPausedStrategy: false, // ✅ Strategic Pause state
-            pauseUntil: 0,
+
+            // Compatibilidade infra
+            currentProfit: 0,
+            currentLoss: 0,
+            operationsCount: 0,
+            saldoInicial: config.initialCapital,
+            lucroAtual: 0,
+            picoLucro: 0,
+            stopBlindadoAtivo: false,
+            pisoBlindado: 0
         };
 
 
@@ -256,24 +318,52 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
-        const ZeusConfig: ZeusUserConfig = {
-            userId: config.userId,
-            initialStake: config.initialStake,
-            dailyProfitTarget: config.dailyProfitTarget,
-            dailyLossLimit: config.dailyLossLimit,
-            derivToken: config.derivToken,
-            currency: config.currency,
-            symbol: 'R_100',
-            initialBalance: config.initialBalance || 0,
-            stopLossType: (config as any).stopLossType || 'normal',
-            riskProfile: (config as any).riskProfile || 'MODERADO',
+        // Mapear AutonomousAgentConfig (DB) para ZeusConfig (Spec)
+        // Valores default do Spec `buildDefaultConfig`
+        const risk = (config as any).riskProfile as RiskProfile || 'MODERADO';
+
+        // Coletar token resolvido anteriormente ou do config
+        const derivToken = config.derivToken; // Já resolvido na syncActiveUsersFromDb
+
+        const zeusConfig: ZeusUserConfig = {
+            ...config, // Mantém compatibilidade com infra (userId, etc)
+
+            strategyName: "ZEUS",
+            subtitle: ZEUS_SUBTITLE,
+            symbol: ZEUS_CONSTANTS.symbol,
+            is24x7: true,
+
+            initialCapital: config.initialBalance || 0,
+            profitTarget: config.dailyProfitTarget,
+            stopLoss: config.dailyLossLimit,
+            baseStake: parseFloat(config.initialStake.toString()),
+
+            riskProfile: risk,
+
+            enableStopLossBlindado: (config as any).stopLossType === 'blindado',
+            blindadoTriggerPctOfTarget: 0.4,
+            blindadoProtectPctOfPeak: 0.5,
+
+            payoutPrimary: ZEUS_CONSTANTS.payoutPrimary,
+            payoutRecovery: ZEUS_CONSTANTS.payoutRecovery,
+
+            martingaleMaxLevel: ZEUS_CONSTANTS.martingaleMaxLevel,
+            martingaleMultiplier: ZEUS_CONSTANTS.martingaleMultiplier,
+            recoveryExtraProfitPct: risk === 'CONSERVADOR' ? 0 : (risk === 'AGRESSIVO' ? 0.30 : 0.15),
+
+            hasContractSwitch: true,
+            strategicPauseEnabled: true,
+            strategicPauseSeconds: ZEUS_CONSTANTS.strategicPauseSeconds,
+            cooldownWinSeconds: ZEUS_CONSTANTS.cooldownWinSeconds,
+            cooldownLossSeconds: ZEUS_CONSTANTS.cooldownLossSeconds,
+            dataCollectionTicks: ZEUS_CONSTANTS.dataCollectionTicks
         };
 
 
         // ✅ Proteção contra reset de estado pelo Sync (5min)
         if (this.userConfigs.has(userId)) {
             this.logger.log(`[Zeus][${userId}] 🔄 Atualizando configuração (Usuário já ativo).`);
-            this.userConfigs.set(userId, ZeusConfig);
+            this.userConfigs.set(userId, zeusConfig);
 
             // Apenas garantir que está ativo (se não estiver pausado por stop)
             const state = this.userStates.get(userId);
@@ -286,18 +376,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.logInitialConfigV2(userId, {
                 agentName: 'Zeus',
                 operationMode: mode,
-                riskProfile: ZeusConfig.riskProfile || 'MODERADO',
-                profitTarget: ZeusConfig.dailyProfitTarget,
+                riskProfile: zeusConfig.riskProfile || 'MODERADO',
+                profitTarget: zeusConfig.dailyProfitTarget,
 
-                stopLoss: ZeusConfig.dailyLossLimit,
-                stopBlindadoEnabled: ZeusConfig.stopLossType === 'blindado'
+                stopLoss: zeusConfig.dailyLossLimit,
+                stopBlindadoEnabled: zeusConfig.stopLossType === 'blindado'
             });
 
             this.logSessionStart(userId, {
                 date: new Date(),
-                initialBalance: ZeusConfig.initialBalance || 0,
-                profitTarget: ZeusConfig.dailyProfitTarget,
-                stopLoss: ZeusConfig.dailyLossLimit,
+                initialBalance: zeusConfig.initialBalance || 0,
+                profitTarget: zeusConfig.dailyProfitTarget,
+                stopLoss: zeusConfig.dailyLossLimit,
                 mode: mode,
                 agentName: 'Zeus'
             });
@@ -306,43 +396,43 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
-        this.userConfigs.set(userId, ZeusConfig);
-        this.initializeUserState(userId, ZeusConfig);
+        this.userConfigs.set(userId, zeusConfig);
+        this.initializeUserState(userId, zeusConfig);
 
         // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
         try {
             this.logger.log(`[Zeus][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`);
-            await this.warmUpConnection(ZeusConfig.derivToken);
+            await this.warmUpConnection(zeusConfig.derivToken);
             this.logger.log(`[Zeus][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`);
         } catch (error: any) {
             this.logger.warn(`[Zeus][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
         }
 
-        // ✅ Obter modo do estado (inicializado como 'VELOZ')
+        // ✅ Obter modo do estado (inicializado como 'NORMAL')
         const state = this.userStates.get(userId);
-        const mode = state?.mode || 'VELOZ';
+        const mode = state?.mode || 'NORMAL';
 
 
         // ✅ Log de ativação no padrão Orion
         this.logInitialConfigV2(userId, {
             agentName: 'Zeus',
             operationMode: mode,
-            riskProfile: ZeusConfig.riskProfile || 'MODERADO',
-            profitTarget: ZeusConfig.dailyProfitTarget,
-            stopLoss: ZeusConfig.dailyLossLimit,
-            stopBlindadoEnabled: ZeusConfig.stopLossType === 'blindado'
+            riskProfile: zeusConfig.riskProfile || 'MODERADO',
+            profitTarget: zeusConfig.dailyProfitTarget,
+            stopLoss: zeusConfig.dailyLossLimit,
+            stopBlindadoEnabled: zeusConfig.stopLossType === 'blindado'
         });
 
         this.logSessionStart(userId, {
             date: new Date(),
-            initialBalance: ZeusConfig.initialBalance,
-            profitTarget: ZeusConfig.dailyProfitTarget,
-            stopLoss: ZeusConfig.dailyLossLimit,
+            initialBalance: zeusConfig.initialBalance || 0,
+            profitTarget: zeusConfig.dailyProfitTarget,
+            stopLoss: zeusConfig.dailyLossLimit,
             mode: mode,
             agentName: 'Zeus'
         });
 
-        this.logger.log(`[Zeus] ✅ Usuário ${userId} ativado | Symbol: ${ZeusConfig.symbol} | Total configs: ${this.userConfigs.size}`);
+        this.logger.log(`[Zeus] ✅ Usuário ${userId} ativado | Symbol: ${zeusConfig.symbol} | Total configs: ${this.userConfigs.size}`);
     }
 
     async deactivateUser(userId: string): Promise<void> {
@@ -388,6 +478,132 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * Processa tick para um usuário específico
      */
+    /**
+     * ✅ LOGIC HELPER: Extrair último dígito
+     */
+    private lastDigitFromPrice(price: number): number {
+        return Math.floor(price * 1000) % 10;
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Filtros Principais (Digits Over 3)
+     */
+    private passesPrimaryFilters(prices: number[], digits: number[]): boolean {
+        if (digits.length < 5) return false;
+
+        // Filtro 1: média dos dígitos > 4.5
+        const avgDigit = digits.reduce((a, b) => a + b, 0) / digits.length;
+        if (avgDigit <= 4.5) return false;
+
+        // Filtro 2: std dev controlado (Price Action)
+        const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+        const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
+        const stdDev = Math.sqrt(variance);
+
+        if (stdDev > 0.05) return false;
+
+        return true;
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Filtros de Recuperação (Rise/Fall)
+     */
+    private passesRecoveryFilters(prices: number[], digits: number[]): boolean {
+        if (prices.length < 10) return false;
+
+        // Filtro 1: preço atual > média dos últimos 10 (Trend Following)
+        const last10 = prices.slice(-10);
+        const avg10 = last10.reduce((a, b) => a + b, 0) / last10.length;
+        const currentPrice = prices[prices.length - 1];
+
+        if (currentPrice <= avg10) return false;
+
+        // Filtro 2: não ter muitos dígitos baixos recentes (Evitar tendência de baixa oculta)
+        const last5Digits = digits.slice(-5);
+        const lowCount = last5Digits.filter((d) => d < 4).length;
+        if (lowCount > 2) return false;
+
+        return true;
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Calcular Stake (Soros / Martingale)
+     */
+    private computeNextStake(config: ZeusUserConfig, state: ZeusState): number {
+        let stake = config.baseStake;
+
+        // Martingale (só na RECUPERAÇÃO)
+        if (state.analysis === "RECUPERACAO") {
+            stake = config.baseStake * Math.pow(config.martingaleMultiplier, state.mgLevel);
+        }
+
+        // Soros N1 (1 nível) - Só no modo PRINCIPAL
+        if (state.analysis === "PRINCIPAL" && state.sorosPending) {
+            stake = config.baseStake + state.lastWinProfit;
+        }
+
+        // Clamp Stop Loss (Não apostar mais do que o restante até o stop)
+        const currentDrawdown = Math.abs(Math.min(0, state.profit));
+        const remainingStop = Math.max(0, config.stopLoss - currentDrawdown);
+        stake = Math.min(stake, remainingStop);
+
+        // Clamp Profit Target (Não apostar muito mais do que precisa para bater a meta)
+        // Regra fixa: stake para meta
+        const payout = state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery;
+        const remainingProfit = config.profitTarget - state.profit;
+
+        if (remainingProfit > 0) {
+            const maxStakeForTarget = remainingProfit / payout;
+            // Regra fixa: stake para meta (sem margem, conforme spec)
+            stake = Math.min(stake, maxStakeForTarget);
+        }
+
+        return Math.max(0.35, Math.round(stake * 100) / 100);
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Verificar se pode operar
+     */
+    private canOperate(userId: string, config: ZeusUserConfig, state: ZeusState): boolean {
+        const nowTs = Date.now();
+
+        if (state.sessionEnded) return false;
+        if (nowTs < state.cooldownUntilTs) return false;
+        if (nowTs < state.inStrategicPauseUntilTs) return false;
+
+        // STOPLOSS sessão
+        const drawdown = Math.max(0, -state.profit);
+        if (drawdown >= config.stopLoss) {
+            state.sessionEnded = true;
+            state.endReason = "STOPLOSS";
+            this.handleStopCondition(userId, 'STOP_LOSS_LIMIT');
+            return false;
+        }
+
+        // Blindado
+        if (config.enableStopLossBlindado && state.blindadoActive) {
+            if (state.profit < state.blindadoFloorProfit) {
+                state.sessionEnded = true;
+                state.endReason = "BLINDADO";
+                this.handleStopCondition(userId, 'BLINDADO');
+                return false;
+            }
+        }
+
+        // Meta
+        if (state.profit >= config.profitTarget) {
+            state.sessionEnded = true;
+            state.endReason = "TARGET";
+            this.handleStopCondition(userId, 'TAKE_PROFIT');
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * ✅ CORE: Processar Tick
+     */
     private async processTickForUser(userId: string, tick: Tick): Promise<void> {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
@@ -396,635 +612,124 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
-        // ✅ Verificar lock de processamento (evitar múltiplas análises simultâneas)
-        if (this.processingLocks.get(userId)) {
-            return; // Já está processando, ignorar este tick
-        }
+        // Infra: Check Lock
+        if (this.processingLocks.get(userId)) return;
 
-        // ✅ ATUALIZAR SEMPRE O HISTÓRICO (Mesmo se estiver esperando contrato)
+        // Infra: History & Digits
         const userTicks = this.ticks.get(userId) || [];
         userTicks.push(tick);
-        if (userTicks.length > this.maxTicks) userTicks.shift();
+        if (userTicks.length > config.dataCollectionTicks + 50) userTicks.shift();
         this.ticks.set(userId, userTicks);
 
-        // Coletar dígito de forma robusta
-        const priceStr = tick.value.toFixed(8).replace(/\.?0+$/, '').replace('.', '');
-        const lastDigit = parseInt(priceStr[priceStr.length - 1]);
+        const lastDigit = this.lastDigitFromPrice(tick.value);
         state.lastDigits.push(lastDigit);
-        if (state.lastDigits.length > 30) state.lastDigits.shift();
+        if (state.lastDigits.length > 50) state.lastDigits.shift();
 
-        // Se está aguardando resultado de contrato, paramos aqui (mas histórico já foi atualizado)
-        if (state.isWaitingContract) {
-            return;
-        }
+        // 1. Can we operate?
+        if (!this.canOperate(userId, config, state)) return;
 
-        // ✅ TICK ADVANCE LÓGICA (Só conta para análise se NÃO houver operação)
-        state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
+        // 2. Are we waiting for contract?
+        if (state.isWaitingContract) return;
 
-        // Zeus opera em tempo real baseado em ticks, mas para evitar flood,
-        // só analisa a cada 3 ticks (similar ao Falcon)
-        const requiredSkip = state.mode === 'PRECISO' ? 2 : (state.mode === 'NORMAL' ? 1 : 0); // Veloce is 0 skip? Keeping logic similar
-
-        if (state.ticksSinceLastAnalysis <= requiredSkip) {
-            return; // Pular este tick
-        }
-
-        // ✅ Atualizar contador de dígitos perdedores para o modo atual (Focado na Entrada M0)
-        // V4.0: Perdedor é dígito <= 3 para entrada Over 3.
-        const targetDigit = ZEUS_V4_CONFIGS.M0_ENTRADA.targetDigit;
-        const isLoser = lastDigit <= targetDigit;
-
-        if (isLoser) {
-            state.consecutiveLosingDigits++;
-        } else {
-            state.consecutiveLosingDigits = 0;
-        }
-
-        // Multi-tick delay concluído, resetar para próximo ciclo
-        state.ticksSinceLastAnalysis = 0;
-
-        // Zeus v4.0 window analysis
-        // Usar maior janela necessária (Momentum 10 ticks)
-        const requiredTicks = ZEUS_V4_CONFIGS.M0_ENTRADA.filterMomentumWindow + 1;
-
-        if (state.lastDigits.length < requiredTicks) {
-            if (state.lastDigits.length % 5 === 0) {
-                this.logDataCollection(userId, {
-                    targetCount: requiredTicks,
-                    currentCount: state.lastDigits.length,
-                    mode: state.mode
-                });
-            }
-            this.processingLocks.set(userId, false);
-            return;
-        }
-
-        // ✅ Log inicial de análise ou heartbeat a cada X ticks
-        // Removido log redundante com o resultado do analyzeMarket para evitar flood
-
-        // ✅ Verificar novamente ANTES de fazer análise
-        if (state.isWaitingContract) {
-            this.processingLocks.set(userId, false);
-            return;
-        }
-
-
-        // ✅ Setar lock de processamento ANTES de fazer análise
+        // 3. Analyze Market
         this.processingLocks.set(userId, true);
-
         try {
-            // Realizar análise de mercado
-            const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+            const analysis = this.analyzeMarket(config, state, userTicks, state.lastDigits);
 
-            // ✅ Resetar contador de avanço (usando a info do mercado se disponivel, ou apenas resetando)
-            // Se analisou, reseta o contador
-            state.ticksSinceLastAnalysis = 0;
+            if (analysis && analysis.signal) {
+                const stake = this.computeNextStake(config, state);
 
-            // ✅ Verificar novamente APÓS análise (pode ter mudado durante análise)
-            if (state.isWaitingContract) {
-                this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-                return;
-            }
-
-            // ✅ Log de debug da análise
-            if (marketAnalysis) {
-                const { signal, probability, details } = marketAnalysis;
-
-                this.logger.debug(`[Zeus][${userId}] Análise (${state.mode}): prob=${probability.toFixed(1)}%, signal=${signal}`);
-
-                const message = `📊 ANÁLISE ZEUS v3.7\n` +
-                    `• Padrão: ${details?.digitPattern || details?.info || 'Analisando...'}\n` +
-                    `• Volatilidade: ${details?.volatility ? Number(details.volatility).toFixed(3) : 'Estabilizando...'}\n` +
-                    `• Status: ${signal ? `SINAL ENCONTRADO 🟢 (${probability}%)` : 'AGUARDANDO PADRÃO 🟡'}\n` +
-                    `• Modo: ${state.mode}`;
-
-                this.saveLog(userId, 'INFO', 'ANALYZER', message);
-            }
-
-
-            if (marketAnalysis && marketAnalysis.signal) {
-                // ✅ Verificar novamente ANTES de processar decisão (pode ter mudado durante análise)
-                if (state.isWaitingContract) {
-                    this.processingLocks.set(userId, false); // Liberar lock antes de retornar
+                if (stake < 0.35) {
+                    // Stake inválida (provavelmente stop loss próximo)
                     return;
                 }
 
-                // Processar decisão de trade
-                const decision = await this.processAgent(userId, marketAnalysis);
-
-                // ✅ Verificar novamente ANTES de executar (pode ter mudado durante processAgent)
-                if (state.isWaitingContract) {
-                    this.processingLocks.set(userId, false); // Liberar lock antes de retornar
-                    return;
-                }
-
-                if (decision.action === 'BUY') {
-                    await this.executeTrade(userId, decision, marketAnalysis);
-                } else if (decision.action === 'STOP') {
-                    await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
-                }
+                // Execute Trade
+                await this.executeTrade(userId, {
+                    action: 'BUY',
+                    stake,
+                    contractType: analysis.details.contractType,
+                    reason: 'ZEUS_V2_SIGNAL',
+                }, analysis);
             }
         } finally {
-            // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
             this.processingLocks.set(userId, false);
         }
     }
 
     /**
-     * Análise de mercado Zeus v4.0 (4 Filtros + Recuperação Price Action)
+     * ✅ CORE: Análise de Mercado (Substitui analyzeMarket antigo)
      */
-    private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
-        const state = this.userStates.get(userId);
-        if (!state) return null;
+    private analyzeMarket(config: ZeusUserConfig, state: ZeusState, pricesObj: Tick[], digits: number[]): MarketAnalysis | null {
+        // Converter ticks objects para array de numbers
+        const prices = pricesObj.map(t => t.value);
+        if (prices.length < config.dataCollectionTicks) return null;
 
-        // Se estiver em recuperação, mudar logica para Rise/Fall
-        const cfg = ZEUS_V4_CONFIGS.M0_ENTRADA;
-        const recoveryCfg = ZEUS_V4_CONFIGS.RECOVERY;
-        const requiredWindow = Math.max(cfg.filterMomentumWindow, cfg.filterPatternWindow);
+        const WINDOW = config.dataCollectionTicks;
+        const wPrices = prices.slice(-WINDOW);
+        const wDigits = digits.slice(-WINDOW);
 
-        if (state.lastDigits.length < requiredWindow) {
-            return null;
-        }
+        let signal = false;
+        let probability = 0;
+        let details: any = {};
 
-        const digits = state.lastDigits; // Full history
-        const lastDigitsMomentum = digits.slice(-cfg.filterMomentumWindow);
-        const lastDigitsPattern = digits.slice(-cfg.filterPatternWindow);
-
-        // --- PAUSA ESTRATÉGICA ---
-        if (state.isPausedStrategy) {
-            if (Date.now() < (state.pauseUntil || 0)) {
-                return this.generateHeartbeat({
-                    filters: { pattern: 0, reqPattern: 0, momentum: 0, reqMomentum: 0, volatility: 0, reqVolatility: 0 },
-                    window: digits,
-                    info: '⏸️ PAUSA ESTRATÉGICA (Aguardando Estabilização)'
-                });
-            } else {
-                // Sair da pausa
-                state.isPausedStrategy = false;
-                this.saveLog(userId, 'INFO', 'CORE', '▶️ Fim da Pausa Estratégica. Retornando operações.');
-            }
-        }
-
-        // --- MODO RECUPERAÇÃO (M1+ e Gatilho de 2 perdas principais) ---
-        // V4 Spec: "Após 2 perdas consecutivas no contrato principal, ocorre troca para recuperação"
-
-        const shouldUseRecovery = state.martingaleLevel > 0 || state.consecutiveMainLosses >= 2;
-
-        if (shouldUseRecovery) {
-            // Lógica Rise/Fall (Price Action simplificado)
-            // Analisa momentum dos últimos N ticks para decidir CALL ou PUT
-            const momentumWindow = recoveryCfg.momentumWindow;
-            const recentTicks = ticks.slice(-momentumWindow - 1);
-
-            if (recentTicks.length < momentumWindow + 1) return null;
-
-            // Calcular Delta Total
-            const startPrice = recentTicks[0].value;
-            const endPrice = recentTicks[recentTicks.length - 1].value;
-            const delta = Math.abs(endPrice - startPrice);
-
-            if (delta < recoveryCfg.minDelta) {
-                // Mercado lateralizado/sem força
-                return null;
-            }
-
-            const direction = endPrice > startPrice ? 'CALL' : 'PUT';
-
-            return {
-                signal: direction, // ✅ Fixed: Using valid 'CALL' | 'PUT' type
-                probability: 95, // Alta probabilidade assumida em Price Action forte
-                payout: recoveryCfg.payout,
-                confidence: 0.95,
-                details: {
-                    contractType: 'RISE_FALL', // Internal mapping
-                    direction: direction,
-                    volatility: delta,
-                    info: `Recuperação Price Action: Delta ${delta.toFixed(3)} | ${direction}`
-                }
+        // Lógica Principal vs Recuperação
+        if (state.analysis === "PRINCIPAL") {
+            signal = this.passesPrimaryFilters(wPrices, wDigits);
+            probability = signal ? 88.5 : 20.0;
+            details = {
+                contractType: 'DIGITOVER', // M0
+                info: 'Análise Principal (Digits Over 3)',
+                mode: 'NORMAL'
             };
-        }
-
-        // --- MODO NORMAL (M0 - DIGIT OVER 3) ---
-        // FILTRO 1: PADRÃO (5+ dígitos <= 3 nos últimos 6)
-        const patternCount = this.countDigitsLeq(lastDigitsPattern, cfg.targetDigit);
-        if (patternCount < cfg.filterPatternCount) {
-            return this.generateHeartbeat({
-                filters: {
-                    pattern: patternCount, reqPattern: cfg.filterPatternCount,
-                    momentum: 0, reqMomentum: 0,
-                    volatility: 0, reqVolatility: 0
-                },
-                window: digits
-            });
-        }
-
-        // FILTRO 2: CONSECUTIVOS (2+ dígitos <= 3 consecutivos no final)
-        const last2 = digits.slice(-2);
-        const consecutiveCount = this.countDigitsLeq(last2, cfg.targetDigit);
-        if (consecutiveCount < cfg.filterConsecutiveMin) {
-            return this.generateHeartbeat({
-                filters: {
-                    pattern: patternCount, reqPattern: cfg.filterPatternCount,
-                    momentum: 0, reqMomentum: 0,
-                    volatility: 0, reqVolatility: 0
-                },
-                window: digits
-            });
-        }
-
-        // FILTRO 3: MOMENTUM (60%+ dos últimos 10 são <= 3)
-        const momentumCount = this.countDigitsLeq(lastDigitsMomentum, cfg.targetDigit);
-        if (momentumCount < cfg.filterMomentumCount) {
-            return this.generateHeartbeat({
-                filters: {
-                    pattern: patternCount, reqPattern: cfg.filterPatternCount,
-                    momentum: momentumCount, reqMomentum: cfg.filterMomentumCount,
-                    volatility: 0, reqVolatility: 0
-                },
-                window: digits
-            });
-        }
-
-        // FILTRO 4: VOLATILIDADE (3+ dígitos únicos nos últimos 6)
-        const uniqueCount = this.calculateUniqueDigits(lastDigitsPattern);
-        if (uniqueCount < cfg.filterVolatilityMinUnique) {
-            return this.generateHeartbeat({
-                filters: {
-                    pattern: patternCount, reqPattern: cfg.filterPatternCount,
-                    momentum: momentumCount, reqMomentum: cfg.filterMomentumCount,
-                    volatility: uniqueCount, reqVolatility: cfg.filterVolatilityMinUnique
-                },
-                window: digits
-            });
-        }
-
-        // TODOS OS FILTROS PASSARAM!
-        return {
-            signal: 'DIGIT',
-            probability: 100,
-            payout: cfg.payout,
-            confidence: 1.0,
-            details: {
-                digitPattern: `Pat ${patternCount}/${cfg.filterPatternCount} | Mtm ${momentumCount}/${cfg.filterMomentumCount} | Vol ${uniqueCount}/${cfg.filterVolatilityMinUnique}`,
-                volatility: uniqueCount,
-                mode: state.mode, // Corrected to use current state mode
-
-                contractType: cfg.contractType,
-                targetDigit: cfg.targetDigit,
-                symbol: 'R_100'
-            }
-        };
-    }
-
-    private calculateUniqueDigits(window: number[]): number {
-        return new Set(window).size;
-    }
-
-    private countDigitsLeq(window: number[], target: number): number {
-        return window.filter(d => d <= target).length;
-    }
-
-    private generateHeartbeat(details: any): MarketAnalysis {
-        const prob = 10; // Low probability for heatbeat
-
-        let statusMsg = `Aguardando padrão v4.0`;
-        if (details.filters) {
-            const f = details.filters;
-            statusMsg = `Filtros: Pat ${f.pattern}/${f.reqPattern} | Mtm ${f.momentum}/${f.reqMomentum} | Vol ${f.volatility}/${f.reqVolatility}`;
-        }
-
-        return {
-            signal: null,
-            probability: prob,
-            payout: 0,
-            confidence: prob / 100,
-            details: {
-                info: details.info || statusMsg,
-                mode: 'ZEUS_V4_SCAN',
-                lastDigits: details.window ? details.window.slice(-5).join(',') : ''
-            }
-        };
-    }
-
-    private calculateDigitalVolatility(window: number[]): number {
-        // Not used in v4.0 directly (replaced by Unique Digits), but kept for legacy compat if needed
-        const mean = window.reduce((a, b) => a + b, 0) / window.length;
-        const variance = window.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / window.length;
-        const stdDev = Math.sqrt(variance);
-        return stdDev / 10;
-    }
-
-    private isValidHour(): boolean {
-        // Operar 24/7 conforme spec v4.0 (Mercados Sintéticos)
-        return true;
-    }
-
-
-    // Métodos antigos removidos (calculateVolatility, calculateEMA, analyzeDigits) pois não são usados na V2.0
-
-    /**
-     * Processa agente (chamado via interface)
-     */
-    async processAgent(userId: string, marketAnalysis: MarketAnalysis): Promise<TradeDecision> {
-        const config = this.userConfigs.get(userId);
-        const state = this.userStates.get(userId);
-
-        if (!config || !state || !state.isActive) {
-            return { action: 'WAIT', reason: 'USER_NOT_ACTIVE' };
-        }
-
-        // ✅ Verificar se já está aguardando resultado de contrato
-        if (state.isWaitingContract) {
-            return { action: 'WAIT', reason: 'WAITING_CONTRACT_RESULT' };
-        }
-
-        // A. Verificações de Segurança (Hard Stops)
-        if (state.lucroAtual >= config.dailyProfitTarget) {
-            return { action: 'STOP', reason: 'TAKE_PROFIT' };
-        }
-
-        // B. Filtro de Precisão (v2.2 thresholds simplificados)
-        // ✅ Se a análise retornou 100% de probabilidade, todos os filtros técnicos passaram
-        const requiredProb = 90;
-
-        if (marketAnalysis.probability >= requiredProb && marketAnalysis.signal) {
-            const stake = this.calculateStake(userId, marketAnalysis.payout);
-
-            if (stake <= 0) {
-                return { action: 'WAIT', reason: 'NO_STAKE' };
-            }
-
-            const stopLossCheck = await this.checkStopLoss(userId, stake);
-            if (stopLossCheck.action === 'STOP') {
-                return stopLossCheck;
-            }
-
-            const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
-
-            // Log de sinal
-            this.logSignalGenerated(userId, {
-                mode: state.mode,
-                isRecovery: state.mode !== 'PRECISO',
-                filters: [marketAnalysis.details?.digitPattern, `Vol: ${marketAnalysis.details?.volatility}`],
-                trigger: `Filtros Zeus v3.7 🛡️ (${state.mode})`,
-                probability: marketAnalysis.probability,
-                contractType: marketAnalysis.details?.contractType,
-                direction: marketAnalysis.signal as any
-            });
-
-            return {
-                action: 'BUY',
-                stake: finalStake,
-                contractType: marketAnalysis.details?.contractType,
-                mode: state.mode,
-                reason: 'ZEUS_SIGNAL_CONFIRMED',
-            };
-        }
-        else {
-            // ✅ Log de motivo para não comprar (formato igual ao SENTINEL)
-            const missingProb = requiredProb - marketAnalysis.probability;
-            const reasonMsg = marketAnalysis.probability < requiredProb
-                ? `Score ${marketAnalysis.probability.toFixed(1)}% abaixo do mínimo ${requiredProb}% (faltam ${missingProb.toFixed(1)}%)`
-                : 'Sinal indefinido';
-
-            const now = Date.now();
-            const lastLogTime = state.lastDeniedLogTime || 0;
-            const timeSinceLastLog = now - lastLogTime;
-            const lastLogData = state.lastDeniedLogData;
-
-            const probabilityChanged = !lastLogData ||
-                Math.abs(lastLogData.probability - marketAnalysis.probability) > 5;
-            const directionChanged = !lastLogData ||
-                lastLogData.signal !== marketAnalysis.signal;
-
-            const shouldLog = timeSinceLastLog > 30000 || // 30 segundos
-                probabilityChanged ||
-                directionChanged;
-
-            if (shouldLog) {
-                this.logBlockedEntry(userId, {
-                    reason: reasonMsg,
-                    details: `Score: ${marketAnalysis.probability.toFixed(1)}% | Dir: ${marketAnalysis.signal || 'N/A'}`
-                });
-
-                // ✅ Atualizar estado de último log
-                state.lastDeniedLogTime = now;
-                state.lastDeniedLogData = {
-                    probability: marketAnalysis.probability,
-                    signal: marketAnalysis.signal
-                };
-            }
-        }
-
-        return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
-    }
-
-    /**
-     * Atualiza o modo do agente baseado em vitória/derrota
-     */
-    private updateMode(userId: string, win: boolean): void {
-        const state = this.userStates.get(userId);
-        const config = this.userConfigs.get(userId);
-        if (!state || !config) return;
-
-
-        if (win) {
-            state.consecutiveWins++;
-            state.consecutiveLosses = 0;
-            state.totalLossAccumulated = 0; // Resetar perdas acumuladas ao vencer
-            state.consecutiveMainLosses = 0; // ✅ Reset main losses
-
-            // ✅ Reset Pós-Recuperação: Retorna ao modo inicial (VELOZ) se estava em recuperação
-            if (state.martingaleLevel > 0) {
-                this.logger.log(`[Zeus][${userId}] 🔄 Reset Pós-Recuperação: ${state.mode} -> VELOZ`);
-                state.mode = 'VELOZ';
-            }
-
-            state.martingaleLevel = 0;
-            state.sorosLevel = 0; // Reset Soros when returning from recovery or finishing cycle
-
-            // Lógica de Soros Nível 1 (Apenas no modo Normal M0 - Entrada, e se não estava em recuperação)
-            if (state.martingaleLevel === 0 && config.riskProfile !== 'CONSERVADOR') { // Conservador is flat bet usually? check doc. Doc says Soros Level 1 for all.
-                if (state.sorosLevel === 0) {
-                    // Win 1 -> Ativar Soros para a próxima
-                    state.sorosLevel = 1;
-                    this.logger.log(`[Zeus][${userId}] ✅ WIN (M0) -> Ativando SOROS NÍVEL 1 para próxima entrada`);
-                } else {
-                    // Win 2 (Soros) -> Cycle Complete, Reset
-                    state.sorosLevel = 0;
-                    this.logger.log(`[Zeus][${userId}] ✅ WIN (SOROS) -> Ciclo completado! Retornando a stake inicial.`);
-                }
-            } else {
-                state.sorosLevel = 0;
-            }
-
-            if (state.lastContractType?.includes('RISE_FALL') || state.lastContractType === 'CALL' || state.lastContractType === 'PUT') {
-                // Log de fim de recuperação
-            }
-
         } else {
-            state.consecutiveWins = 0;
-            state.consecutiveLosses++;
+            signal = this.passesRecoveryFilters(wPrices, wDigits);
+            probability = signal ? 95.0 : 30.0; // Recuperação exige alta confiança
 
-            // Se perdeu na Entrada Principal (M0)
-            if (state.martingaleLevel === 0) {
-                state.consecutiveMainLosses++;
+            // Direção Rise/Fall
+            const priceNow = prices[prices.length - 1];
+            // Simples previsão baseada no ultimo tick vs média (implementado no filtro)
+            // Se passou no filtro, é porque está subindo (Preço > Média) -> CALL
+            // Se quiséssemos PUT, teríamos que adaptar o filtro.
+            // O filtro: "currentPrice > avg10" -> Tendência de Alta -> CALL
 
-                // ✅ Regras Universais de Troca de Modo
-                // VELOZ -> após 2 perdas seguidas -> NORMAL
-                if (state.mode === 'VELOZ' && state.consecutiveMainLosses >= 2) {
-                    this.logger.log(`[Zeus][${userId}] 🔻 Downgrade de Modo: VELOZ -> NORMAL (2 Losses)`);
-                    state.mode = 'NORMAL';
-                    // ✅ Não resetar perdas aqui para permitir que a lógica de recuperação (M1) seja ativada logo em seguida
-                }
-                // NORMAL -> após 4 perdas seguidas -> PRECISO
-                else if (state.mode === 'NORMAL' && state.consecutiveMainLosses >= 4) {
-                    this.logger.log(`[Zeus][${userId}] 🔻 Downgrade de Modo: NORMAL -> PRECISO (4 Losses)`);
-                    state.mode = 'PRECISO';
-                    state.consecutiveMainLosses = 0;
-                }
-            }
-
-            // Resetar Soros em caso de Loss
-            state.sorosLevel = 0;
-
-            // Incrementar nível de recuperação (Se já estamos em recuperação ou se atingimos o gatilho)
-            // O gatilho é 2 losses. Então no segundo loss, a PRÓXIMA entrada é recuperação.
-            // Aqui estamos processando o RESULTADO da entrada anterior.
-
-            // Se eu acabei de perder a segunda (consecutiveMainLosses = 2), a próxima deve ser RECOVERY.
-            // Então eu não aumento martingaleLevel AGORA se ainda estou em M0?
-            // "Após 2 perdas... ocorre troca".
-            // Se martingaleLevel=0, e perdi. 
-            // Se consecutiveMainLosses >= 2 (acabei de tomar a segunda), então a proxima análise vai ver isso e disparar Recovery.
-            // O martingaleLevel é o contador de "nível da aposta". M0 é base. M1 é recuperação 1.
-            // Se eu vou entrar em recuperação, a próxima é M1.
-
-            // Lógica antiga incrementava martingale direto. 
-            // V4: "Após 2 perdas... troca para contrato de recuperação".
-            // Isso significa que continuamos tentando DIGITOVER por 2 vezes.
-            // Se fallhar a 2a, vamos para RISE_FALL (M1).
-
-            // Increment logic:
-            if (state.martingaleLevel > 0) {
-                state.martingaleLevel++;
-            } else if (state.consecutiveMainLosses >= 2) {
-                // A próxima será a primeira de recuperação (M1).
-                // Mas martingaleLevel controla o calculo de stake.
-                // Vou setar martingaleLevel = 1 aqui para indicar que ESTAMOS entrando em recuperação?
-                // Ou deixamos analyzeMarket detectar? 
-                // Melhor deixar analyzeMarket usar consecutiveMainLosses para decidir o SINAL.
-                // Mas calculateStake usa martingaleLevel.
-                // Vamos setar aqui se o gatilho foi atingido.
-                state.martingaleLevel = 1;
-            }
-
-            if (state.lastProfit < 0) {
-                state.totalLossAccumulated += Math.abs(state.lastProfit);
-            }
-
-            // check pause condition for Recovery
-            // "Após uma recuperação igual ou superior a 5 perdas seguidas... PAUSA"
-            // Se martingaleLevel chegar a 6 (perdeu M5), ou se count > 5.
-            // Assuming maxRecoveryLevel caps the bets.
-
-            const configRisk = ZEUS_V4_RISK_MANAGEMENT[config.riskProfile as keyof typeof ZEUS_V4_RISK_MANAGEMENT] || ZEUS_V4_RISK_MANAGEMENT.MODERADO;
-
-            if (state.martingaleLevel > configRisk.maxRecoveryLevel) {
-                this.logger.warn(`[Zeus][${userId}] 🛑 Limite de Recuperação Atingido (${state.martingaleLevel - 1}/${configRisk.maxRecoveryLevel})`);
-
-                // ✅ PAUSA ESTRATÉGICA
-                state.isPausedStrategy = true;
-                // Pause for X minutes (e.g. 10 min) or ticks. Doc: "Aguardar estabilização".
-                // Vamos usar 5 minutos.
-                state.pauseUntil = Date.now() + (5 * 60 * 1000);
-
-                this.logger.warn(`[Zeus][${userId}] ⏸️ ESTRATÉGIA PAUSADA por 5 minutos.`);
-                this.saveLog(userId, 'WARN', 'RISK', `Limite de recuperação excedido. Estratégia pausada para estabilização (5 min).`);
-
-                // Reset levels logic typically happens here too or after pause?
-                // Doc: "O retorno ocorre quando as condições mínimas... atendidas"
-                // Reset counters so when we come back we start fresh?
-                state.martingaleLevel = 0;
-                state.consecutiveMainLosses = 0;
-                state.totalLossAccumulated = 0;
-                // Mode stays (?) "Reset Pós-Recuperação... modo retorna ao inicial".
-                // If we failed recovery, complete reset implies going back to base.
-                state.mode = 'VELOZ';
-            }
+            details = {
+                contractType: 'RISE_FALL',
+                direction: 'CALL', // Simplificado para Uptrend following
+                info: 'Análise Recuperação (Trend Follow)',
+                mode: 'PRECISO'
+            };
         }
+
+        if (signal) {
+            return {
+                signal: state.analysis === "RECUPERACAO" ? details.direction : 'DIGIT',
+                probability,
+                payout: state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery,
+                confidence: probability / 100,
+                details
+            };
+        }
+
+        // Heartbeat para log (opcional, manter null para não spammar)
+        return null;
+    }
+
+    // Métodos antigos placeholders removidos (isValidHour, processAgent, etc)
+
+
+    /**
+     * Stub para satisfazer interface IAutonomousAgentStrategy
+     * (A lógica agora reside inteiramente em processTickForUser)
+     */
+    async processAgent(userId: string, marketAnalysis: any): Promise<any> {
+        return { action: 'WAIT', reason: 'DEPRECATED_METHOD' };
     }
 
     /**
-     * Calcula o stake baseado no modo e situação
+     * ✅ LOGIC HELPER: Verificar Stop Loss e Gerenciamento de Risco
      */
-    /**
-     * Calcula o stake baseado no modo e situação (Zeus v4.0)
-     */
-    private calculateStake(userId: string, marketPayoutPercent: number): number {
-        const config = this.userConfigs.get(userId);
-        const state = this.userStates.get(userId);
-
-        if (!config || !state) return 0;
-
-        // M0: Entrada Normal (Com suporte a Soros Nível 1)
-        if (state.martingaleLevel === 0) {
-            if (state.sorosLevel === 1) {
-                // Soros: Stake Inicial + Lucro da Anterior
-                // Lucro da anterior está em state.lastProfit (positivo)
-                // Se por algum motivo for <=0, fallback para initialStake
-                const sorosStake = config.initialStake + (state.lastProfit > 0 ? state.lastProfit : 0);
-                this.logger.log(`[Zeus][${userId}] 🚀 CALCULANDO SOROS: ${config.initialStake.toFixed(2)} + ${state.lastProfit.toFixed(2)} = ${sorosStake.toFixed(2)}`);
-                return Math.round(sorosStake * 100) / 100;
-            }
-            return config.initialStake;
-        }
-
-        // M1+: Recuperação (Martingale Controlado)
-        const riskProfile = config.riskProfile || 'MODERADO';
-        // Mapear string para chave (fallback to MODERADO)
-        const riskKey = (ZEUS_V4_RISK_MANAGEMENT as any)[riskProfile] ? riskProfile : 'MODERADO';
-        const riskSettings = (ZEUS_V4_RISK_MANAGEMENT as any)[riskKey];
-
-        // Verificar limite de níveis (ex: Conservador para no M3)
-        // Se maxRecoveryLevel < 0, é infinito (ex: Moderado/Agressivo na lógica antiga, mas aqui definimos limites na v4 spec se necessário, ou -1)
-        if (riskSettings.maxRecoveryLevel > 0 && state.martingaleLevel > riskSettings.maxRecoveryLevel) {
-            this.logger.warn(`[Zeus][${userId}] 🛑 Limite Recuperação ${riskProfile} (M${riskSettings.maxRecoveryLevel}) atingido.`);
-            this.saveLog(userId, 'WARN', 'RISK', `Limite M${riskSettings.maxRecoveryLevel} atingido. Aceitando perda de $${state.totalLossAccumulated.toFixed(2)}.`);
-
-            // Reset forçado
-            state.martingaleLevel = 0;
-            state.sorosLevel = 0;
-            state.totalLossAccumulated = 0;
-            state.consecutiveLosses = 0;
-            return config.initialStake;
-        }
-
-        const lossToRecover = state.totalLossAccumulated;
-
-        // Fator de Lucro na Recuperação (0% Cons, 25% Mod, 50% Agr) - Sobre o LUCRO ESPERADO ou sobre a PERDA?
-        // Spec v4.0: "Recuperar todas as perdas anteriores + um lucro adicional"
-        // Fórmula básica: próxima_aposta = (perdas_totais x fator_lucro) / (payout / 100)
-        // Onde "fator_lucro" na tabela é 1.0 (Cons), 1.25 (Mod), 1.50 (Agr).
-
-        // O payout de recuperação é o do contrato de recuperação (Rise/Fall ~85%)
-        // Como 'marketPayoutPercent' vem da análise, ele deve ser ~1.85 (para Rise/Fall) ou vindo da config
-        const payoutRate = ZEUS_V4_CONFIGS.RECOVERY.payout - 1; // 1.85 - 1 = 0.85 (85%)
-
-        // Fórmula Spec: next = (loss * factor) / payout%
-        // Ex: Loss $1.00, Mod (1.25), Payout 85% -> (1.00 * 1.25) / 0.85 = 1.25 / 0.85 = $1.47
-
-        const nextStake = (lossToRecover * riskSettings.profitFactor) / payoutRate;
-
-        return Math.max(0.35, Math.round(nextStake * 100) / 100);
-    }
-
-
-    /**
-     * Verifica Stop Loss (Normal ou Blindado)
-     * Unifica a lógica de stop loss normal e o stop loss blindado (Catraca do Zeus)
-     */
-    private async checkStopLoss(userId: string, nextStake?: number): Promise<TradeDecision> {
+    private async checkStopLoss(userId: string, nextStake?: number): Promise<{ action: 'STOP' | 'WAIT' | 'BUY'; stake?: number; reason?: string }> {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
 
@@ -1033,20 +738,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         const stake = nextStake || 0;
-        const initialBalance = config.initialBalance || 0;
 
         // 1. Stop Loss Normal
-
         const currentDrawdown = state.lucroAtual < 0 ? Math.abs(state.lucroAtual) : 0;
 
         // Verificação de limite simples (já estourou?)
-        if (currentDrawdown >= config.dailyLossLimit) {
+        if (currentDrawdown >= config.stopLoss) {
             return { action: 'STOP', reason: 'STOP_LOSS' };
         }
 
         // Verificação com a próxima stake
-        if (currentDrawdown + stake > config.dailyLossLimit) {
-            const remaining = config.dailyLossLimit - currentDrawdown;
+        if (currentDrawdown + stake > config.stopLoss) {
+            const remaining = config.stopLoss - currentDrawdown;
             // Arredondar para 2 casas e garantir mínimo da Deriv (0.35)
             const adjustedStake = Math.round(remaining * 100) / 100;
 
@@ -1058,7 +761,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             this.logger.log(`[Zeus][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${stake.toFixed(2)} para ${adjustedStake.toFixed(2)}`);
             await this.saveLog(userId, 'WARN', 'RISK',
-                `Risco de ultrapassar Stop Loss! perdas=${currentDrawdown.toFixed(2)}, stake=${stake.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Ajustando para ${adjustedStake.toFixed(2)}`);
+                `Risco de ultrapassar Stop Loss! perdas=${currentDrawdown.toFixed(2)}, stake=${stake.toFixed(2)}, limite=${config.stopLoss.toFixed(2)}. Ajustando para ${adjustedStake.toFixed(2)}`);
 
             return {
                 action: 'BUY',
@@ -1067,60 +770,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
-        // 2. Stop Loss Blindado (Efeito Catraca - Lógica Zeus Preservada)
-        // ✅ Verifica se o tipo de Stop Loss é 'blindado' antes de aplicar a lógica
-        if (config.stopLossType === 'blindado') {
-            if (!state.stopBlindadoAtivo) {
-                // Ativação (40% da Meta)
-                if (state.lucroAtual >= config.dailyProfitTarget * 0.40) {
-                    state.stopBlindadoAtivo = true;
-                    state.picoLucro = state.lucroAtual;
-                    state.pisoBlindado = state.picoLucro * 0.50; // Piso é 50% do pico
-
-                    this.logger.log(`[Zeus][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)}`);
-                    await this.saveLog(userId, 'INFO', 'RISK',
-                        `Lucro atual: $${state.lucroAtual.toFixed(2)}. Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`);
-                }
-            } else {
-                // Atualização Dinâmica (Trailing Stop)
-                if (state.lucroAtual > state.picoLucro) {
-                    state.picoLucro = state.lucroAtual;
-                    state.pisoBlindado = state.picoLucro * 0.50;
-
-                    this.logger.log(`[Zeus][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)}`);
-                }
-
-                // Gatilho de Saída
-                if (state.lucroAtual <= state.pisoBlindado) {
-                    this.logger.log(`[Zeus][${userId}] 🛑 STOP BLINDADO ATINGIDO. Encerrando operações.`);
-
-                    await this.saveLog(userId, 'WARN', 'RISK',
-                        `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${((config.initialBalance || 0) + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`);
-
-
-                    // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
-                    // Mantém is_active = TRUE para permitir reset automático no dia seguinte
-                    state.isActive = false; // Pausa em memória
-                    await this.dataSource.query(
-                        `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
-                        [userId],
-                    );
-
-                    return { action: 'STOP', reason: 'BLINDADO' };
-                }
+        // 2. Stop Loss Blindado (V2)
+        if (config.enableStopLossBlindado) {
+            if (state.blindadoActive && state.profit < state.blindadoFloorProfit) {
+                return { action: 'STOP', reason: 'BLINDADO' };
             }
         }
 
-        // Se passou por todas as verificações, pode comprar
-        return {
-            action: 'BUY',
-            stake: stake,
-            reason: 'RiskCheckOK'
-        };
+        return { action: 'BUY', stake: stake };
     }
 
     /**
-     * Executa trade (Zeus v4.0)
+     * ✅ CORE: Executa trade (Zeus V2)
      */
     private async executeTrade(userId: string, decision: TradeDecision, marketAnalysis: MarketAnalysis): Promise<void> {
         const config = this.userConfigs.get(userId);
@@ -1135,38 +796,41 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
+        // Dupla checagem de Stop Loss
         const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
         if (stopLossCheck.action === 'STOP') {
+            await this.handleStopCondition(userId, stopLossCheck.reason || 'STOP_LOSS');
             return;
         }
 
-        // Determinar tipo de contrato para API
-        // Decisão já deve vir com 'CALL', 'PUT' ou 'DIGITOVER'
-        let contractType = decision.contractType;
+        // Stake final (pode ter sido ajustada pelo stop check)
+        const finalStake = stopLossCheck.stake || decision.stake || config.baseStake;
+
+        // Determinar tipo de contrato e Barreira
+        let contractType: string = decision.contractType || 'CALL';
         let barrier: string | undefined;
         let duration = 1;
 
-        // Se for RECOVERY_SIGNAL do analyzeMarket, details.direction tem CALL/PUT
-        if (marketAnalysis.details?.contractType === 'RISE_FALL') {
-            contractType = marketAnalysis.details.direction as 'CALL' | 'PUT';
-            duration = ZEUS_V4_CONFIGS.RECOVERY.duration; // ✅ Corrected to V4 config (1 tick)
-            barrier = undefined;
-        } else if (contractType === 'DIGITOVER') {
-            // M0 Entrada Padrão
+        if (contractType === 'RISE_FALL') {
+            // Recuperação: Rise/Fall 1 tick
+            contractType = decision.reason === 'CALL' ? 'CALL' : (decision.reason === 'PUT' ? 'PUT' : marketAnalysis.signal as 'CALL' | 'PUT'); // V2: Use signal as direction
+            if (contractType !== 'CALL' && contractType !== 'PUT') contractType = 'CALL'; // Fallback
             duration = 1;
-            barrier = ZEUS_V4_CONFIGS.M0_ENTRADA.targetDigit.toString();
-        } else {
-            // Fallback
-            contractType = marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT';
+        } else if (contractType === 'DIGITOVER') {
+            // Principal: Digits Over 3
+            contractType = 'DIGITOVER';
+            barrier = "3";
+            duration = 1;
         }
 
-        // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar
+        // ✅ Setar isWaitingContract ANTES de comprar
         state.isWaitingContract = true;
 
-        // Payout esperado para registro (não enviado para API, apenas histórico)
-        const payoutRate = state.martingaleLevel === 0
-            ? ZEUS_V4_CONFIGS.M0_ENTRADA.payout - 1
-            : ZEUS_V4_CONFIGS.RECOVERY.payout - 1;
+        // Registrar tentativa no log
+        await this.saveLog(userId, 'INFO', 'TRADER', `⚡ EXECUTANDO: ${contractType} ${barrier ? `(Over ${barrier})` : ''} | Stake: $${finalStake.toFixed(2)} | Modo: ${state.mode}`);
+
+        // Payout esperado (apenas informativo)
+        const payoutRate = state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery;
 
         const userTicks = this.ticks.get(userId) || [];
         const currentPrice = userTicks.length > 0
@@ -1174,13 +838,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             : marketAnalysis.details?.currentPrice || 0;
 
         try {
+            state.currentContractId = "PENDING"; // Marker
             state.lastContractType = contractType;
 
             const tradeId = await this.createTradeRecord(
                 userId,
                 {
                     contractType: contractType || 'UNKNOWN',
-                    stakeAmount: decision.stake || config.initialStake,
+                    stakeAmount: finalStake,
                     duration: duration,
                     marketAnalysis: marketAnalysis,
                     payout: payoutRate,
@@ -1188,13 +853,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 },
             );
 
+            state.currentTradeId = tradeId;
+
             let lastErrorMsg = 'Falha ao comprar contrato';
             const contractId = await this.buyContract(
                 userId,
                 config.derivToken,
-                contractType || 'CALL',
+                contractType,
                 config.symbol,
-                decision.stake || config.initialStake,
+                finalStake,
                 duration,
                 barrier,
                 2,
@@ -1206,23 +873,17 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             if (contractId) {
                 state.currentContractId = contractId;
-                state.currentTradeId = tradeId;
+                // Log sucesso vinculo
+                this.logger.log(`[Zeus][${userId}] 🎫 Contrato Confirmado: ${contractId}`);
 
-                this.logger.log(`[Zeus][${userId}] 🎫 Trade VINCLULADO: TradeId=${tradeId}, ContractId=${contractId}`);
-
-                await this.saveLog(
-                    userId,
-                    'INFO',
-                    'TRADER',
-                    `⚡ ENTRADA CONFIRMADA: ${contractType} | Valor: $${(decision.stake || config.initialStake).toFixed(2)} | Nível: M${state.martingaleLevel}`,
-                );
-
+                // Atualizar status trade ativo
                 await this.updateTradeRecord(tradeId, {
                     contractId: contractId,
                     status: 'ACTIVE',
                 });
             } else {
                 state.isWaitingContract = false;
+                state.currentContractId = null;
                 await this.updateTradeRecord(tradeId, {
                     status: 'ERROR',
                     errorMessage: lastErrorMsg,
@@ -1231,8 +892,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
         } catch (error: any) {
             state.isWaitingContract = false;
-            this.logger.error(`[Zeus][${userId}] Erro ao executar trade:`, error);
-            await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message}`);
+            this.logger.error(`[Zeus][${userId}] Erro crítico ao executar trade:`, error);
+            await this.saveLog(userId, 'ERROR', 'API', `Erro crítico trade: ${error.message}`);
         }
     }
 
@@ -1532,37 +1193,192 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
+     * ✅ LOGIC HELPER: Atualizar Blindado Stop
+     */
+    private updateBlindado(userId: string, profit: number): void {
+        const config = this.userConfigs.get(userId);
+        const state = this.userStates.get(userId);
+        if (!config || !state || !config.enableStopLossBlindado) return;
+
+        // 1. Ativação
+        if (!state.blindadoActive) {
+            const activationThreshold = config.profitTarget * config.blindadoTriggerPctOfTarget;
+            if (state.profit >= activationThreshold) {
+                state.blindadoActive = true;
+                state.blindadoFloorProfit = state.profit * 0.5; // Protege 50% do que tem
+                this.saveLog(userId, 'INFO', 'RISK', `🛡️ STOP BLINDADO ATIVADO! Lucro > $${activationThreshold.toFixed(2)}. Piso garantido: $${state.blindadoFloorProfit.toFixed(2)}`);
+            }
+        } else {
+            // 2. Trailing (Subir piso se lucro subir)
+            // Se lucro atual for maior que o pico registrado desde ativação?
+            // Simplificado: se novo lucro for maior que anterior, subir piso
+            // Vamos usar peakProfit
+            if (state.profit > state.peakProfit) {
+                state.peakProfit = state.profit;
+                const newFloor = state.peakProfit * config.blindadoProtectPctOfPeak;
+                if (newFloor > state.blindadoFloorProfit) {
+                    state.blindadoFloorProfit = newFloor;
+                    // Log silent ou debug para não spammar
+                    this.logger.debug(`[Zeus][${userId}] 🛡️ Piso Blindado ajustado para $${newFloor.toFixed(2)}`);
+                }
+            }
+        }
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Atualizar Modo e Nível (Core State Machine)
+     */
+    private updateMode(userId: string, win: boolean): void {
+        const config = this.userConfigs.get(userId);
+        const state = this.userStates.get(userId);
+        if (!config || !state) return;
+
+        // Resetar ou incrementar contadores
+        if (win) {
+            state.wins++;
+            state.consecutiveLosses = 0; // Reset geral
+            state.consecutiveLossesOnPrimaryContract = 0;
+            state.lastWinProfit = state.lastOpProfit; // Para Soros
+
+            // SOROS LOGIC (Se Modo Principal)
+            if (state.analysis === "PRINCIPAL") {
+                // Se estava aplicanso Soros, agora reseta
+                if (state.sorosPending) {
+                    state.sorosPending = false; // Ganhou o Soros, volta base
+                    this.saveLog(userId, 'INFO', 'CORE', `💰 SOROS VITORIOSO! Retornando à stake base.`);
+                } else {
+                    // Se não estava, ativa para próxima
+                    state.sorosPending = true;
+                    this.saveLog(userId, 'INFO', 'CORE', `🚀 SOROS ARMADO para próxima entrada.`);
+                }
+            }
+
+            // RECUPERACAO EXIT LOGIC
+            // Fim da recuperação APENAS quando bater o alvo exato: perdas + (perdas * extraPct do perfil)
+            if (state.analysis === "RECUPERACAO") {
+                const recoveryProfit = state.balance - state.recoveryStartBalance;
+                const recoveryTarget = state.lossSum + (state.lossSum * config.recoveryExtraProfitPct);
+
+                // Se atingiu o alvo da recuperação
+                if (recoveryProfit >= recoveryTarget) {
+                    this.saveLog(userId, 'INFO', 'CORE', `✅ RECUPERAÇÃO CONCLUÍDA! Profit: $${recoveryProfit.toFixed(2)} / Target: $${recoveryTarget.toFixed(2)}`);
+
+                    // Pausa Estratégica universal: após recuperar sequência >= 5 losses
+                    if (config.strategicPauseEnabled && state.recoveryLossStreak >= 5) {
+                        const pauseSeconds = config.strategicPauseSeconds;
+                        state.inStrategicPauseUntilTs = Date.now() + (pauseSeconds * 1000);
+                        this.saveLog(userId, 'WARN', 'CORE', `⏸️ PAUSA ESTRATÉGICA ativada por ${pauseSeconds}s (Recuperada sequência de ${state.recoveryLossStreak} perdas).`);
+                    }
+
+                    // Reset para Principal
+                    state.analysis = "PRINCIPAL";
+                    state.mode = "NORMAL";
+                    state.mgLevel = 0;
+                    state.sorosPending = false;
+                    state.lossSum = 0;
+                    state.currentRecoveryLosses = 0;
+                    state.recoveryStartBalance = state.balance;
+                } else {
+                    // Ainda não recuperou tudo -> Mantém Recuperação
+                    // Se ganhou, talvez resetar o nível do Martingale? 
+                    // Specs V2: "active until recovery is complete". Usually Martingale resets on win, 
+                    // but here we might need to continue if target not reached.
+                    // Standard Martingale resets on win. Spec implies custom logic "Martingale to cover accumulated losses".
+                    // Let's reset MG level on win, as stake calculation will re-assess based on remaining loss if we were smart, 
+                    // but 'computeNextStake' uses 'mgLevel'.
+                    // For now, let's keep MG logic simple (reset level on win) but stay in recovery if target not hit?
+                    // NO, usually Martingale creates a profit that covers all losses + target in 1 win.
+                    // If we didn't hit target, it means Payout was low or Stake was capped.
+                    // Let's reset MG level to 0 but stay in Recovery Mode until target is hit.
+                    state.mgLevel = 0;
+                    this.saveLog(userId, 'INFO', 'CORE', `🔁 Win na Recuperação ($${recoveryProfit.toFixed(2)}), mas alvo ($${recoveryTarget.toFixed(2)}) não atingido. Mantendo modo PRECISO.`);
+                }
+            }
+
+        } else {
+            // LOSS
+            state.losses++;
+            state.sorosPending = false; // Perdeu, cancela Soros
+            state.consecutiveLosses++;
+
+            if (state.analysis === "PRINCIPAL") {
+                state.consecutiveLossesOnPrimaryContract++;
+
+                // TRIGGER: 2 Loss seguidos no Principal -> Vai para Recuperação
+                if (config.hasContractSwitch && state.consecutiveLossesOnPrimaryContract >= 2) {
+                    state.analysis = "RECUPERACAO";
+                    state.mode = "PRECISO"; // Modo Rise/Fall
+                    state.mgLevel = 0; // Inicia Martingale Cycle
+                    state.recoveryStartBalance = state.balance;
+                    state.lossSum = 0; // Reset sum
+                    state.recoveryLossStreak = state.consecutiveLosses; // Salva tamanho da sequencia atual para checar pausa depois
+                    this.saveLog(userId, 'WARN', 'CORE', `⚠️ 2 LOSS no Principal -> Ativando MODO RECUPERAÇÃO (Rise/Fall).`);
+                }
+            } else {
+                // Estamos em RECUPERACAO e perdemos
+                state.lossSum += Math.abs(state.lastOpProfit); // Soma prejuizo (lastOpProfit é negativo)
+                state.mgLevel++;
+                state.currentRecoveryLosses++;
+
+                if (state.mgLevel > config.martingaleMaxLevel) {
+                    // Estourou Martingale -> Aceita preju e volta Principal (Stop Loss Parcial)
+                    state.analysis = "PRINCIPAL";
+                    state.mode = "NORMAL";
+                    state.mgLevel = 0;
+                    state.consecutiveLossesOnPrimaryContract = 0;
+                    this.saveLog(userId, 'ERROR', 'RISK', `🛑 LIMITE DE MARTINGALE (${config.martingaleMaxLevel}) ATINGIDO. Resetando para modo Principal.`);
+                } else {
+                    this.saveLog(userId, 'WARN', 'CORE', `📉 Loss na Recuperação. Subindo para Nível ${state.mgLevel} | LossSum: $${state.lossSum.toFixed(2)}`);
+                }
+            }
+        }
+    }
+
+    /**
      * Processa resultado de contrato finalizado
      */
     async onContractFinish(
         userId: string,
         result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
-        tradeIdFromCallback?: number, // ✅ Adicionado parâmetro opcional
+        tradeIdFromCallback?: number,
     ): Promise<void> {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
 
         if (!config || !state) {
-            this.logger.warn(`[Zeus][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`);
             return;
         }
 
-        // ✅ COOLDOWN PÓS-TRADE: Resetar ticksSinceLastAnalysis para um valor negativo
-        // Isso obriga o robô a esperar que o padrão antigo seja "limpado" pelo tempo
-        state.ticksSinceLastAnalysis = -15; // Esperar 15 ticks (aprox 15-30s) antes de reanalisar
+        // ✅ COOLDOWN PÓS-TRADE
         state.isWaitingContract = false;
+        state.lastOpTs = Date.now();
+        state.cooldownUntilTs = Date.now() + (result.win ? config.cooldownWinSeconds : config.cooldownLossSeconds) * 1000;
 
         // Priorizar tradeId que veio do closure do buyContract
         const tradeId = tradeIdFromCallback || state.currentTradeId;
-
         state.currentContractId = null;
-        if (state.currentTradeId === tradeId) {
-            state.currentTradeId = null;
-        }
+        if (state.currentTradeId === tradeId) state.currentTradeId = null;
 
-        this.logger.log(`[Zeus][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+        // Atualizar Financeiro State
+        state.profit += result.profit;
+        state.balance += result.profit;
+        state.lastOpProfit = result.profit;
 
-        // ✅ Atualizar trade no banco com resultado
+        if (state.profit > state.peakProfit) state.peakProfit = state.profit;
+
+        // Compatibilidade Infra
+        state.lucroAtual = state.profit;
+        state.opsCount++;
+
+        // ✅ Log Trade Result (Orion Format)
+        this.logTradeResultV2(userId, {
+            status: result.win ? 'WIN' : 'LOSS',
+            profit: result.profit,
+            stake: result.stake,
+            balance: state.balance
+        });
+
+        // ✅ Atualizar DB (Trade)
         if (tradeId) {
             try {
                 await this.updateTradeRecord(tradeId, {
@@ -1571,49 +1387,20 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     profitLoss: result.profit,
                     closedAt: new Date(),
                 });
-                this.logger.log(`[Zeus][${userId}] ✅ Trade ${tradeId} atualizado no banco de dados`);
             } catch (error) {
                 this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
             }
-        } else {
-            this.logger.warn(`[Zeus][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
         }
 
-        // Atualizar estado
-        state.opsCount++;
-        state.operationsCount++;
-        state.lastProfit = result.profit;
-        state.lucroAtual += result.profit;
-        state.currentProfit = state.lucroAtual > 0 ? state.lucroAtual : 0;
-        state.currentLoss = state.lucroAtual < 0 ? Math.abs(state.lucroAtual) : 0;
-
-
-        // Atualizar modo (PRECISO ou ALTA_PRECISAO)
+        // ✅ Lógica Core: Check Blindado, Modes, etc.
+        this.updateBlindado(userId, state.profit);
         this.updateMode(userId, result.win);
 
-        // ✅ Atualizar banco de dados PRIMEIRO (antes dos logs)
+        // ✅ Persistir State
         await this.updateUserStateInDb(userId, state);
 
-        // ✅ Logs detalhados do resultado (formato igual à Orion)
-        const status = result.win ? 'WON' : 'LOST';
-        const contractType = state.lastContractType || 'CALL'; // Usar último tipo de contrato executado
-        const pnl = result.profit >= 0 ? `+$${result.profit.toFixed(2)}` : `-$${Math.abs(result.profit).toFixed(2)}`;
-
-        // ✅ Log de resultado no padrão Orion
-        this.logTradeResultV2(userId, {
-            status: result.win ? 'WIN' : 'LOSS',
-            profit: result.profit,
-            stake: result.stake,
-            balance: (config.initialBalance || 0) + state.lucroAtual
-        });
-
-
-        // Verificar se atingiu meta ou stop
-        if (state.lucroAtual >= config.dailyProfitTarget) {
-            await this.handleStopCondition(userId, 'TAKE_PROFIT');
-        } else if (state.lucroAtual <= -config.dailyLossLimit) {
-            await this.handleStopCondition(userId, 'STOP_LOSS');
-        }
+        // ✅ Verificar Fim de Sessão
+        this.canOperate(userId, config, state); // Chama apenas para verificar flags e trigger stop se necessário
     }
 
     /**
@@ -1712,7 +1499,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.duration,
                     trade.entryPrice,
                     trade.stakeAmount,
-                    state.mode === 'VELOZ' ? 'M0' : (state.mode === 'NORMAL' ? 'M1' : 'M2'), // ✅ Fixed lint and mapping
+                    state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // ✅ Fixed lint and mapping
                     trade.payout * 100, // Converter para percentual
                     config.symbol || 'R_100',
                 ],
@@ -1922,7 +1709,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.consecutiveMainLosses = 0;
             state.isPausedStrategy = false;
             state.pauseUntil = 0;
-            state.mode = 'VELOZ'; // ✅ Reset to Initial Mode
+            state.mode = 'NORMAL'; // ✅ Reset to Initial Mode
         }
     }
 
@@ -2432,55 +2219,118 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 }
 
 /**
- * Configuração do usuário para Zeus v3.7
+ * ⚡ ZEUS V2 CONFIG (New Spec)
+ * Mantém compatibilidade com AutonomousAgentConfig para a infra.
  */
-interface ZeusUserConfig extends AutonomousAgentConfig {
-    initialBalance: number;
-    stopLossType: string;
-    riskProfile: string;
+export interface ZeusConfig {
+    strategyName: "ZEUS";
+    subtitle: string;
+
+    // Mercado
+    symbol: string; // ex: "1HZ100V"
+    is24x7: boolean;
+
+    // Usuário
+    initialCapital: number; // ex: 100
+    profitTarget: number; // ex: 100
+    stopLoss: number; // ex: 100
+    baseStake: number; // ex: 1.00
+
+    // Usuário escolhe só risco
+    riskProfile: RiskProfile;
+
+    // Blindado (opcional)
+    enableStopLossBlindado: boolean;
+    blindadoTriggerPctOfTarget: number; // 0.40 (40% meta)
+    blindadoProtectPctOfPeak: number; // 0.50 (50% do pico)
+
+    // Payouts líquidos
+    payoutPrimary: number; // ex: 0.56
+    payoutRecovery: number; // ex: 0.85
+
+    // Recuperação
+    martingaleMaxLevel: number; // M5
+    martingaleMultiplier: number; // 2.0
+    recoveryExtraProfitPct: number; // 0 / 0.15 / 0.30
+
+    // Troca de contrato
+    hasContractSwitch: boolean;
+
+    // Pausa estratégica
+    strategicPauseEnabled: boolean;
+    strategicPauseSeconds: number;
+
+    // Cooldown
+    cooldownWinSeconds: number;
+    cooldownLossSeconds: number;
+
+    // Coleta (para logs)
+    dataCollectionTicks: number; // ex: 7
 }
 
 /**
- * Estado interno do Zeus v3.7 (Updated v4.0)
+ * Interface combinada para uso na classe Strategy
  */
-interface ZeusUserState extends AutonomousAgentState {
-    mode: 'VELOZ' | 'NORMAL' | 'PRECISO';
-    saldoInicial: number;
-    lucroAtual: number;
-    picoLucro: number;
+interface ZeusUserConfig extends AutonomousAgentConfig, ZeusConfig { }
+
+/**
+ * ⚡ ZEUS V2 STATE (New Spec)
+ */
+export interface ZeusState {
+    // sessão
+    balance: number;
+    profit: number; // balance - initialCapital
+    peakProfit: number;
+
+    blindadoActive: boolean;
+    blindadoFloorProfit: number;
+
+    inStrategicPauseUntilTs: number;
+    sessionEnded: boolean;
+    endReason?: "TARGET" | "STOPLOSS" | "BLINDADO";
+
+    // automático
+    mode: NegotiationMode;
+    analysis: AnalysisType;
+    contract: ContractKind;
+
+    // perdas
     consecutiveLosses: number;
-    consecutiveWins: number;
-    opsCount: number;
-    stopBlindadoAtivo: boolean;
-    pisoBlindado: number;
-    lastProfit: number;
+    consecutiveLossesOnPrimaryContract: number;
+
+    // martingale
+    mgLevel: number; // 0..M5
+    lossSum: number; // soma de perdas na RECUPERAÇÃO
+
+    // recuperação tracking correto
+    recoveryStartBalance: number;
+    recoveryLossStreak: number; // tamanho da sequência que disparou a recuperação (pra pausa >=5)
+    currentRecoveryLosses: number;
+
+    // soros N1
+    sorosPending: boolean;
+    lastWinProfit: number;
+    lastOpProfit: number; // Added for V2 Spec tracking
+
+    // controle
+    lastOpTs: number;
+    cooldownUntilTs: number;
+
+    // métricas
+    opsTotal: number;
+    wins: number;
+    losses: number;
+
+    // System fields (infra)
+    isActive: boolean;
     currentContractId: string | null;
     currentTradeId: number | null;
     isWaitingContract: boolean;
-    lastContractType?: string;
-
-    // Digit-specific state
-    consecutiveLosingDigits: number;
-    lastDigits: number[];
-
-    // Recovery state
-    totalLossAccumulated: number;
-    martingaleLevel: number;
-    sorosLevel: number;
-    totalLosses: number;
-    recoveryAttempts: number;
-    ticksSinceLastAnalysis: number;
-
-    // ✅ New Fields for V4.0
-    consecutiveMainLosses: number;
-    isPausedStrategy: boolean;
-    pauseUntil?: number;
-
-    // Throttling
-    lastDeniedLogTime?: number;
-    lastDeniedLogData?: { probability: number; signal: string | null };
-
-    // Soros v2.2
-    sorosActive: boolean;
-    sorosCount: number;
+    lastContractType?: string; // Mantido para referência rápida
+    ticksSinceLastAnalysis: number; // Mantido para infra
+    lastDigits: number[]; // Mantido para coleta
 }
+
+// Alias para manter compatibilidade com nome antigo se necessário, mas preferimos usar ZeusState
+interface ZeusUserState extends ZeusState, AutonomousAgentState { }
+
