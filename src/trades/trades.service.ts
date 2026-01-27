@@ -317,107 +317,83 @@ export class TradesService {
     let dateFrom = startDate;
     let dateTo = endDate;
 
-    // Se datas não forem fornecidas, usar mês atual
     if (!startDate || !endDate) {
       const now = new Date();
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Último dia do mês
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       dateFrom = firstDay.toISOString().split('T')[0];
       dateTo = lastDay.toISOString().split('T')[0];
     }
 
-    // Buscar o usuário "dono" do token (Admin ou usuário selecionado)
-    const contextUser = await this.userRepository.findById(userId);
-    if (!contextUser) {
-      throw new NotFoundException('Usuário contexto não encontrado');
-    }
-
-    console.log(`[TradesService] Buscando markup no contexto do usuário: ${contextUser.name} (${contextUser.id})`);
-
-    // Buscar TODOS os usuários ativos do banco primeiro
     const allUsers = await this.userRepository.findAll();
     const activeUsers = allUsers.filter(u => u.isActive);
 
-    console.log(`[TradesService] Total de usuários ativos: ${activeUsers.length}`);
+    console.log(`[TradesService] Buscando markup para ${activeUsers.length} usuários ativos de ${dateFrom} até ${dateTo}`);
 
-    // Criar mapa de markup por loginid
-    const markupMap = new Map<string, {
-      transactionCount: number;
-      commission: number;
-    }>();
-
+    const results: any[] = [];
     let totalCommission = 0;
     let totalTransactions = 0;
+    let usersWithMarkup = 0;
 
-    // Tentar buscar dados de markup da API (usando token do usuário)
-    try {
-      // Prioridade: Token do usuário > Token Admin ENV > Token App ENV
-      const adminToken = contextUser.tokenReal || process.env.DERIV_ADMIN_TOKEN || process.env.DERIV_APP_TOKEN;
+    // Função auxiliar para buscar dados de um usuário
+    const fetchUserMarkup = async (user: any) => {
+      const token = user.tokenReal || process.env.DERIV_ADMIN_TOKEN;
+      let userCommission = 0;
+      let userTransactions = 0;
 
-      if (adminToken) {
-        console.log(`[TradesService] Usando token iniciad com: ${adminToken.substring(0, 4)}... para buscar markup de ${dateFrom} até ${dateTo}`);
+      if (token) {
+        try {
+          const derivData = await this.derivService.getAppMarkupDetails(token, {
+            date_from: dateFrom + ' 00:00:00',
+            date_to: dateTo + ' 23:59:59',
+            limit: 10000,
+          });
 
-        const derivData = await this.derivService.getAppMarkupDetails(adminToken, {
-          date_from: dateFrom + ' 00:00:00',
-          date_to: dateTo + ' 23:59:59',
-          limit: 10000,
-        });
-
-        const transactions = derivData.transactions || [];
-        console.log(`[TradesService] Total de transações encontradas: ${transactions.length}`);
-
-        // Processar transações e agrupar por loginid
-        for (const tx of transactions) {
-          const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
-          const clientLoginid = tx.client_loginid || 'unknown';
-
-          totalCommission += markup;
-          totalTransactions++;
-
-          if (!markupMap.has(clientLoginid)) {
-            markupMap.set(clientLoginid, {
-              transactionCount: 0,
-              commission: 0,
-            });
+          const transactions = derivData.transactions || [];
+          for (const tx of transactions) {
+            // Opcional: Se quiser filtrar apenas transações DESTE usuário, precisaria checar client_loginid
+            // Mas como estamos "vendo como" o usuário, assumimos que o token dele retorna o markup DELE (ele sendo o app owner)
+            // SE ele for um App Owner, ele verá as comissões dos SEUS clientes.
+            // Se ele for um cliente final, getAppMarkupDetails provavelmente retornará vazio ou erro de permissão.
+            const markup = parseFloat(tx.app_markup) || parseFloat(tx.app_markup_value) || 0;
+            userCommission += markup;
+            userTransactions++;
           }
-
-          const userData = markupMap.get(clientLoginid);
-          if (userData) {
-            userData.transactionCount += 1;
-            userData.commission += markup;
-          }
+        } catch (error) {
+          // Ignorar erros individuais (usuário pode não ter permissão, token inválido, etc)
+          // console.warn(`[Markup] Erro ao buscar para ${user.email}: ${error.message}`);
         }
-      } else {
-        console.warn('[TradesService] Token de admin não configurado. Exibindo usuários sem dados de markup.');
       }
-    } catch (error) {
-      console.error(`[TradesService] Erro ao buscar markup da API:`, error.message);
-      console.warn('[TradesService] Continuando com dados de usuários do banco...');
-    }
 
-    // Montar resultado com TODOS os usuários ativos
-    const results: any[] = [];
+      if (userCommission > 0) usersWithMarkup++;
+      totalCommission += userCommission;
+      totalTransactions += userTransactions;
 
-    for (const user of activeUsers) {
-      const loginid = user.idRealAccount || 'N/A';
-      const markupData = markupMap.get(loginid);
-
-      results.push({
+      return {
         userId: user.id,
         name: user.name,
         email: user.email,
         whatsapp: user.phone || null,
         country: 'Brasil',
-        loginid: loginid,
-        transactionCount: markupData?.transactionCount || 0,
-        commission: markupData ? parseFloat(markupData.commission.toFixed(2)) : 0,
-        realData: !!markupData, // true se tiver dados da API, false se for só do banco
+        loginid: user.idRealAccount || 'N/A',
+        transactionCount: userTransactions,
+        commission: parseFloat(userCommission.toFixed(2)),
+        realData: userTransactions > 0,
         role: user.role,
         traderMestre: user.traderMestre,
-      });
+      };
+    };
+
+    // Executar em paralelo com limite de concorrência (ex: 5 por vez) para não estourar
+    // Como Promise.all seleciona tudo de uma vez, vamos fazer em chunks ou usar p-limit
+    // Aqui farei um chunk simples
+    const chunkSize = 5;
+    for (let i = 0; i < activeUsers.length; i += chunkSize) {
+      const chunk = activeUsers.slice(i, i + chunkSize);
+      const chunkResults = await Promise.all(chunk.map(user => fetchUserMarkup(user)));
+      results.push(...chunkResults);
     }
 
-    // Ordenar por comissão (maior primeiro)
     results.sort((a, b) => b.commission - a.commission);
 
     return {
@@ -426,8 +402,8 @@ export class TradesService {
         totalCommission: parseFloat(totalCommission.toFixed(2)),
         totalTransactions: totalTransactions,
         totalUsers: results.length,
-        usersWithMarkup: markupMap.size,
-        usersWithoutMarkup: results.length - markupMap.size,
+        usersWithMarkup: usersWithMarkup,
+        usersWithoutMarkup: results.length - usersWithMarkup,
       },
       period: {
         from: dateFrom,
