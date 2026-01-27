@@ -462,66 +462,66 @@ export class EmailService {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <style>
             body { font-family: 'Inter', 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #E5E7EB; background-color: ${bgMain}; margin: 0; padding: 0; }
-            .wrapper { background-color: ${bgMain}; padding: 30px 15px; }
-            .container { max-width: 580px; margin: 0 auto; background-color: #161e2e; border-radius: 20px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.06); }
+            .wrapper { background-color: ${bgMain}; padding: 20px 10px; }
+            .container { max-width: 540px; margin: 0 auto; background-color: #161e2e; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.06); }
             
             .header { 
               background: linear-gradient(135deg, #166534 0%, #00C853 100%); 
               color: white; 
-              padding: 45px 30px; 
+              padding: 40px 20px; 
               text-align: center; 
             }
-            .header-logo { font-weight: 900; letter-spacing: 3px; font-size: 12px; opacity: 0.8; margin-bottom: 15px; display: block; }
-            .header-title { margin: 0; font-size: 26px; font-weight: 800; }
+            .header-logo { font-weight: 900; letter-spacing: 3px; font-size: 11px; opacity: 0.8; margin-bottom: 12px; display: block; }
+            .header-title { margin: 0; font-size: 24px; font-weight: 800; }
 
-            .content { padding: 35px 25px; }
-            .welcome-text { font-size: 22px; color: #ffffff; font-weight: 800; margin-bottom: 5px; }
-            .welcome-sub { font-size: 14px; color: #94A3B8; margin-bottom: 30px; }
+            .content { padding: 30px 20px; }
+            .welcome-text { font-size: 20px; color: #ffffff; font-weight: 800; margin-bottom: 4px; }
+            .welcome-sub { font-size: 13px; color: #94A3B8; margin-bottom: 25px; }
             
-            /* Ajuste de Grid para não cortar */
-            .stat-grid { margin: 25px 0; }
-            .stat-table { width: 100%; border-spacing: 12px; border-collapse: separate; margin: 0 -12px; }
+            /* Ajuste de Grid para não cortar - Reduzido */
+            .stat-grid { margin: 20px 0; }
+            .stat-table { width: 100%; border-spacing: 8px; border-collapse: separate; margin: 0 -8px; }
             .stat-card { 
               background-color: ${bgCard}; 
-              padding: 20px 10px; 
-              border-radius: 14px; 
+              padding: 15px 8px; 
+              border-radius: 12px; 
               text-align: center; 
               border: 1px solid rgba(255,255,255,0.04);
-              width: 50%; /* 2 por linha para mobile-friendly */
+              width: 50%;
             }
-            .stat-value { font-size: 24px; font-weight: 800; color: #ffffff; display: block; margin-bottom: 2px; }
-            .stat-label { font-size: 10px; color: #64748B; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
+            .stat-value { font-size: 22px; font-weight: 800; color: #ffffff; display: block; margin-bottom: 2px; }
+            .stat-label { font-size: 9px; color: #64748B; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
             
-            .stat-card-success .stat-value { color: ${colorSuccess}; text-shadow: 0 0 10px rgba(0, 200, 83, 0.2); }
+            .stat-card-success .stat-value { color: ${colorSuccess}; }
             .stat-card-error .stat-value { color: ${colorError}; }
 
             .profit-box { 
               text-align: center; 
               background-color: ${profitBg}; 
-              padding: 35px 20px; 
-              border-radius: 18px; 
-              margin-top: 15px; 
+              padding: 30px 15px; 
+              border-radius: 16px; 
+              margin-top: 10px; 
               border: 1px solid ${isPositive ? 'rgba(0, 200, 83, 0.1)' : 'rgba(255, 82, 82, 0.1)'};
             }
-            .profit-label { font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 8px; display: block; }
+            .profit-label { font-size: 10px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; display: block; }
             .profit-value { 
-              font-size: 44px; 
+              font-size: 40px; 
               font-weight: 900; 
               color: ${profitColor}; 
               font-family: 'SF Mono', 'Courier New', monospace;
-              letter-spacing: -1.5px;
+              letter-spacing: -1.2px;
             }
 
-            .button-container { text-align: center; margin: 35px 0; }
+            .button-container { text-align: center; margin: 30px 0; }
             .button { 
               display: inline-block; 
-              padding: 18px 40px; 
+              padding: 16px 36px; 
               background-color: #00C853;
-              color: white; 
+              color: #ffffff !important; /* Força Branco */
               text-decoration: none; 
-              border-radius: 12px; 
+              border-radius: 10px; 
               font-weight: 800;
-              font-size: 14px;
+              font-size: 13px;
               text-transform: uppercase;
               box-shadow: 0 10px 20px rgba(0, 200, 83, 0.15);
             }
