@@ -13,21 +13,21 @@ export class ClientsService {
     private readonly userRepository: Repository<UserEntity>,
     @InjectRepository(UserSessionEntity)
     private readonly sessionRepository: Repository<UserSessionEntity>,
-  ) {}
+  ) { }
 
   async getMetrics(): Promise<ClientMetricsDto> {
     const now = new Date();
-    
+
     // Data de início de hoje (00:00:00)
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+
     // Data de início da semana (segunda-feira)
     const startOfWeek = new Date(now);
     const dayOfWeek = startOfWeek.getDay();
     const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Ajusta para segunda-feira
     startOfWeek.setDate(startOfWeek.getDate() - diff);
     startOfWeek.setHours(0, 0, 0, 0);
-    
+
     // Data de início do mês
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -117,7 +117,16 @@ export class ClientsService {
     };
   }
 
-  async getClients(search?: string, balanceFilter?: string): Promise<ClientListResponseDto> {
+  async getClients(
+    search?: string,
+    balanceFilter?: string,
+    onlyRealAccount?: boolean,
+    minBalance?: number,
+    maxBalance?: number,
+    noRealBalance?: boolean
+  ): Promise<ClientListResponseDto> {
+    const isRealAccountFilterActive = onlyRealAccount || (minBalance !== undefined) || (maxBalance !== undefined) || noRealBalance;
+
     let query = this.userRepository
       .createQueryBuilder('user')
       .select([
@@ -125,9 +134,12 @@ export class ClientsService {
         'user.name as userName',
         'user.email as userEmail',
         'user.derivLoginId as derivLoginId',
-        'user.derivBalance as derivBalance',
+        'user.derivBalance as derivBalance', // Default balance
+        'user.realAmount as realAmount',     // Real account balance
         'user.createdAt as createdAt',
         'user.role as userRole',
+        'user.idRealAccount as idRealAccount',
+        'user.tokenReal as tokenReal'
       ]);
 
     // Filtro de busca por nome, email ou login ID
@@ -138,8 +150,10 @@ export class ClientsService {
       );
     }
 
-    // Filtro de saldo
-    if (balanceFilter) {
+    // Filtro de saldo legado (balanceFilter)
+    // Mantemos para compatibilidade, mas se os novos filtros forem usados, eles têm precedência ou se somam?
+    // Vamos aplicar se fornecido.
+    if (balanceFilter && !isRealAccountFilterActive) {
       const filterCondition = search ? 'andWhere' : 'where';
       switch (balanceFilter) {
         case 'less100':
@@ -157,6 +171,28 @@ export class ClientsService {
       }
     }
 
+    // Filtros de Conta Real
+    if (isRealAccountFilterActive) {
+      // Garante que estamos olhando para contas reais (tem token ou ID)
+      if (!search) {
+        query = query.where('(user.idRealAccount IS NOT NULL OR user.tokenReal IS NOT NULL)');
+      } else {
+        query = query.andWhere('(user.idRealAccount IS NOT NULL OR user.tokenReal IS NOT NULL)');
+      }
+
+      if (minBalance !== undefined) {
+        query = query.andWhere('user.realAmount >= :minBalance', { minBalance });
+      }
+
+      if (maxBalance !== undefined) {
+        query = query.andWhere('user.realAmount <= :maxBalance', { maxBalance });
+      }
+
+      if (noRealBalance) {
+        query = query.andWhere('user.realAmount = 0');
+      }
+    }
+
     const users = await query.getRawMany();
 
     // Calcular tempo gasto por usuário (soma de todas as sessões)
@@ -171,7 +207,7 @@ export class ClientsService {
 
         let totalMinutes = 0;
         let lastActivity = '-';
-        
+
         // Estimar tempo gasto baseado nas sessões
         for (const session of sessions) {
           const sessionStart = new Date(session.createdAt);
@@ -182,7 +218,7 @@ export class ClientsService {
 
         // Obter última atividade
         if (sessions.length > 0) {
-          const latestSession = sessions.reduce((latest, current) => 
+          const latestSession = sessions.reduce((latest, current) =>
             new Date(current.lastActivity) > new Date(latest.lastActivity) ? current : latest
           );
           lastActivity = new Date(latestSession.lastActivity).toISOString().split('T')[0];
@@ -192,12 +228,19 @@ export class ClientsService {
         const minutes = totalMinutes % 60;
         const timeSpent = `${hours}h ${minutes}m`;
 
+        // Se o filtro de conta real estiver ativo, mostramos o saldo real.
+        // Caso contrário, mantemos o comportamento anterior (derivBalance).
+        // Convertendo para number para garantir.
+        const displayBalance = isRealAccountFilterActive
+          ? parseFloat(user.realAmount || '0')
+          : parseFloat(user.derivBalance || '0');
+
         return {
           userId: user.userId,
           name: user.userName,
           loginId: user.derivLoginId || '-',
           email: user.userEmail,
-          balance: parseFloat(user.derivBalance || '0'),
+          balance: displayBalance,
           timeSpent,
           createdAt: new Date(user.createdAt).toISOString().split('T')[0],
           lastActivity,
@@ -220,19 +263,19 @@ export class ClientsService {
 
   async updateUserRole(userId: string, role: string): Promise<{ success: boolean; message: string }> {
     const validRoles = ['user', 'admin', 'master_trader', 'expert'];
-    
+
     if (!validRoles.includes(role)) {
       return { success: false, message: `Role inválida. Roles permitidas: ${validRoles.join(', ')}` };
     }
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
-    
+
     if (!user) {
       return { success: false, message: 'Usuário não encontrado' };
     }
 
     await this.userRepository.update(userId, { role });
-    
+
     return { success: true, message: `Role do usuário atualizada para ${role}` };
   }
 }

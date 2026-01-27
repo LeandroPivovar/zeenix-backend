@@ -7,7 +7,7 @@ import { ClientListResponseDto } from './dto/client-list.dto';
 @Controller('clients')
 @UseGuards(AuthGuard('jwt'))
 export class ClientsController {
-  constructor(private readonly clientsService: ClientsService) {}
+  constructor(private readonly clientsService: ClientsService) { }
 
   @Get('metrics')
   async getMetrics(): Promise<ClientMetricsDto> {
@@ -18,8 +18,19 @@ export class ClientsController {
   async getClients(
     @Query('search') search?: string,
     @Query('balanceFilter') balanceFilter?: string,
+    @Query('onlyRealAccount') onlyRealAccount?: string,
+    @Query('minBalance') minBalance?: string,
+    @Query('maxBalance') maxBalance?: string,
+    @Query('noRealBalance') noRealBalance?: string,
   ): Promise<ClientListResponseDto> {
-    return this.clientsService.getClients(search, balanceFilter);
+    return this.clientsService.getClients(
+      search,
+      balanceFilter,
+      onlyRealAccount === 'true',
+      minBalance ? parseFloat(minBalance) : undefined,
+      maxBalance ? parseFloat(maxBalance) : undefined,
+      noRealBalance === 'true'
+    );
   }
 
   @Get('export')
