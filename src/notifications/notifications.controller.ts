@@ -55,18 +55,6 @@ export class NotificationsController {
     return this.notificationsService.getLoginSummary(userId);
   }
 
-  /**
-   * POST /notifications/trigger-test-email
-   * Permite que o usuário (especialmente admins no front) disparem um e-mail de teste
-   */
-  @Post('trigger-test-email')
-  @UseGuards(JwtAuthGuard)
-  async triggerTestEmail(@Req() req: any) {
-    const userId = req.user?.userId;
-    if (!userId) throw new Error('Não autorizado');
-
-    return this.dailySummaryService.triggerManualSummary(userId);
-  }
 }
 
 
