@@ -432,9 +432,13 @@ export class CoursesService {
       updateData.contentLink = this.normalizeMediaPath(updateLessonDto.contentLink);
     }
 
-    // Se for marcado como tutorial da Deriv (valor > 0), desmarcar o que já estiver usando esse valor
-    if (updateLessonDto.isDerivTutorial && Number(updateLessonDto.isDerivTutorial) > 0) {
-      await this.lessonEntityRepository.update({ isDerivTutorial: updateLessonDto.isDerivTutorial }, { isDerivTutorial: null });
+    // Se for marcado como tutorial da Deriv, desmarcar todos os outros do MESMO TIPO
+    if (updateLessonDto.isDerivTutorial && updateLessonDto.isDerivTutorial > 0) {
+      // Zera qualquer outra aula que tenha esse mesmo ID de tutorial
+      await this.lessonEntityRepository.update(
+        { isDerivTutorial: updateLessonDto.isDerivTutorial },
+        { isDerivTutorial: 0 }
+      );
     }
 
     Object.assign(lesson, updateData);
@@ -554,9 +558,9 @@ export class CoursesService {
   }
 
 
-  async getDerivTutorialVideo() {
+  async getDerivTutorialVideo(tutorialType: number = 1) {
     const lesson = await this.lessonEntityRepository.findOne({
-      where: { isDerivTutorial: 1, isActive: true },
+      where: { isDerivTutorial: tutorialType, isActive: true },
     });
 
     if (!lesson) return null;

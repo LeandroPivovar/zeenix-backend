@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtService } from '@nestjs/jwt';
@@ -103,8 +104,8 @@ export class CoursesController {
 
   // Deriv Tutorial
   @Get('deriv-tutorial-video')
-  getDerivTutorialVideo() {
-    return this.coursesService.getDerivTutorialVideo();
+  getDerivTutorialVideo(@Query('type') type?: number) {
+    return this.coursesService.getDerivTutorialVideo(type ? Number(type) : 1);
   }
 
   // Courses CRUD

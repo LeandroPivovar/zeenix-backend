@@ -44,6 +44,10 @@ export class CreateLessonDto {
   @IsOptional()
   @IsNumber()
   orderIndex?: number;
+
+  @IsOptional()
+  @IsNumber()
+  isDerivTutorial?: number;
 }
 
 

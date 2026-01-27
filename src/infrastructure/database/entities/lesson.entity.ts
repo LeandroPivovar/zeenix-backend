@@ -43,8 +43,8 @@ export class LessonEntity {
   @Column({ type: 'int', default: 0, name: 'order_index' })
   orderIndex: number;
 
-  @Column({ type: 'int', nullable: true, name: 'is_deriv_tutorial' })
-  isDerivTutorial: number | null;
+  @Column({ type: 'int', default: 0, name: 'is_deriv_tutorial' })
+  isDerivTutorial: number;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
