@@ -22,7 +22,10 @@ export class TypeOrmUserRepository implements UserRepository {
   }
 
   async findById(id: string): Promise<User | null> {
-    const userEntity = await this.userRepository.findOne({ where: { id } });
+    const userEntity = await this.userRepository.findOne({
+      where: { id },
+      relations: ['plan']
+    });
     return userEntity ? this.toDomain(userEntity) : null;
   }
 
@@ -184,6 +187,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.idDemoAccount,
       entity.role,
       entity.isActive,
+      entity.plan?.name || null,
     );
   }
 

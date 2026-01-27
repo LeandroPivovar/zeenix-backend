@@ -78,6 +78,7 @@ export class SettingsService {
       demoAmount: user.demoAmount,
       idRealAccount: user.idRealAccount,
       idDemoAccount: user.idDemoAccount,
+      planName: user.planName,
     };
   }
 

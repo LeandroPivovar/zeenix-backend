@@ -21,6 +21,7 @@ export class User {
     public readonly idDemoAccount?: string | null,
     public readonly role: string = 'user',
     public readonly isActive: boolean = true,
+    public readonly planName?: string | null,
   ) { }
 
   static create(
@@ -32,7 +33,7 @@ export class User {
     firstAccess: boolean = true,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, null, null, 'user', true);
+    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, null, null, 'user', true, null);
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -58,6 +59,7 @@ export class User {
       this.idDemoAccount,
       this.role,
       this.isActive,
+      this.planName,
     );
   }
 
@@ -84,6 +86,7 @@ export class User {
       this.idDemoAccount,
       this.role,
       this.isActive,
+      this.planName,
     );
   }
 }
