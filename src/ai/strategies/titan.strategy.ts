@@ -403,7 +403,7 @@ class RiskManager {
             if (userId && symbol && logCallback) {
                 const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
                 logCallback(userId, symbol, 'info',
-                    `🛡️ Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
+                    `Stop Blindado: Ativado | Lucro atual $${profitAccumulatedAtPeak.toFixed(2)} | Protegendo 50%: $${guaranteedProfit.toFixed(2)}`);
             }
         }
 
@@ -412,7 +412,7 @@ class RiskManager {
             const percentualProgresso = (profitAccumulatedAtPeak / activationTrigger) * 100;
             if (userId && symbol && logCallback) {
                 logCallback(userId, symbol, 'info',
-                    `ℹ️🛡️ Stop Blindado: Lucro $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
+                    `Stop Blindado: Lucro $${profitAccumulatedAtPeak.toFixed(2)} | Meta ativação: $${activationTrigger.toFixed(2)} (${percentualProgresso.toFixed(1)}%)`);
             }
         }
 
@@ -430,8 +430,8 @@ class RiskManager {
 
             if (adjustedStake < 0.35) {
                 const msg = this._blindadoActive
-                    ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
-                    : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+                    ? `STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+                    : `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
                 if (userId && symbol && logCallback) {
                     logCallback(userId, symbol, 'alerta', msg);
                 }
@@ -441,8 +441,8 @@ class RiskManager {
             if (userId && symbol && logCallback) {
                 const balanceRemaining = (currentBalance - minAllowedBalance).toFixed(2);
                 const adjMsg = this._blindadoActive
-                    ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção.`
-                    : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`;
+                    ? `AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção.`
+                    : `AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${balanceRemaining}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`;
                 logCallback(userId, symbol, 'alerta', adjMsg);
             }
             return adjustedStake;
@@ -1437,7 +1437,7 @@ Status: Aguardando Próximo Ciclo`;
     }
 
     private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
-        const message = `❄️ TITAN | 🚀 Soros Nível ${level}
+        const message = `TITAN | Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -1445,7 +1445,7 @@ Status: Aguardando Próximo Ciclo`;
     }
 
     private logWinStreak(userId: string, count: number, profit: number) {
-        const message = `❄️ TITAN | 🏆 Sequência: ${count} Vitórias
+        const message = `TITAN | Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
@@ -1462,7 +1462,7 @@ Status: Sessão Equilibrada`;
     }
 
     private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
-        const message = `❄️ TITAN | 🔄 Ajuste de Operação
+        const message = `TITAN | Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;

@@ -289,11 +289,11 @@ class RiskManager {
           nextStake = (this.totalLossAccumulated * 1.02) / PAYOUT_RATE;
           nextStake = Math.round(nextStake * 100) / 100;
           if (logger) {
-            logger.log(`🔄 [CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
+            logger.log(`[CONSERVADOR] Recuperação Ativada: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
           }
           if (saveLog) {
             const targetProfit = this.totalLossAccumulated * 0.02;
-            saveLog('info', `🔄 MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
+            saveLog('info', `MARTINGALE (CONSERVADOR) | Nível M${this.consecutiveLosses} | Perda acumulada: $${this.totalLossAccumulated.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
           }
         } else {
           // Aceita a perda e reseta
@@ -313,11 +313,11 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`⚖️ [MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
+          logger.log(`[MODERADO] Buscando Recuperação + 15%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
         }
         if (saveLog) {
           const targetProfit = this.totalLossAccumulated * 0.15;
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
+          saveLog('info', `RECUPERAÇÃO ATIVADA (MODERADO +15%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }
       // 3. AGRESSIVO: Infinito + 30% de Lucro sobre a perda
@@ -326,11 +326,11 @@ class RiskManager {
         nextStake = targetRecovery / PAYOUT_RATE;
         nextStake = Math.round(nextStake * 100) / 100;
         if (logger) {
-          logger.log(`🔥 [AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
+          logger.log(`[AGRESSIVO] Buscando Recuperação + 30%: $${nextStake.toFixed(2)} (Payout: 82.5%)`);
         }
         if (saveLog) {
           const targetProfit = this.totalLossAccumulated * 0.30;
-          saveLog('info', `🩹 RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
+          saveLog('info', `RECUPERAÇÃO ATIVADA (AGRESSIVO +30%) | M${this.consecutiveLosses} | Próxima: $${nextStake.toFixed(2)} | Objetivo: Recuperar $${this.totalLossAccumulated.toFixed(2)} + $${targetProfit.toFixed(2)}`);
         }
       }
     }
@@ -340,10 +340,10 @@ class RiskManager {
       // Último trade foi recuperação - voltar para aposta base, NÃO aplicar Soros
       this.lastWasRecovery = false; // Reset flag
       if (logger) {
-        logger.log(`♻️ [RECUPERAÇÃO COMPLETA] Voltando para aposta base após recuperação bem-sucedida`);
+        logger.log(`[RECUPERAÇÃO COMPLETA] Voltando para aposta base após recuperação bem-sucedida`);
       }
       if (saveLog) {
-        saveLog('info', `♻️ RECUPERAÇÃO COMPLETA\n• Resetando para aposta base: $${baseStake.toFixed(2)}\n• Não aplicando Soros sobre lucro de recuperação`);
+        saveLog('info', `RECUPERAÇÃO CONCLUÍDA\n• Resetando para aposta base: $${baseStake.toFixed(2)}\n• Não aplicando Soros sobre lucro de recuperação`);
       }
       nextStake = baseStake; // Forçar volta para base
     }
@@ -352,10 +352,10 @@ class RiskManager {
       nextStake = baseStake + lastProfit;
       nextStake = Math.round(nextStake * 100) / 100;
       if (logger) {
-        logger.log(`🚀 [SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
+        logger.log(`[SOROS] Nível ${vitoriasConsecutivas} ativado! Entrada: $${nextStake.toFixed(2)}`);
       }
       if (saveLog) {
-        saveLog('info', `🚀 APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
+        saveLog('info', `APLICANDO SOROS NÍVEL ${vitoriasConsecutivas}\n• Lucro Anterior: $${lastProfit.toFixed(2)}\n• Nova Stake (Base + Lucro): $${nextStake.toFixed(2)}`);
       }
     }
 
@@ -381,11 +381,11 @@ class RiskManager {
 
       // Mensagem informativa (apenas quando muda o pico)
       if (currentBalance === this.maxBalance && logger) {
-        logger.log(`🛡️ [SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`);
+        logger.log(`[SISTEMA] Stop Blindado Atualizado. Novo Piso: $${minAllowedBalance.toFixed(2)}`);
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ Proteção de Lucro: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `Proteção de Lucro: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -407,12 +407,12 @@ class RiskManager {
         if (logger) {
           if (this._blindadoActive) {
             logger.log(
-              `🏆 [META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
+              `[META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
-            logger.log(`🚨 [STOP LOSS] ${limitType} atingido. Parando operações.`);
-            if (saveLog) saveLog('alerta', `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
+            logger.log(`[STOP LOSS] ${limitType} atingido. Parando operações.`);
+            if (saveLog) saveLog('alerta', `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
           }
         }
         return 0.0; // Sinal de parada
@@ -427,9 +427,9 @@ class RiskManager {
         );
         if (saveLog) {
           if (limitType.includes('PISO')) {
-            saveLog('alerta', `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
+            saveLog('alerta', `AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
           } else {
-            saveLog('alerta', `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
+            saveLog('alerta', `AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
           }
         }
       }
@@ -543,7 +543,7 @@ Contrato Avaliado: Digits/Price Action (1 tick)`;
     // Variação A: Filtro
     // Variação B: Delta
 
-    let message = `⏸️ ENTRADA BLOQUEADA\n`;
+    let message = `ENTRADA BLOQUEADA\n`;
     if (blocked.reason === 'filter' && blocked.details.digits) {
       message += `• Motivo: Filtro não atendido\n` +
         `• Dígitos Analisados: [${blocked.details.digits.join(', ')}]\n` +
@@ -621,7 +621,7 @@ Objetivo: Lucro Exponencial`;
     accumulatedProfit: number;
     currentStake: number;
   }) {
-    const message = `❄️ ORION | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+    const message = `ORION | Sequência: ${streak.consecutiveWins} Vitórias
 • Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
     this.saveOrionLog(userId, this.symbol, 'info', message);
@@ -634,7 +634,7 @@ Objetivo: Lucro Exponencial`;
     newPayout: number;
     analysisDescription: string;
   }) {
-    const message = `❄️ ORION | 🔄 Ajuste de Operação
+    const message = `ORION | Ajuste de Operação
 • De: ${change.previousContract}
 • Para: ${change.newContract}
 • Motivo: ${change.consecutiveLosses} perdas consecutivas`;
@@ -671,11 +671,11 @@ Status: Aguardando Próximo Ciclo`;
 
     let message = '';
     if (defense.hasMultipleModes) {
-      message = `🚨 DEFESA AUTOMÁTICA ATIVADA\n` +
+      message = `DEFESA AUTOMÁTICA ATIVADA\n` +
         `• Motivo: ${defense.consecutiveLosses} Perdas Consecutivas.\n` +
         `• Ação: Mudando análise para MODO LENTO para recuperação segura.`;
     } else {
-      message = `🚨 MODO LENTO MANTIDO\n` +
+      message = `MODO LENTO MANTIDO\n` +
         `• Motivo: ${defense.strategyName} opera exclusivamente em modo LENTO.\n` +
         `• Ação: Mantendo análise rigorosa (delta >= ${defense.deltaMin}) para recuperação segura.`;
     }

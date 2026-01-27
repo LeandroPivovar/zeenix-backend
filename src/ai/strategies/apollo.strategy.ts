@@ -169,7 +169,7 @@ Status: Aguardando Próximo Ciclo`;
 
   private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
     const message =
-      `APOLLO | 🚀 Soros Nível ${level}
+      `APOLLO | Soros Nível ${level}
 • Lucro Anterior: $${profit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
@@ -177,7 +177,7 @@ Status: Aguardando Próximo Ciclo`;
 
   private logWinStreak(userId: string, count: number, profit: number) {
     const message =
-      `APOLLO | 🏆 Sequência: ${count} Vitórias
+      `APOLLO | Sequência: ${count} Vitórias
 • Lucro Acumulado: $${profit.toFixed(2)}`;
     this.saveLog(userId, 'info', message);
   }
@@ -193,7 +193,7 @@ Status: Sessão Equilibrada`;
 
   private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
     const message =
-      `APOLLO | 🔄 Ajuste de Operação
+      `APOLLO | Ajuste de Operação
 • De: ${oldContract}
 • Para: ${newContract}
 • Motivo: ${reason}`;
@@ -439,7 +439,7 @@ Status: Sessão Equilibrada`;
     // Validate if local capital estimate is enough (with 10% margin)
     const requiredBalance = stake * 1.1;
     if (state.capital < requiredBalance) {
-      this.saveLog(state.userId, 'erro', `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${requiredBalance.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`);
+      this.saveLog(state.userId, 'erro', `SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${requiredBalance.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`);
       await this.handleStopInternal(state, 'insufficient_balance', state.capital);
       return;
     }
@@ -629,7 +629,7 @@ Status: Sessão Equilibrada`;
         } else {
           // Completou Nível 1 -> Reset
           state.sorosLevel = 0;
-          this.saveLog(state.userId, 'info', `🔄 [SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base.`);
+          this.saveLog(state.userId, 'info', `[SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base.`);
         }
       }
       state.totalLossAccumulated = 0;
@@ -663,7 +663,7 @@ Status: Sessão Equilibrada`;
     if (state.consecutiveLosses > 0) {
       // Modo Conservador: Até M5 (5 perdas), depois reseta
       if (state.riskProfile === 'conservador' && state.consecutiveLosses > 5) {
-        this.saveLog(state.userId, 'alerta', `♻️ [CONSERVADOR] Limite de recuperação atingido (M5). Resetando stake.`);
+        this.saveLog(state.userId, 'alerta', `[CONSERVADOR] Limite de recuperação atingido (M5). Resetando stake.`);
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
         return state.apostaInicial;
@@ -904,7 +904,7 @@ Status: Sessão Equilibrada`;
   ): Promise<{ contractId: string, profit: number, exitSpot: any, entrySpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
     if (!conn) {
-      this.saveLog(userId, 'erro', `❌ Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
+      this.saveLog(userId, 'erro', `Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
       return null;
     }
 
@@ -964,7 +964,7 @@ Status: Sessão Equilibrada`;
         buyResponse = await conn.sendRequest(buyReq, 60000);
       } catch (error: any) {
         const errorMessage = error?.message || JSON.stringify(error);
-        this.saveLog(userId, 'erro', `❌ FALHA NA ENTRADA: ${errorMessage}`);
+        this.saveLog(userId, 'erro', `FALHA NA ENTRADA: ${errorMessage}`);
 
         if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
           // ✅ Buscando contas do usuário para log detalhado
@@ -1040,7 +1040,7 @@ Status: Sessão Equilibrada`;
                 hasResolved = true;
                 clearTimeout(contractMonitorTimeout!);
                 conn.removeSubscription(contractId);
-                this.saveLog(userId, 'erro', `❌ Erro no monitoramento: ${msg.error.message}`);
+                this.saveLog(userId, 'erro', `Erro no monitoramento: ${msg.error.message}`);
                 resolve(null);
               }
               return;
@@ -1075,7 +1075,7 @@ Status: Sessão Equilibrada`;
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(contractMonitorTimeout!);
-            this.saveLog(userId, 'erro', `❌ Falha ao inscrever no monitoramento: ${e.message}`);
+            this.saveLog(userId, 'erro', `Falha ao inscrever no monitoramento: ${e.message}`);
             resolve(null);
           }
         });

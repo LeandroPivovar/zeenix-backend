@@ -1419,7 +1419,7 @@ Status: Aguardando Próximo Ciclo`;
         const level = soros.level || 1;
         const newStake = soros.stakeBase + soros.previousProfit;
 
-        const message = `❄️ NEXUS | 🚀 Soros Nível ${level}
+        const message = `NEXUS | Soros Nível ${level}
 • Lucro Anterior: $${soros.previousProfit.toFixed(2)}
 • Nova Stake: $${newStake.toFixed(2)}`;
 
@@ -1431,7 +1431,7 @@ Status: Aguardando Próximo Ciclo`;
         accumulatedProfit: number;
         currentStake: number;
     }) {
-        const message = `❄️ NEXUS | 🏆 Sequência: ${streak.consecutiveWins} Vitórias
+        const message = `NEXUS | Sequência: ${streak.consecutiveWins} Vitórias
 • Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'resultado', message);
@@ -1458,7 +1458,7 @@ Status: Sessão Equilibrada`;
         newContract: string;
         analysis: string;
     }) {
-        const message = `❄️ NEXUS | 🔄 Ajuste de Operação
+        const message = `NEXUS | Ajuste de Operação
 • De: ${change.oldContract}
 • Para: ${change.newContract}
 • Motivo: ${change.reason}`;

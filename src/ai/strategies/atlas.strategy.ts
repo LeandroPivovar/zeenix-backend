@@ -158,8 +158,8 @@ export class AtlasStrategy implements IStrategy {
   }
 
   async initialize(): Promise<void> {
-    this.logger.log('[ATLAS] 🔵 Estratégia ATLAS v2.0 (EHF) inicializada');
-    this.logger.log('[ATLAS] ✅ Aguardando ticks do AIService (R_10, R_25, R_100, 1HZ100V)...');
+    this.logger.log('[ATLAS] Estratégia ATLAS v2.0 (EHF) inicializada');
+    this.logger.log('[ATLAS] Aguardando ticks do AIService (R_10, R_25, R_100, 1HZ100V)...');
   }
 
   async processTick(tick: Tick, symbol?: string): Promise<void> {
@@ -293,7 +293,7 @@ Status: Analisando padrões...`);
 
     if (isNew || (hasConfigChanges && (now - lastLogTime > 5000))) {
       const logPrefix = isNew ? 'Usuário ATIVADO' : 'Usuário JÁ ATIVO (config atualizada)';
-      this.logger.log(`[ATLAS] ✅ ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
+      this.logger.log(`[ATLAS] ${logPrefix} ${userId} | Ativo: ${atlasSymbol} | Total de usuários: ${this.atlasUsers.size}`);
 
       const state = this.atlasUsers.get(userId);
       const saldoAtual = state ? state.capital : stakeAmountNum;
