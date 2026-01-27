@@ -152,12 +152,12 @@ export class KiwifyService {
                                     }
 
                                     // Sincronizar plan_id se houver um plano correspondente
-                                    const plan = await this.planRepository.findOne({ where: { id: offerId } });
+                                    const plan = await this.planRepository.findOne({ where: { externalId: offerId } });
                                     if (plan) {
                                         if (user.planId !== plan.id) {
                                             user.planId = plan.id;
                                             updated = true;
-                                            this.logger.log(`Plano ${plan.name} (${plan.id}) vinculado ao usuário ${user.email}`);
+                                            this.logger.log(`Plano ${plan.name} (${plan.id}) vinculado ao usuário ${user.email} via externalId ${offerId}`);
                                         }
                                     }
                                 }
