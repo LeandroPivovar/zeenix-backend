@@ -1112,6 +1112,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           config.symbol,
           decision.stake || config.initialStake,
           1, // duration em ticks (ZENIX v1.0 standard)
+          2, // maxRetries
+          tradeId // ✅ Passar tradeId para associar corretamente no callback
         );
 
         if (contractId) {
@@ -1216,6 +1218,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     stake: number,
     duration: number,
     maxRetries = 2,
+    tradeId: number = 0, // ✅ Adicionado tradeId
   ): Promise<string | null> {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
@@ -1410,6 +1413,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.onContractFinish(
                   userId,
                   { win, profit, contractId, exitPrice, stake },
+                  tradeId // ✅ Passar tradeId do closure
                 ).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
                 });
@@ -1464,30 +1468,37 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   async onContractFinish(
     userId: string,
     result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
+    tradeIdFromCallback?: number, // ✅ Novo argumento
   ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
     if (!config || !state) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`);
       return;
     }
 
-    const tradeId = state.currentTradeId;
-
-    // ✅ [ZENIX v3.0] Prevenção de Processamento Duplicado
-    // Se o contrato já foi processado (pode acontecer com delays de rede/WS)
-    if (!tradeId || (state.currentTradeId !== null && state.currentTradeId !== tradeId)) {
-      if (tradeId) {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ Ignorando resultado tardio do contrato ${result.contractId} (Trade #${tradeId})`);
-      }
-      return;
-    }
-
+    // ✅ [CORREÇÃO CRÍTICA] Resetar isWaitingContract IMEDIATAMENTE
+    // Isso evita que o agente fique travado em "OPERAÇÃO EM ANDAMENTO"
     state.isWaitingContract = false;
     state.waitingContractStartTime = null;
-    state.currentContractId = null;
-    state.currentTradeId = null;
+
+    // Priorizar tradeId que veio do closure do buyContract (mais seguro)
+    const tradeId = tradeIdFromCallback || state.currentTradeId;
+
+    // Apenas limpar currentContractId e currentTradeId se forem os mesmos que acabaram de finalizar
+    if (state.currentContractId === result.contractId) {
+      state.currentContractId = null;
+    }
+    if (state.currentTradeId === tradeId) {
+      state.currentTradeId = null;
+    }
+
+    // ✅ Prevenção de Processamento Duplicado
+    // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
+    if (!tradeId) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId})`);
+      return;
+    }
 
     this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
 
