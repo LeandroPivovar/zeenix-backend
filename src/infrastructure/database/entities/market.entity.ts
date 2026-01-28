@@ -1,4 +1,5 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { MarketContractEntity } from './market-contract.entity';
 
 @Entity('markets')
 export class MarketEntity {
@@ -34,4 +35,7 @@ export class MarketEntity {
 
     @Column({ type: 'json', nullable: true })
     operations: string[];
+
+    @OneToMany(() => MarketContractEntity, contract => contract.marketEntity)
+    contracts: MarketContractEntity[];
 }
