@@ -1424,7 +1424,7 @@ Ação: IA DESATIVADA`
     const currentPayout = isPriceAction ? 0.83 : modeConfig.payout;
 
 
-if (isWin) {
+    if (isWin) {
       const lucro = profit > 0 ? profit : (stakeAmount * currentPayout - stakeAmount);
       state.capital += lucro;
       state.totalProfitLoss += lucro;
@@ -1440,7 +1440,7 @@ if (isWin) {
         if (state.mode !== state.originalMode) {
           state.mode = state.originalMode;
         }
-        
+
         // Log de recuperação (opcional, já existe no seu código)
         this.logSuccessfulRecoveryV2(state.userId, {
           recoveredLoss: state.perdaAcumulada,
@@ -1448,7 +1448,7 @@ if (isWin) {
           profitPercentage: (lucro / (state.perdaAcumulada || 1)) * 100,
           stakeBase: state.apostaBase
         });
-      } 
+      }
       // ✅ 2. LÓGICA DE SOROS (APENAS 1 NÍVEL)
       else {
         state.virtualLossCount = 0;
@@ -1463,8 +1463,8 @@ if (isWin) {
           state.isInSoros = false;
           state.ultimoLucro = 0;
           this.logger.log(`[ATLAS] Ciclo de Soros finalizado com sucesso. Retornando à base.`);
-          
-          this.saveAtlasLog(state.userId, symbol, 'vitoria', 
+
+          this.saveAtlasLog(state.userId, symbol, 'vitoria',
             `SOROS FINALIZADO\nStatus: Ciclo Concluído\nResultado: Vitória no Nível 1\nAção: Retornando à Stake Base`);
         }
       }
@@ -1561,11 +1561,25 @@ if (isWin) {
     // ✅ [ZENIX v3.1] Lucro da SESSÃO (Recalculado após a trade)
     const lucroSessao = state.totalProfitLoss;
 
-    // Atualizar saldo da sessão no banco de dados (Sincronismo para Dashboard)
-    this.dataSource.query(
-      `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
-      [lucroSessao, state.userId]
-    ).catch(e => { });
+    // ✅ [STOP BLINDADO FIX] Atualizar profit_peak se lucro atual for maior
+    // Isso é essencial para o Stop Blindado funcionar corretamente
+    if (lucroSessao > 0) {
+      this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET session_balance = ?, 
+             profit_peak = GREATEST(COALESCE(profit_peak, 0), ?)
+         WHERE user_id = ? AND is_active = 1`,
+        [lucroSessao, lucroSessao, state.userId]
+      ).catch(e => {
+        this.logger.error(`[ATLAS] Erro ao atualizar session_balance e profit_peak:`, e);
+      });
+    } else {
+      // Se está em prejuízo, só atualizar session_balance
+      this.dataSource.query(
+        `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
+        [lucroSessao, state.userId]
+      ).catch(e => { });
+    }
 
     // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
@@ -1657,11 +1671,42 @@ Ação: IA DESATIVADA`
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const activationThreshold = profitTarget * 0.40;
 
+      // ✅ [DEBUG] Log para rastrear valores
+      this.logger.log(`[ATLAS] 🛡️ Verificando Stop Blind ado:
+        profitPeak: ${profitPeak}
+        activationThreshold: ${activationThreshold}
+        profitTarget: ${profitTarget}
+        lucroAtual: ${lucroAtual}
+        capitalSessao: ${capitalSessao}
+        capitalInicial: ${capitalInicial}`);
+
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
         // ✅ Fixed Floor: Protect % of Activation Threshold, not Peak
         const valorProtegidoFixo = activationThreshold * factor;
         const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+        // ✅ [DEBUG] Log para rastrear cálculo do piso
+        this.logger.log(`[ATLAS] 🛡️ Stop Blindado ATIVO:
+          valorProtegidoFixo: ${valorProtegidoFixo}
+          stopBlindado: ${stopBlindado}
+          capitalSessao: ${capitalSessao}
+          Vai parar? ${capitalSessao <= stopBlindado + 0.01}`);
+
+        // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
+        // Só loga se o profit_peak acabou de passar o limiar (evita spam)
+        const justActivated = profitPeak >= activationThreshold && profitPeak < (activationThreshold + 0.50);
+        if (justActivated && !state.blindadoActive) {
+          state.blindadoActive = true;
+          this.saveAtlasLog(state.userId, symbol, 'info',
+            `🛡️ STOP BLINDADO ATIVADO
+Status: Proteção de Lucro Ativa
+Lucro Atual: ${formatCurrency(lucroAtual, state.currency)}
+Piso Protegido: ${formatCurrency(valorProtegidoFixo, state.currency)}
+Percentual: ${config.stopBlindadoPercent}%
+Ação: monitorando para proteger ganhos`
+          );
+        }
 
         if (capitalSessao <= stopBlindado + 0.01) { // Added tolerance again just in case
           const lucroFinal = capitalSessao - capitalInicial;
