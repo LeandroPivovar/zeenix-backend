@@ -420,6 +420,12 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     this.logger.debug(`[AutonomousAgent] Enviando tick para StrategyManager (symbol=${tickSymbol})`);
+
+    // ✅ Log terminal para depuração de multi-símbolos
+    if (tickSymbol !== 'R_100') {
+      console.log(`[TERM] [AutonomousAgent] Submitting ${tickSymbol} tick to StrategyManager. Users active: ${this.activeSymbols.size}`);
+    }
+
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
       this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
     });

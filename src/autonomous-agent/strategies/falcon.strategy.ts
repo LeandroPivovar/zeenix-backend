@@ -297,7 +297,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         riskProfile: falconConfig.riskProfile || 'MODERADO',
         profitTarget: falconConfig.dailyProfitTarget,
         stopLoss: falconConfig.dailyLossLimit,
-        stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+        stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
+        symbol: falconConfig.symbol
       });
 
       this.logSessionStart(userId, {
@@ -335,7 +336,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       riskProfile: falconConfig.riskProfile || 'MODERADO',
       profitTarget: falconConfig.dailyProfitTarget,
       stopLoss: falconConfig.dailyLossLimit,
-      stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+      stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
+      symbol: falconConfig.symbol
     });
 
     this.logSessionStart(userId, {
@@ -354,6 +356,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.delete(userId);
     this.userStates.delete(userId);
     this.ticks.delete(userId);
+    this.processingLocks.delete(userId);
     this.logger.log(`[Falcon] ✅ Usuário ${userId} desativado`);
   }
 
@@ -455,7 +458,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       if (userTicks.length < requiredTicks) {
         // ✅ Log de progresso a cada 3 ticks (igual Zeus)
-        if (userTicks.length % 3 === 0) {
+        // ✅ Log de progresso mais frequente no início (sempre no 1º, 2º e a cada 3)
+        if (userTicks.length < 5 || userTicks.length % 3 === 0) {
           this.logDataCollection(userId, {
             targetCount: requiredTicks,
             currentCount: userTicks.length,
@@ -465,9 +469,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ Log de início de análise (Heartbeat a cada 10 ticks = 10s)
-      if (state.ticksSinceLastAnalysis >= 10) {
-        state.ticksSinceLastAnalysis = 0;
+      // ✅ Log de início de análise (Heartbeat a cada 15 análises = ~15s em média)
+      // Primeiro log logo na primeira análise após o warm-up de dados
+      if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 15 === 0) {
+        if (state.ticksSinceLastAnalysis % 15 === 0) {
+          state.ticksSinceLastAnalysis = 0;
+        }
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
 
@@ -2170,9 +2177,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     profitTarget: number;
     stopLoss: number;
     stopBlindadoEnabled: boolean;
+    symbol: string;
   }) {
     const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
       `• Agente: ${config.agentName}\n` +
+      `• Mercado: ${config.symbol}\n` +
       `• Modo: ${config.operationMode}\n` +
       `• Perfil: ${config.riskProfile}\n` +
       `• Meta Lucro: $${config.profitTarget.toFixed(2)}\n` +
