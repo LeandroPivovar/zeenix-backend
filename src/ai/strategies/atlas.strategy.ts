@@ -265,7 +265,7 @@ Status: Analisando padrões...`);
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V' = 'R_50';
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V' = '1HZ100V';
 
     if (symbol && ['R_10', 'R_25', 'R_50', 'R_100', '1HZ100V'].includes(symbol)) {
       atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V';
