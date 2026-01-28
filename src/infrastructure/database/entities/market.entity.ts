@@ -31,4 +31,7 @@ export class MarketEntity {
 
     @UpdateDateColumn({ name: 'updated_at' })
     updatedAt: Date;
+
+    @Column({ type: 'json', nullable: true })
+    operations: string[];
 }
