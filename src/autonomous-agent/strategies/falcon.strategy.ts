@@ -1414,6 +1414,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    const tradeId = state.currentTradeId;
+
     // ✅ [ZENIX v3.0] Prevenção de Processamento Duplicado
     // Se o contrato já foi processado (pode acontecer com delays de rede/WS)
     if (!tradeId || (state.currentTradeId !== null && state.currentTradeId !== tradeId)) {
