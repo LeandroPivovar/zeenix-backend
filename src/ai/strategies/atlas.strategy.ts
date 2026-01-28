@@ -918,7 +918,7 @@ Ação: IA DESATIVADA`
         }
 
         stakeAmount = Math.max(minStake, Number(stakeAmount.toFixed(decimals)));
-      } else if (state.isInSoros && state.vitoriasConsecutivas === 1) {
+      } else if (state.isInSoros) {
         stakeAmount = state.apostaBase + state.ultimoLucro;
         // ✅ LOG PADRONIZADO V2: Soros
         this.logSorosActivation(state.userId, {
