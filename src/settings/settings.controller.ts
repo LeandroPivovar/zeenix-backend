@@ -32,6 +32,12 @@ class UpdatePasswordDto {
   newPassword: string;
 }
 
+class UpdatePhoneDto {
+  @IsString()
+  @MinLength(8)
+  phone: string;
+}
+
 class UpdateSettingsDto {
   @IsOptional()
   @IsString()
@@ -153,6 +159,17 @@ export class SettingsController {
       body.newPassword,
       this.getIpAddress(req),
       this.getUserAgent(req),
+    );
+  }
+
+  @Put('phone')
+  async updatePhone(@Req() req: any, @Body() body: UpdatePhoneDto) {
+    const userId = req.user.userId;
+    return await this.settingsService.updatePhone(
+      userId,
+      body.phone,
+      this.getIpAddress(req),
+      this.getUserAgent(req)
     );
   }
 

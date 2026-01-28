@@ -58,6 +58,7 @@ export class SettingsService {
     return {
       name: user.name,
       email: user.email,
+      phone: user.phone,
       createdAt: user.createdAt,
       profilePictureUrl: settings.profilePictureUrl,
       language: settings.language,
@@ -141,6 +142,31 @@ export class SettingsService {
     await this.logActivity(userId, 'UPDATE_PASSWORD', 'Alterou a senha', ipAddress, userAgent);
 
     return { success: true, message: 'Senha atualizada com sucesso' };
+  }
+
+  async updatePhone(userId: string, phone: string, ipAddress?: string, userAgent?: string) {
+    const user = await this.userRepository.findById(userId);
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    // Remove non-numeric characters for storage/validation if needed, 
+    // but for now keeping as string to support international formats + chars like +, -, space
+    if (!phone || phone.trim().length < 8) {
+      throw new BadRequestException('Telefone inválido');
+    }
+
+    // Check if phone is already used by another user (optional, but recommended)
+    const existing = await this.userRepository.findByPhone(phone);
+    if (existing && existing.id !== userId) {
+      throw new BadRequestException('Este telefone já está em uso');
+    }
+
+    const oldPhone = user.phone;
+    const updatedUser = user.update(undefined, undefined, phone);
+    await this.userRepository.update(updatedUser);
+
+    await this.logActivity(userId, 'UPDATE_PHONE', `Alterou o telefone de "${oldPhone || 'N/A'}" para "${phone}"`, ipAddress, userAgent);
+
+    return { success: true, message: 'Telefone atualizado com sucesso' };
   }
 
   async updateSettings(
