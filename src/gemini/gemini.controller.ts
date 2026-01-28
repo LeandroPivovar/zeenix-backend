@@ -32,11 +32,11 @@ export class GeminiController {
       };
     }
 
-    // Pegar os últimos 10 ticks
-    const last10Ticks = body.ticks.slice(-10);
+    // Pegar os últimos 50 ticks
+    const last50Ticks = body.ticks.slice(-50);
 
     const recommendation = await this.geminiService.getTradingRecommendation(
-      last10Ticks,
+      last50Ticks,
       body.symbol,
       body.tradeType,
       body.duration,
