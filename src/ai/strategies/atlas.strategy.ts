@@ -11,9 +11,6 @@ import { getMinStakeByCurrency, formatCurrency } from '../../utils/currency.util
 // ✅ [ZENIX v3.4] Suporte para moedas dinâmicas (BTC, etc)
 // Removidas funções locais, usando currency.utils.ts
 
-export type AtlasSymbol = 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V';
-export type AtlasLogSymbol = AtlasSymbol | 'SISTEMA';
-
 // ✅ ATLAS: Função para calcular próxima aposta de martingale - ATLAS v2.0
 // Atualizado: Payout ajustado para 0.83 (83%) para garantir recuperação com margem de segurança
 function calcularProximaApostaAtlas(
@@ -58,7 +55,7 @@ export interface AtlasUserState {
   modoMartingale: ModoMartingale;
   mode: string; // 'veloz' | 'normal' | 'lento'
   originalMode: string; // ✅ ATLAS: Modo original configurado pelo usuário
-  symbol: AtlasSymbol;
+  symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
 
   // Estado de operação
   isOperationActive: boolean;
@@ -129,13 +126,11 @@ export class AtlasStrategy implements IStrategy {
   private atlasTicks: {
     R_10: Tick[];
     R_25: Tick[];
-    R_50: Tick[];
     R_100: Tick[];
     '1HZ100V': Tick[];
   } = {
       R_10: [],
       R_25: [],
-      R_50: [],
       R_100: [],
       '1HZ100V': [],
     };
@@ -146,7 +141,7 @@ export class AtlasStrategy implements IStrategy {
   // ✅ Sistema de logs (similar à Trinity)
   private logQueue: Array<{
     userId: string;
-    symbol: AtlasLogSymbol;
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
     message: string;
     details?: any;
@@ -265,10 +260,10 @@ Status: Analisando padrões...`);
       selectedMarket, // ✅ Pode vir do frontend como selectedMarket
     } = config;
 
-    let atlasSymbol: 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V' = '1HZ100V';
+    let atlasSymbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' = '1HZ100V';
 
-    if (symbol && ['R_10', 'R_25', 'R_50', 'R_100', '1HZ100V'].includes(symbol)) {
-      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V';
+    if (symbol && ['R_10', 'R_25', 'R_100', '1HZ100V'].includes(symbol)) {
+      atlasSymbol = symbol as 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     } else if (selectedMarket) {
       const marketLower = selectedMarket.toLowerCase();
 
@@ -279,8 +274,6 @@ Status: Analisando padrões...`);
         atlasSymbol = '1HZ100V';
       } else if (marketLower === 'r_100' || marketLower === 'vol100' || marketLower === 'volatility 100 index') {
         atlasSymbol = '1HZ100V'; // ✅ Atlas v3.0 prefere 1s (1HZ100V)
-      } else if (marketLower === 'r_50' || marketLower === 'vol50' || marketLower === 'volatility 50 index') {
-        atlasSymbol = 'R_50';
       } else if (marketLower === 'r_25' || marketLower === 'vol25' || marketLower === 'volatility 25 index') {
         atlasSymbol = 'R_25';
       } else {
@@ -576,7 +569,7 @@ Status: monitorando força...`
   /**
    * ✅ ATLAS: Sinal de Recuperação (Price Action) - Filtros Específicos por Modo
    */
-  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_50' | 'R_100' | '1HZ100V'): 'CALL' | 'PUT' | null {
+  private getRecoverySignal(state: AtlasUserState, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): 'CALL' | 'PUT' | null {
     const ticks = this.atlasTicks[symbol];
     if (ticks.length < 3) return null;
 
@@ -667,7 +660,7 @@ Ação: aguardar força de tendência`);
    */
   private async executeAtlasOperation(
     state: AtlasUserState,
-    symbol: AtlasSymbol,
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT' | 'EVEN' | 'ODD',
     analysis?: string,
   ): Promise<void> {
@@ -1067,16 +1060,16 @@ Ação: IA DESATIVADA`
   private generateDigitsSignal(state: AtlasUserState): 'EVEN' | 'ODD' | null {
     const mode = (state.mode || 'veloz').toLowerCase();
 
-    // Configurações por modo (Atualizado Spec R50)
+    // Configurações por modo
     let window = 12;
-    let threshold = 5;
+    let threshold = 3;
 
     if (mode === 'normal') {
       window = 25;
-      threshold = 9;
+      threshold = 6;
     } else if (mode === 'preciso' || mode === 'lento') {
       window = 40;
-      threshold = 13;
+      threshold = 9;
     }
 
     if (state.digitBuffer.length < window) return null;
@@ -1090,8 +1083,6 @@ Ação: IA DESATIVADA`
 
     return evens > odds ? 'EVEN' : 'ODD';
   }
-
-
 
   /**
    * ✅ ATLAS R_50: Cálculo de Stake (Ciclo de Recuperação + Meta + Soros)
@@ -1207,7 +1198,7 @@ Ação: IA DESATIVADA`
 
   private async executeAtlasTradeDirect(
     userId: string,
-    symbol: AtlasSymbol,
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     token: string,
     contractParams: any,
     onBuy?: (contractId: string, entryPrice: number) => Promise<void>
@@ -1413,7 +1404,7 @@ Ação: IA DESATIVADA`
    */
   private async processAtlasResult(
     state: AtlasUserState,
-    symbol: AtlasSymbol,
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V',
     isWin: boolean,
     stakeAmount: number,
     operation: 'OVER' | 'UNDER' | 'CALL' | 'PUT' | 'EVEN' | 'ODD',
@@ -1469,11 +1460,9 @@ Ação: IA DESATIVADA`
           this.logger.log(`[ATLAS] Soros ativado para próxima entrada (Lucro: ${lucro})`);
         }
 
-        // Pós-win fora de recuperação: Retornar ao modo original
-        if (state.originalMode && state.mode !== state.originalMode) {
-          this.logger.log(`[ATLAS] Win detectado: Retornando ao modo original ${state.originalMode.toUpperCase()}`);
-          state.mode = state.originalMode;
-        }
+        // Pós-win fora de recuperação: tende a retornar para VELOZ (Spec Logic)
+        if (state.mode === 'normal') state.mode = 'veloz';
+        if (state.mode === 'preciso' || state.mode === 'lento') state.mode = 'normal';
       }
 
       this.logTradeResultV2(state.userId, {
@@ -1502,28 +1491,27 @@ Ação: IA DESATIVADA`
       // ✅ [ATLAS R_50] Início de Recuperação (se >= 2 perdas consec e não está recuperando)
       if (!state.recovering) {
         if (state.consecutiveLosses >= 2) {
-          // Degradação de modo (Spec: 2 losses -> Normal, 4 losses -> Preciso)
-          if (state.consecutiveLosses === 2) {
-            state.mode = 'normal';
-            this.logger.log(`[ATLAS] 2 perdas consecutivas: Degradando para modo NORMAL`);
-          }
+          // Degradação de modo
+          if (state.mode === 'veloz') state.mode = 'normal';
 
           // Iniciar ciclo de recuperação
-          state.perdaAcumulada += perda;
+          // Spec: "entra em recuperação a partir de 2 losses seguidos"
+          state.perdaAcumulada += perda; // Acumular para saber quanto recuperar
           this.startRecovery(state);
         } else {
-          state.perdaAcumulada += perda;
+          // Apenas 1 loss, normal
+          state.perdaAcumulada += perda; // Ainda acumula p/ caso vire recuperação
         }
       } else {
-        // Já em recuperação
+        // Já em recuperação: acumular perda no ciclo?
+        // Spec não detalha se a perda nova aumenta o alvo dinamicamente ou se o alvo é fixo do inicio.
+        // "Alvo = perdas do ciclo + %". Se perdeu dentro do ciclo, a perda do ciclo aumentou.
+        // Vamos aumentar o target para cobrir essa nova perda também.
         state.recoveryTargetProfit += perda;
 
-        // Degradação em recuperação (Spec: 4 perdas total ou no ciclo?)
-        // Vamos usar 4 losses consecutivos totais para ir para PRECISO
-        if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
-          state.mode = 'preciso';
-          this.logger.log(`[ATLAS] 4 perdas consecutivas: Degradando para modo PRECISO`);
-        }
+        // Degradação em recuperação
+        if (state.mode === 'normal') state.mode = 'lento'; // 'preciso' no spec
+        else if (state.mode === 'veloz') state.mode = 'normal';
       }
 
       this.logTradeResultV2(state.userId, {
@@ -1795,7 +1783,7 @@ Ação: IA DESATIVADA`
     profitTarget?: number | null;
     lossLimit?: number | null;
     stopLossBlindado?: boolean | null;
-    symbol: AtlasSymbol;
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
   }): { isNew: boolean; hasConfigChanges: boolean } {
     const existing = this.atlasUsers.get(params.userId);
     const stopLossNormalized = params.lossLimit != null ? -Math.abs(params.lossLimit) : null;
@@ -1920,7 +1908,7 @@ Ação: IA DESATIVADA`
   private async saveAtlasTrade(trade: {
     userId: string;
     contractId: string | null;
-    symbol: AtlasSymbol;
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V';
     contractType: string;
     entryPrice: number;
     stakeAmount: number;
@@ -2081,7 +2069,7 @@ Ação: IA DESATIVADA`
    */
   private saveAtlasLog(
     userId: string,
-    symbol: AtlasLogSymbol,
+    symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA',
     type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro',
     message: string,
     details?: any,
@@ -2344,7 +2332,7 @@ Status: Proteção Ativada`;
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
 
-  private logContractSwitchRecovery(userId: string, symbol: AtlasLogSymbol, martingaleLevel: number) {
+  private logContractSwitchRecovery(userId: string, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA', martingaleLevel: number) {
     const message = `TROCA PARA RECUPERAÇÃO
 Foco em Price Action
 Motivo: ${martingaleLevel} perdas consecutivas
@@ -2357,7 +2345,7 @@ Ação: Aguardando sinal de tendência`;
   private async saveAtlasLogsBatch(
     userId: string,
     logs: Array<{
-      symbol: AtlasLogSymbol;
+      symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA';
       type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
       message: string;
       details?: any;
@@ -2709,7 +2697,7 @@ Ação: Aguardando sinal de tendência`;
   }
 
   // Getters
-  getTicks(symbol: AtlasSymbol): Tick[] {
+  getTicks(symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V'): Tick[] {
     return this.atlasTicks[symbol];
   }
 
