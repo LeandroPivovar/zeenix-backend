@@ -299,6 +299,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             isWaitingContract: false,
             ticksSinceLastAnalysis: 0,
             lastDigits: [],
+            streakLossSum: 0, // ✅ New field for smart tracking
 
             // Compatibilidade infra
             currentProfit: 0,
@@ -557,9 +558,22 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     private computeNextStake(config: ZeusUserConfig, state: ZeusState): number {
         let stake = config.baseStake;
 
-        // Martingale (só na RECUPERAÇÃO)
+        // Martingale Inteligente (RECUPERAÇÃO)
         if (state.analysis === "RECUPERACAO") {
-            stake = config.baseStake * Math.pow(config.martingaleMultiplier, state.mgLevel);
+            // Smart Stake: Calcula exatamente o necessário para cobrir o prejuízo + lucro alvo
+            // Target = (Perda Acumulada) + (Perda * % Extra)
+            const targetTotal = state.lossSum + (state.lossSum * config.recoveryExtraProfitPct);
+            const currentRecoveryProfit = state.balance - state.recoveryStartBalance;
+            const needed = targetTotal - currentRecoveryProfit;
+
+            if (needed <= 0) {
+                stake = config.baseStake;
+            } else {
+                // Stake necessária = Valor Faltante / Payout
+                stake = needed / config.payoutRecovery;
+            }
+
+            // Safety: Respeitar limites razoáveis (opcional, aqui confiamos no bankroll do user)
         }
 
         // Soros N1 (1 nível) - Só no modo PRINCIPAL
@@ -1305,6 +1319,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.consecutiveLossesOnPrimaryContract = 0;
             state.lastWinProfit = state.lastOpProfit; // Para Soros
 
+            if (state.analysis === "PRINCIPAL") {
+                state.streakLossSum = 0; // Reset streak tracking on primary win
+            }
+
             // SOROS LOGIC (Se Modo Principal)
             if (state.analysis === "PRINCIPAL") {
                 // Se estava aplicanso Soros, agora reseta
@@ -1368,6 +1386,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             if (state.analysis === "PRINCIPAL") {
                 state.consecutiveLossesOnPrimaryContract++;
+                state.streakLossSum = (state.streakLossSum || 0) + Math.abs(state.lastOpProfit); // Track loss amount
 
                 // TRIGGER: 2 Loss seguidos no Principal -> Vai para Recuperação
                 if (config.hasContractSwitch && state.consecutiveLossesOnPrimaryContract >= 2) {
@@ -1375,7 +1394,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     state.mode = "PRECISO"; // Modo Rise/Fall
                     state.mgLevel = 0; // Inicia Martingale Cycle
                     state.recoveryStartBalance = state.balance;
-                    state.lossSum = 0; // Reset sum
+                    state.lossSum = state.streakLossSum; // ✅ Init with actual loss amount
                     state.recoveryLossStreak = state.consecutiveLosses; // Salva tamanho da sequencia atual para checar pausa depois
                     this.saveLog(userId, 'WARN', 'CORE', `⚠️ 2 LOSS no Principal -> Ativando MODO RECUPERAÇÃO (Rise/Fall).`);
                 }
@@ -2426,6 +2445,7 @@ export interface ZeusState {
     recoveryStartBalance: number;
     recoveryLossStreak: number; // tamanho da sequência que disparou a recuperação (pra pausa >=5)
     currentRecoveryLosses: number;
+    streakLossSum: number; // auxiliar para trackear loss acumulado no principal antes de entrar na recup
 
     // soros N1
     sorosPending: boolean;
