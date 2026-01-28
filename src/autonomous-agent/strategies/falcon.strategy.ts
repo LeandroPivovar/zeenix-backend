@@ -1104,56 +1104,53 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // Definir currentTradeId IMEDIATAMENTE, antes de chamar buyContract via API.
       state.currentTradeId = tradeId;
 
-      try {
-        // ✅ LOG: Notificar pedido de compra
-        await this.saveLog(userId, 'INFO', 'TRADER', `📡 SOLICITANDO COMPRA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`);
+      let lastErrorMsg = 'Falha ao comprar contrato';
+      // ✅ LOG: Notificar pedido de compra
+      await this.saveLog(userId, 'INFO', 'TRADER', `📡 SOLICITANDO COMPRA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`);
 
-        const contractId = await this.buyContract(
+      const contractId = await this.buyContract(
+        userId,
+        config.derivToken,
+        contractType,
+        config.symbol,
+        decision.stake || config.initialStake,
+        1, // duration em ticks (ZENIX v1.0 standard)
+        2, // maxRetries
+        tradeId // ✅ Passar tradeId para associar corretamente no callback
+      ).catch(err => {
+        lastErrorMsg = err.message || 'Falha ao comprar contrato';
+        return null;
+      });
+
+      if (contractId) {
+        state.currentContractId = contractId;
+        // state.currentTradeId = tradeId; // ✅ Já definido acima para evitar race condition
+
+        // ✅ Log de operação no padrão Orion/Zeus
+        await this.saveLog(
           userId,
-          config.derivToken,
-          contractType,
-          config.symbol,
-          decision.stake || config.initialStake,
-          1, // duration em ticks (ZENIX v1.0 standard)
-          2, // maxRetries
-          tradeId // ✅ Passar tradeId para associar corretamente no callback
+          'INFO',
+          'TRADER',
+          `⚡ ENTRADA CONFIRMADA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`,
         );
 
-        if (contractId) {
-          state.currentContractId = contractId;
-          // state.currentTradeId = tradeId; // ✅ Já definido acima para evitar race condition
-
-          // ✅ Log de operação no padrão Orion
-          await this.saveLog(
-            userId,
-            'INFO',
-            'TRADER',
-            `⚡ ENTRADA CONFIRMADA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`,
-          );
-
-          // ✅ Atualizar trade com contract_id
-          await this.updateTradeRecord(tradeId, {
-            contractId: contractId,
-            status: 'ACTIVE',
-          });
-        } else {
-          // Se falhou, resetar isWaitingContract e atualizar trade com erro
-          state.isWaitingContract = false;
-          state.waitingContractStartTime = null;
-          state.currentTradeId = null; // ✅ Resetar ID pois falhou
-          await this.updateTradeRecord(tradeId, {
-            status: 'ERROR',
-            errorMessage: 'Falha ao comprar contrato',
-          });
-          await this.saveLog(userId, 'ERROR', 'API', 'Falha ao comprar contrato. Aguardando novo sinal...');
-        }
-      } catch (error) {
-        // Se houve erro, resetar isWaitingContract
+        // ✅ Atualizar trade com contract_id
+        await this.updateTradeRecord(tradeId, {
+          contractId: contractId,
+          status: 'ACTIVE',
+        });
+      } else {
+        // Se falhou, resetar isWaitingContract e atualizar trade com erro
         state.isWaitingContract = false;
         state.waitingContractStartTime = null;
         state.currentTradeId = null; // ✅ Resetar ID pois falhou
-        this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato: `, error);
-        await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
+        state.currentContractId = null;
+
+        await this.updateTradeRecord(tradeId, {
+          status: 'ERROR',
+          errorMessage: lastErrorMsg,
+        });
+        await this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: ${lastErrorMsg}`);
       }
     } catch (error) {
       // ✅ Fallback de segurança máximo: resetar estado se qualquer erro crítico ocorrer antes/durante execução
@@ -1226,8 +1223,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
 
-    // ✅ OTIMIZAÇÃO: Reduzido delay inicial para 500ms para evitar gargalo
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // ✅ ESTABILIDADE ZEUS: Delay inicial de 3000ms antes da primeira tentativa
+    // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR no pool
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1359,17 +1357,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               const contract = contractMsg.proposal_open_contract;
               const state = this.userStates.get(userId);
 
-              this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
-
-              // ✅ DETAILED DEBUG: Log full message to see why it might be missed
-              this.logger.debug(`[Falcon][${userId}] 📥 Message details: ${JSON.stringify(contractMsg)}`);
+              this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold}, status=${contract.status}, profit=${contract.profit}`);
 
               // ✅ Atualizar entry_price quando disponível
               if (contract.entry_spot && state?.currentTradeId) {
                 this.updateTradeRecord(state.currentTradeId, {
                   entryPrice: Number(contract.entry_spot),
-                }).then(() => {
-                  this.logger.log(`[Falcon][${userId}] ✅ Entry price atualizado para ${contract.entry_spot} (trade #${state.currentTradeId})`);
                 }).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao atualizar entry_price:`, error);
                 });
@@ -1392,8 +1385,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 if (state) {
                   state.isWaitingContract = false;
                   state.waitingContractStartTime = null;
-                  state.currentContractId = null;
-                  state.currentTradeId = null;
                 }
 
                 // Remover subscription usando pool interno
@@ -1401,8 +1392,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 return;
               }
 
-              // ✅ Verificar se contrato foi finalizado (igual Orion)
-              // Aceitar tanto is_sold (1 ou true) quanto status ('won', 'lost', 'sold')
+              // ✅ Verificar se contrato foi finalizado
               const isFinalized = contract.is_sold === 1 || contract.is_sold === true ||
                 contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
 
@@ -1416,8 +1406,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // Processar resultado
                 this.onContractFinish(
                   userId,
-                  { win, profit, contractId, exitPrice, stake },
-                  tradeId // ✅ Passar tradeId do closure
+                  { win, profit, contractId, exitPrice, stake: roundedStake },
+                  tradeId
                 ).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
                 });
@@ -1427,8 +1417,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               }
             }
           },
-          contractId,
-          90000, // timeout 90s
+          String(contractId), // ✅ CAST TO STRING (Consistency Fix)
+          90000,
         );
 
         // ✅ Se chegou aqui, sucesso!
@@ -2131,7 +2121,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       ws: conn.ws,
       sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
       subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+        this.subscribeViaConnection(token, payload, callback, String(subId), timeoutMs),
       removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
     };
   }
