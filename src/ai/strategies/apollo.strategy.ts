@@ -71,6 +71,11 @@ export interface ApolloUserState {
   recoveryRecovered: number;
   recoveryStartLossStreak: number;
   sessionLoss: number;
+
+  // ================== NEW METRICS ==================
+  startTime: number;
+  totalOperations: number;
+  totalWins: number;
 }
 
 @Injectable()
@@ -99,112 +104,291 @@ export class ApolloStrategy implements IStrategy {
   // 🎨 HELPERS DE LOG PADRÃO ZENIX v2.0 (APOLLO)
   // ============================================
 
-  private logInitialConfigV2(userId: string, mode: string, riskProfile: string, profitTarget: number, stopLoss: number, useBlindado: boolean) {
-    const message = `CONFIGURAÇÕES INICIAIS
-IA: APOLLO
-Modo: ${mode.toUpperCase()}
-Perfil Corretora: ${riskProfile.toUpperCase()}
-Meta de Lucro: $${profitTarget.toFixed(2)}
-Limite de Perda: $${stopLoss.toFixed(2)}
-Stop Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`;
+  // ============================================
+  // 🎨 HELPERS DE LOG PADRÃO ZENIX (OFICIAL)
+  // ============================================
 
-    this.saveLog(userId, 'info', message);
-  }
+  // 🔵 LOGS DE SISTEMA / INFORMAÇÃO
 
-  private logSessionStart(userId: string, initialBalance: number, meta: number) {
-    const message = `INÍCIO DE SESSÃO
+  private logSessionStart(userId: string, initialBalance: number, meta: number, stopLoss: number, strategy: string, symbol: string, mode: string) {
+    const message = `Início de Sessão
 Saldo Inicial: $${initialBalance.toFixed(2)}
-Meta do Dia: $${meta.toFixed(2)}
-IA Ativa: APOLLO
-Status: Monitorando Mercado`;
-
+Meta de Lucro: $${meta.toFixed(2)}
+Stop Loss: $${stopLoss.toFixed(2)}
+Estratégia: ${strategy.toUpperCase()}
+Símbolo: ${symbol}
+Modo Inicial: ${mode.toUpperCase()}
+Ação: iniciar coleta de dados`;
     this.saveLog(userId, 'info', message);
   }
 
   private logDataCollection(userId: string, current: number, target: number) {
-    const message = `COLETA DE DADOS
-Coleta de Dados em Andamento
+    const message = `Coleta de Dados em Andamento
 Meta de Coleta: ${target} ticks
 Progresso: ${current} / ${target}
-Status: aguardando ticks suficientes`;
-    this.saveLog(userId, 'analise', message);
+Status: aguardando ticks suficientes
+Ação: aguardar coleta mínima`;
+    this.saveLog(userId, 'info', message);
   }
 
-  private logAnalysisStarted(userId: string, mode: string) {
-    const message = `ANÁLISE INICIADA
-Análise de Mercado
+  private logAnalysisStarted(userId: string, mode: string, contractType: string) {
+    const message = `Análise de Mercado
 Tipo de Análise: PRINCIPAL
 Modo Ativo: ${mode.toUpperCase()}
-Contrato Avaliado: Price Action (1 tick)`;
-    this.saveLog(userId, 'analise', message);
-  }
-
-  private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
-    const filtersText = filters.map((f, i) => `• ${f}`).join('\n');
-    const message = `SINAL DETECTADO
-Direção: ${signal}
-${filtersText}
-Força: ${probability}%
-Tipo de Contrato: Rise/Fall`;
-    this.saveLog(userId, 'sinal', message);
-  }
-
-  private logTradeResultV2(
-    userId: string,
-    result: 'WIN' | 'LOSS',
-    profit: number,
-    balance: number,
-    contractInfo?: { exitDigit?: string }
-  ) {
-    const message = `RESULTADO DA OPERAÇÃO
-Status: ${result}
-Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
-Saldo Atual: $${balance.toFixed(2)}
-Estado: Operação Finalizada`;
-
-    this.saveLog(userId, 'resultado', message);
-  }
-
-  private logMartingaleLevelV2(userId: string, level: number, stake: number) {
-    const message = `MARTINGALE NÍVEL ${level}
-Próxima Stake: $${stake.toFixed(2)}
-Objetivo: Recuperação de Capital
-Investimento: Inteligência Artificial
-Status: Aguardando Próximo Ciclo`;
-    this.saveLog(userId, 'alerta', message);
-  }
-
-  private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
-    const message =
-      `APOLLO | Soros Nível ${level}
-• Lucro Anterior: $${profit.toFixed(2)}
-• Nova Stake: $${newStake.toFixed(2)}`;
+Contrato Avaliado: ${contractType}
+Objetivo: identificar sinal válido`;
     this.saveLog(userId, 'info', message);
   }
 
-  private logWinStreak(userId: string, count: number, profit: number) {
-    const message =
-      `APOLLO | Sequência: ${count} Vitórias
-• Lucro Acumulado: $${profit.toFixed(2)}`;
+  private logModeEvaluation(userId: string, mode: string, winRate: number, consecutiveLosses: number, decision: string) {
+    const message = `Avaliação de Modo
+Modo Atual: ${mode.toUpperCase()}
+Win Rate Local: ${winRate.toFixed(1)}%
+Perdas Consecutivas: ${consecutiveLosses}
+Decisão: ${decision}`;
     this.saveLog(userId, 'info', message);
   }
 
-  private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
-    const message = `RECUPERAÇÃO CONCLUÍDA
-Recuperação Bem-Sucedida
-Recuperado: $${totalLoss.toFixed(2)}
-Ação: Retornando à Stake Base
-Status: Sessão Equilibrada`;
+  private logContractCreated(userId: string, contractType: string, direction: string, stake: number, proposalId: string, latency: number) {
+    const message = `Contrato Criado
+Contrato: ${contractType}
+Direção: ${direction}
+Stake: $${stake.toFixed(2)}
+Proposal ID: ${proposalId}
+Latência de Criação: ${latency} ms
+Ação: aguardar execução`;
     this.saveLog(userId, 'info', message);
+  }
+
+  private logExecutionConfirmed(userId: string, contractId: string, executionTime: number, entryPrice: number) {
+    const message = `Execução Confirmada
+Contrato ID: ${contractId}
+Tempo de Execução: ${executionTime} ms
+Preço de Entrada: ${entryPrice}
+Status: contrato ativo`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logStateReset(userId: string, oldMode: string, newMode: string, oldAnalysis: string, newAnalysis: string, oldMartingale: string, newMartingale: string) {
+    const message = `Reset de Estado
+Modo: ${oldMode} → ${newMode}
+Análise: ${oldAnalysis} → ${newAnalysis}
+Martingale: ${oldMartingale} → ${newMartingale}
+Motivo: recuperação concluída`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  private logSessionEnd(userId: string, reason: string, initialBalance: number, finalBalance: number, duration: string, operations: number, winRate: number) {
+    const message = `Encerramento de Sessão
+Motivo: ${reason}
+Saldo Inicial: $${initialBalance.toFixed(2)}
+Saldo Final: ${finalBalance.toFixed(2)}
+Duração: ${duration}
+Operações Executadas: ${operations}
+Win Rate: ${winRate.toFixed(2)}%`;
+    this.saveLog(userId, 'info', message);
+  }
+
+  // 🟡 LOGS DE DEFESA / BLOQUEIO
+
+  private logBlockedEntry(userId: string, reason: string, criteria: string, detected: string, required: string) {
+    const message = `Entrada Bloqueada
+Motivo: ${reason}
+Critério Avaliado: ${criteria}
+Detectado: ${detected}
+Exigido: ${required}
+Ação: aguardar próximo ciclo`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logBlockedEntryState(userId: string, reason: string, state: string, remainingTime: string) {
+    const message = `Entrada Bloqueada
+Motivo: ${reason}
+Estado Atual: ${state}
+Tempo Restante: ${remainingTime}
+Ação: aguardar liberação`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logAnalysisChange(userId: string, oldAnalysis: string, newAnalysis: string, reason: string) {
+    const message = `Troca de Análise
+Análise Anterior: ${oldAnalysis}
+Nova Análise: ${newAnalysis}
+Motivo: ${reason}`;
+    this.saveLog(userId, 'warning', message);
   }
 
   private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
-    const message =
-      `APOLLO | Ajuste de Operação
-• De: ${oldContract}
-• Para: ${newContract}
-• Motivo: ${reason}`;
-    this.saveLog(userId, 'info', message);
+    const message = `Troca de Contrato
+Contrato Anterior: ${oldContract}
+Contrato Atual: ${newContract}
+Motivo: ${reason}`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logRecoveryStart(userId: string, riskProfile: string, losses: number, target: number, contract: string) {
+    const message = `Entrada em Recuperação
+Perfil de Risco: ${riskProfile.toUpperCase()}
+Perdas Acumuladas: $${losses.toFixed(2)}
+Alvo de Recuperação: $${target.toFixed(2)}
+Contrato: ${contract}`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logRecoveryPartial(userId: string, recovered: number, remaining: number) {
+    const message = `Recuperação Parcial
+Recuperado até agora: +$${recovered.toFixed(2)}
+Falta para concluir: $${remaining.toFixed(2)}
+Ação: recalcular stake`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logMartingaleLevel(userId: string, level: number, multiplier: number, stake: number, limit: number) {
+    const message = `Recuperação Ativa
+Nível Atual: M${level}
+Multiplicador: ${multiplier.toFixed(1)}x
+Próxima Stake: $${stake.toFixed(2)}
+Limite Máximo: M${limit}`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logStrategicPauseEvaluated(userId: string, reason: string, status: string) {
+    const message = `Pausa Estratégica Avaliada
+Motivo: ${reason}
+Status: ${status}`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logStrategicPauseActivated(userId: string, reason: string, duration: string) {
+    const message = `Pausa Estratégica
+Motivo: ${reason}
+Duração: ${duration}
+Ação: bloquear entradas temporariamente`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logStrategicPauseEnded(userId: string, status: string) {
+    const message = `Pausa Estratégica Encerrada
+Status: ${status}`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  private logAnalysisRejected(userId: string, reason: string, delta: number, threshold: number) {
+    const message = `Entrada Bloqueada
+Motivo: ${reason}
+Delta: ${delta.toFixed(5)}
+Limiar Exigido: > ${threshold}
+Ação: aguardar sinal mais forte`;
+    this.saveLog(userId, 'warning', message);
+  }
+
+  // 🟢 LOGS DE SUCESSO
+
+  private logSignalGenerated(userId: string, analysis: string, mode: string, direction: string, force: number, contract: string, stake: number) {
+    const message = `Sinal de Entrada
+Análise: ${analysis}
+Modo: ${mode.toUpperCase()}
+Direção: ${direction}
+Força do Sinal: ${force}%
+Contrato: ${contract}
+Stake Calculada: $${stake.toFixed(2)}`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logTradeResult(userId: string, status: 'WIN' | 'LOSS', direction: string, contract: string, profit: number, balance: number) {
+    const type = status === 'WIN' ? 'success' : 'error';
+    const message = `Resultado da Operação
+Status: ${status}
+Direção: ${direction}
+Contrato: ${contract}
+Resultado Financeiro: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}
+Saldo Atual: $${balance.toFixed(2)}`;
+    this.saveLog(userId, type, message);
+  }
+
+  private logSorosLevel(userId: string, profit: number, baseStake: number, newStake: number) {
+    const message = `Soros Nível 1 Aplicado
+Lucro Anterior: +$${profit.toFixed(2)}
+Stake Base: $${baseStake.toFixed(2)}
+Nova Stake: $${newStake.toFixed(2)}`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logWinStreak(userId: string, count: number, profit: number) {
+    const message = `Sequência Positiva Detectada
+Vitórias Consecutivas: ${count}
+Lucro Acumulado: +$${profit.toFixed(2)}`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logRecoveryCompleted(userId: string, target: number, balance: number) {
+    const message = `Recuperação Finalizada
+Alvo Atingido: $${target.toFixed(2)}
+Saldo Atual: $${balance.toFixed(2)}
+Ação: reset para análise principal`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logStopBlindadoStatus(userId: string, profit: number, peak: number, floor: number) {
+    const message = `Stop Blindado
+Status: MONITORANDO
+Lucro Atual: +$${profit.toFixed(2)}
+Pico Atual: +$${peak.toFixed(2)}
+Piso Atual: +$${floor.toFixed(2)}`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logStopBlindadoActivated(userId: string, profit: number, peak: number, floor: number) {
+    const message = `Stop Blindado Ativo
+Lucro Atingido: +$${profit.toFixed(2)}
+Pico Atual: +$${peak.toFixed(2)}
+Piso de Proteção: +$${floor.toFixed(2)}`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logBlindadoStabilized(userId: string, profit: number, floor: number) {
+    const message = `Blindado Estabilizado
+Lucro Atual: +$${profit.toFixed(2)}
+Piso Atual: +$${floor.toFixed(2)}
+Ação: liberar novas operações`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  private logProfitTargetReached(userId: string, profit: number, finalBalance: number, operations: number, winRate: number) {
+    const message = `Meta Alcançada
+Lucro Final: +$${profit.toFixed(2)}
+Saldo Final: $${finalBalance.toFixed(2)}
+Operações Executadas: ${operations}
+Win Rate: ${winRate.toFixed(2)}%`;
+    this.saveLog(userId, 'success', message);
+  }
+
+  // 🔴 LOGS DE ERRO / PERDA
+
+  private logInsufficientBalance(userId: string, stake: number, available: number) {
+    const message = `Entrada Bloqueada
+Motivo: stake maior que saldo disponível
+Stake Calculada: $${stake.toFixed(2)}
+Saldo Disponível: $${available.toFixed(2)}
+Ação: reduzir stake ou bloquear entrada`;
+    this.saveLog(userId, 'error', message);
+  }
+
+  private logStopLossReached(userId: string, loss: number, finalBalance: number) {
+    const message = `Stop Loss da Sessão
+Perda Total: -$${Math.abs(loss).toFixed(2)}
+Saldo Final: $${finalBalance.toFixed(2)}
+Ação: encerrar sessão imediatamente`;
+    this.saveLog(userId, 'error', message);
+  }
+
+  private logConnectionError(userId: string, type: string, attempt: number, maxAttempts: number) {
+    const message = `Erro de Conexão
+Tipo: ${type}
+Tentativa: ${attempt} de ${maxAttempts}
+Status: operações pausadas
+Ação: reconectar automaticamente`;
+    this.saveLog(userId, 'error', message);
   }
 
   constructor(
@@ -237,7 +421,7 @@ Status: Sessão Equilibrada`;
     const lastLog = this.lastLogTimeNodes.get(symbol) || 0;
     if (now - lastLog > 10000) {
       const usersOnSymbol = Array.from(this.users.values()).filter(u => u.symbol === symbol).length;
-      this.logger.debug(`[APOLLO][${symbol}] 📊 Ticks: ${ticks.length}/20 | Users: ${usersOnSymbol}`);
+      this.logger.debug(`[APOLLO][${symbol}]Ticks: ${ticks.length}/20 | Users: ${usersOnSymbol}`);
       this.lastLogTimeNodes.set(symbol, now);
     }
 
@@ -278,6 +462,14 @@ Status: Sessão Equilibrada`;
     // 3. ANALYZE SIGNAL
     const signal = this.analyzeSignal(state, ticks);
 
+    // LOG ANALYSIS RESULT (Reject Reasons)
+    // analyzeSignal now logs internally if rejected, or we can move log logic there.
+    // Ideally, analyzeSignal should return detail if null.
+
+    // Refactor analyzeSignal to be void/return internal but let's just log rejections.
+    // Since analyzeSignal returns null, we don't know WHY.
+    // I will check delta inside analyzeSignal to log rejections.
+
     // ✅ Reset count after analysis (Respects "Wait for next X ticks" rule)
     state.ticksColetados = 0;
 
@@ -297,18 +489,29 @@ Status: Sessão Equilibrada`;
     // --- MODO VELOZ ---
     if (state.mode === 'veloz') {
       // Delta >= 0 -> CALL, else PUT
+      // Veloz is very permissive, usually always trades if direction changes or continues?
+      // "Veloz (1 Filter)" - usually just Price Action.
+      // If delta is 0, arguably no signal, but let's assume it accepts.
       return delta >= 0 ? 'CALL' : 'PUT';
     }
 
     // --- MODO NORMAL ---
     if (state.mode === 'normal') {
-      if (Math.abs(delta) < 0.25) return null;
+      if (Math.abs(delta) < 0.25) {
+        // Log rejection
+        this.logAnalysisRejected(state.userId, 'volatilidade insuficiente (normal)', Math.abs(delta), 0.25);
+        return null;
+      }
       return delta >= 0 ? 'CALL' : 'PUT';
     }
 
     // --- MODO PRECISO (LENTO) ---
     if (state.mode === 'lento') {
-      if (Math.abs(delta) < 0.4) return null; // New threshold 0.4
+      if (Math.abs(delta) < 0.4) {
+        // Log rejection
+        this.logAnalysisRejected(state.userId, 'volatilidade insuficiente (lento)', Math.abs(delta), 0.4);
+        return null; // New threshold 0.4
+      }
       return delta >= 0 ? 'CALL' : 'PUT';
     }
 
@@ -326,7 +529,7 @@ Status: Sessão Equilibrada`;
     // Validate if local capital estimate is enough (with 10% margin)
     const requiredBalance = stake * 1.1;
     if (state.capital < requiredBalance) {
-      this.saveLog(state.userId, 'erro', `SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${requiredBalance.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`);
+      this.logInsufficientBalance(state.userId, stake, state.capital);
       await this.handleStopInternal(state, 'insufficient_balance', state.capital);
       return;
     }
@@ -349,8 +552,8 @@ Status: Sessão Equilibrada`;
         // Stop reached
         const isBlindado = state.stopBlindadoActive;
         const msg = isBlindado
-          ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
-          : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+          ? `Stop Blindado Atingido Por Ajuste De Entrada!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
+          : `Stop Loss Atingido Por Ajuste De Entrada!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
 
         this.saveLog(state.userId, 'alerta', msg);
         this.handleStopInternal(state, isBlindado ? 'blindado' : 'loss', isBlindado ? state.stopBlindadoFloor : -state.stopLoss);
@@ -358,8 +561,8 @@ Status: Sessão Equilibrada`;
       }
       stake = Number(limitRemaining.toFixed(2));
       const adjMsg = state.stopBlindadoActive
-        ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${stake.toFixed(2)}\n• Lucro Protegido Restante: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para não violar a proteção.`
-        : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${stake.toFixed(2)}\n• Saldo Restante até Stop: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para respeitar o Stop Loss.`;
+        ? `Ajuste De Risco (Proteção De Lucro)\n• Stake Calculada: $${stake.toFixed(2)}\n• Lucro Protegido Restante: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para não violar a proteção.`
+        : `Ajuste De Risco (Stop Loss)\n• Stake Calculada: $${stake.toFixed(2)}\n• Saldo Restante até Stop: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para respeitar o Stop Loss.`;
 
       this.saveLog(state.userId, 'alerta', adjMsg);
     }
@@ -368,7 +571,7 @@ Status: Sessão Equilibrada`;
 
     // 3. RECUPERAÇÃO / MARTINGALE LOG
     if (state.consecutiveLosses > 0) {
-      this.logMartingaleLevelV2(state.userId, state.consecutiveLosses, stake);
+      this.logMartingaleLevel(state.userId, state.consecutiveLosses, 2.0, stake, 10); // Standard Martingale Log
     }
 
     // 4. EXECUTE
@@ -488,8 +691,8 @@ Status: Sessão Equilibrada`;
     } catch (e) { console.error(e); }
 
     // --- LOG RESULT ---
-    // ✅ LOG PADRONIZADO V2: Resultado Detalhado
-    this.logTradeResultV2(state.userId, win ? 'WIN' : 'LOSS', profit, state.capital);
+    // ✅ LOG PADRONIZADO (OFICIAL)
+    this.logTradeResult(state.userId, win ? 'WIN' : 'LOSS', state.lastEntryDirection || 'N/A', 'Rise/Fall', profit, state.capital);
 
     // --- UPDATE STATE ---
     // --- UPDATE STATE (NEW STATE MACHINE) ---
@@ -506,7 +709,8 @@ Status: Sessão Equilibrada`;
           state.consecutiveLosses = 0;
           state.sessionLoss = 0;
 
-          this.logSuccessfulRecoveryV2(state.userId, state.recoveryTarget, state.recoveryRecovered, state.capital);
+          this.logRecoveryCompleted(state.userId, state.recoveryTarget, state.capital);
+          this.logStateReset(state.userId, 'RECUPERAÇÃO', 'NORMAL', 'RECUPERAÇÃO', 'PRINCIPAL', 'M' + state.recoveryStartLossStreak, 'M0');
         }
       }
 
@@ -515,17 +719,28 @@ Status: Sessão Equilibrada`;
         state.mode = 'veloz';
       }
 
-      // (Soros logic removed)
+      // -- Soros Level 1 (Conservative) --
+      if (!state.isRecovering) {
+        if (state.sorosLevel === 0) {
+          state.sorosLevel = 1;
+
+        } else if (state.sorosLevel === 1) {
+          state.sorosLevel = 0; // Reset after level 1
+        }
+      } else {
+        state.sorosLevel = 0;
+      }
       state.totalLossAccumulated = 0;
 
     } else {
       // LOSS
       state.consecutiveLosses++;
+      state.sorosLevel = 0; // Reset Soros on Loss
       state.sessionLoss += stakeUsed; // Accumulate for recovery calculation
       // state.totalLossAccumulated += stakeUsed; // Legacy
 
       // -- Start Recovery Trigger --
-      if (!state.isRecovering && state.consecutiveLosses >= 2) {
+      if (!state.isRecovering && state.consecutiveLosses >= 1) {
         state.isRecovering = true;
         state.recoveryStartLossStreak = state.consecutiveLosses;
 
@@ -536,7 +751,7 @@ Status: Sessão Equilibrada`;
         state.recoveryTarget = state.sessionLoss * multiplier;
         state.recoveryRecovered = 0;
 
-        this.saveLog(state.userId, 'alerta', `[RECUPERAÇÃO] Iniciando modo recuperação. Alvo: $${state.recoveryTarget.toFixed(2)}`);
+        this.logRecoveryStart(state.userId, state.riskProfile, state.sessionLoss, state.recoveryTarget, 'Rise/Fall');
       }
 
       // -- Switch Mode on Loss --
@@ -583,7 +798,15 @@ Status: Sessão Equilibrada`;
     }
 
     // --- Se NÃO estiver recuperando, usa Stake Base ---
-    if (!state.isRecovering) return baseStake;
+    if (!state.isRecovering) {
+      // Soros Level 1 Check
+      if (state.sorosLevel === 1) {
+        const sorosStake = baseStake + state.lastProfit;
+        this.logSorosLevel(state.userId, state.lastProfit, baseStake, sorosStake);
+        return Number(sorosStake.toFixed(2));
+      }
+      return baseStake;
+    }
 
     // --- Lógica de Recuperação ---
     const toRecover = state.recoveryTarget - state.recoveryRecovered;
@@ -635,24 +858,21 @@ Status: Sessão Equilibrada`;
 
     // 1. PROFIT TARGET
     if (profit >= state.profitTarget) {
-      this.saveLog(state.userId, 'resultado',
-        `🎯 META DE LUCRO ATINGIDA! Lucro: $${profit.toFixed(2)} | Meta: $${state.profitTarget.toFixed(2)} - IA DESATIVADA`);
+      this.logProfitTargetReached(state.userId, profit, state.capital, state.totalOperations || 0, ((state.totalWins || 0) / (state.totalOperations || 1)) * 100);
       this.handleStopInternal(state, 'profit', profit);
       return false;
     }
 
     // 2. STOP LOSS NORMAL
     if (profit <= -state.stopLoss) {
-      this.saveLog(state.userId, 'alerta',
-        `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(profit).toFixed(2)} | Limite: $${state.stopLoss.toFixed(2)} - IA DESATIVADA`);
+      this.logStopLossReached(state.userId, profit, state.capital);
       this.handleStopInternal(state, 'loss', profit);
       return false;
     }
 
     // 3. STOP BLINDADO
     if (state.stopBlindadoActive && profit <= state.stopBlindadoFloor) {
-      this.saveLog(state.userId, 'alerta',
-        `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${profit.toFixed(2)} - IA DESATIVADA`);
+      this.saveLog(state.userId, 'error', `STOP BLINDADO ATINGIDO\nLucro protegido: $${profit.toFixed(2)}\nIA DESATIVADA`);
       this.handleStopInternal(state, 'blindado', state.stopBlindadoFloor);
       return false;
     }
@@ -717,6 +937,9 @@ Status: Sessão Equilibrada`;
       apostaInicial: config.entryValue || 0.35,
       stopLoss: config.lossLimit || 50,
       profitTarget: config.profitTarget || 10,
+      startTime: Date.now(),
+      totalOperations: 0,
+      totalWins: 0,
       useBlindado: config.useBlindado !== false,
       symbol: selectedSymbol,
 
@@ -746,16 +969,16 @@ Status: Sessão Equilibrada`;
     this.users.set(userId, initialState);
     this.getOrCreateWebSocketConnection(config.derivToken);
 
-    // ✅ LOGS PADRONIZADOS V2
-    this.logInitialConfigV2(
+    // ✅ LOGS PADRONIZADOS (OFICIAL)
+    this.logSessionStart(
       userId,
-      initialState.mode.toUpperCase(),
-      initialState.riskProfile.toUpperCase(),
+      initialState.capital,
       initialState.profitTarget,
       initialState.stopLoss,
-      initialState.useBlindado
+      'APOLLO',
+      initialState.symbol,
+      initialState.mode
     );
-    this.logSessionStart(userId, initialState.capital, initialState.profitTarget);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -765,10 +988,21 @@ Status: Sessão Equilibrada`;
   getUserState(userId: string) { return this.users.get(userId); }
 
   private saveLog(userId: string, type: string, message: string) {
-    const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌' };
+    const iconMap: any = {
+      'info': '🔵',
+      'warning': '🟡',
+      'success': '🟢',
+      'error': '🔴',
+      // Backwards compatibility mappings if needed internally
+      'alerta': '🟡', 'sinal': '🟢', 'resultado': '🟢', 'erro': '🔴'
+    };
+
+    // Use mapped icon or default based on new types. 
+    // If type is unknown, default to info.
+    const icon = iconMap[type] || '🔵';
 
     this.dataSource.query(`INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
-      [userId, type, iconMap[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
+      [userId, type, icon, message, JSON.stringify({ strategy: 'apollo' })]
     ).catch(e => console.error('Error saving log', e));
 
     this.tradeEvents.emitLog({
@@ -812,7 +1046,8 @@ Status: Sessão Equilibrada`;
   ): Promise<{ contractId: string, profit: number, exitSpot: any, entrySpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
     if (!conn) {
-      this.saveLog(userId, 'erro', `Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
+      this.saveLog(userId, 'erro', `Erro de Conexão
+Motivo: Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
       return null;
     }
 
@@ -836,19 +1071,24 @@ Status: Sessão Equilibrada`;
 
       const propPromise = await conn.sendRequest(req);
 
-      // ✅ Validação de Erro na Proposta (Padrão Orion)
       const errorObj = propPromise.error || propPromise.proposal?.error;
       if (errorObj) {
         const errorCode = errorObj?.code || '';
         const errorMessage = errorObj?.message || JSON.stringify(errorObj);
 
-        let userMessage = `❌ Erro na proposta da Deriv | Código: ${errorCode} | Mensagem: ${errorMessage}`;
+        let userMessage = `Erro na Proposta
+Código: ${errorCode}
+Mensagem: ${errorMessage}`;
+
         if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
-          userMessage = `❌ Erro temporário (WrongResponse). Tentando novamente...`;
+          userMessage = `Erro de Conexão
+Motivo: Erro temporário (WrongResponse). Tentando novamente...`;
         } else if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-          userMessage = `💡 Saldo insuficiente na Deriv.`;
+          userMessage = `Saldo Insuficiente
+Motivo: Saldo insuficiente na Deriv.`;
         } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
-          userMessage = `💡 Rate limit atingido. Aguarde.`;
+          userMessage = `Limite de Taxa
+Motivo: Rate limit atingido. Aguarde.`;
         }
 
         this.saveLog(userId, 'erro', userMessage);
@@ -872,7 +1112,8 @@ Status: Sessão Equilibrada`;
         buyResponse = await conn.sendRequest(buyReq, 60000);
       } catch (error: any) {
         const errorMessage = error?.message || JSON.stringify(error);
-        this.saveLog(userId, 'erro', `FALHA NA ENTRADA: ${errorMessage}`);
+        this.saveLog(userId, 'erro', `Falha na Entrada
+Motivo: ${errorMessage}`);
 
         if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
           // ✅ Buscando contas do usuário para log detalhado
@@ -888,7 +1129,8 @@ Status: Sessão Equilibrada`;
                     `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
                   ).join('\n');
 
-                  this.saveLog(userId, 'alerta', `📋 Contas Disponíveis (Cache):\n${accountListInfo}`);
+                  this.saveLog(userId, 'alerta', `Contas Disponíveis (Cache)
+${accountListInfo}`);
                 }
               }
             }).catch(err => {
@@ -901,18 +1143,15 @@ Status: Sessão Equilibrada`;
 
       if (buyResponse.error || buyResponse.buy?.error) {
         const buyError = buyResponse.error || buyResponse.buy?.error;
-        this.saveLog(userId, 'erro', `Erro na Compra: ${buyError.message || JSON.stringify(buyError)}`);
+        this.saveLog(userId, 'erro', `Erro na Compra
+Motivo: ${buyError.message || JSON.stringify(buyError)}`);
         return null;
       }
 
       const contractId = buyResponse.buy.contract_id;
       const buyDuration = Date.now() - buyStartTime;
 
-      this.saveLog(userId, 'operacao',
-        `✅ CONTRATO CRIADO\n` +
-        `• ID: ${contractId}\n` +
-        `• Latência Proposta: ${proposalDuration}ms\n` +
-        `• Latência Compra: ${buyDuration}ms`);
+      this.logContractCreated(userId, 'Rise/Fall', params.contract_type === 'CALL' ? 'CALL' : 'PUT', params.amount, String(proposalId), proposalDuration);
 
       // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
       if (onBuy) {
@@ -933,7 +1172,8 @@ Status: Sessão Equilibrada`;
           if (!hasResolved) {
             hasResolved = true;
             conn.removeSubscription(contractId);
-            this.saveLog(userId, 'erro', `⚠️ Timeout monitoramento (90s). Verifique conexão.`);
+            this.saveLog(userId, 'erro', `Erro de Monitoramento
+Motivo: Timeout (90s). Verifique conexão.`);
             resolve(null);
           }
         }, 90000);
@@ -948,7 +1188,8 @@ Status: Sessão Equilibrada`;
                 hasResolved = true;
                 clearTimeout(contractMonitorTimeout!);
                 conn.removeSubscription(contractId);
-                this.saveLog(userId, 'erro', `Erro no monitoramento: ${msg.error.message}`);
+                this.saveLog(userId, 'erro', `Erro no Monitoramento
+Motivo: ${msg.error.message}`);
                 resolve(null);
               }
               return;
@@ -983,7 +1224,8 @@ Status: Sessão Equilibrada`;
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(contractMonitorTimeout!);
-            this.saveLog(userId, 'erro', `Falha ao inscrever no monitoramento: ${e.message}`);
+            this.saveLog(userId, 'erro', `Falha na Inscrição
+Motivo: ${e.message}`);
             resolve(null);
           }
         });
