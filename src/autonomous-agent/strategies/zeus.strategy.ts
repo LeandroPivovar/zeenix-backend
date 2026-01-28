@@ -1912,9 +1912,25 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                         }
                     }
 
-                    // ✅ Processar respostas de requisições (proposal, buy, etc.) - PRIORIDADE 2
+                    // ✅ Processar respostas de requisições (ROTEAMENDO POR REQ_ID / PASSTHROUGH) - PRIORIDADE 2
+                    const reqId = msg.req_id || (msg.echo_req?.passthrough?.req_id);
+
+                    if (reqId && conn.pendingRequests.has(reqId)) {
+                        const pending = conn.pendingRequests.get(reqId);
+                        if (pending) {
+                            clearTimeout(pending.timeout);
+                            conn.pendingRequests.delete(reqId);
+                            if (msg.error) {
+                                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                            } else {
+                                pending.resolve(msg);
+                            }
+                            return; // Resolvido
+                        }
+                    }
+
+                    // ✅ FALLBACK: Processar por tipo se não tiver reqId (Apenas para garantir compatibilidade)
                     if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-                        // Processar primeira requisição pendente (FIFO)
                         const firstKey = conn.pendingRequests.keys().next().value;
                         if (firstKey) {
                             const pending = conn.pendingRequests.get(firstKey);
@@ -2014,7 +2030,17 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }, timeoutMs);
 
             conn.pendingRequests.set(requestId, { resolve, reject, timeout });
-            conn.ws.send(JSON.stringify(payload));
+
+            // ✅ Garantir que o req_id vá na requisição para roteamento seguro
+            const enrichedPayload = {
+                ...payload,
+                passthrough: {
+                    ...payload.passthrough,
+                    req_id: requestId
+                }
+            };
+
+            conn.ws.send(JSON.stringify(enrichedPayload));
         });
     }
 
