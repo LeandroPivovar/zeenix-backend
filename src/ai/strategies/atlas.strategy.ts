@@ -1723,6 +1723,9 @@ Ação: IA DESATIVADA`
             [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
+          // ✅ [DEBUG] Confirmar que UPDATE foi executado
+          this.logger.warn(`[ATLAS] 🛡️ STOP BLINDADO - UPDATE executado! session_status = 'stopped_blindado', userId: ${state.userId}`);
+
           this.tradeEvents.emit({
             userId: state.userId,
             type: 'stopped_blindado',
@@ -1734,12 +1737,20 @@ Ação: IA DESATIVADA`
 
           this.atlasUsers.delete(state.userId);
           state.isStopped = true;
+
+          // ✅ [FIX] Log final e RETURN imediatamente
+          this.logger.warn(`[ATLAS] 🛡️ STOP BLINDADO - IA parada, saindo de checkAtlasLimits()...`);
           return;
         }
       }
     }
 
     // 3. Stop Loss Normal
+    // ✅ [FIX] Verificar se IA já foi parada antes
+    if (state.isStopped) {
+      this.logger.log(`[ATLAS] ⏸️ IA já foi parada, ignorando verificação de Stop Loss Normal`);
+      return;
+    }
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
       this.saveAtlasLog(state.userId, symbol, 'alerta',
