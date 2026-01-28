@@ -1356,8 +1356,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               const contract = contractMsg.proposal_open_contract;
               const state = this.userStates.get(userId);
 
-              // ✅ Log de debug para rastrear atualizações do contrato
               this.logger.debug(`[Falcon][${userId}] 📊 Atualização do contrato ${contractId}: is_sold=${contract.is_sold} (tipo: ${typeof contract.is_sold}), status=${contract.status}, profit=${contract.profit}`);
+
+              // ✅ DETAILED DEBUG: Log full message to see why it might be missed
+              this.logger.debug(`[Falcon][${userId}] 📥 Message details: ${JSON.stringify(contractMsg)}`);
 
               // ✅ Atualizar entry_price quando disponível
               if (contract.entry_spot && state?.currentTradeId) {
@@ -1492,80 +1494,86 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.currentTradeId = null;
     }
 
-    // ✅ Prevenção de Processamento Duplicado
-    // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
-    let finalTradeId = tradeId;
-    if (!finalTradeId) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId}). Tentando recuperar do banco...`);
-      try {
-        const trade = await this.dataSource.query('SELECT id FROM trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
-        if (trade && trade.length > 0) {
-          finalTradeId = trade[0].id;
-          this.logger.log(`[Falcon][${userId}] ✅ TradeId recuperado do banco: ${finalTradeId}`);
+    try {
+      // ✅ Prevenção de Processamento Duplicado
+      // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
+      let finalTradeId = tradeId;
+      if (!finalTradeId) {
+        this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId}). Tentando recuperar do banco...`);
+        try {
+          const trade = await this.dataSource.query('SELECT id FROM trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
+          if (trade && trade.length > 0) {
+            finalTradeId = trade[0].id;
+            this.logger.log(`[Falcon][${userId}] ✅ TradeId recuperado do banco: ${finalTradeId}`);
+          }
+        } catch (e) {
+          this.logger.error(`[Falcon][${userId}] Falha ao recuperar trade do banco:`, e);
         }
-      } catch (e) {
-        this.logger.error(`[Falcon][${userId}] Falha ao recuperar trade do banco:`, e);
       }
-    }
 
-    if (!finalTradeId) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ ABORTANDO: Impossível identificar trade para contrato ${result.contractId}`);
-      return;
-    }
-
-    // Usar finalTradeId daqui para frente
-    const processingTradeId = finalTradeId;
-
-    this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${processingTradeId} | Win: ${result.win} | Profit: ${result.profit}`);
-
-    // ✅ Atualizar trade no banco com resultado
-    if (processingTradeId) {
-      try {
-        await this.updateTradeRecord(processingTradeId, {
-          status: result.win ? 'WON' : 'LOST',
-          exitPrice: result.exitPrice || 0,
-          profitLoss: result.profit,
-          closedAt: new Date(),
-        });
-        this.logger.log(`[Falcon][${userId}] ✅ Trade ${processingTradeId} atualizado no banco de dados`);
-      } catch (error) {
-        this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${processingTradeId} no banco:`, error);
+      if (!finalTradeId) {
+        this.logger.warn(`[Falcon][${userId}] ⚠️ ABORTANDO: Impossível identificar trade para contrato ${result.contractId}`);
+        return;
       }
-    } else {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
+
+      // Usar finalTradeId daqui para frente
+      const processingTradeId = finalTradeId;
+
+      this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${processingTradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+
+      // ✅ Atualizar trade no banco com resultado
+      if (processingTradeId) {
+        try {
+          await this.updateTradeRecord(processingTradeId, {
+            status: result.win ? 'WON' : 'LOST',
+            exitPrice: result.exitPrice || 0,
+            profitLoss: result.profit,
+            closedAt: new Date(),
+          });
+          this.logger.log(`[Falcon][${userId}] ✅ Trade ${processingTradeId} atualizado no banco de dados`);
+        } catch (error) {
+          this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${processingTradeId} no banco:`, error);
+        }
+      } else {
+        this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
+      }
+
+      // Atualizar estado
+      state.opsCount++;
+      state.lastProfit = result.profit;
+      state.lucroAtual += result.profit;
+
+      // Atualizar modo (PRECISO ou ALTA_PRECISAO)
+      this.updateMode(userId, result.win);
+
+      // ✅ Atualizar banco de dados PRIMEIRO (antes dos logs)
+      await this.updateUserStateInDb(userId, state);
+
+      // ✅ Logs detalhados do resultado (formato igual à Orion)
+      // ✅ Log de resultado no padrão Orion
+      await this.logTradeResultV2(userId, {
+        status: result.win ? 'WIN' : 'LOSS',
+        profit: result.profit,
+        stake: result.stake,
+        balance: config.initialBalance + state.lucroAtual
+      });
+
+      // Verificar se atingiu meta ou stop
+      if (state.lucroAtual >= config.dailyProfitTarget) {
+        await this.handleStopCondition(userId, 'TAKE_PROFIT');
+      } else if (state.lucroAtual <= -config.dailyLossLimit) {
+        await this.handleStopCondition(userId, 'STOP_LOSS');
+      }
+    } catch (criticalError) {
+      this.logger.error(`[Falcon][${userId}] ❌ ERRO CRÍTICO no processamento de contrato:`, criticalError);
+      await this.saveLog(userId, 'ERROR', 'SYSTEM', `Erro crítico ao processar resultado do contrato ${result.contractId}. Detalhes salvos nos logs do sistema.`);
+    } finally {
+      // ✅ [SAFETY] Resetar trava SEMPRE, independentemente de erro no processamento
+      // Isso é o que impede o loop "OPERAÇÃO EM ANDAMENTO" em caso de crash interno
+      state.isWaitingContract = false;
+      state.waitingContractStartTime = null;
+      this.logger.debug(`[Falcon][${userId}] 🔓 Trava resetada (finally block)`);
     }
-
-    // Atualizar estado
-    state.opsCount++;
-    state.lastProfit = result.profit;
-    state.lucroAtual += result.profit;
-
-    // Atualizar modo (PRECISO ou ALTA_PRECISAO)
-    this.updateMode(userId, result.win);
-
-    // ✅ Atualizar banco de dados PRIMEIRO (antes dos logs)
-    await this.updateUserStateInDb(userId, state);
-
-    // ✅ Logs detalhados do resultado (formato igual à Orion)
-    // ✅ Log de resultado no padrão Orion
-    await this.logTradeResultV2(userId, {
-      status: result.win ? 'WIN' : 'LOSS',
-      profit: result.profit,
-      stake: result.stake,
-      balance: config.initialBalance + state.lucroAtual
-    });
-
-    // Verificar se atingiu meta ou stop
-    if (state.lucroAtual >= config.dailyProfitTarget) {
-      await this.handleStopCondition(userId, 'TAKE_PROFIT');
-    } else if (state.lucroAtual <= -config.dailyLossLimit) {
-      await this.handleStopCondition(userId, 'STOP_LOSS');
-    }
-
-    // ✅ [CORREÇÃO DE RACE CONDITION] Resetar trava APENAS após todo o processamento
-    // Isso impede que um novo tick inicie uma análise/compra ANTES que o martingale seja atualizado.
-    state.isWaitingContract = false;
-    state.waitingContractStartTime = null;
   }
 
   /**
@@ -2013,11 +2021,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
           // ✅ Processar mensagens de subscription (proposal_open_contract) - PRIORIDADE 1
           if (msg.proposal_open_contract) {
-            const subContractId = msg.proposal_open_contract.contract_id;
+            const subContractId = String(msg.proposal_open_contract.contract_id); // ✅ CAST TO STRING
             if (subContractId && conn.subscriptions.has(subContractId)) {
               const callback = conn.subscriptions.get(subContractId)!;
               callback(msg);
               return;
+            } else {
+              this.logger.debug(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Subscription não encontrada para contract_id: ${subContractId} (Types: sub=${typeof subContractId}, keys=${Array.from(conn.subscriptions.keys()).map(k => typeof k).join(',')})`);
             }
           }
 
