@@ -526,7 +526,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
         const stdDev = Math.sqrt(variance);
 
-        if (stdDev > 0.15) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
+        if (stdDev > 0.05) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
 
         return {
             passes: true,
@@ -564,19 +564,36 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     private computeNextStake(config: ZeusUserConfig, state: ZeusState): number {
         let stake = config.baseStake;
 
-        // Martingale Inteligente (RECUPERAÇÃO)
-        if (state.analysis === "RECUPERACAO") {
+        // Martingale Inteligente (RECUPERAÇÃO ou PRINCIPAL com loss pendente)
+        // ✅ User Request: Martingale começa após a primeira perda (mesmo antes de trocar de modo)
+        if (state.analysis === "RECUPERACAO" || state.consecutiveLosses > 0) {
+            // Se estiver no Principal, usamos o streakLossSum como base
+            const lossBase = state.analysis === "RECUPERACAO" ? state.lossSum : (state.streakLossSum || 0);
+
             // Smart Stake: Calcula exatamente o necessário para cobrir o prejuízo + lucro alvo
             // Target = (Perda Acumulada) + (Perda * % Extra)
-            const targetTotal = state.lossSum + (state.lossSum * config.recoveryExtraProfitPct);
-            const currentRecoveryProfit = state.balance - state.recoveryStartBalance;
+            const targetTotal = lossBase + (lossBase * config.recoveryExtraProfitPct);
+
+            // Quanto já recuperamos nessa "sessão de recuperação" (se aplicável)
+            let currentRecoveryProfit = 0;
+            if (state.analysis === "RECUPERACAO") {
+                currentRecoveryProfit = state.balance - state.recoveryStartBalance;
+            } else {
+                // No principal, a "recovery session" é apenas o trade atual tentando cobrir o loss anterior
+                currentRecoveryProfit = 0;
+            }
+
             const needed = targetTotal - currentRecoveryProfit;
 
             if (needed <= 0) {
+                // Já recuperou (ou sem perdas), volta pra base (ou soros se aplicável)
                 stake = config.baseStake;
             } else {
                 // Stake necessária = Valor Faltante / Payout
-                stake = needed / config.payoutRecovery;
+                // Payout depende do contrato que SERÁ usado.
+                // Se estamos no Principal -> PayoutPrimary. Se Rec -> PayoutRecovery.
+                const p = state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery;
+                stake = needed / p;
             }
 
             // Safety: Respeitar limites razoáveis (opcional, aqui confiamos no bankroll do user)
@@ -797,7 +814,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             if (state.analysis === "PRINCIPAL") {
                 filterDetails = `• Filtro 1 (Média Dígitos): ${(m.avgDigit || 0).toFixed(2)} > 4.5 (OK)\n` +
-                    `• Filtro 2 (Volatilidade): ${(m.stdDev || 0).toFixed(4)} ≤ 0.15 (OK)`;
+                    `• Filtro 2 (Volatilidade): ${(m.stdDev || 0).toFixed(4)} ≤ 0.05 (OK)`;
             } else {
                 filterDetails = `• Filtro 1 (Tendência): ${(m.currentPrice || 0).toFixed(2)} > ${(m.avg10 || 0).toFixed(2)} (OK)\n` +
                     `• Filtro 2 (Ruído Baixo): ${m.lowCount} ≤ 2 (OK)`;
