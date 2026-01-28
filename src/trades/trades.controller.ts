@@ -76,6 +76,7 @@ export class TradesController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ): Observable<MessageEvent> {
+    console.log(`[TradesController] SSE Markup Stream chamado - startDate: ${startDate}, endDate: ${endDate}`);
     return this.tradesService.getMarkupDataStream(startDate, endDate);
   }
 }
