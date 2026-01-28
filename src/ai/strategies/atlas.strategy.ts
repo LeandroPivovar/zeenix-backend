@@ -1084,37 +1084,35 @@ Ação: IA DESATIVADA`
   }
 
   /**
-   * ✅ ATLAS R_50: Cálculo de Stake (Ciclo de Recuperação + Meta)
+   * ✅ ATLAS R_50: Cálculo de Stake (Ciclo de Recuperação + Meta + Soros)
    */
   private calculateStake(state: AtlasUserState, balance: number): number {
     // 1) Stake Base
     let stake = state.apostaInicial;
-    const payout = 0.83; // Spec: 0.83 fixo ou config (vamos usar um valor conservador p/ calculo ou config)
-    // Nota: O payout real depende do contrato, Even/Odd costuma ser ~0.90 ou variando. 
-    // O spec menciona 0.83 no exemplo config. Vamos assumir 0.90 para Even/Odd ou usar o parametro.
-    // Usaremos 0.90 como base para Digits Even/Odd se não definido.
-    const payoutEst = 0.90;
+    const payoutEst = 0.80; // Ajuste conservador para garantir recuperação total sem sobras (User req)
 
     // 2) Ajuste para META (Sessão curta)
     const remainingTarget = (state.profitTarget || 0) - state.sessionProfit;
-    // Se tem meta definida E não está em recuperação, tenta ajustar para bater a meta exata
-    if (!state.recovering && state.profitTarget && remainingTarget > 0 && remainingTarget < (stake * payoutEst)) {
+    if (!state.recovering && !state.isInSoros && state.profitTarget && remainingTarget > 0 && remainingTarget < (stake * payoutEst)) {
       stake = remainingTarget / payoutEst;
-      // Clamp min stake
     }
 
     // 3) Ajuste para RECUPERAÇÃO (Ciclo)
     if (state.recovering) {
       const missing = state.recoveryTargetProfit - state.recoveryRecovered;
-      if (missing <= 0) return state.apostaInicial; // Recuperação concluída logicamente, mas flag ainda ativa
+      if (missing <= 0) return state.apostaInicial;
 
       // Stake para recuperar o que falta
       stake = missing / payoutEst;
     }
+    // 4) SOROS (Se não estiver recuperando)
+    else if (state.isInSoros) {
+      // Soros Nível 1: Stake Base + Último Lucro
+      stake = state.apostaBase + state.ultimoLucro;
+    }
 
-    // 4) Bloqueios de Saldo
+    // 5) Bloqueios de Saldo
     if (stake > balance) {
-      // Log handled in execution
       return balance;
     }
 
@@ -1143,7 +1141,7 @@ Ação: IA DESATIVADA`
     state.recoveryLosses = currentLoss;
 
     // Perfil de Risco
-    let pct = 0.0; // Conservador
+    let pct = 0.02; // Conservador (2%)
     if (state.modoMartingale === 'moderado') pct = 0.15;
     if (state.modoMartingale === 'agressivo') pct = 0.30;
 
@@ -1174,6 +1172,8 @@ Ação: IA DESATIVADA`
     state.martingaleStep = 0;
     state.perdaAcumulada = 0;
     state.consecutiveLosses = 0;
+    state.isInSoros = false;
+    state.ultimoLucro = 0;
 
     // Reset mode
     if (state.mode !== (state.originalMode || 'veloz')) {
@@ -1435,6 +1435,19 @@ Ação: IA DESATIVADA`
             `RECUPERAÇÃO PARCIAL: ${state.recoveryRecovered.toFixed(2)}/${state.recoveryTargetProfit.toFixed(2)}`);
         }
       } else {
+        // ✅ LÓGICA SOROS (Se não estiver recuperando)
+        if (state.isInSoros) {
+          // Ganhou a 2ª (Soros Nível 1) -> Resetar
+          state.isInSoros = false;
+          state.ultimoLucro = 0;
+          this.saveAtlasLog(state.userId, symbol, 'vitoria', `✅ SOROS CONCLUÍDO (Retorno à base)`);
+        } else {
+          // Ganhou a 1ª (Base) -> Ativar Soros
+          state.isInSoros = true;
+          state.ultimoLucro = lucro;
+          this.logger.log(`[ATLAS] Soros ativado para próxima entrada (Lucro: ${lucro})`);
+        }
+
         // Pós-win fora de recuperação: tende a retornar para VELOZ (Spec Logic)
         if (state.mode === 'normal') state.mode = 'veloz';
         if (state.mode === 'preciso' || state.mode === 'lento') state.mode = 'normal';
@@ -1456,6 +1469,12 @@ Ação: IA DESATIVADA`
 
       state.consecutiveLosses++;
       state.consecutiveWins = 0;
+
+      // Reset Soros se perder
+      if (state.isInSoros) {
+        state.isInSoros = false;
+        state.ultimoLucro = 0;
+      }
 
       // ✅ [ATLAS R_50] Início de Recuperação (se >= 2 perdas consec e não está recuperando)
       if (!state.recovering) {
