@@ -430,7 +430,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
 
         if (waitTime > 60000) {
-          this.logger.warn(`[Falcon][${userId}] ⚠️ [SAFETY] Contrato ${state.currentContractId || 'ativo'} parado há ${Math.round(waitTime / 1000)}s. Destravando agente...`);
+          const contractRef = state.currentContractId || 'ativo';
+          this.logger.warn(`[Falcon][${userId}] ⚠️ [SAFETY] Contrato ${contractRef} parado há ${Math.round(waitTime / 1000)}s. Destravando agente...`);
+
+          await this.saveLog(userId, 'WARN', 'SYSTEM',
+            `⚠️ RECUPERANDO CONEXÃO...\n• Motivo: Operação ${contractRef} sem resposta da API há ${Math.round(waitTime / 1000)}s.\n• Ação: Destravando agente para nova análise.`
+          );
+
           state.isWaitingContract = false;
           state.waitingContractStartTime = null;
           state.currentContractId = null;
@@ -445,7 +451,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.lastDeniedLogTime = now;
             this.logBlockedEntry(userId, {
               reason: 'OPERAÇÃO EM ANDAMENTO',
-              details: `Sinal ${marketAnalysis.signal} detectado durante contrato ${state.currentContractId || 'ativo'}`
+              details: `Sinal ${marketAnalysis.signal} detectado | Operação ${state.currentContractId || 'em curso'} (Há ${Math.round(waitTime / 1000)}s)`
             });
           }
         }
@@ -498,7 +504,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const { signal, probability, details } = marketAnalysis;
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
-        const cutoff = (state.mode as any) === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
+        const cutoff = (state.mode as any) === 'VELOZ' ? 55 : (state.mode === 'NORMAL' ? 55 : 55);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Sequência: ${details?.digitPattern || 'Processando...'}\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
@@ -1145,6 +1151,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
       }
     } catch (error) {
+      // ✅ Fallback de segurança máximo: resetar estado se qualquer erro crítico ocorrer antes/durante execução
+      state.isWaitingContract = false;
+      state.waitingContractStartTime = null;
+      state.currentTradeId = null;
       this.logger.error(`[Falcon][${userId}] Erro ao executar trade: `, error);
       await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message} `);
     }
