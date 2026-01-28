@@ -1105,6 +1105,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       state.currentTradeId = tradeId;
 
       try {
+        // ✅ LOG: Notificar pedido de compra
+        await this.saveLog(userId, 'INFO', 'TRADER', `📡 SOLICITANDO COMPRA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`);
+
         const contractId = await this.buyContract(
           userId,
           config.derivToken,
@@ -1501,7 +1504,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (!finalTradeId) {
         this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId}). Tentando recuperar do banco...`);
         try {
-          const trade = await this.dataSource.query('SELECT id FROM trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
+          // ✅ FIX: Table name was 'trades', changed to 'autonomous_agent_trades'
+          const trade = await this.dataSource.query('SELECT id FROM autonomous_agent_trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
           if (trade && trade.length > 0) {
             finalTradeId = trade[0].id;
             this.logger.log(`[Falcon][${userId}] ✅ TradeId recuperado do banco: ${finalTradeId}`);
@@ -2151,8 +2155,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
       // ✅ Garantir que o req_id vá na requisição para roteamento seguro
+      // ✅ CRITICAL FIX: req_id MUST be at the top level for Deriv API 
+      // to return it in the response for routing.
       const enrichedPayload = {
         ...payload,
+        req_id: requestId, // ✅ TOP LEVEL (Essential for routing)
         passthrough: {
           ...payload.passthrough,
           req_id: requestId
