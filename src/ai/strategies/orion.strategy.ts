@@ -213,6 +213,10 @@ class RiskManager {
   private _blindadoActive: boolean;
   private lastWasRecovery: boolean; // ✅ Flag para detectar se último win foi recuperação
 
+  public isBlindadoActive(): boolean {
+    return this._blindadoActive;
+  }
+
   constructor(
     initialBalance: number,
     stopLossLimit: number,
@@ -409,7 +413,7 @@ class RiskManager {
             logger.log(
               `[META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog) saveLog('alerta', `STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO! (via AJUSTE)\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`[STOP LOSS] ${limitType} atingido. Parando operações.`);
             if (saveLog) saveLog('alerta', `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
@@ -2464,10 +2468,30 @@ Status: Sessão Equilibrada`;
       );
       if (adjustedStake === 0) {
         // ✅ Se RiskManager retornou 0, parar operações (Stop Loss atingido)
+        const isBlindado = riskManager.isBlindadoActive();
+        const status = isBlindado ? 'stopped_blindado' : 'stopped_loss';
+        const label = isBlindado ? '🛡️ STOP BLINDADO' : '🛑 STOP LOSS';
+
         this.logger.warn(
-          `[ORION][${mode}][${state.userId}] 🚨 RiskManager bloqueou operação. Stop Loss atingido.`,
+          `[ORION][${mode}][${state.userId}] ${label} atingido. Desativando IA.`,
         );
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `🚨 RiskManager bloqueou operação. Stop Loss atingido.`);
+
+        // ✅ [USER REQUEST] Chamar desativação ANTES do log
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [status, state.userId],
+        );
+
+        // Remover da memória local
+        this.velozUsers.delete(state.userId);
+        this.moderadoUsers.delete(state.userId);
+        this.precisoUsers.delete(state.userId);
+        this.lentaUsers.delete(state.userId);
+
+        // Registrar log final
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `${label} ATINGIDO! (via AJUSTE)\n• Motivo: Limite respeitado.\n• Ação: Encerrando operações.`);
+
         return; // Parar operação
       } else {
         // Se há martingale ativo (entry > 1), usar o stake calculado pelo martingale
