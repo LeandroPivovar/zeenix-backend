@@ -2499,7 +2499,7 @@ Ação: Aguardando sinal de tendência`;
           }
         }
 
-        // ✅ ATLAS: Suporte a req_id para pareamento preciso de requisições assíncronas
+        // ✅ Processar respostas de requisições (ROTEAMENDO POR REQ_ID) - PRIORIDADE 2
         const msgReqId = msg.req_id ? Number(msg.req_id) : null;
         if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
           const pending = conn.pendingRequests.get(msgReqId);
@@ -2515,9 +2515,8 @@ Ação: Aguardando sinal de tendência`;
           return;
         }
 
-        // Fallback legado para mensagens sem req_id (ex: notificações de contrato se não tiverem req_id)
+        // ✅ FALLBACK: Processar por tipo se não tiver reqId (Apenas para garantir compatibilidade)
         if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-          // Se não tiver req_id, ainda tentamos pegar o primeiro pendente (menos seguro, mas mantém compatibilidade)
           const firstKey = conn.pendingRequests.keys().next().value;
           if (firstKey) {
             const pending = conn.pendingRequests.get(firstKey);
@@ -2611,8 +2610,15 @@ Ação: Aguardando sinal de tendência`;
 
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-      // ✅ Injetar req_id no payload
-      const finalPayload = { ...payload, req_id: requestId };
+      // ✅ [ZENIX v3.0] Injetar req_id E passthrough para redundância de roteamento
+      const finalPayload = {
+        ...payload,
+        req_id: requestId,
+        passthrough: {
+          ...payload.passthrough,
+          req_id: requestId
+        }
+      };
       conn.ws.send(JSON.stringify(finalPayload));
     });
   }
