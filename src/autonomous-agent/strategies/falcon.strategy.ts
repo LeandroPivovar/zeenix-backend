@@ -124,7 +124,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       const activeUsers = await this.dataSource.query(
         `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
-            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type,
+            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -193,7 +193,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           currency: user.currency,
           symbol: '1HZ10V', // ✅ V2: Volatility 10 (1s) Index
           initialBalance: parseFloat(user.initial_balance) || 0,
-          stopLossType: 'normal',
+          stopLossType: (user.stop_loss_type as 'normal' | 'blindado') || 'normal',
           riskProfile: 'MODERADO',
         };
 
@@ -961,6 +961,31 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           state.pisoBlindado = state.picoLucro * 0.50;
 
           this.logger.log(`[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)} `);
+        }
+
+        // ✅ VERIFICAÇÃO COM CLAMPING (Igual Zeus)
+        // Se a próxima aposta nos faria cruzar o piso, reduzimos a stake
+        // Ex: Profit 100, Piso 50. Margem 50.
+        // Se stake 60 -> Reduz para 50.
+
+        const marginToFloor = state.lucroAtual - state.pisoBlindado;
+
+        // Se já estamos abaixo (por algum motivo), stop imediato
+        if (marginToFloor <= 0) {
+          // Stop imediato (já manipulado abaixo, mas garantindo)
+        } else if (stake > marginToFloor) {
+          const adjustedStake = Math.round(marginToFloor * 100) / 100;
+          if (adjustedStake < 0.35) {
+            this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO: Margem insuficiente para aposta mínima.`);
+            // Deixa cair no bloco de stop abaixo
+          } else {
+            this.logger.log(`[Falcon][${userId}] 🔒 CLAMP BLINDADO: Stake ajustada de $${stake} para $${adjustedStake} para proteger lucro.`);
+            return {
+              action: 'BUY',
+              stake: adjustedStake,
+              reason: 'BLINDADO_CLAMP'
+            };
+          }
         }
 
         // Gatilho de Saída

@@ -784,6 +784,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         if (filterResult.passes) {
+            // ✅ Detailed Log: Sinal Encontrado + Filtros
+            const filterDetails = state.analysis === "PRINCIPAL"
+                ? `• Filtro 1 (Padrão IPI): OK\n• Filtro 2 (Volatilidade ${config.volatilityThreshold}): OK`
+                : `• Filtro 1 (Tendência 10 Ticks): OK\n• Filtro 2 (Força Relativa): OK`;
+
+            this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (${state.analysis})\n${filterDetails}`);
+
             state.lastRejectionReason = undefined;
             return {
                 signal: state.analysis === "RECUPERACAO" ? details.direction : 'DIGIT',
