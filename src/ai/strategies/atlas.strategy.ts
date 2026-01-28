@@ -107,6 +107,7 @@ export interface AtlasUserState {
   recoveryLosses: number;
   recoveryTargetProfit: number;
   recoveryRecovered: number;
+  protectedFloor: number; // ✅ ATLAS: Piso protegido pelo Stop Blindado
 
   // Pausa
   pauseUntilTs: number;
@@ -1116,6 +1117,17 @@ Ação: IA DESATIVADA`
       return balance;
     }
 
+    // ✅ ATLAS: Respeitar Stop Blindado (Recalcular para proteger piso)
+    if (state.blindadoActive && state.protectedFloor > 0) {
+      const maxRisk = state.sessionProfit - state.protectedFloor;
+      // Se stake calculada for maior que o risco permitido, reduzimos
+      if (stake > maxRisk) {
+        // Se maxRisk for negativo ou zero (já furou), deve parar, mas aqui retornamos 0 ou min 
+        // para que a verificaçao de stop limits pare a IA na sequencia.
+        stake = Math.max(0, maxRisk);
+      }
+    }
+
     // Normalizar dinheiro
     const currency = state.currency || 'USD';
     const minStake = getMinStakeByCurrency(currency);
@@ -1656,9 +1668,12 @@ Ação: IA DESATIVADA`
 
         // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
         // Só loga se o profit_peak acabou de passar o limiar (evita spam)
+        // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
+        // Só loga se o profit_peak acabou de passar o limiar (evita spam)
         const justActivated = profitPeak >= activationThreshold && profitPeak < (activationThreshold + 0.50);
         if (justActivated && !state.blindadoActive) {
           state.blindadoActive = true;
+          state.protectedFloor = valorProtegidoFixo;
           this.saveAtlasLog(state.userId, symbol, 'info',
             `🛡️ STOP BLINDADO ATIVADO
 Status: Proteção de Lucro Ativa
@@ -1868,6 +1883,7 @@ Ação: IA DESATIVADA`
       recoveryLosses: 0,
       recoveryTargetProfit: 0,
       recoveryRecovered: 0,
+      protectedFloor: 0,
       pauseUntilTs: 0,
       recoveredFromLossStreak: 0
     });
