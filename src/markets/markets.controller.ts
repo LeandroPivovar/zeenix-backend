@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get, Post, Param } from '@nestjs/common';
 import { MarketsService } from './markets.service';
 // import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 // import { RolesGuard } from '../auth/guards/roles.guard';
@@ -11,6 +11,11 @@ export class MarketsController {
     @Get()
     async findAll() {
         return this.marketsService.findAll();
+    }
+
+    @Get(':symbol/contracts')
+    async findContracts(@Param('symbol') symbol: string) {
+        return this.marketsService.findContractsBySymbol(symbol);
     }
 
     @Post('sync')

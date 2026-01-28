@@ -23,6 +23,12 @@ export class MarketsService {
         });
     }
 
+    async findContractsBySymbol(symbol: string): Promise<MarketContractEntity[]> {
+        return this.marketContractRepository.find({
+            where: { marketSymbol: symbol }
+        });
+    }
+
     async syncMarkets(): Promise<{ count: number; message: string }> {
         const appId = 1089; // Default Deriv App ID
         const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
