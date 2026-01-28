@@ -504,6 +504,14 @@ export class TradesService {
         const totalUsers = activeUsers.length;
         const accumulatedData: any[] = [];
 
+        console.log(`[TradesService] Encontrados ${totalUsers} usuários ativos com realAmount > 0`);
+        if (totalUsers > 0) {
+          console.log(`[TradesService] Primeiro usuário de exemplo:`, {
+            email: activeUsers[0].email,
+            realAmount: activeUsers[0].realAmount
+          });
+        }
+
         // Emitir evento de início com metadata
         subject.next({
           data: { type: 'start', totalUsers, period: { from: dateFrom, to: dateTo } }
@@ -609,6 +617,17 @@ export class TradesService {
             // Markup (nossa comissão) = GrossProfit * 0.03 = (X / 0.97) * 0.03
             const grossProfit = totalPayout / 0.97;
             const commission = grossProfit * 0.03;
+
+            // Log detalhado para debug
+            if (totalPayout > 0 || transactionCount > 0) {
+              console.log(`[TradesService] Markup para ${user.email}:`, {
+                totalPayout,
+                transactionCount,
+                grossProfit: grossProfit.toFixed(2),
+                commission: commission.toFixed(2),
+                breakdown
+              });
+            }
 
             return {
               userId: user.id,
