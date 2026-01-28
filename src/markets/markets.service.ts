@@ -17,28 +17,7 @@ export class MarketsService {
     ) { }
 
     async findAll(): Promise<MarketEntity[]> {
-        // Now we can fetch with relations if needed, or stick to basic info for the list
-        // Maybe we want to load 'contracts' too? The frontend 'markets' list included 'operations'
-        // We should map the new contracts relation back to 'operations' JSON or return the relation.
-        // For now, let's keep returning the MarketEntity, but we might want to populate 'operations' 
-        // with the contract types for backward compatibility or frontend ease.
-        const markets = await this.marketRepository.find({
-            order: { displayName: 'ASC' },
-            relations: ['contracts'] // Assuming we add this relation to MarketEntity
-        });
-
-        // Populate the legacy 'operations' column if it's null, or just rely on frontend handling relations
-        // If the frontend expects 'operations' as array of strings in the JSON response:
-        markets.forEach(m => {
-            if (m.contracts && m.contracts.length > 0) {
-                // Update the operations column on the fly for the response if needed, 
-                // or ensure it's saved in syncMarkets. 
-                // We will update syncMarkets to save both for redundancy/ease.
-                m.operations = [...new Set(m.contracts.map(c => c.contractType))];
-            }
-        });
-
-        return markets;
+        return this.marketRepository.find({ order: { displayName: 'ASC' } });
     }
 
     async syncMarkets(): Promise<{ count: number; message: string }> {
