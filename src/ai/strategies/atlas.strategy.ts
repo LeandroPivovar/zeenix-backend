@@ -1564,7 +1564,7 @@ Ação: IA DESATIVADA`
     // ✅ [STOP BLINDADO FIX] Atualizar profit_peak se lucro atual for maior
     // Isso é essencial para o Stop Blindado funcionar corretamente
     if (lucroSessao > 0) {
-      this.dataSource.query(
+      await this.dataSource.query(
         `UPDATE ai_user_config 
          SET session_balance = ?, 
              profit_peak = GREATEST(COALESCE(profit_peak, 0), ?)
@@ -1573,13 +1573,22 @@ Ação: IA DESATIVADA`
       ).catch(e => {
         this.logger.error(`[ATLAS] Erro ao atualizar session_balance e profit_peak:`, e);
       });
+
+      this.logger.log(`[ATLAS] ✅ profit_peak atualizado: ${lucroSessao}, userId: ${state.userId}`);
     } else {
       // Se está em prejuízo, só atualizar session_balance
-      this.dataSource.query(
+      await this.dataSource.query(
         `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
         [lucroSessao, state.userId]
       ).catch(e => { });
     }
+
+    // ✅ [DEBUG] Log antes de verificar limites
+    this.logger.log(`[ATLAS] 📊 ANTES de checkAtlasLimits():
+      userId: ${state.userId}
+      lucroSessao: ${lucroSessao}
+      totalProfitLoss: ${state.totalProfitLoss}
+      isStopped: ${state.isStopped}`);
 
     // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
@@ -1723,6 +1732,9 @@ Ação: IA DESATIVADA`
             [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
+          // ✅ [DEBUG] Confirmar que UPDATE foi executado
+          this.logger.warn(`[ATLAS] 🛡️ STOP BLINDADO - UPDATE executado! session_status = 'stopped_blindado', userId: ${state.userId}`);
+
           this.tradeEvents.emit({
             userId: state.userId,
             type: 'stopped_blindado',
@@ -1734,12 +1746,20 @@ Ação: IA DESATIVADA`
 
           this.atlasUsers.delete(state.userId);
           state.isStopped = true;
+
+          // ✅ [FIX] Log final e RETURN imediatamente
+          this.logger.warn(`[ATLAS] 🛡️ STOP BLINDADO - IA parada, saindo de checkAtlasLimits()...`);
           return;
         }
       }
     }
 
     // 3. Stop Loss Normal
+    // ✅ [FIX] Verificar se IA já foi parada antes
+    if (state.isStopped) {
+      this.logger.log(`[ATLAS] ⏸️ IA já foi parada, ignorando verificação de Stop Loss Normal`);
+      return;
+    }
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
       this.saveAtlasLog(state.userId, symbol, 'alerta',
