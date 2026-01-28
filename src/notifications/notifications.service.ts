@@ -116,6 +116,13 @@ export class NotificationsService {
       this.logger.error(`[Notifications] Erro ao registrar saldo: ${err.message}`)
     );
 
+    // ✅ Verificar se usuário tem telefone cadastrado
+    const user = await this.dataSource.getRepository(UserEntity).findOne({
+      where: { id: userId },
+      select: ['phone']
+    });
+    const hasPhone = !!user?.phone;
+
     const [agentSummary, aiSummary, systemNotifications] = await Promise.all([
       this.getAgentSummary(userId),
       this.getAISummary(userId),
@@ -125,7 +132,8 @@ export class NotificationsService {
     const notifications = this.buildNotifications(
       agentSummary,
       aiSummary,
-      systemNotifications
+      systemNotifications,
+      hasPhone
     );
 
     const summary: LoginNotificationSummary = {
@@ -327,7 +335,8 @@ export class NotificationsService {
   private buildNotifications(
     agent: AgentSummary | null,
     ai: AISummary | null,
-    systemNotifications: NotificationEntity[] = []
+    systemNotifications: NotificationEntity[] = [],
+    hasPhone: boolean = true
   ): LoginNotificationSummary['notifications'] {
     const notifications: LoginNotificationSummary['notifications'] = [];
     const now = new Date();
@@ -337,6 +346,17 @@ export class NotificationsService {
       // return (now.getTime() - timestamp.getTime()) < 24 * 60 * 60 * 1000;
       return true; // Sempre considera como nova
     };
+
+    // 📱 Notificação de Telefone Ausente
+    if (!hasPhone) {
+      notifications.push({
+        type: 'warning',
+        title: '📱 Cadastre seu Telefone',
+        message: 'Para sua segurança e notificações importantes, por favor cadastre seu telefone no perfil.',
+        source: 'system',
+        timestamp: now,
+      });
+    }
 
     // System Notifications
     if (systemNotifications && systemNotifications.length > 0) {
