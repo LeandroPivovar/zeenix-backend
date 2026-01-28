@@ -544,51 +544,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Análise de mercado FALCON v2.0 - Pattern Matching e Recuperação
+   * Análise de mercado FALCON v2.0 - Pattern Matching IPI
+   * 
+   * Implementa a lógica:
+   * Padrão: {ÍMPAR, PAR, ÍMPAR} nos últimos 3 ticks
+   * Sinal: DIGITODD (ÍMPAR)
    */
   private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
     const state = this.userStates.get(userId);
-    const config = this.userConfigs.get(userId); // Needed for recovery logic
-    if (!state || !config) return null;
+    if (!state) return null;
 
-    // RECUPERAÇÃO (Rise/Fall)
-    // Se tiver 2 ou mais perdas consecutivas, muda para lógica de tendência
-    if (state.consecutiveLosses >= 2) {
-      const windowSize = 10; // Recuperação precisa de mais contexto
-      if (ticks.length < windowSize) return null;
-
-      const recent = ticks.slice(-windowSize);
-      const prices = recent.map(t => t.value);
-
-      // Filtro de Tendência Simples (Média Móvel)
-      const currentPrice = prices[prices.length - 1];
-      const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-
-      const isUptrend = currentPrice > avgPrice;
-
-      // Calcular probabilidade (Simulada baseada na força da tendência)
-      // Quanto mais longe da média, maior a "certeza" (simplificado)
-      const diff = Math.abs(currentPrice - avgPrice);
-      const strength = Math.min(diff * 10, 0.95); // Heurística arbitrária
-      const probability = 55 + (strength * 40); // 55% a 95%
-
-      const signal = isUptrend ? 'CALL' : 'PUT';
-
-      return {
-        probability,
-        signal: signal,
-        payout: 0.92, // Payout médio Rise/Fall
-        confidence: probability / 100,
-        details: {
-          trend: isUptrend ? 'UP' : 'DOWN',
-          currentPrice,
-          avgPrice,
-          mode: 'RECUPERACAO_RISE_FALL'
-        }
-      };
-    }
-
-    // LÓGICA PADRÃO (IPI - Digit Odd)
     const windowSize = 3;
 
     if (ticks.length < windowSize) return null;
