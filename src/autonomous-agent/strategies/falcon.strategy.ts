@@ -244,6 +244,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       ticksSinceLastAnalysis: 0,
       lastSignals: [],
       consecutiveLossesSinceModeChange: 0,
+      waitingContractStartTime: null,
     };
 
     this.userStates.set(userId, state);
@@ -424,17 +425,29 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // 2. Se está aguardando resultado de contrato, realizar análise apenas para detectar entrada bloqueada
       if (state.isWaitingContract) {
-        const marketAnalysis = await this.analyzeMarket(userId, userTicks);
-        if (marketAnalysis?.signal) {
-          this.logBlockedEntry(userId, {
-            reason: 'OPERAÇÃO EM ANDAMENTO',
-            details: `Sinal ${marketAnalysis.signal} detectado durante contrato ${state.currentContractId || 'ativo'}`
-          });
+        // ✅ [SAFETY] Timeout de 60s para contrato preso (possível queda de WS/Subscription)
+        const now = Date.now();
+        const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
+
+        if (waitTime > 60000) {
+          this.logger.warn(`[Falcon][${userId}] ⚠️ [SAFETY] Contrato ${state.currentContractId || 'ativo'} parado há ${Math.round(waitTime / 1000)}s. Destravando agente...`);
+          state.isWaitingContract = false;
+          state.waitingContractStartTime = null;
+          state.currentContractId = null;
+          state.currentTradeId = null;
+          return;
         }
 
-        // Heartbeat ocasional
-        if (userTicks.length % 5 === 0) {
-          this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados: ${userTicks.length})`);
+        const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+        if (marketAnalysis?.signal) {
+          // Throttling de log para não inundar
+          if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 10000) {
+            state.lastDeniedLogTime = now;
+            this.logBlockedEntry(userId, {
+              reason: 'OPERAÇÃO EM ANDAMENTO',
+              details: `Sinal ${marketAnalysis.signal} detectado durante contrato ${state.currentContractId || 'ativo'}`
+            });
+          }
         }
         return;
       }
@@ -1050,6 +1063,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
+    state.waitingContractStartTime = Date.now();
 
     // Payout fixo: 92.15%
     const zenixPayout = 0.9215;
@@ -1114,6 +1128,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         } else {
           // Se falhou, resetar isWaitingContract e atualizar trade com erro
           state.isWaitingContract = false;
+          state.waitingContractStartTime = null;
           state.currentTradeId = null; // ✅ Resetar ID pois falhou
           await this.updateTradeRecord(tradeId, {
             status: 'ERROR',
@@ -1124,6 +1139,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       } catch (error) {
         // Se houve erro, resetar isWaitingContract
         state.isWaitingContract = false;
+        state.waitingContractStartTime = null;
         state.currentTradeId = null; // ✅ Resetar ID pois falhou
         this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato: `, error);
         await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
@@ -1358,6 +1374,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 if (state) {
                   state.isWaitingContract = false;
+                  state.waitingContractStartTime = null;
                   state.currentContractId = null;
                   state.currentTradeId = null;
                 }
@@ -1458,6 +1475,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     state.isWaitingContract = false;
+    state.waitingContractStartTime = null;
     state.currentContractId = null;
     state.currentTradeId = null;
 
@@ -2425,4 +2443,6 @@ interface FalconUserState {
   // ✅ Novos campos para Análise FALCON 2.2
   lastSignals: Array<{ direction: string; timestamp: number }>; // Para confirmação dupla
   consecutiveLossesSinceModeChange: number; // Para ajuste de rigor por histórico
+  waitingContractStartTime: number | null; // ✅ Novo: Timestamp de quando começou a aguardar contrato
+
 }
