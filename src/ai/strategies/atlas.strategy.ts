@@ -1467,13 +1467,12 @@ Ação: IA DESATIVADA`
         state.virtualLossCount = 0;
         state.virtualLossActive = false;
 
-        if (state.vitoriasConsecutivas === 0) {
-          state.vitoriasConsecutivas = 1;
+        if (!state.isInSoros) {
+          // Ativa Soros após primeira vitória normal
           state.isInSoros = true;
           state.ultimoLucro = lucro;
-        } else if (state.vitoriasConsecutivas === 1) {
-          // ✅ ATLAS: No Exemplo 2, o Soros reseta após o Nível 1 (2ª vitória)
-          state.vitoriasConsecutivas = 0;
+        } else {
+          // Já estava em Soros, ganhou a segunda, reseta Soros
           state.isInSoros = false;
           state.ultimoLucro = 0;
         }
