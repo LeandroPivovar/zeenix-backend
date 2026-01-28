@@ -446,8 +446,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         const marketAnalysis = await this.analyzeMarket(userId, userTicks);
         if (marketAnalysis?.signal) {
-          // Throttling de log para não inundar
-          if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 10000) {
+          // Throttling de log para não inundar (aumentado para 30s para reduzir ruído)
+          if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 30000) {
             state.lastDeniedLogTime = now;
             this.logBlockedEntry(userId, {
               reason: 'OPERAÇÃO EM ANDAMENTO',
@@ -1223,9 +1223,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
 
-    // ✅ CORREÇÃO: Delay inicial de 3000ms antes da primeira tentativa
-    // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // ✅ OTIMIZAÇÃO: Reduzido delay inicial para 500ms para evitar gargalo
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1477,10 +1476,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
-    // ✅ [CORREÇÃO CRÍTICA] Resetar isWaitingContract IMEDIATAMENTE
-    // Isso evita que o agente fique travado em "OPERAÇÃO EM ANDAMENTO"
-    state.isWaitingContract = false;
-    state.waitingContractStartTime = null;
+    // [Nota]: O reset de isWaitingContract foi movido para o final da função 
+    // para evitar que um novo tick trigger outra entrada antes de processar o resultado atual.
+    // state.isWaitingContract = false;
+    // state.waitingContractStartTime = null;
 
     // Priorizar tradeId que veio do closure do buyContract (mais seguro)
     const tradeId = tradeIdFromCallback || state.currentTradeId;
@@ -1562,6 +1561,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     } else if (state.lucroAtual <= -config.dailyLossLimit) {
       await this.handleStopCondition(userId, 'STOP_LOSS');
     }
+
+    // ✅ [CORREÇÃO DE RACE CONDITION] Resetar trava APENAS após todo o processamento
+    // Isso impede que um novo tick inicie uma análise/compra ANTES que o martingale seja atualizado.
+    state.isWaitingContract = false;
+    state.waitingContractStartTime = null;
   }
 
   /**
