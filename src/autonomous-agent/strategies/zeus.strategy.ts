@@ -514,7 +514,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * ✅ LOGIC HELPER: Filtros Principais (Digits Over 3)
      */
-    private passesPrimaryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string } {
+    private passesPrimaryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string; metrics?: any } {
         if (digits.length < 5) return { passes: false, reason: 'Coleta de dígitos insuficiente' };
 
         // Filtro 1: média dos dígitos > 4.5
@@ -528,13 +528,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (stdDev > 0.15) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
 
-        return { passes: true };
+        return {
+            passes: true,
+            metrics: { avgDigit, stdDev }
+        };
     }
 
     /**
      * ✅ LOGIC HELPER: Filtros de Recuperação (Rise/Fall)
      */
-    private passesRecoveryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string } {
+    private passesRecoveryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string; metrics?: any } {
         if (prices.length < 10) return { passes: false, reason: 'Aguardando ticks para tendência' };
 
         // Filtro 1: preço atual > média dos últimos 10 (Trend Following)
@@ -549,7 +552,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const lowCount = last5Digits.filter((d) => d < 4).length;
         if (lowCount > 2) return { passes: false, reason: 'Ruído de dígitos baixos detectado' };
 
-        return { passes: true };
+        return {
+            passes: true,
+            metrics: { currentPrice, avg10, lowCount }
+        };
     }
 
     /**
@@ -744,7 +750,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const wPrices = prices.slice(-WINDOW);
         const wDigits = digits.slice(-WINDOW);
 
-        let filterResult: { passes: boolean; reason?: string } = { passes: false };
+        let filterResult: { passes: boolean; reason?: string; metrics?: any } = { passes: false };
         let probability = 0;
         let details: any = {};
 
@@ -784,10 +790,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         if (filterResult.passes) {
-            // ✅ Detailed Log: Sinal Encontrado + Filtros
-            const filterDetails = state.analysis === "PRINCIPAL"
-                ? `• Filtro 1 (Padrão IPI): OK\n• Filtro 2 (Volatilidade ${config.volatilityThreshold}): OK`
-                : `• Filtro 1 (Tendência 10 Ticks): OK\n• Filtro 2 (Força Relativa): OK`;
+            // ✅ Detailed Log: Sinal Encontrado + Filtros com valores explícitos
+            let filterDetails = '';
+            // Metrics should ensure values are safe (default to 0 if missing for safety)
+            const m = filterResult.metrics || {};
+
+            if (state.analysis === "PRINCIPAL") {
+                filterDetails = `• Filtro 1 (Média Dígitos): ${(m.avgDigit || 0).toFixed(2)} > 4.5 (OK)\n` +
+                    `• Filtro 2 (Volatilidade): ${(m.stdDev || 0).toFixed(4)} ≤ 0.15 (OK)`;
+            } else {
+                filterDetails = `• Filtro 1 (Tendência): ${(m.currentPrice || 0).toFixed(2)} > ${(m.avg10 || 0).toFixed(2)} (OK)\n` +
+                    `• Filtro 2 (Ruído Baixo): ${m.lowCount} ≤ 2 (OK)`;
+            }
 
             this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (${state.analysis})\n${filterDetails}`);
 
