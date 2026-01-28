@@ -1187,10 +1187,8 @@ Ação: IA DESATIVADA`
     state.isInSoros = false;
     state.ultimoLucro = 0;
 
-    // Reset mode
-    if (state.mode !== (state.originalMode || 'veloz')) {
-      state.mode = state.originalMode || 'veloz';
-    }
+    // Reset mode (User Requirement: "Em caso de WIN, deve voltar para o modo VELOZ")
+    state.mode = 'veloz';
 
     this.logger.log(`[ATLAS] ✅ Recuperação Finalizada!`);
   }
@@ -1460,9 +1458,9 @@ Ação: IA DESATIVADA`
           this.logger.log(`[ATLAS] Soros ativado para próxima entrada (Lucro: ${lucro})`);
         }
 
-        // Pós-win fora de recuperação: tende a retornar para VELOZ (Spec Logic)
-        if (state.mode === 'normal') state.mode = 'veloz';
-        if (state.mode === 'preciso' || state.mode === 'lento') state.mode = 'normal';
+        // Pós-win: Sempre retorna para VELOZ (User Requirement: "Em caso de WIN, deve voltar para o modo VELOZ")
+        state.mode = 'veloz';
+        this.logger.log(`[ATLAS] Win detectado. Modo resetado para VELOZ.`);
       }
 
       this.logTradeResultV2(state.userId, {
@@ -1491,27 +1489,30 @@ Ação: IA DESATIVADA`
       // ✅ [ATLAS R_50] Início de Recuperação (se >= 2 perdas consec e não está recuperando)
       if (!state.recovering) {
         if (state.consecutiveLosses >= 2) {
-          // Degradação de modo
-          if (state.mode === 'veloz') state.mode = 'normal';
+          // Degradação de modo: VELOZ -> NORMAL
+          if (state.mode === 'veloz') {
+            state.mode = 'normal';
+            this.logger.log(`[ATLAS] 2 losses seguidos. Degradando para modo NORMAL.`);
+          }
 
           // Iniciar ciclo de recuperação
           // Spec: "entra em recuperação a partir de 2 losses seguidos"
           state.perdaAcumulada += perda; // Acumular para saber quanto recuperar
           this.startRecovery(state);
         } else {
-          // Apenas 1 loss, normal
-          state.perdaAcumulada += perda; // Ainda acumula p/ caso vire recuperação
+          state.perdaAcumulada += perda;
         }
       } else {
-        // Já em recuperação: acumular perda no ciclo?
-        // Spec não detalha se a perda nova aumenta o alvo dinamicamente ou se o alvo é fixo do inicio.
-        // "Alvo = perdas do ciclo + %". Se perdeu dentro do ciclo, a perda do ciclo aumentou.
-        // Vamos aumentar o target para cobrir essa nova perda também.
+        // Já está recuperando...
         state.recoveryTargetProfit += perda;
 
         // Degradação em recuperação
-        if (state.mode === 'normal') state.mode = 'lento'; // 'preciso' no spec
-        else if (state.mode === 'veloz') state.mode = 'normal';
+        if (state.mode === 'normal') {
+          state.mode = 'lento';
+          this.logger.log(`[ATLAS] Loss em modo NORMAL (Recuperando). Degradando para modo LENTO.`);
+        } else if (state.mode === 'veloz') {
+          state.mode = 'normal';
+        }
       }
 
       this.logTradeResultV2(state.userId, {
@@ -2214,14 +2215,9 @@ Contrato Avaliado: Digits Over 2 (1 tick)`;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `SINAL GERADO
-Sinal de Entrada
-Análise: PRINCIPAL
-Modo: ${signal.mode.toUpperCase()}
-Direção: ${signal.direction || (signal.contractType === 'DIGIT OVER' ? 'CALL' : signal.contractType)}
-Força do Sinal: ${signal.probability}%
-Contrato: ${signal.contractType} (1 tick)
-Stake Calculada: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
+    const message = `SINAL DETECTADO
+Contrato: ${signal.contractType}
+Stake: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'sinal', message);
   }
@@ -2235,13 +2231,10 @@ Stake Calculada: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
     // ✅ [ZENIX v3.5] O banco reconhece apenas o tipo 'resultado' para operações finalizadas
-    const message = `RESULTADO DA OPERAÇÃO
+    const message = `RESULTADO DA ENTRADA
 Status: ${result.status}
-Direção: ${state?.ultimaDirecaoOp || 'CALL'}
-Contrato: Digits Over 2 (1 tick)
-Resultado Financeiro: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
-Saldo Atual: ${formatCurrency(result.balance, currency)}
-Estado: Operação Normal`;
+Lucro/Prejuízo: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
+Saldo Atual: ${formatCurrency(result.balance, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
   }
