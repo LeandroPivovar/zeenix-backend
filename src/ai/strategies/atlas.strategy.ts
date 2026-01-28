@@ -1564,7 +1564,7 @@ Ação: IA DESATIVADA`
     // ✅ [STOP BLINDADO FIX] Atualizar profit_peak se lucro atual for maior
     // Isso é essencial para o Stop Blindado funcionar corretamente
     if (lucroSessao > 0) {
-      this.dataSource.query(
+      await this.dataSource.query(
         `UPDATE ai_user_config 
          SET session_balance = ?, 
              profit_peak = GREATEST(COALESCE(profit_peak, 0), ?)
@@ -1573,13 +1573,22 @@ Ação: IA DESATIVADA`
       ).catch(e => {
         this.logger.error(`[ATLAS] Erro ao atualizar session_balance e profit_peak:`, e);
       });
+
+      this.logger.log(`[ATLAS] ✅ profit_peak atualizado: ${lucroSessao}, userId: ${state.userId}`);
     } else {
       // Se está em prejuízo, só atualizar session_balance
-      this.dataSource.query(
+      await this.dataSource.query(
         `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
         [lucroSessao, state.userId]
       ).catch(e => { });
     }
+
+    // ✅ [DEBUG] Log antes de verificar limites
+    this.logger.log(`[ATLAS] 📊 ANTES de checkAtlasLimits():
+      userId: ${state.userId}
+      lucroSessao: ${lucroSessao}
+      totalProfitLoss: ${state.totalProfitLoss}
+      isStopped: ${state.isStopped}`);
 
     // Verificar Limites (Meta, Stop Loss, Blindado)
     await this.checkAtlasLimits(state);
