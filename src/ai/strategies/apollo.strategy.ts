@@ -918,6 +918,9 @@ Ação: reconectar automaticamente`;
       apostaInicial: config.entryValue || 0.35,
       stopLoss: config.lossLimit || 50,
       profitTarget: config.profitTarget || 10,
+      startTime: Date.now(),
+      totalOperations: 0,
+      totalWins: 0,
       useBlindado: config.useBlindado !== false,
       symbol: selectedSymbol,
 
@@ -1023,492 +1026,493 @@ Ação: reconectar automaticamente`;
     onBuy?: (contractId: string, entryPrice: number) => Promise<void>
   ): Promise<{ contractId: string, profit: number, exitSpot: any, entrySpot: any } | null> {
     const conn = await this.getOrCreateWebSocketConnection(token);
-    this.saveLog(userId, 'erro', `Erro de Conexão
+    if (!conn) {
+      this.saveLog(userId, 'erro', `Erro de Conexão
 Motivo: Falha ao conectar na Deriv (Timeout ou Auth). Verifique logs do sistema.`);
-    return null;
-  }
+      return null;
+    }
 
-  const symbol = this.users.get(userId)?.symbol || this.defaultSymbol;
+    const symbol = this.users.get(userId)?.symbol || this.defaultSymbol;
 
     try {
-  // ✅ PASSO 1: Solicitar Proposta
-  const proposalStartTime = Date.now();
-  this.logger.debug(`[APOLLO] 📤Usuario [${userId}] Solicitando proposta | Tipo: ${params.contract_type} | Valor: $${params.amount}`);
+      // ✅ PASSO 1: Solicitar Proposta
+      const proposalStartTime = Date.now();
+      this.logger.debug(`[APOLLO] 📤Usuario [${userId}] Solicitando proposta | Tipo: ${params.contract_type} | Valor: $${params.amount}`);
 
-  const req: any = {
-    proposal: 1,
-    amount: params.amount,
-    basis: 'stake',
-    contract_type: params.contract_type,
-    currency: params.currency,
-    duration: 1,
-    duration_unit: 't',
-    symbol: symbol
-  };
+      const req: any = {
+        proposal: 1,
+        amount: params.amount,
+        basis: 'stake',
+        contract_type: params.contract_type,
+        currency: params.currency,
+        duration: 1,
+        duration_unit: 't',
+        symbol: symbol
+      };
 
-  const propPromise = await conn.sendRequest(req);
+      const propPromise = await conn.sendRequest(req);
 
-  const errorObj = propPromise.error || propPromise.proposal?.error;
-  if (errorObj) {
-    const errorCode = errorObj?.code || '';
-    const errorMessage = errorObj?.message || JSON.stringify(errorObj);
+      const errorObj = propPromise.error || propPromise.proposal?.error;
+      if (errorObj) {
+        const errorCode = errorObj?.code || '';
+        const errorMessage = errorObj?.message || JSON.stringify(errorObj);
 
-    let userMessage = `Erro na Proposta
+        let userMessage = `Erro na Proposta
 Código: ${errorCode}
 Mensagem: ${errorMessage}`;
 
-    if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
-      userMessage = `Erro de Conexão
+        if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
+          userMessage = `Erro de Conexão
 Motivo: Erro temporário (WrongResponse). Tentando novamente...`;
-    } else if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-      userMessage = `Saldo Insuficiente
+        } else if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          userMessage = `Saldo Insuficiente
 Motivo: Saldo insuficiente na Deriv.`;
-    } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
-      userMessage = `Limite de Taxa
+        } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
+          userMessage = `Limite de Taxa
 Motivo: Rate limit atingido. Aguarde.`;
-    }
+        }
 
-    this.saveLog(userId, 'erro', userMessage);
-    return null;
-  }
+        this.saveLog(userId, 'erro', userMessage);
+        return null;
+      }
 
-  const proposalId = propPromise.proposal?.id;
-  const proposalPrice = Number(propPromise.proposal?.ask_price);
+      const proposalId = propPromise.proposal?.id;
+      const proposalPrice = Number(propPromise.proposal?.ask_price);
 
-  if (!proposalId) throw new Error('Proposta inválida (sem ID)');
+      if (!proposalId) throw new Error('Proposta inválida (sem ID)');
 
-  const proposalDuration = Date.now() - proposalStartTime;
-  this.logger.debug(`[APOLLO] 📊 Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}`);
+      const proposalDuration = Date.now() - proposalStartTime;
+      this.logger.debug(`[APOLLO] 📊 Proposta recebida em ${proposalDuration}ms | ID=${proposalId}, Preço=${proposalPrice}`);
 
-  // ✅ PASSO 2: Executar Compra
-  const buyStartTime = Date.now();
-  const buyReq = { buy: proposalId, price: proposalPrice };
+      // ✅ PASSO 2: Executar Compra
+      const buyStartTime = Date.now();
+      const buyReq = { buy: proposalId, price: proposalPrice };
 
-  let buyResponse: any;
-  try {
-    buyResponse = await conn.sendRequest(buyReq, 60000);
-  } catch (error: any) {
-    const errorMessage = error?.message || JSON.stringify(error);
-    this.saveLog(userId, 'erro', `Falha na Entrada
+      let buyResponse: any;
+      try {
+        buyResponse = await conn.sendRequest(buyReq, 60000);
+      } catch (error: any) {
+        const errorMessage = error?.message || JSON.stringify(error);
+        this.saveLog(userId, 'erro', `Falha na Entrada
 Motivo: ${errorMessage}`);
 
-    if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-      // ✅ Buscando contas do usuário para log detalhado
-      this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [userId])
-        .then((userDerivData) => {
-          if (userDerivData && userDerivData.length > 0 && userDerivData[0].deriv_raw) {
-            const derivData = typeof userDerivData[0].deriv_raw === 'string'
-              ? JSON.parse(userDerivData[0].deriv_raw)
-              : userDerivData[0].deriv_raw;
+        if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          // ✅ Buscando contas do usuário para log detalhado
+          this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [userId])
+            .then((userDerivData) => {
+              if (userDerivData && userDerivData.length > 0 && userDerivData[0].deriv_raw) {
+                const derivData = typeof userDerivData[0].deriv_raw === 'string'
+                  ? JSON.parse(userDerivData[0].deriv_raw)
+                  : userDerivData[0].deriv_raw;
 
-            if (derivData.authorize && derivData.authorize.account_list && Array.isArray(derivData.authorize.account_list)) {
-              const accountListInfo = derivData.authorize.account_list.map((acc: any) =>
-                `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
-              ).join('\n');
+                if (derivData.authorize && derivData.authorize.account_list && Array.isArray(derivData.authorize.account_list)) {
+                  const accountListInfo = derivData.authorize.account_list.map((acc: any) =>
+                    `• ${acc.loginid} (${acc.is_virtual ? 'Demo' : 'Real'}): ${acc.currency} ${acc.balance}`
+                  ).join('\n');
 
-              this.saveLog(userId, 'alerta', `Contas Disponíveis (Cache)
+                  this.saveLog(userId, 'alerta', `Contas Disponíveis (Cache)
 ${accountListInfo}`);
-            }
-          }
-        }).catch(err => {
-          this.logger.error(`[APOLLO] Erro ao buscar dados da conta para log de erro:`, err);
-        });
-    }
+                }
+              }
+            }).catch(err => {
+              this.logger.error(`[APOLLO] Erro ao buscar dados da conta para log de erro:`, err);
+            });
+        }
 
-    return null;
-  }
-
-  if (buyResponse.error || buyResponse.buy?.error) {
-    const buyError = buyResponse.error || buyResponse.buy?.error;
-    this.saveLog(userId, 'erro', `Erro na Compra
-Motivo: ${buyError.message || JSON.stringify(buyError)}`);
-    return null;
-  }
-
-  const contractId = buyResponse.buy.contract_id;
-  const buyDuration = Date.now() - buyStartTime;
-
-  this.logContractCreated(userId, 'Rise/Fall', params.contract_type === 'CALL' ? 'CALL' : 'PUT', params.amount, String(proposalId), proposalDuration);
-
-  // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
-  if (onBuy) {
-    onBuy(contractId, buyResponse.buy.entry_tick || buyResponse.buy.price).catch(err => {
-      this.logger.error(`[APOLLO] Erro no callback onBuy: ${err.message}`);
-    });
-  }
-
-  // ✅ PASSO 3: Monitorar Resultado (Timeout 90s) usando Subscription
-  const monitorStartTime = Date.now();
-
-  return new Promise((resolve) => {
-    let hasResolved = false;
-    let contractMonitorTimeout: any | null = null;
-
-    // Timeout de segurança
-    contractMonitorTimeout = setTimeout(() => {
-      if (!hasResolved) {
-        hasResolved = true;
-        conn.removeSubscription(contractId);
-        this.saveLog(userId, 'erro', `Erro de Monitoramento
-Motivo: Timeout (90s). Verifique conexão.`);
-        resolve(null);
+        return null;
       }
-    }, 90000);
 
-    // Inscrever no contrato
-    conn.subscribe(
-      { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
-      (msg: any) => {
-        // Verificar erros
-        if (msg.error) {
+      if (buyResponse.error || buyResponse.buy?.error) {
+        const buyError = buyResponse.error || buyResponse.buy?.error;
+        this.saveLog(userId, 'erro', `Erro na Compra
+Motivo: ${buyError.message || JSON.stringify(buyError)}`);
+        return null;
+      }
+
+      const contractId = buyResponse.buy.contract_id;
+      const buyDuration = Date.now() - buyStartTime;
+
+      this.logContractCreated(userId, 'Rise/Fall', params.contract_type === 'CALL' ? 'CALL' : 'PUT', params.amount, String(proposalId), proposalDuration);
+
+      // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
+      if (onBuy) {
+        onBuy(contractId, buyResponse.buy.entry_tick || buyResponse.buy.price).catch(err => {
+          this.logger.error(`[APOLLO] Erro no callback onBuy: ${err.message}`);
+        });
+      }
+
+      // ✅ PASSO 3: Monitorar Resultado (Timeout 90s) usando Subscription
+      const monitorStartTime = Date.now();
+
+      return new Promise((resolve) => {
+        let hasResolved = false;
+        let contractMonitorTimeout: any | null = null;
+
+        // Timeout de segurança
+        contractMonitorTimeout = setTimeout(() => {
           if (!hasResolved) {
             hasResolved = true;
-            clearTimeout(contractMonitorTimeout!);
             conn.removeSubscription(contractId);
-            this.saveLog(userId, 'erro', `Erro no Monitoramento
-Motivo: ${msg.error.message}`);
+            this.saveLog(userId, 'erro', `Erro de Monitoramento
+Motivo: Timeout (90s). Verifique conexão.`);
             resolve(null);
           }
-          return;
-        }
+        }, 90000);
 
-        const c = msg.proposal_open_contract;
-        if (!c) return;
+        // Inscrever no contrato
+        conn.subscribe(
+          { proposal_open_contract: 1, contract_id: contractId, subscribe: 1 },
+          (msg: any) => {
+            // Verificar erros
+            if (msg.error) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout!);
+                conn.removeSubscription(contractId);
+                this.saveLog(userId, 'erro', `Erro no Monitoramento
+Motivo: ${msg.error.message}`);
+                resolve(null);
+              }
+              return;
+            }
 
-        if (c.is_sold) {
+            const c = msg.proposal_open_contract;
+            if (!c) return;
+
+            if (c.is_sold) {
+              if (!hasResolved) {
+                hasResolved = true;
+                clearTimeout(contractMonitorTimeout!);
+                conn.removeSubscription(contractId);
+
+                // Resultado Final
+                const profit = Number(c.profit);
+                const status = profit > 0 ? 'WIN' : 'LOSS';
+                // O log de resultado é feito pelo chamador通常, mas podemos logar debug aqui
+                this.logger.debug(`[APOLLO] Trade Finalizado: ${status} | Profit: ${profit}`);
+
+                resolve({
+                  profit: profit,
+                  contractId: c.contract_id,
+                  exitSpot: c.exit_tick,
+                  entrySpot: c.entry_tick
+                });
+              }
+            }
+          },
+          contractId
+        ).catch(e => {
           if (!hasResolved) {
             hasResolved = true;
             clearTimeout(contractMonitorTimeout!);
-            conn.removeSubscription(contractId);
-
-            // Resultado Final
-            const profit = Number(c.profit);
-            const status = profit > 0 ? 'WIN' : 'LOSS';
-            // O log de resultado é feito pelo chamador通常, mas podemos logar debug aqui
-            this.logger.debug(`[APOLLO] Trade Finalizado: ${status} | Profit: ${profit}`);
-
-            resolve({
-              profit: profit,
-              contractId: c.contract_id,
-              exitSpot: c.exit_tick,
-              entrySpot: c.entry_tick
-            });
-          }
-        }
-      },
-      contractId
-    ).catch(e => {
-      if (!hasResolved) {
-        hasResolved = true;
-        clearTimeout(contractMonitorTimeout!);
-        this.saveLog(userId, 'erro', `Falha na Inscrição
+            this.saveLog(userId, 'erro', `Falha na Inscrição
 Motivo: ${e.message}`);
-        resolve(null);
-      }
-    });
-  });
+            resolve(null);
+          }
+        });
+      });
 
-} catch (e: any) {
-  this.saveLog(userId, 'erro', `Erro Crítico Deriv: ${e.message}`);
-  return null;
-}
+    } catch (e: any) {
+      this.saveLog(userId, 'erro', `Erro Crítico Deriv: ${e.message}`);
+      return null;
+    }
   }
 
   /**
    * ✅ APOLLO (Refatorado): Obtém ou cria conexão WebSocket reutilizável por token
    * Mantém uma conexão por token para evitar criar nova conexão a cada trade
    */
-  private async getOrCreateWebSocketConnection(token: string, userId ?: string): Promise < {
-  ws: WebSocket;
-  sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
-  subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
-  removeSubscription: (subId: string) => void;
-} | null > {
-  // ✅ Verificar se já existe conexão ativa para este token
-  const existing = this.wsConnections.get(token);
+  private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+    ws: WebSocket;
+    sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+    subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+    removeSubscription: (subId: string) => void;
+  } | null> {
+    // ✅ Verificar se já existe conexão ativa para este token
+    const existing = this.wsConnections.get(token);
 
-  // ✅ Logs de diagnóstico
-  this.logger.debug(`[APOLLO] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`);
+    // ✅ Logs de diagnóstico
+    this.logger.debug(`[APOLLO] 🔍 [${userId || 'SYSTEM'}] Verificando conexão existente para token ${token.substring(0, 8)}...`);
 
-  if(existing) {
-    const readyState = existing.ws.readyState;
-    const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
-      readyState === WebSocket.CONNECTING ? 'CONNECTING' :
-        readyState === WebSocket.CLOSING ? 'CLOSING' :
-          readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
+    if (existing) {
+      const readyState = existing.ws.readyState;
+      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
+        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
+          readyState === WebSocket.CLOSING ? 'CLOSING' :
+            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
 
-    this.logger.debug(`[APOLLO] � [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+      this.logger.debug(`[APOLLO] � [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
 
-    if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-      this.logger.debug(`[APOLLO] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+      if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
+        this.logger.debug(`[APOLLO] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
+
+        return {
+          ws: existing.ws,
+          sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+          subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+          removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+        };
+      } else {
+        this.logger.warn(`[APOLLO] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta. Fechando e recriando.`);
+        if (existing.keepAliveInterval) {
+          clearInterval(existing.keepAliveInterval);
+        }
+        try { existing.ws.close(); } catch (e) { }
+        this.wsConnections.delete(token);
+      }
+    }
+
+    // ✅ Criar nova conexão
+    this.logger.debug(`[APOLLO] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
+    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+
+    try {
+      const ws = await new Promise<WebSocket>((resolve, reject) => {
+        const socket = new WebSocket(endpoint, {
+          headers: { Origin: 'https://app.deriv.com' },
+        });
+
+        let authResolved = false;
+        const connectionTimeout = setTimeout(() => {
+          if (!authResolved) {
+            this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
+            try { socket.close(); } catch (e) { }
+            this.wsConnections.delete(token);
+            reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
+          }
+        }, 20000);
+
+        // ✅ Listener de mensagens para capturar autorização e outras respostas
+        socket.on('message', (data: any) => {
+          try {
+            const msg = JSON.parse(data.toString());
+
+            // ✅ Ignorar ping/pong
+            if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
+              return;
+            }
+
+            const conn = this.wsConnections.get(token);
+            if (!conn) {
+              // Se conexão não existe (ex: durante auth ainda não foi adicionada ou foi removida), não faz nada.
+              // Mas durante o setup (dentro desta Promise), nós tratamos o auth especificamente aqui.
+            }
+
+            // ✅ Processar autorização (apenas durante inicialização)
+            if (msg.msg_type === 'authorize' && !authResolved) {
+              this.logger.debug(`[APOLLO] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
+              authResolved = true;
+              clearTimeout(connectionTimeout);
+
+              if (msg.error || (msg.authorize && msg.authorize.error)) {
+                const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
+                this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+                this.wsConnections.delete(token); // Limpar token inválido
+                reject(new Error(errorMsg));
+              } else {
+                this.logger.log(`[APOLLO] ✅ [${userId || 'SYSTEM'}] WebSocket Autorizado com Sucesso!`);
+                // Configurar Keep-Alive
+                const keepAlive = setInterval(() => {
+                  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
+                }, 30000);
+
+                // Salvar conexão no pool
+                this.wsConnections.set(token, {
+                  ws: socket,
+                  authorized: true,
+                  authorizedCurrency: msg.authorize?.currency || null,
+                  pendingRequests: new Map(),
+                  subscriptions: new Map(),
+                  keepAliveInterval: keepAlive,
+                  requestIdCounter: 0
+                });
+
+                resolve(socket);
+              }
+              return;
+            }
+
+            // ✅ Roteamento normal de mensagens para conexões ativas
+            if (conn) {
+              // 1. Tentar casar com req_id se existir (Prioridade Alta)
+              const msgReqId = msg.req_id ? Number(msg.req_id) : null;
+              if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
+                const pending = conn.pendingRequests.get(msgReqId);
+                if (pending) {
+                  clearTimeout(pending.timeout);
+                  conn.pendingRequests.delete(msgReqId);
+                  if (msg.error) pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                  else pending.resolve(msg);
+                }
+                return;
+              }
+
+              // Fallback legado (FIFO) - Menos seguro mas mantém compatibilidade para msgs sem req_id
+              if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
+                const firstKey = conn.pendingRequests.keys().next().value;
+                if (firstKey) {
+                  const pending = conn.pendingRequests.get(firstKey);
+                  if (pending) {
+                    clearTimeout(pending.timeout);
+                    conn.pendingRequests.delete(firstKey);
+                    if (msg.error) {
+                      pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+                    } else {
+                      pending.resolve(msg);
+                    }
+                  }
+                  return;
+                }
+              }
+
+              // 3. Subscriptions (Proposal Open Contract, Ticks)
+              if (msg.proposal_open_contract) {
+                const id = msg.proposal_open_contract.contract_id;
+                const callback = conn.subscriptions.get(id);
+                if (callback) {
+                  callback(msg);
+                  return;
+                }
+              }
+              if (msg.tick) {
+                const id = msg.tick.id;
+                const callback = conn.subscriptions.get(id);
+                if (callback) callback(msg);
+              }
+            }
+
+          } catch (e) {
+            // JSON parse error or logic error
+          }
+        });
+
+        socket.on('error', (err) => {
+          if (!authResolved) {
+            clearTimeout(connectionTimeout);
+            reject(err);
+          }
+          this.logger.error(`[APOLLO] ❌ WS Error: ${err.message}`);
+        });
+
+        socket.on('close', () => {
+          this.logger.warn(`[APOLLO] 🔌 WS Closed`);
+          this.wsConnections.delete(token); // Limpar ao fechar
+        });
+
+        // Enviar Authorize logo após abrir
+        socket.on('open', () => {
+          this.logger.debug(`[APOLLO] 📤 [${userId || 'SYSTEM'}] Enviando solicitação de autorização...`);
+          socket.send(JSON.stringify({ authorize: token }));
+        });
+      });
 
       return {
-        ws: existing.ws,
+        ws,
         sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
         subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
           this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
         removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
       };
-    } else {
-      this.logger.warn(`[APOLLO] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta. Fechando e recriando.`);
-      if (existing.keepAliveInterval) {
-        clearInterval(existing.keepAliveInterval);
-      }
-      try { existing.ws.close(); } catch (e) { }
-      this.wsConnections.delete(token);
+
+    } catch (e) {
+      this.logger.error(`[APOLLO] ❌ Falha fatal ao criar conexão: ${e instanceof Error ? e.message : e}`);
+      return null;
     }
   }
 
-    // ✅ Criar nova conexão
-    this.logger.debug(`[APOLLO] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
-  const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  /**
+   * ✅ Envia requisição via conexão existente
+   */
+  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise<any> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
+    }
 
-  try {
-    const ws = await new Promise<WebSocket>((resolve, reject) => {
-      const socket = new WebSocket(endpoint, {
-        headers: { Origin: 'https://app.deriv.com' },
-      });
+    return new Promise((resolve, reject) => {
+      // ✅ APOLLO: Usar req_id INTEIRO (1 a 2^31 - 1) para compliance com Deriv API
+      const requestId = ++conn.requestIdCounter;
 
-      let authResolved = false;
-      const connectionTimeout = setTimeout(() => {
-        if (!authResolved) {
-          this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
-          try { socket.close(); } catch (e) { }
-          this.wsConnections.delete(token);
-          reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
-        }
-      }, 20000);
+      const timeout = setTimeout(() => {
+        conn.pendingRequests.delete(requestId);
+        reject(new Error(`Timeout após ${timeoutMs}ms`));
+      }, timeoutMs);
 
-      // ✅ Listener de mensagens para capturar autorização e outras respostas
-      socket.on('message', (data: any) => {
-        try {
-          const msg = JSON.parse(data.toString());
+      conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-          // ✅ Ignorar ping/pong
-          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
-            return;
-          }
-
-          const conn = this.wsConnections.get(token);
-          if (!conn) {
-            // Se conexão não existe (ex: durante auth ainda não foi adicionada ou foi removida), não faz nada.
-            // Mas durante o setup (dentro desta Promise), nós tratamos o auth especificamente aqui.
-          }
-
-          // ✅ Processar autorização (apenas durante inicialização)
-          if (msg.msg_type === 'authorize' && !authResolved) {
-            this.logger.debug(`[APOLLO] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
-            authResolved = true;
-            clearTimeout(connectionTimeout);
-
-            if (msg.error || (msg.authorize && msg.authorize.error)) {
-              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
-              this.logger.error(`[APOLLO] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
-              this.wsConnections.delete(token); // Limpar token inválido
-              reject(new Error(errorMsg));
-            } else {
-              this.logger.log(`[APOLLO] ✅ [${userId || 'SYSTEM'}] WebSocket Autorizado com Sucesso!`);
-              // Configurar Keep-Alive
-              const keepAlive = setInterval(() => {
-                if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
-              }, 30000);
-
-              // Salvar conexão no pool
-              this.wsConnections.set(token, {
-                ws: socket,
-                authorized: true,
-                authorizedCurrency: msg.authorize?.currency || null,
-                pendingRequests: new Map(),
-                subscriptions: new Map(),
-                keepAliveInterval: keepAlive,
-                requestIdCounter: 0
-              });
-
-              resolve(socket);
-            }
-            return;
-          }
-
-          // ✅ Roteamento normal de mensagens para conexões ativas
-          if (conn) {
-            // 1. Tentar casar com req_id se existir (Prioridade Alta)
-            const msgReqId = msg.req_id ? Number(msg.req_id) : null;
-            if (msgReqId !== null && conn.pendingRequests.has(msgReqId)) {
-              const pending = conn.pendingRequests.get(msgReqId);
-              if (pending) {
-                clearTimeout(pending.timeout);
-                conn.pendingRequests.delete(msgReqId);
-                if (msg.error) pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-                else pending.resolve(msg);
-              }
-              return;
-            }
-
-            // Fallback legado (FIFO) - Menos seguro mas mantém compatibilidade para msgs sem req_id
-            if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-              const firstKey = conn.pendingRequests.keys().next().value;
-              if (firstKey) {
-                const pending = conn.pendingRequests.get(firstKey);
-                if (pending) {
-                  clearTimeout(pending.timeout);
-                  conn.pendingRequests.delete(firstKey);
-                  if (msg.error) {
-                    pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-                  } else {
-                    pending.resolve(msg);
-                  }
-                }
-                return;
-              }
-            }
-
-            // 3. Subscriptions (Proposal Open Contract, Ticks)
-            if (msg.proposal_open_contract) {
-              const id = msg.proposal_open_contract.contract_id;
-              const callback = conn.subscriptions.get(id);
-              if (callback) {
-                callback(msg);
-                return;
-              }
-            }
-            if (msg.tick) {
-              const id = msg.tick.id;
-              const callback = conn.subscriptions.get(id);
-              if (callback) callback(msg);
-            }
-          }
-
-        } catch (e) {
-          // JSON parse error or logic error
-        }
-      });
-
-      socket.on('error', (err) => {
-        if (!authResolved) {
-          clearTimeout(connectionTimeout);
-          reject(err);
-        }
-        this.logger.error(`[APOLLO] ❌ WS Error: ${err.message}`);
-      });
-
-      socket.on('close', () => {
-        this.logger.warn(`[APOLLO] 🔌 WS Closed`);
-        this.wsConnections.delete(token); // Limpar ao fechar
-      });
-
-      // Enviar Authorize logo após abrir
-      socket.on('open', () => {
-        this.logger.debug(`[APOLLO] 📤 [${userId || 'SYSTEM'}] Enviando solicitação de autorização...`);
-        socket.send(JSON.stringify({ authorize: token }));
-      });
+      try {
+        const finalPayload = { ...payload, req_id: requestId };
+        conn.ws.send(JSON.stringify(finalPayload));
+      } catch (e) {
+        clearTimeout(timeout);
+        conn.pendingRequests.delete(requestId);
+        reject(e);
+      }
     });
-
-    return {
-      ws,
-      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-        this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
-      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
-    };
-
-  } catch(e) {
-    this.logger.error(`[APOLLO] ❌ Falha fatal ao criar conexão: ${e instanceof Error ? e.message : e}`);
-    return null;
-  }
-}
-
-  /**
-   * ✅ Envia requisição via conexão existente
-   */
-  /**
-   * ✅ Envia requisição via conexão existente
-   */
-  private async sendRequestViaConnection(token: string, payload: any, timeoutMs: number): Promise < any > {
-  const conn = this.wsConnections.get(token);
-  if(!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
-  throw new Error('Conexão WebSocket não está disponível ou autorizada');
-}
-
-return new Promise((resolve, reject) => {
-  // ✅ APOLLO: Usar req_id INTEIRO (1 a 2^31 - 1) para compliance com Deriv API
-  const requestId = ++conn.requestIdCounter;
-
-  const timeout = setTimeout(() => {
-    conn.pendingRequests.delete(requestId);
-    reject(new Error(`Timeout após ${timeoutMs}ms`));
-  }, timeoutMs);
-
-  conn.pendingRequests.set(requestId, { resolve, reject, timeout });
-
-  try {
-    const finalPayload = { ...payload, req_id: requestId };
-    conn.ws.send(JSON.stringify(finalPayload));
-  } catch (e) {
-    clearTimeout(timeout);
-    conn.pendingRequests.delete(requestId);
-    reject(e);
-  }
-});
   }
 
   /**
    * ✅ Inscreve-se para atualizações via conexão existente
    */
   private async subscribeViaConnection(
-  token: string,
-  payload: any,
-  callback: (msg: any) => void,
-  subId: string,
-  timeoutMs: number,
-): Promise < void> {
-  const conn = this.wsConnections.get(token);
-  if(!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
-  throw new Error('Conexão WebSocket não está disponível ou autorizada');
-}
-
-// ✅ Aguardar primeira resposta para confirmar subscription
-await new Promise<void>((resolve, reject) => {
-  const timeout = setTimeout(() => {
-    conn.subscriptions.delete(subId);
-    reject(new Error(`Timeout ao inscrever ${subId}`));
-  }, timeoutMs);
-
-  // ✅ Callback wrapper que confirma subscription na primeira mensagem
-  const wrappedCallback = (msg: any) => {
-    // ✅ Primeira mensagem confirma subscription
-    if (msg.proposal_open_contract || msg.tick || msg.error) {
-      clearTimeout(timeout);
-      if (msg.error) {
-        conn.subscriptions.delete(subId);
-        reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-        return;
-      }
-      // ✅ Subscription confirmada, substituir por callback original
-      conn.subscriptions.set(subId, callback);
-      resolve();
-      // ✅ Chamar callback original com primeira mensagem
-      callback(msg);
-      return;
+    token: string,
+    payload: any,
+    callback: (msg: any) => void,
+    subId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const conn = this.wsConnections.get(token);
+    if (!conn || conn.ws.readyState !== WebSocket.OPEN || !conn.authorized) {
+      throw new Error('Conexão WebSocket não está disponível ou autorizada');
     }
-    // ✅ Se não for primeira mensagem, já deve estar usando callback original (mas por segurança chamamos)
-    try { callback(msg); } catch (e) { }
-  };
 
-  conn.subscriptions.set(subId, wrappedCallback);
-  conn.ws.send(JSON.stringify(payload));
-});
+    // ✅ Aguardar primeira resposta para confirmar subscription
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        conn.subscriptions.delete(subId);
+        reject(new Error(`Timeout ao inscrever ${subId}`));
+      }, timeoutMs);
+
+      // ✅ Callback wrapper que confirma subscription na primeira mensagem
+      const wrappedCallback = (msg: any) => {
+        // ✅ Primeira mensagem confirma subscription
+        if (msg.proposal_open_contract || msg.tick || msg.error) {
+          clearTimeout(timeout);
+          if (msg.error) {
+            conn.subscriptions.delete(subId);
+            reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+            return;
+          }
+          // ✅ Subscription confirmada, substituir por callback original
+          conn.subscriptions.set(subId, callback);
+          resolve();
+          // ✅ Chamar callback original com primeira mensagem
+          callback(msg);
+          return;
+        }
+        // ✅ Se não for primeira mensagem, já deve estar usando callback original (mas por segurança chamamos)
+        try { callback(msg); } catch (e) { }
+      };
+
+      conn.subscriptions.set(subId, wrappedCallback);
+      conn.ws.send(JSON.stringify(payload));
+    });
   }
 
   /**
    * ✅ Remove subscription da conexão
    */
   private removeSubscriptionFromConnection(token: string, subId: string): void {
-  const conn = this.wsConnections.get(token);
-  if(conn) {
-    conn.subscriptions.delete(subId);
-    // Optional: Send forget request? 
-    // Deriv API 'forget' { forget: subId } if subId is stream ID. 
-    // Not strictly necessary for client-side cleanup but good for server resources.
+    const conn = this.wsConnections.get(token);
+    if (conn) {
+      conn.subscriptions.delete(subId);
+      // Optional: Send forget request? 
+      // Deriv API 'forget' { forget: subId } if subId is stream ID. 
+      // Not strictly necessary for client-side cleanup but good for server resources.
+    }
   }
-}
 }
