@@ -525,7 +525,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
         const stdDev = Math.sqrt(variance);
 
-        if (stdDev > 0.05) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
+        if (stdDev > 0.5) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
 
         return { passes: true };
     }
