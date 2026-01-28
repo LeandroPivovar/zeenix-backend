@@ -28,7 +28,7 @@ export interface AutonomousAgentState {
 
 export interface MarketAnalysis {
   probability: number;
-  signal: 'CALL' | 'PUT' | 'DIGIT' | 'MATCH' | null;
+  signal: 'CALL' | 'PUT' | 'DIGIT' | 'MATCH' | 'ODD' | 'EVEN' | null;
   payout: number;
   confidence: number;
   details?: any;
