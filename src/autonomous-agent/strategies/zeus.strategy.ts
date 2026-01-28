@@ -131,7 +131,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const activeUsers = await this.dataSource.query(
                 `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
-            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type,
+            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -213,7 +213,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                     riskProfile: ((user as any).riskProfile as RiskProfile) || 'MODERADO', // Use user.riskProfile if available, otherwise default
 
-                    enableStopLossBlindado: (user as any).stopLossType === 'blindado', // Use user.stopLossType
+                    enableStopLossBlindado: user.stop_loss_type === 'blindado', // ✅ Fix mapping
                     blindadoTriggerPctOfTarget: 0.4,
                     blindadoProtectPctOfPeak: 0.5,
 

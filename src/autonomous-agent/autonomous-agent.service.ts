@@ -121,6 +121,17 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
 
+      // 4. Adicionar coluna stop_loss_type
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE autonomous_agent_config 
+          ADD COLUMN stop_loss_type VARCHAR(20) DEFAULT 'normal'
+        `);
+        this.logger.log('[CreateStatsIndexes] ✅ Coluna stop_loss_type adicionada em autonomous_agent_config');
+      } catch (error) {
+        // Ignorar se já existe
+      }
+
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
@@ -759,6 +770,7 @@ export class AutonomousAgentService implements OnModuleInit {
                symbol = ?,
                agent_type = ?,
                trading_mode = ?,
+               stop_loss_type = ?,
                initial_balance = ?,
                session_status = 'active',
                session_date = NOW(),
@@ -777,6 +789,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.symbol || 'R_100', // Default fallback, but respects V2 symbols if provided
             normalizedAgentType,
             config.tradingMode || 'normal',
+            config.stopLossType || 'normal',
             config.initialBalance || 0,
             userId,
           ],
@@ -791,9 +804,9 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, initial_balance,
+            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance,
             session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -806,6 +819,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
             config.tradingMode || 'normal',
+            config.stopLossType || 'normal',
             config.initialBalance || 0,
           ],
         );
