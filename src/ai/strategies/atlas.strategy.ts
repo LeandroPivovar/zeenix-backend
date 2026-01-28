@@ -604,13 +604,7 @@ Status: monitorando força...`
       // ✅ Log de rejeição por delta insuficiente (apenas em recuperação)
       const key = `${symbol}_${state.userId}_recovery_rejection`;
       if (!this.intervaloLogsEnviados.has(key) || (state.tickCounter || 0) % 5 === 0) {
-        this.saveAtlasLog(state.userId, symbol, 'analise',
-          `ENTRADA BLOQUEADA
-Motivo: força insuficiente
-Critério Avaliado: delta (movimento)
-Detectado: ${absDiff.toFixed(2)}
-Exigido: ${threshold.toFixed(2)}
-Ação: aguardar força de tendência`);
+        this.logBlockedEntry(state.userId, `Filtro de força: ${absDiff.toFixed(2)} (Exigido: ${threshold.toFixed(2)})`, 'FILTRO');
         this.intervaloLogsEnviados.set(key, true);
         if ((state.tickCounter || 0) % 5 === 0) {
           this.intervaloLogsEnviados.delete(key);
@@ -727,13 +721,11 @@ Ação: aguardar força de tendência`);
 
       // Meta de Lucro
       if (profitTarget > 0 && lucroAtual >= profitTarget) {
-        this.saveAtlasLog(state.userId, symbol, 'vitoria',
-          `META DE LUCRO ATINGIDA
-Status: Meta Alcançada
-Lucro: ${formatCurrency(lucroAtual, state.currency)}
-Meta: ${formatCurrency(profitTarget, state.currency)}
-Ação: IA DESATIVADA`
-        );
+        this.logSessionEnd(state.userId, {
+          result: 'TAKE_PROFIT',
+          totalProfit: lucroAtual,
+          trades: state.consecutiveWins + state.consecutiveLosses
+        });
 
         await this.dataSource.query(
           `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
@@ -765,13 +757,7 @@ Ação: IA DESATIVADA`
 
           if (currentPeak >= activationThreshold) {
             const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
-            this.saveAtlasLog(state.userId, symbol, 'vitoria',
-              `PROTEÇÃO DO BLINDADO
-Lucro Atual: +${formatCurrency(currentPeak, state.currency)}
-Piso Atual: +${formatCurrency(protectedAmount, state.currency)}
-Regra: travar entradas abaixo do piso
-Ação: entradas protegidas`
-            );
+            this.logStrategicPause(state.userId, 'ATIVADA', `Stop Blindado (Lucro Atual: +${formatCurrency(currentPeak, state.currency)} | Piso: +${formatCurrency(protectedAmount, state.currency)})`);
           }
         }
 
@@ -781,12 +767,11 @@ Ação: entradas protegidas`
 
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
-            this.saveAtlasLog(state.userId, symbol, 'vitoria',
-              `STOP BLINDADO ATINGIDO
-Status: Lucro Garantido
-Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
-Ação: IA DESATIVADA`
-            );
+            this.logSessionEnd(state.userId, {
+              result: 'STOP_LOSS', // Usando stop loss como genérico para "interrupção"
+              totalProfit: lucroFinal,
+              trades: state.consecutiveWins + state.consecutiveLosses // Usando como aproximação
+            });
 
             await this.dataSource.query(
               `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
@@ -813,13 +798,11 @@ Ação: IA DESATIVADA`
       // Stop Loss Normal
       const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
       if (lossLimit > 0 && perdaAtual >= lossLimit) {
-        this.saveAtlasLog(state.userId, symbol, 'alerta',
-          `STOP LOSS ATINGIDO
-Status: Limite de Perda
-Perda: ${formatCurrency(perdaAtual, state.currency)}
-Limite: ${formatCurrency(lossLimit, state.currency)}
-Ação: IA DESATIVADA`
-        );
+        this.logSessionEnd(state.userId, {
+          result: 'STOP_LOSS',
+          totalProfit: -perdaAtual,
+          trades: state.consecutiveWins + state.consecutiveLosses
+        });
 
         await this.dataSource.query(
           `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
@@ -1188,9 +1171,14 @@ Ação: IA DESATIVADA`
     state.ultimoLucro = 0;
 
     // Reset mode (User Requirement: "Em caso de WIN, deve voltar para o modo VELOZ")
+    const oldMode = state.mode;
     state.mode = 'veloz';
 
     this.logger.log(`[ATLAS] ✅ Recuperação Finalizada!`);
+
+    const total = state.consecutiveWins + state.consecutiveLosses;
+    const winRate = total > 0 ? (state.consecutiveWins / total) * 100 : 0;
+    this.logModeEvaluation(state.userId, state.mode, winRate, 0);
   }
 
 
@@ -1307,11 +1295,15 @@ Ação: IA DESATIVADA`
 
       const buyDuration = Date.now() - buyStartTime;
       this.logger.log(`[ATLAS][${symbol}] ✅ Contrato criado | Proposal: ${proposalDuration}ms | Compra: ${buyDuration}ms | ContractId: ${contractId}`);
-      this.saveAtlasLog(userId, symbol, 'operacao',
-        `✅ CONTRATO CRIADO\n` +
-        `• ID: ${contractId}\n` +
-        `• Latência Proposta: ${proposalDuration}ms\n` +
-        `• Latência Compra: ${buyDuration}ms`);
+
+      const userState = this.atlasUsers.get(userId);
+      this.logContractCreated(userId, {
+        type: contractParams.contract_type,
+        direction: userState?.ultimaDirecaoOp || 'N/A',
+        stake: contractParams.amount,
+        proposalId: proposalId,
+        latency: proposalDuration + buyDuration
+      });
 
       // ✅ Chamar callback onBuy IMEDIATAMENTE (Replication)
       if (onBuy) {
@@ -1441,8 +1433,10 @@ Ação: IA DESATIVADA`
         if (state.recoveryRecovered >= state.recoveryTargetProfit) {
           this.finishRecovery(state);
         } else {
-          this.saveAtlasLog(state.userId, symbol, 'alerta',
-            `RECUPERAÇÃO PARCIAL: ${state.recoveryRecovered.toFixed(2)}/${state.recoveryTargetProfit.toFixed(2)}`);
+          this.logRecoveryPartial(state.userId, {
+            recovered: state.recoveryRecovered,
+            target: state.recoveryTargetProfit
+          });
         }
       } else {
         // ✅ LÓGICA SOROS (Se não estiver recuperando)
@@ -1450,17 +1444,32 @@ Ação: IA DESATIVADA`
           // Ganhou a 2ª (Soros Nível 1) -> Resetar
           state.isInSoros = false;
           state.ultimoLucro = 0;
-          this.saveAtlasLog(state.userId, symbol, 'vitoria', `✅ SOROS CONCLUÍDO (Retorno à base)`);
+
+          this.logWinStreak(state.userId, {
+            consecutiveWins: state.consecutiveWins,
+            accumulatedProfit: state.sessionProfit,
+            currentStake: state.ultimaApostaUsada
+          });
         } else {
           // Ganhou a 1ª (Base) -> Ativar Soros
           state.isInSoros = true;
           state.ultimoLucro = lucro;
           this.logger.log(`[ATLAS] Soros ativado para próxima entrada (Lucro: ${lucro})`);
+
+          this.logSorosActivation(state.userId, {
+            previousProfit: lucro,
+            stakeBase: state.apostaBase,
+            level: 1
+          });
         }
 
         // Pós-win: Sempre retorna para VELOZ (User Requirement: "Em caso de WIN, deve voltar para o modo VELOZ")
         state.mode = 'veloz';
         this.logger.log(`[ATLAS] Win detectado. Modo resetado para VELOZ.`);
+
+        const totalW = state.consecutiveWins + state.consecutiveLosses;
+        const winRateW = totalW > 0 ? (state.consecutiveWins / totalW) * 100 : 0;
+        this.logModeEvaluation(state.userId, state.mode, winRateW, state.consecutiveLosses);
       }
 
       this.logTradeResultV2(state.userId, {
@@ -1491,13 +1500,25 @@ Ação: IA DESATIVADA`
         if (state.consecutiveLosses >= 2) {
           // Degradação de modo: VELOZ -> NORMAL
           if (state.mode === 'veloz') {
+            const oldMode = state.mode;
             state.mode = 'normal';
             this.logger.log(`[ATLAS] 2 losses seguidos. Degradando para modo NORMAL.`);
+
+            const total = state.consecutiveWins + state.consecutiveLosses;
+            const winRate = total > 0 ? (state.consecutiveWins / total) * 100 : 0;
+            this.logModeEvaluation(state.userId, state.mode, winRate, state.consecutiveLosses);
           }
 
           // Iniciar ciclo de recuperação
           // Spec: "entra em recuperação a partir de 2 losses seguidos"
           state.perdaAcumulada += perda; // Acumular para saber quanto recuperar
+
+          this.logRecoveryStarted(state.userId, {
+            accumulatedLoss: state.perdaAcumulada,
+            target: state.perdaAcumulada * 1.5, // Exemplo de alvo
+            riskProfile: state.mode
+          });
+
           this.startRecovery(state);
         } else {
           state.perdaAcumulada += perda;
@@ -1510,8 +1531,15 @@ Ação: IA DESATIVADA`
         if (state.mode === 'normal') {
           state.mode = 'lento';
           this.logger.log(`[ATLAS] Loss em modo NORMAL (Recuperando). Degradando para modo LENTO.`);
+
+          const total = state.consecutiveWins + state.consecutiveLosses;
+          const winRate = total > 0 ? (state.consecutiveWins / total) * 100 : 0;
+          this.logModeEvaluation(state.userId, state.mode, winRate, state.consecutiveLosses);
         } else if (state.mode === 'veloz') {
           state.mode = 'normal';
+          const total = state.consecutiveWins + state.consecutiveLosses;
+          const winRate = total > 0 ? (state.consecutiveWins / total) * 100 : 0;
+          this.logModeEvaluation(state.userId, state.mode, winRate, state.consecutiveLosses);
         }
       }
 
@@ -2167,13 +2195,13 @@ Ação: iniciar coleta de dados`;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `INÍCIO DE SESSÃO DIÁRIA
-Início de Sessão
+    const message = `INÍCIO DE SESSÃO
+Título: Início de Sessão
 Saldo Inicial: ${formatCurrency(session.initialBalance, currency)}
 Meta de Lucro: ${formatCurrency(session.profitTarget, currency)}
 Stop Loss: ${formatCurrency(session.stopLoss, currency)}
 Estratégia: ATLAS
-Símbolo: ${state?.symbol || 'N/A'}
+Símbolo: ${state?.symbol || '1HZ100V'}
 Modo Inicial: ${session.mode.toUpperCase()}
 Ação: iniciar coleta de dados`;
 
@@ -2186,22 +2214,71 @@ Ação: iniciar coleta de dados`;
     mode?: string;
   }) {
     const message = `COLETA DE DADOS
-Coleta de Dados em Andamento
+Título: Coleta de Dados em Andamento
 Meta de Coleta: ${data.targetCount} ticks
 Progresso: ${data.currentCount} / ${data.targetCount}
-Status: aguardando ticks suficientes`;
+Status: aguardando ticks suficientes
+Ação: aguardar coleta mínima`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
     const message = `ANÁLISE INICIADA
-Análise de Mercado
+Título: Análise de Mercado
 Tipo de Análise: PRINCIPAL
 Modo Ativo: ${mode.toUpperCase()}
-Contrato Avaliado: Digits Over 2 (1 tick)`;
+Contrato Avaliado: Digits Over 3 (1 tick)
+Objetivo: identificar sinal válido`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
+  }
+
+  private logModeEvaluation(userId: string, mode: string, winRate: number, losses: number) {
+    const message = `AVALIAÇÃO DE MODO
+Título: Avaliação de Modo
+Modo Atual: ${mode.toUpperCase()}
+Win Rate Local: ${winRate.toFixed(1)}%
+Perdas Consecutivas: ${losses}
+Decisão: manter modo`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
+  }
+
+  private logContractCreated(userId: string, contract: {
+    type: string;
+    direction: string;
+    stake: number;
+    proposalId: string;
+    latency: number;
+  }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `CONTRATO CRIADO
+Título: Contrato Criado
+Contrato: ${contract.type} (1 tick)
+Direção: ${contract.direction}
+Stake: ${formatCurrency(contract.stake, currency)}
+Proposal ID: ${contract.proposalId}
+Latência de Criação: ${contract.latency} ms
+Ação: aguardar execução`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'operacao', message);
+  }
+
+  private logExecutionConfirmed(userId: string, execution: {
+    contractId: string;
+    latency: number;
+    entryPrice: number;
+  }) {
+    const message = `EXECUÇÃO CONFIRMADA
+Título: Execução Confirmada
+Contrato ID: ${execution.contractId}
+Tempo de Execução: ${execution.latency} ms
+Preço de Entrada: ${execution.entryPrice}
+Status: contrato ativo`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'operacao', message);
   }
 
   private logSignalGenerated(userId: string, signal: {
@@ -2211,13 +2288,19 @@ Contrato Avaliado: Digits Over 2 (1 tick)`;
     trigger: string;
     probability: number;
     contractType: string;
-    direction?: 'CALL' | 'PUT';
+    direction?: 'CALL' | 'PUT' | string;
+    stake?: number;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `SINAL DETECTADO
-Contrato: ${signal.contractType}
-Stake: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
+    const message = `SINAL GERADO
+Título: Sinal de Entrada
+Análise: ${signal.isRecovery ? 'RECUPERAÇÃO' : 'PRINCIPAL'}
+Modo: ${signal.mode.toUpperCase()}
+Direção: ${signal.direction || 'N/A'}
+Força do Sinal: ${signal.probability}%
+Contrato: ${signal.contractType} (1 tick)
+Stake Calculada: ${formatCurrency(signal.stake || state?.ultimaApostaUsada || 0, currency)}`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'sinal', message);
   }
@@ -2230,13 +2313,26 @@ Stake: ${formatCurrency(state?.ultimaApostaUsada || 0, currency)}`;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    // ✅ [ZENIX v3.5] O banco reconhece apenas o tipo 'resultado' para operações finalizadas
-    const message = `RESULTADO DA ENTRADA
-Status: ${result.status}
-Lucro/Prejuízo: ${result.profit >= 0 ? '+' : ''}${formatCurrency(result.profit, currency)}
-Saldo Atual: ${formatCurrency(result.balance, currency)}`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
+    if (result.status === 'WIN') {
+      const message = `RESULTADO — WIN
+Título: Resultado da Operação
+Status: WIN
+Direção: ${state?.ultimaDirecaoOp || 'CALL'}
+Contrato: Digits Over 3 (1 tick)
+Resultado Financeiro: +${formatCurrency(result.profit, currency)}
+Saldo Atual: ${formatCurrency(result.balance, currency)}`;
+      this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
+    } else {
+      const message = `RESULTADO — LOSS
+Título: Resultado da Operação
+Status: LOSS
+Direção: ${state?.ultimaDirecaoOp || 'CALL'}
+Contrato: Digits Over 3 (1 tick)
+Resultado Financeiro: -${formatCurrency(Math.abs(result.profit), currency)}
+Saldo Atual: ${formatCurrency(result.balance, currency)}`;
+      this.saveAtlasLog(userId, 'SISTEMA', 'derrota', message);
+    }
   }
 
   private logMartingaleLevelV2(userId: string, martingale: {
@@ -2249,11 +2345,12 @@ Saldo Atual: ${formatCurrency(result.balance, currency)}`;
   }) {
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `MARTINGALE NÍVEL ${martingale.level}
+    const message = `NÍVEL DE MARTINGALE
+Título: Recuperação Ativa
+Nível Atual: M${martingale.level}
+Multiplicador: ${(martingale.calculatedStake / (state?.apostaInicial || 1)).toFixed(1)}x
 Próxima Stake: ${formatCurrency(martingale.calculatedStake, currency)}
-Objetivo: Recuperação de Capital
-Nível Atual: ${martingale.level}
-Perda Acumulada: ${formatCurrency(martingale.accumulatedLoss, currency)}`;
+Limite Máximo: M12`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
@@ -2269,13 +2366,12 @@ Perda Acumulada: ${formatCurrency(martingale.accumulatedLoss, currency)}`;
     const newStake = soros.stakeBase + soros.previousProfit;
 
     const message = `SOROS NÍVEL ${level}
-Soros Nível ${level} Aplicado
+Título: Soros Nível ${level} Aplicado
 Lucro Anterior: +${formatCurrency(soros.previousProfit, currency)}
 Stake Base: ${formatCurrency(soros.stakeBase, currency)}
-Nova Stake: ${formatCurrency(newStake, currency)}
-Objetivo: potencializar sequência positiva`;
+Nova Stake: ${formatCurrency(newStake, currency)}`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
   }
 
   private logWinStreak(userId: string, streak: {
@@ -2286,12 +2382,11 @@ Objetivo: potencializar sequência positiva`;
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
     const message = `SEQUÊNCIA DE VITÓRIAS
-Status: Meta de Soros
-Vitórias: ${streak.consecutiveWins}
-Lucro Acumulado: ${formatCurrency(streak.accumulatedProfit, currency)}
-Ação: monitorando próximo ciclo`;
+Título: Sequência Positiva Detectada
+Vitórias Consecutivas: ${streak.consecutiveWins}
+Lucro Acumulado: +${formatCurrency(streak.accumulatedProfit, currency)}`;
 
-    this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'vitoria', message);
   }
 
   private logSuccessfulRecoveryV2(userId: string, recovery: {
@@ -2303,12 +2398,44 @@ Ação: monitorando próximo ciclo`;
     const state = this.atlasUsers.get(userId);
     const currency = state?.currency || 'USD';
     const message = `RECUPERAÇÃO CONCLUÍDA
-Recuperação Bem-Sucedida
-Recuperado: ${formatCurrency(recovery.recoveredLoss, currency)}
-Lucro Extra: ${formatCurrency(recovery.additionalProfit, currency)}
-Ação: Retornando à Stake Base`;
+Título: Recuperação Finalizada
+Alvo Atingido: ${formatCurrency(recovery.recoveredLoss + recovery.additionalProfit, currency)}
+Saldo Atual: ${formatCurrency(state?.capital || 0, currency)}
+Ação: reset para análise principal`;
 
     this.saveAtlasLog(userId, 'SISTEMA', 'resultado', message);
+  }
+
+  private logRecoveryPartial(userId: string, recovery: {
+    recovered: number;
+    target: number;
+  }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `RECUPERAÇÃO PARCIAL
+Título: Recuperação Parcial
+Recuperado até agora: +${formatCurrency(recovery.recovered, currency)}
+Falta para concluir: ${formatCurrency(recovery.target - recovery.recovered, currency)}
+Ação: recalcular stake`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logRecoveryStarted(userId: string, recovery: {
+    accumulatedLoss: number;
+    target: number;
+    riskProfile: string;
+  }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `INÍCIO DA RECUPERAÇÃO
+Título: Entrada em Recuperação
+Perfil de Risco: ${recovery.riskProfile.toUpperCase()}
+Perdas Acumuladas: -${formatCurrency(recovery.accumulatedLoss, currency)}
+Alvo de Recuperação: ${formatCurrency(recovery.target, currency)}
+Contrato: Rise/Fall (1 tick)`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
 
   private logConservativeReset(userId: string, reset: {
@@ -2325,14 +2452,68 @@ Status: Proteção Ativada`;
     this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
   }
 
-  private logContractSwitchRecovery(userId: string, symbol: 'R_10' | 'R_25' | 'R_100' | '1HZ100V' | 'SISTEMA', martingaleLevel: number) {
-    const message = `TROCA PARA RECUPERAÇÃO
-Foco em Price Action
-Motivo: ${martingaleLevel} perdas consecutivas
-Contrato: Rise/Fall (1 tick)
-Ação: Aguardando sinal de tendência`;
+  private logAnalysisSwitch(userId: string, from: string, to: string, reason: string) {
+    const message = `TROCA DE ANÁLISE
+Título: Troca de Análise
+Análise Anterior: ${from.toUpperCase()}
+Nova Análise: ${to.toUpperCase()}
+Motivo: ${reason}`;
 
-    this.saveAtlasLog(userId, symbol, 'alerta', message);
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logContractSwitch(userId: string, from: string, to: string, reason: string) {
+    const message = `TROCA DE CONTRATO
+Título: Troca de Contrato
+Contrato Anterior: ${from}
+Contrato Atual: ${to}
+Motivo: ${reason}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  } private logStrategicPause(userId: string, phase: 'AVALIADA' | 'ATIVADA' | 'ENCERRADA', details: string) {
+    const message = `PAUSA ESTRATÉGICA
+Título: Pausa Estratégica (${phase})
+Status: ${phase === 'AVALIADA' ? 'em análise' : phase === 'ATIVADA' ? 'suspensão temporária' : 'retomando operações'}
+Motivo: ${details}
+Ação: ${phase === 'ENCERRADA' ? 'voltar à análise' : 'aguardar resfriamento'}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logBlockedEntry(userId: string, reason: string, type: 'FILTRO' | 'ESTADO') {
+    const message = `ENTRADA BLOQUEADA — ${type}
+Título: Operação Bloqueada
+Motivo: ${reason}
+Fator: ${type === 'FILTRO' ? 'critério técnico' : 'gerenciamento de risco'}
+Ação: aguardar próxima janela`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'alerta', message);
+  }
+
+  private logStateReset(userId: string, reason: string) {
+    const message = `RESET DE ESTADO
+Título: Reinicialização de Ciclo
+Motivo: ${reason}
+Status: dados limpos
+Ação: reiniciar monitoramento`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
+  }
+
+  private logSessionEnd(userId: string, summary: {
+    result: 'PROFIT' | 'LOSS' | 'STOP_LOSS' | 'TAKE_PROFIT';
+    totalProfit: number;
+    trades: number;
+  }) {
+    const state = this.atlasUsers.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `ENCERRAMENTO DE SESSÃO
+Título: Sessão Finalizada
+Resultado Global: ${formatCurrency(summary.totalProfit, currency)}
+Total de Entradas: ${summary.trades}
+Status Final: ${summary.result.replace('_', ' ')}`;
+
+    this.saveAtlasLog(userId, 'SISTEMA', 'analise', message);
   }
 
   private async saveAtlasLogsBatch(
@@ -2348,16 +2529,16 @@ Ação: Aguardando sinal de tendência`;
 
     try {
       const icons = {
-        info: '',
-        tick: '',
-        analise: '',
-        sinal: '',
-        operacao: '',
-        resultado: '',
-        vitoria: '',
-        derrota: '',
-        alerta: '',
-        erro: '',
+        info: 'ℹ️',
+        tick: '⏱️',
+        analise: '🔍',
+        sinal: '🟢',
+        operacao: '🚀',
+        resultado: '📊',
+        vitoria: '✅',
+        derrota: '❌',
+        alerta: '⚠️',
+        erro: '🚨',
       };
 
       const values = logs.map(log => {
