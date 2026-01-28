@@ -1424,23 +1424,13 @@ Ação: IA DESATIVADA`
     const currentPayout = isPriceAction ? 0.83 : modeConfig.payout;
 
 
-    if (isWin) {
-      // ✅ VITÓRIA
+if (isWin) {
       const lucro = profit > 0 ? profit : (stakeAmount * currentPayout - stakeAmount);
       state.capital += lucro;
       state.totalProfitLoss += lucro;
 
-      // ✅ Recuperação: resetar (Prioridade Máxima)
+      // ✅ 1. RECUPERAÇÃO (MARTINGALE): Reset total se ganhar
       if (state.isInRecovery) {
-        const perdaRecuperada = state.perdaAcumulada;
-
-        this.logSuccessfulRecoveryV2(state.userId, {
-          recoveredLoss: perdaRecuperada,
-          additionalProfit: lucro,
-          profitPercentage: (lucro / perdaRecuperada) * 100,
-          stakeBase: state.apostaBase
-        });
-
         state.martingaleStep = 0;
         state.perdaAcumulada = 0;
         state.isInRecovery = false;
@@ -1450,23 +1440,32 @@ Ação: IA DESATIVADA`
         if (state.mode !== state.originalMode) {
           state.mode = state.originalMode;
         }
-      }
-      // ✅ LOGICA DE SOROS AJUSTADA
+        
+        // Log de recuperação (opcional, já existe no seu código)
+        this.logSuccessfulRecoveryV2(state.userId, {
+          recoveredLoss: state.perdaAcumulada,
+          additionalProfit: lucro,
+          profitPercentage: (lucro / (state.perdaAcumulada || 1)) * 100,
+          stakeBase: state.apostaBase
+        });
+      } 
+      // ✅ 2. LÓGICA DE SOROS (APENAS 1 NÍVEL)
       else {
         state.virtualLossCount = 0;
-        state.virtualLossActive = false;
 
-        // Ativa o estado de Soros se for a primeira vitória do ciclo
         if (!state.isInSoros) {
+          // Ganhou a primeira (Stake Base): Ativa o Soros para a próxima
           state.isInSoros = true;
           state.ultimoLucro = lucro;
-          this.logger.log(`[ATLAS][${symbol}] Soros Nível 1 Ativado para ${state.userId}`);
+          this.logger.log(`[ATLAS] Soros Nível 1 preparado para o usuário ${state.userId}`);
         } else {
-          // Mantém isInSoros como true e atualiza o lucro para o próximo nível
-          // O reset agora só ocorre se você definir um limite (ex: 3 vitórias) 
-          // ou se houver uma derrota (que já está tratada no bloco 'else' da derrota).
-          state.ultimoLucro = lucro;
-          this.logger.log(`[ATLAS][${symbol}] Soros Avançando... Próxima stake usará lucro de ${lucro}`);
+          // Ganhou a segunda (Stake com Soros): Ciclo completo, hora de resetar
+          state.isInSoros = false;
+          state.ultimoLucro = 0;
+          this.logger.log(`[ATLAS] Ciclo de Soros finalizado com sucesso. Retornando à base.`);
+          
+          this.saveAtlasLog(state.userId, symbol, 'vitoria', 
+            `SOROS FINALIZADO\nStatus: Ciclo Concluído\nResultado: Vitória no Nível 1\nAção: Retornando à Stake Base`);
         }
       }
 
