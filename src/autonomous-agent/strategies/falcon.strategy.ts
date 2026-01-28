@@ -785,6 +785,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.consecutiveWins = 0;
         state.totalLossAccumulated = 0;
         state.martingaleLevel = 0;
+        this.logger.log(`[Falcon][${userId}] ✅ Recuperação completa. Resetando consecutiveWins.`);
       }
 
       // Soros Nível 1: Resetar após 2º win consecutivo
