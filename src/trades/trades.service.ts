@@ -495,34 +495,6 @@ export class TradesService {
         dateTo = lastDay.toISOString().split('T')[0];
       }
 
-      // Cache mantido para evitar queries excessivas (embora DB seja rápido)
-      const cacheKey = `markup_calculated_${dateFrom}_${dateTo}`;
-      const cached = this.markupCache.get(cacheKey);
-      const CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 horas
-
-      if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
-        console.log(`[TradesService] Stream Markup: Usando cache para ${dateFrom} - ${dateTo}`);
-
-        // Emitir evento de início
-        subject.next({
-          data: { type: 'start', totalUsers: cached.data.length, period: { from: dateFrom, to: dateTo } }
-        } as MessageEvent);
-
-        // Emitir dados cacheados em chunks rápidos para não travar event loop se for muito grande
-        const chunkSize = 50;
-        for (let i = 0; i < cached.data.length; i += chunkSize) {
-          const chunk = cached.data.slice(i, i + chunkSize);
-          for (const user of chunk) {
-            subject.next({ data: { type: 'user_data', user } } as MessageEvent);
-          }
-          await new Promise(resolve => setTimeout(resolve, 0)); // Yield
-        }
-
-        subject.next({ data: { type: 'done', totalProcessed: cached.data.length } } as MessageEvent);
-        subject.complete();
-        return;
-      }
-
       console.log(`[TradesService] Stream Markup: Iniciando busca de ${dateFrom} até ${dateTo}`);
 
       try {
@@ -671,11 +643,6 @@ export class TradesService {
           // Opcional: sleep pequeno se necessário
         }
 
-        // Salvar no cache
-        this.markupCache.set(cacheKey, {
-          timestamp: Date.now(),
-          data: accumulatedData
-        });
 
         // Emitir evento de fim
         subject.next({
