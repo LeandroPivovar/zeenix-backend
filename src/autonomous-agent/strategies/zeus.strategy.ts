@@ -493,8 +493,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * ✅ LOGIC HELPER: Extrair último dígito
      */
-    private lastDigitFromPrice(price: number): number {
-        return Math.floor(price * 1000) % 10;
+    /**
+     * ✅ LOGIC HELPER: Extrair último dígito
+     */
+    private lastDigitFromPrice(price: number, symbol: string = '1HZ100V'): number {
+        let precision = 2; // Default 1HZ100V / R_100
+
+        // Ajuste de precisão por ativo
+        if (symbol.includes('R_10') || symbol.includes('1HZ10V')) precision = 3;
+        if (symbol.includes('R_25') || symbol.includes('1HZ25V')) precision = 3;
+        if (symbol.includes('R_50') || symbol.includes('1HZ50V')) precision = 4;
+        if (symbol.includes('R_75') || symbol.includes('1HZ75V')) precision = 4;
+        if (symbol.includes('R_100') || symbol.includes('1HZ100V')) precision = 2;
+
+        const priceStr = price.toFixed(precision);
+        return parseInt(priceStr.slice(-1), 10);
     }
 
     /**
@@ -633,7 +646,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (userTicks.length > config.dataCollectionTicks + 50) userTicks.shift();
         this.ticks.set(userId, userTicks);
 
-        const lastDigit = this.lastDigitFromPrice(tick.value);
+        const lastDigit = this.lastDigitFromPrice(tick.value, config.symbol);
         state.lastDigits.push(lastDigit);
         if (state.lastDigits.length > 50) state.lastDigits.shift();
 
