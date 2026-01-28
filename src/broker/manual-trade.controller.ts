@@ -50,6 +50,7 @@ export class ManualTradeController {
                 status: TradeStatus.PENDING,
                 derivTransactionId: body.contractId ? String(body.contractId) : null,
                 symbol: body.symbol || null,
+                derivCurrency: body.currency || 'USD',
             });
 
             const savedTrade = await this.tradeRepository.save(trade);

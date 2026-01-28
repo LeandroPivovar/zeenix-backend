@@ -47,6 +47,9 @@ export class TradeEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'deriv_transaction_id' })
   derivTransactionId?: string | null;
 
+  @Column({ type: 'varchar', length: 10, nullable: true, name: 'deriv_currency' })
+  derivCurrency?: string | null;
+
   @Column({ type: 'varchar', length: 50, nullable: true, name: 'symbol' })
   symbol?: string | null;
 

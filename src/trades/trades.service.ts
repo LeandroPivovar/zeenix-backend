@@ -17,6 +17,7 @@ export interface CreateTradeDto {
   entryValue: number;
   tradeType: TradeType;
   barrier?: number;
+  derivCurrency?: string;
 }
 
 import { DerivService } from '../broker/deriv.service';
@@ -64,6 +65,7 @@ export class TradesService {
       entryValue: dto.entryValue,
       tradeType: dto.tradeType,
       status: TradeStatus.PENDING,
+      derivCurrency: dto.derivCurrency,
     });
 
     const savedTrade = await this.tradeRepository.save(trade);
@@ -356,7 +358,8 @@ export class TradesService {
           `SELECT SUM(profit) as total, COUNT(*) as count 
            FROM trades 
            WHERE user_id = ? AND status = 'won' 
-           AND DATE(created_at) BETWEEN ? AND ?`,
+           AND DATE(created_at) BETWEEN ? AND ?
+           AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
           [user.id, dateFrom, dateTo]
         );
         const manualProfit = parseFloat(manualWins[0]?.total || 0);
@@ -371,7 +374,8 @@ export class TradesService {
           `SELECT SUM(profit_loss) as total, COUNT(*) as count 
            FROM ai_trades 
            WHERE user_id = ? AND status = 'WON' 
-           AND DATE(created_at) BETWEEN ? AND ?`,
+           AND DATE(created_at) BETWEEN ? AND ?
+           AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
           [user.id, dateFrom, dateTo]
         );
         const aiProfit = parseFloat(aiWins[0]?.total || 0);
@@ -387,7 +391,8 @@ export class TradesService {
             `SELECT SUM(profit_loss) as total, COUNT(*) as count 
              FROM autonomous_agent_trades 
              WHERE user_id = ? AND status = 'WON' 
-             AND DATE(created_at) BETWEEN ? AND ?`,
+             AND DATE(created_at) BETWEEN ? AND ?
+             AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
             [user.id, dateFrom, dateTo]
           );
           const agentProfit = parseFloat(agentWins[0]?.total || 0);
@@ -406,7 +411,8 @@ export class TradesService {
             `SELECT SUM(profit) as total, COUNT(*) as count 
              FROM copy_trading_operations 
              WHERE user_id = ? AND result = 'win' 
-             AND DATE(executed_at) BETWEEN ? AND ?`,
+             AND DATE(executed_at) BETWEEN ? AND ?
+             AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
             [user.id, dateFrom, dateTo]
           );
           const copyProfit = parseFloat(copyWins[0]?.total || 0);
@@ -534,7 +540,8 @@ export class TradesService {
                 `SELECT SUM(profit) as total, COUNT(*) as count 
                  FROM trades 
                  WHERE user_id = ? AND status = 'won' 
-                 AND DATE(created_at) BETWEEN ? AND ?`,
+                 AND DATE(created_at) BETWEEN ? AND ?
+                 AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
                 [user.id, dateFrom, dateTo]
               );
               const manualProfit = parseFloat(manualWins[0]?.total || 0);
@@ -549,7 +556,8 @@ export class TradesService {
                 `SELECT SUM(profit_loss) as total, COUNT(*) as count 
                  FROM ai_trades 
                  WHERE user_id = ? AND status = 'WON' 
-                 AND DATE(created_at) BETWEEN ? AND ?`,
+                 AND DATE(created_at) BETWEEN ? AND ?
+                 AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
                 [user.id, dateFrom, dateTo]
               );
               const aiProfit = parseFloat(aiWins[0]?.total || 0);
@@ -565,7 +573,8 @@ export class TradesService {
                   `SELECT SUM(profit_loss) as total, COUNT(*) as count 
                    FROM autonomous_agent_trades 
                    WHERE user_id = ? AND status = 'WON' 
-                   AND DATE(created_at) BETWEEN ? AND ?`,
+                   AND DATE(created_at) BETWEEN ? AND ?
+                   AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
                   [user.id, dateFrom, dateTo]
                 );
                 const agentProfit = parseFloat(agentWins[0]?.total || 0);
@@ -584,7 +593,8 @@ export class TradesService {
                   `SELECT SUM(profit) as total, COUNT(*) as count 
                    FROM copy_trading_operations 
                    WHERE user_id = ? AND result = 'win' 
-                   AND DATE(executed_at) BETWEEN ? AND ?`,
+                   AND DATE(executed_at) BETWEEN ? AND ?
+                   AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
                   [user.id, dateFrom, dateTo]
                 );
                 const copyProfit = parseFloat(copyWins[0]?.total || 0);

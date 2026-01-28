@@ -26,6 +26,10 @@ class CreateTradeRequestDto implements CreateTradeDto {
 
   @IsEnum(TradeType)
   tradeType: TradeType;
+
+  @IsString()
+  @IsOptional()
+  derivCurrency?: string;
 }
 
 @Controller('trades')
