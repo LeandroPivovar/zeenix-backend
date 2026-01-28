@@ -500,42 +500,42 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * ✅ LOGIC HELPER: Filtros Principais (Digits Over 3)
      */
-    private passesPrimaryFilters(prices: number[], digits: number[]): boolean {
-        if (digits.length < 5) return false;
+    private passesPrimaryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string } {
+        if (digits.length < 5) return { passes: false, reason: 'Coleta de dígitos insuficiente' };
 
         // Filtro 1: média dos dígitos > 4.5
         const avgDigit = digits.reduce((a, b) => a + b, 0) / digits.length;
-        if (avgDigit <= 4.5) return false;
+        if (avgDigit <= 4.5) return { passes: false, reason: `Média de dígitos baixa (${avgDigit.toFixed(1)} ≤ 4.5)` };
 
         // Filtro 2: std dev controlado (Price Action)
         const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
         const variance = prices.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / prices.length;
         const stdDev = Math.sqrt(variance);
 
-        if (stdDev > 0.05) return false;
+        if (stdDev > 0.05) return { passes: false, reason: `Instabilidade de preço alta (Vol: ${stdDev.toFixed(4)})` };
 
-        return true;
+        return { passes: true };
     }
 
     /**
      * ✅ LOGIC HELPER: Filtros de Recuperação (Rise/Fall)
      */
-    private passesRecoveryFilters(prices: number[], digits: number[]): boolean {
-        if (prices.length < 10) return false;
+    private passesRecoveryFilters(prices: number[], digits: number[]): { passes: boolean; reason?: string } {
+        if (prices.length < 10) return { passes: false, reason: 'Aguardando ticks para tendência' };
 
         // Filtro 1: preço atual > média dos últimos 10 (Trend Following)
         const last10 = prices.slice(-10);
         const avg10 = last10.reduce((a, b) => a + b, 0) / last10.length;
         const currentPrice = prices[prices.length - 1];
 
-        if (currentPrice <= avg10) return false;
+        if (currentPrice <= avg10) return { passes: false, reason: 'Tendência de baixa (Preço ≤ Média)' };
 
         // Filtro 2: não ter muitos dígitos baixos recentes (Evitar tendência de baixa oculta)
         const last5Digits = digits.slice(-5);
         const lowCount = last5Digits.filter((d) => d < 4).length;
-        if (lowCount > 2) return false;
+        if (lowCount > 2) return { passes: false, reason: 'Ruído de dígitos baixos detectado' };
 
-        return true;
+        return { passes: true };
     }
 
     /**
@@ -704,22 +704,22 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const wPrices = prices.slice(-WINDOW);
         const wDigits = digits.slice(-WINDOW);
 
-        let signal = false;
+        let filterResult: { passes: boolean; reason?: string } = { passes: false };
         let probability = 0;
         let details: any = {};
 
         // Lógica Principal vs Recuperação
         if (state.analysis === "PRINCIPAL") {
-            signal = this.passesPrimaryFilters(wPrices, wDigits);
-            probability = signal ? 88.5 : 20.0;
+            filterResult = this.passesPrimaryFilters(wPrices, wDigits);
+            probability = filterResult.passes ? 88.5 : 20.0;
             details = {
                 contractType: 'DIGITOVER', // M0
                 info: 'Análise Principal (Digits Over 3)',
                 mode: 'NORMAL'
             };
         } else {
-            signal = this.passesRecoveryFilters(wPrices, wDigits);
-            probability = signal ? 95.0 : 30.0; // Recuperação exige alta confiança
+            filterResult = this.passesRecoveryFilters(wPrices, wDigits);
+            probability = filterResult.passes ? 95.0 : 30.0; // Recuperação exige alta confiança
 
             // Direção Rise/Fall
             const priceNow = prices[prices.length - 1];
@@ -736,7 +736,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
-        if (signal) {
+        if (filterResult.passes) {
+            state.lastRejectionReason = undefined;
             return {
                 signal: state.analysis === "RECUPERACAO" ? details.direction : 'DIGIT',
                 probability,
@@ -746,11 +747,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
+        // Armazenar motivo da rejeição para o log de heartbeat
+        state.lastRejectionReason = filterResult.reason;
+
         // Heartbeat para log a cada 10 ticks de análise sem sinal
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
         if (state.ticksSinceLastAnalysis >= 10) {
             state.ticksSinceLastAnalysis = 0;
-            this.logAnalysisStarted(userId, state.mode, prices.length);
+            this.logAnalysisStarted(userId, state.mode, prices.length, state.lastRejectionReason);
         }
 
         return null;
@@ -2161,12 +2165,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.saveLog(userId, 'INFO', 'ANALYZER', message);
     }
 
-    private logAnalysisStarted(userId: string, mode: string, tickCount?: number) {
+    private logAnalysisStarted(userId: string, mode: string, tickCount?: number, reason?: string) {
         const countStr = tickCount ? ` (Ticks: ${tickCount})` : '';
+        const actionStr = reason ? `⏸️ ENTRADA BLOQUEADA: ${reason}` : 'Aguardando oportunidade...';
         const message = `🧠 ANÁLISE DO MERCADO\n` +
             `• MODO: ${mode}\n` +
             `• STATUS: Monitorando padrões${countStr}\n` +
-            `• AÇÃO: Aguardando oportunidade...`;
+            `• AÇÃO: ${actionStr}`;
 
         this.saveLog(userId, 'INFO', 'ANALYZER', message);
     }
@@ -2424,6 +2429,7 @@ export interface ZeusState {
     lastContractType?: string; // Mantido para referência rápida
     ticksSinceLastAnalysis: number; // Mantido para infra
     lastDigits: number[]; // Mantido para coleta
+    lastRejectionReason?: string; // ✅ Adicionado para transparência de filtros
 }
 
 // Alias para manter compatibilidade com nome antigo se necessário, mas preferimos usar ZeusState
