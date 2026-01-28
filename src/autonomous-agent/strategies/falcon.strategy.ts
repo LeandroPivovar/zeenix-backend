@@ -429,13 +429,21 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const now = Date.now();
         const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
 
-        if (waitTime > 60000) {
+        if (waitTime > 40000) {
           const contractRef = state.currentContractId || 'ativo';
           this.logger.warn(`[Falcon][${userId}] ⚠️ [SAFETY] Contrato ${contractRef} parado há ${Math.round(waitTime / 1000)}s. Destravando agente...`);
 
           await this.saveLog(userId, 'WARN', 'SYSTEM',
-            `⚠️ RECUPERANDO CONEXÃO...\n• Motivo: Operação ${contractRef} sem resposta da API há ${Math.round(waitTime / 1000)}s.\n• Ação: Destravando agente para nova análise.`
+            `⚠️ TIMEOUT NA RESPOSTA (40s)...\n• Motivo: Operação ${contractRef} sem resposta da API.\n• Ação: Marcando trade como erro e destravando agente.`
           );
+
+          // ✅ Marcar trade no banco como erro
+          if (state.currentTradeId) {
+            await this.updateTradeRecord(state.currentTradeId, {
+              status: 'ERROR',
+              errorMessage: 'Timeout aguardando resposta (40s)',
+            }).catch(e => this.logger.error(`[Falcon][${userId}] Erro ao marcar timeout no banco:`, e));
+          }
 
           state.isWaitingContract = false;
           state.waitingContractStartTime = null;
@@ -918,7 +926,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
     }
 
-    return Math.round(stake * 100) / 100;
+    return Number(stake.toFixed(2));
   }
 
   /**
@@ -1220,7 +1228,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     maxRetries = 2,
     tradeId: number = 0, // ✅ Adicionado tradeId
   ): Promise<string | null> {
-    const roundedStake = Math.round(stake * 100) / 100;
+    const roundedStake = Number(stake.toFixed(2));
     let lastError: Error | null = null;
 
     // ✅ ESTABILIDADE ZEUS: Delay inicial de 3000ms antes da primeira tentativa
