@@ -74,7 +74,7 @@ export class ApolloStrategy implements IStrategy {
   private marketTicks = new Map<string, number[]>(); // Store prices per market
   private lastLogTimeNodes = new Map<string, number>(); // ✅ Heartbeat per symbol
   private lastRejectionLog = new Map<string, number>(); // ✅ Throttling for rejection logs
-  private defaultSymbol = 'R_100';
+  private defaultSymbol = 'R_10';
   private appId: string;
 
   // WebSocket Pool
@@ -366,7 +366,7 @@ Status: Sessão Equilibrada`;
       // 2. Análise: Aplica 2 filtros (Delta + Consistência)
       // 3. Decisão: Se delta >= 0.3 E 2 ticks na mesma direção, entra a favor
 
-      const MIN_DELTA = 0.3;
+      const MIN_DELTA = state.defenseMode ? 0.20 : 0.30;
 
       // Delta Total (P3 -> P1)
       const totalDelta = currentPrice - price3;
@@ -397,7 +397,7 @@ Status: Sessão Equilibrada`;
       // 2. Análise: Aplica 2 filtros (Delta + Consistência de 3 movimentos)
       // 3. Decisão: Se delta >= 0.5 E 3 ticks (movimentos) na mesma direção, entra a favor
 
-      const MIN_DELTA = 0.5;
+      const MIN_DELTA = state.defenseMode ? 0.40 : 0.45;
 
       // Delta Total (P4 -> P1, ou seja, Last 3 moves)
       // Prices: [..., P4, P3, P2, P1] (P1=current)
@@ -814,7 +814,7 @@ Status: Sessão Equilibrada`;
     if (modeMap[modeRaw]) modeRaw = modeMap[modeRaw];
 
     // Market Selection
-    let selectedSymbol = 'R_100';
+    let selectedSymbol = 'R_10';
     const marketInput = (config.symbol || config.selectedMarket || '').toLowerCase();
 
     if (marketInput === 'r_100' || marketInput.includes('100')) selectedSymbol = 'R_100';
