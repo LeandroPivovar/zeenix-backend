@@ -723,6 +723,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Lógica Principal vs Recuperação
         if (state.analysis === "PRINCIPAL") {
+            const wPrices = prices.slice(-config.dataCollectionTicks);
+            const wDigits = digits.slice(-config.dataCollectionTicks);
+
             filterResult = this.passesPrimaryFilters(wPrices, wDigits);
             probability = filterResult.passes ? 88.5 : 20.0;
             details = {
@@ -731,6 +734,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 mode: 'NORMAL'
             };
         } else {
+            // Recuperação precisa de mais histórico (10 ticks)
+            const wPrices = prices.slice(-10);
+            const wDigits = digits.slice(-10);
+
             filterResult = this.passesRecoveryFilters(wPrices, wDigits);
             probability = filterResult.passes ? 95.0 : 30.0; // Recuperação exige alta confiança
 
