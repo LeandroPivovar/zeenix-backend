@@ -1495,25 +1495,42 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // ✅ Prevenção de Processamento Duplicado
     // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
-    if (!tradeId) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId})`);
+    let finalTradeId = tradeId;
+    if (!finalTradeId) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId}). Tentando recuperar do banco...`);
+      try {
+        const trade = await this.dataSource.query('SELECT id FROM trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
+        if (trade && trade.length > 0) {
+          finalTradeId = trade[0].id;
+          this.logger.log(`[Falcon][${userId}] ✅ TradeId recuperado do banco: ${finalTradeId}`);
+        }
+      } catch (e) {
+        this.logger.error(`[Falcon][${userId}] Falha ao recuperar trade do banco:`, e);
+      }
+    }
+
+    if (!finalTradeId) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ ABORTANDO: Impossível identificar trade para contrato ${result.contractId}`);
       return;
     }
 
-    this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+    // Usar finalTradeId daqui para frente
+    const processingTradeId = finalTradeId;
+
+    this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${processingTradeId} | Win: ${result.win} | Profit: ${result.profit}`);
 
     // ✅ Atualizar trade no banco com resultado
-    if (tradeId) {
+    if (processingTradeId) {
       try {
-        await this.updateTradeRecord(tradeId, {
+        await this.updateTradeRecord(processingTradeId, {
           status: result.win ? 'WON' : 'LOST',
           exitPrice: result.exitPrice || 0,
           profitLoss: result.profit,
           closedAt: new Date(),
         });
-        this.logger.log(`[Falcon][${userId}] ✅ Trade ${tradeId} atualizado no banco de dados`);
+        this.logger.log(`[Falcon][${userId}] ✅ Trade ${processingTradeId} atualizado no banco de dados`);
       } catch (error) {
-        this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+        this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${processingTradeId} no banco:`, error);
       }
     } else {
       this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
