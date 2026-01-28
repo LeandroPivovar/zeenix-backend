@@ -581,10 +581,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             stake = config.baseStake + state.lastWinProfit;
         }
 
-        // Clamp Stop Loss (Não apostar mais do que o restante até o stop)
-        const currentDrawdown = Math.abs(Math.min(0, state.profit));
-        const remainingStop = Math.max(0, config.stopLoss - currentDrawdown);
-        stake = Math.min(stake, remainingStop);
+        // Clamp Stop Loss & Blindado (Proteção de Capital)
+        let maxAllowedRisk = 0;
+
+        if (state.blindadoActive) {
+            // Se blindado, o risco máximo é o que temos acima do piso garantido
+            // Ex: Profit 60, Piso 50 -> Pode arriscar 10
+            maxAllowedRisk = Math.max(0, state.profit - state.blindadoFloorProfit);
+        } else {
+            // Stop Loss Normal
+            const currentDrawdown = Math.abs(Math.min(0, state.profit));
+            maxAllowedRisk = Math.max(0, config.stopLoss - currentDrawdown);
+        }
+
+        // Aplicar redução de stake se necessário
+        if (stake > maxAllowedRisk) {
+            stake = maxAllowedRisk;
+        }
 
         // Clamp Profit Target (Não apostar muito mais do que precisa para bater a meta)
         // Regra fixa: stake para meta
