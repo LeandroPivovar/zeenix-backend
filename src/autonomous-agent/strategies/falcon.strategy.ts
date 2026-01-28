@@ -43,13 +43,13 @@ const FALCON_MODES = {
   NORMAL: {
     name: 'NORMAL',
     windowSize: 3, // Padrão requer 3 ticks
-    frequency: { principal: 1, recovery: 1 }, // Ticks para pular (1 = todo tick)
+    frequency: { principal: 1, recovery: 2 }, // Ticks para pular (1 = todo tick)
     lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
   },
   PRECISO: {
     name: 'PRECISO',
     windowSize: 3,
-    frequency: { principal: 2, recovery: 1 }, // Mais lento para maior precisão
+    frequency: { principal: 2, recovery: 3 }, // Mais lento para maior precisão
     lossesToDowngrade: null,
   },
 };
