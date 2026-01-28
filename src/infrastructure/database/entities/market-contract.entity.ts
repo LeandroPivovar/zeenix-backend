@@ -42,7 +42,7 @@ export class MarketContractEntity {
     @Column({ type: 'json', nullable: true })
     payload: any;
 
-    @ManyToOne(() => MarketEntity, market => market.symbol, { onDelete: 'CASCADE' })
+    @ManyToOne(() => MarketEntity, { onDelete: 'CASCADE' })
     @JoinColumn({ name: 'market_symbol', referencedColumnName: 'symbol' })
     marketEntity: MarketEntity;
 }
