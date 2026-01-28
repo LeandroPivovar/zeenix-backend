@@ -420,6 +420,12 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     this.logger.debug(`[AutonomousAgent] Enviando tick para StrategyManager (symbol=${tickSymbol})`);
+
+    // ✅ Log terminal para depuração de multi-símbolos
+    if (tickSymbol !== 'R_100') {
+      console.log(`[TERM] [AutonomousAgent] Submitting ${tickSymbol} tick to StrategyManager. Users active: ${this.activeSymbols.size}`);
+    }
+
     this.strategyManager.processTick(newTick, tickSymbol).catch((error) => {
       this.logger.error(`[StrategyManager][${tickSymbol}] Erro ao processar tick:`, error);
     });
@@ -882,6 +888,10 @@ export class AutonomousAgentService implements OnModuleInit {
           symbol: agentSymbol,
           tradingMode: config.tradingMode || 'normal',
           initialBalance: config.initialBalance || 0,
+          // ✅ Parâmetros extras necessários para logic de proteção/gestão
+          stopLossType: config.stopLossType,
+          riskProfile: config.riskProfile,
+          agentType: strategy
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {

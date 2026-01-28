@@ -244,6 +244,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       ticksSinceLastAnalysis: 0,
       lastSignals: [],
       consecutiveLossesSinceModeChange: 0,
+      waitingContractStartTime: null,
     };
 
     this.userStates.set(userId, state);
@@ -258,7 +259,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: '1HZ10V', // ✅ V2: Force 1HZ10V
+      symbol: config.symbol || '1HZ10V', // ✅ V2: Use config symbol (allow user choice)
       initialBalance: config.initialBalance || 0,
       stopLossType: (config as any).stopLossType || 'normal',
       riskProfile: (config as any).riskProfile || 'MODERADO',
@@ -297,7 +298,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         riskProfile: falconConfig.riskProfile || 'MODERADO',
         profitTarget: falconConfig.dailyProfitTarget,
         stopLoss: falconConfig.dailyLossLimit,
-        stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+        stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
+        symbol: falconConfig.symbol
       });
 
       this.logSessionStart(userId, {
@@ -335,7 +337,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       riskProfile: falconConfig.riskProfile || 'MODERADO',
       profitTarget: falconConfig.dailyProfitTarget,
       stopLoss: falconConfig.dailyLossLimit,
-      stopBlindadoEnabled: falconConfig.stopLossType === 'blindado'
+      stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
+      symbol: falconConfig.symbol
     });
 
     this.logSessionStart(userId, {
@@ -354,6 +357,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.delete(userId);
     this.userStates.delete(userId);
     this.ticks.delete(userId);
+    this.processingLocks.delete(userId);
     this.logger.log(`[Falcon] ✅ Usuário ${userId} desativado`);
   }
 
@@ -421,17 +425,35 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // 2. Se está aguardando resultado de contrato, realizar análise apenas para detectar entrada bloqueada
       if (state.isWaitingContract) {
-        const marketAnalysis = await this.analyzeMarket(userId, userTicks);
-        if (marketAnalysis?.signal) {
-          this.logBlockedEntry(userId, {
-            reason: 'OPERAÇÃO EM ANDAMENTO',
-            details: `Sinal ${marketAnalysis.signal} detectado durante contrato ${state.currentContractId || 'ativo'}`
-          });
+        // ✅ [SAFETY] Timeout de 60s para contrato preso (possível queda de WS/Subscription)
+        const now = Date.now();
+        const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
+
+        if (waitTime > 60000) {
+          const contractRef = state.currentContractId || 'ativo';
+          this.logger.warn(`[Falcon][${userId}] ⚠️ [SAFETY] Contrato ${contractRef} parado há ${Math.round(waitTime / 1000)}s. Destravando agente...`);
+
+          await this.saveLog(userId, 'WARN', 'SYSTEM',
+            `⚠️ RECUPERANDO CONEXÃO...\n• Motivo: Operação ${contractRef} sem resposta da API há ${Math.round(waitTime / 1000)}s.\n• Ação: Destravando agente para nova análise.`
+          );
+
+          state.isWaitingContract = false;
+          state.waitingContractStartTime = null;
+          state.currentContractId = null;
+          state.currentTradeId = null;
+          return;
         }
 
-        // Heartbeat ocasional
-        if (userTicks.length % 10 === 0) {
-          this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados: ${userTicks.length})`);
+        const marketAnalysis = await this.analyzeMarket(userId, userTicks);
+        if (marketAnalysis?.signal) {
+          // Throttling de log para não inundar
+          if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 10000) {
+            state.lastDeniedLogTime = now;
+            this.logBlockedEntry(userId, {
+              reason: 'OPERAÇÃO EM ANDAMENTO',
+              details: `Sinal ${marketAnalysis.signal} detectado | Operação ${state.currentContractId || 'em curso'} (Há ${Math.round(waitTime / 1000)}s)`
+            });
+          }
         }
         return;
       }
@@ -455,7 +477,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       if (userTicks.length < requiredTicks) {
         // ✅ Log de progresso a cada 3 ticks (igual Zeus)
-        if (userTicks.length % 3 === 0) {
+        // ✅ Log de progresso mais frequente no início (sempre no 1º, 2º e a cada 3)
+        if (userTicks.length < 5 || userTicks.length % 3 === 0) {
           this.logDataCollection(userId, {
             targetCount: requiredTicks,
             currentCount: userTicks.length,
@@ -465,9 +488,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ Log de início de análise (Heartbeat a cada 30 ticks de análise sem sinal)
-      if (state.ticksSinceLastAnalysis >= 30) {
-        state.ticksSinceLastAnalysis = 0;
+      // ✅ Log de início de análise (Heartbeat a cada 15 análises = ~15s em média)
+      // Primeiro log logo na primeira análise após o warm-up de dados
+      if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 15 === 0) {
+        if (state.ticksSinceLastAnalysis % 15 === 0) {
+          state.ticksSinceLastAnalysis = 0;
+        }
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
 
@@ -478,13 +504,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const { signal, probability, details } = marketAnalysis;
 
         // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
-        const cutoff = (state.mode as any) === 'VELOZ' ? 78 : (state.mode === 'NORMAL' ? 80 : 86);
+        const cutoff = (state.mode as any) === 'VELOZ' ? 55 : (state.mode === 'NORMAL' ? 55 : 55);
         const message = `📊 ANÁLISE COMPLETA\n` +
           `• Sequência: ${details?.digitPattern || 'Processando...'}\n` +
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
           `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
-        // Throttled: Apenas logar análise completa se houver sinal ou a cada 30 ticks
+        // Throttled: Apenas logar análise completa se houver sinal ou a cada 10 ticks
         if (marketAnalysis.signal || state.ticksSinceLastAnalysis === 0) {
           this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
         }
@@ -537,9 +563,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const digits = recent.map(t => parseInt(t.value.toString().slice(-1))); // Extrai último dígito
 
     // FILTRO 1: Horário de Operação (24/7 sempre ativo)
-    if (!this.isValidTradingHour()) {
-      return null;
-    }
+    // if (!this.isValidTradingHour()) {
+    //   return null;
+    // }
 
     // LOGICA V2: Padrão IPI (Odd-Even-Odd)
     // Dígito 1 (Mais antigo): ÍMPAR
@@ -1043,6 +1069,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
     state.isWaitingContract = true;
+    state.waitingContractStartTime = Date.now();
 
     // Payout fixo: 92.15%
     const zenixPayout = 0.9215;
@@ -1085,6 +1112,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           config.symbol,
           decision.stake || config.initialStake,
           1, // duration em ticks (ZENIX v1.0 standard)
+          2, // maxRetries
+          tradeId // ✅ Passar tradeId para associar corretamente no callback
         );
 
         if (contractId) {
@@ -1107,6 +1136,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         } else {
           // Se falhou, resetar isWaitingContract e atualizar trade com erro
           state.isWaitingContract = false;
+          state.waitingContractStartTime = null;
           state.currentTradeId = null; // ✅ Resetar ID pois falhou
           await this.updateTradeRecord(tradeId, {
             status: 'ERROR',
@@ -1117,11 +1147,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       } catch (error) {
         // Se houve erro, resetar isWaitingContract
         state.isWaitingContract = false;
+        state.waitingContractStartTime = null;
         state.currentTradeId = null; // ✅ Resetar ID pois falhou
         this.logger.error(`[Falcon][${userId}] Erro ao comprar contrato: `, error);
         await this.saveLog(userId, 'ERROR', 'API', `Erro ao comprar contrato: ${error.message}. Aguardando novo sinal...`);
       }
     } catch (error) {
+      // ✅ Fallback de segurança máximo: resetar estado se qualquer erro crítico ocorrer antes/durante execução
+      state.isWaitingContract = false;
+      state.waitingContractStartTime = null;
+      state.currentTradeId = null;
       this.logger.error(`[Falcon][${userId}] Erro ao executar trade: `, error);
       await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message} `);
     }
@@ -1183,6 +1218,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     stake: number,
     duration: number,
     maxRetries = 2,
+    tradeId: number = 0, // ✅ Adicionado tradeId
   ): Promise<string | null> {
     const roundedStake = Math.round(stake * 100) / 100;
     let lastError: Error | null = null;
@@ -1351,6 +1387,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 if (state) {
                   state.isWaitingContract = false;
+                  state.waitingContractStartTime = null;
                   state.currentContractId = null;
                   state.currentTradeId = null;
                 }
@@ -1376,6 +1413,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.onContractFinish(
                   userId,
                   { win, profit, contractId, exitPrice, stake },
+                  tradeId // ✅ Passar tradeId do closure
                 ).catch((error) => {
                   this.logger.error(`[Falcon][${userId}] Erro ao processar resultado:`, error);
                 });
@@ -1430,29 +1468,37 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   async onContractFinish(
     userId: string,
     result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
+    tradeIdFromCallback?: number, // ✅ Novo argumento
   ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
     if (!config || !state) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas config ou state não encontrado`);
       return;
     }
 
-    const tradeId = state.currentTradeId;
-
-    // ✅ [ZENIX v3.0] Prevenção de Processamento Duplicado
-    // Se o contrato já foi processado (pode acontecer com delays de rede/WS)
-    if (!tradeId || (state.currentTradeId !== null && state.currentTradeId !== tradeId)) {
-      if (tradeId) {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ Ignorando resultado tardio do contrato ${result.contractId} (Trade #${tradeId})`);
-      }
-      return;
-    }
-
+    // ✅ [CORREÇÃO CRÍTICA] Resetar isWaitingContract IMEDIATAMENTE
+    // Isso evita que o agente fique travado em "OPERAÇÃO EM ANDAMENTO"
     state.isWaitingContract = false;
-    state.currentContractId = null;
-    state.currentTradeId = null;
+    state.waitingContractStartTime = null;
+
+    // Priorizar tradeId que veio do closure do buyContract (mais seguro)
+    const tradeId = tradeIdFromCallback || state.currentTradeId;
+
+    // Apenas limpar currentContractId e currentTradeId se forem os mesmos que acabaram de finalizar
+    if (state.currentContractId === result.contractId) {
+      state.currentContractId = null;
+    }
+    if (state.currentTradeId === tradeId) {
+      state.currentTradeId = null;
+    }
+
+    // ✅ Prevenção de Processamento Duplicado
+    // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
+    if (!tradeId) {
+      this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId})`);
+      return;
+    }
 
     this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${tradeId} | Win: ${result.win} | Profit: ${result.profit}`);
 
@@ -2170,9 +2216,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     profitTarget: number;
     stopLoss: number;
     stopBlindadoEnabled: boolean;
+    symbol: string;
   }) {
     const message = `⚙️ CONFIGURAÇÃO INICIAL\n` +
       `• Agente: ${config.agentName}\n` +
+      `• Mercado: ${config.symbol}\n` +
       `• Modo: ${config.operationMode}\n` +
       `• Perfil: ${config.riskProfile}\n` +
       `• Meta Lucro: $${config.profitTarget.toFixed(2)}\n` +
@@ -2377,7 +2425,7 @@ interface FalconUserConfig {
   dailyLossLimit: number;
   derivToken: string;
   currency: string;
-  symbol: '1HZ10V';
+  symbol: string; // ✅ V2: Allow dynamic symbol
   initialBalance: number;
   stopLossType?: 'normal' | 'blindado';
   riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
@@ -2416,4 +2464,6 @@ interface FalconUserState {
   // ✅ Novos campos para Análise FALCON 2.2
   lastSignals: Array<{ direction: string; timestamp: number }>; // Para confirmação dupla
   consecutiveLossesSinceModeChange: number; // Para ajuste de rigor por histórico
+  waitingContractStartTime: number | null; // ✅ Novo: Timestamp de quando começou a aguardar contrato
+
 }
