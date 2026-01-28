@@ -39,7 +39,7 @@ export class MarketContractEntity {
     @Column({ nullable: true })
     submarket: string;
 
-    @Column('jsonb', { nullable: true })
+    @Column({ type: 'json', nullable: true })
     payload: any;
 
     @ManyToOne(() => MarketEntity, market => market.symbol, { onDelete: 'CASCADE' })
