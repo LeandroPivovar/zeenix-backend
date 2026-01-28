@@ -64,6 +64,13 @@ export interface ApolloUserState {
   totalLossAccumulated: number;
   sorosLevel: number; // 0 = Base, 1 = Soros Active
   consecutiveWins?: number; // Track win streak
+
+  // ================== NEW STATE FIELDS ==================
+  isRecovering: boolean;
+  recoveryTarget: number;
+  recoveryRecovered: number;
+  recoveryStartLossStreak: number;
+  sessionLoss: number;
 }
 
 @Injectable()
@@ -265,20 +272,8 @@ Status: Sessão Equilibrada`;
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
-    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 4 losses)
-    // Updated requirement: Auto-Defense logic switches to LENTO after 4 losses.
-    if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
-      if (!state.defenseMode) {
-        state.defenseMode = true;
-        state.mode = 'lento';
-        this.logContractChange(state.userId, state.mode, 'LENTO', '4 Perdas Consecutivas - Ativando Defesa');
-      }
-    } else if (state.lastResultWin && state.mode === 'lento' && state.defenseMode) {
-      // Return to NORMAL after 1 win in Lento (Recovery complete)
-      state.defenseMode = false;
-      state.mode = state.originalMode === 'lento' ? 'normal' : state.originalMode;
-      this.logContractChange(state.userId, 'LENTO', state.mode.toUpperCase(), 'Recuperação com Sucesso');
-    }
+    // 2. DEFENSE MECHANISM (REMOVED - Handled by State Machine in processResult)
+    // Legacy defense code removed to align with new logic.
 
     // 3. ANALYZE SIGNAL
     const signal = this.analyzeSignal(state, ticks);
@@ -292,140 +287,32 @@ Status: Sessão Equilibrada`;
   }
 
   private analyzeSignal(state: ApolloUserState, prices: number[]): 'CALL' | 'PUT' | null {
-    // Determine ticks needed based on mode
-    let requiredTicks = 2;
+    // New Logic: Needs at least 2 ticks to calculate Delta
+    if (prices.length < 2) return null;
 
-    // ADJUST COLLECTION REQUIREMENTS
-    // Veloz: Needs 2 ticks total history (Current, Previous)
-    // Normal/Lento: Needs 3 ticks total history (Current, P-1, P-2)
+    const currentPrice = prices[prices.length - 1]; // Last
+    const lastPrice = prices[prices.length - 2];    // Prev
+    const delta = currentPrice - lastPrice;
 
-    if (state.mode === 'veloz') requiredTicks = 2;
-    else if (state.mode === 'lento') requiredTicks = 4; // Lento needs 3 moves (4 points)
-    else requiredTicks = 3;
-
-    if (prices.length < requiredTicks) return null;
-
-    const currentPrice = prices[prices.length - 1]; // P1
-    const lastPrice = prices[prices.length - 2];    // P2
-    const price3 = prices[prices.length - 3] || 0;  // P3
-
-    let direction: 'CALL' | 'PUT' | null = null;
-    let strength = 0;
-    const filters: string[] = [];
-    const reasons: string[] = [];
-
-    // --- SMART RECOVERY (INVERSION) ---
-    // Rule: If 2 consecutive losses on the SAME direction, invert the next signal logic.
-    let invertSignal = false;
-    if (state.consecutiveLosses >= 2 && state.lastEntryDirection) {
-      // Simplified inversion logic
-      invertSignal = true;
-    }
-
+    // --- MODO VELOZ ---
     if (state.mode === 'veloz') {
-      // MODO VELOZ
-      // Coleta: Aguarda apenas 1 tick
-      // 2. Análise: Aguarda apenas 1 tick e entra a favor
-      // 3. Decisão: Entra sempre seguindo a direção do último tick
-
-      const delta = currentPrice - lastPrice;
-
-      // Direção do último tick
-      if (delta > 0) direction = 'CALL';
-      else if (delta < 0) direction = 'PUT';
-
-      if (direction) {
-        strength = 60;
-        filters.push(`Tendência Imediata (1 Tick)`);
-        filters.push(`Direção: ${direction}`);
-      }
-    }
-    else if (state.mode === 'normal') {
-      // MODO NORMAL
-      // Coleta: Aguarda 2 ticks
-      // 2. Análise: Aplica 2 filtros (Delta + Consistência)
-      // 3. Decisão: Se delta >= 0.3 E 2 ticks na mesma direção, entra a favor
-
-      const MIN_DELTA = 0.3;
-
-      // Delta Total (P3 -> P1)
-      const totalDelta = currentPrice - price3;
-      const absDelta = Math.abs(totalDelta);
-      const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
-
-      // Consistência: P3->P2 e P2->P1 devem ser na mesma direção
-      const move1 = lastPrice - price3;
-      const move2 = currentPrice - lastPrice;
-      const isConsistent = (move1 > 0 && move2 > 0) || (move1 < 0 && move2 < 0);
-
-      if (absDelta >= MIN_DELTA) {
-        if (isConsistent) {
-          direction = currentDirection;
-          strength = 75;
-          filters.push(`Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA}`);
-          filters.push(`Consistência (2 Ticks na mesma direção)`);
-        } else {
-          reasons.push(`Falta de Consistência (Ziguezague)`);
-        }
-      } else {
-        reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
-      }
-    }
-    else if (state.mode === 'lento') {
-      // MODO LENTO - CORREÇÃO 4
-      // Coleta: Aguarda 3 ticks (para ter 3 movimentos)
-      // 2. Análise: Aplica 2 filtros (Delta + Consistência de 3 movimentos)
-      // 3. Decisão: Se delta >= 0.5 E 3 ticks (movimentos) na mesma direção, entra a favor
-
-      const MIN_DELTA = 0.5;
-
-      // Delta Total (P4 -> P1, ou seja, Last 3 moves)
-      // Prices: [..., P4, P3, P2, P1] (P1=current)
-      // Indices: length-1(current), length-2, length-3, length-4
-      const price4 = prices[prices.length - 4] || 0; // P4
-
-      if (price4 === 0) return null; // Safety check
-
-      const totalDelta = currentPrice - price4; // Delta total dos 3 movimentos
-      const absDelta = Math.abs(totalDelta);
-      const currentDirection = totalDelta > 0 ? 'CALL' : 'PUT';
-
-      // Consistência: 3 movimentos na mesma direção
-      // P4->P3, P3->P2, P2->P1
-      const move1 = price3 - price4;      // Move 1
-      const move2 = lastPrice - price3;   // Move 2
-      const move3 = currentPrice - lastPrice; // Move 3
-
-      const isConsistentUP = move1 > 0 && move2 > 0 && move3 > 0;
-      const isConsistentDOWN = move1 < 0 && move2 < 0 && move3 < 0;
-      const isConsistent = isConsistentUP || isConsistentDOWN;
-
-      if (absDelta >= MIN_DELTA) {
-        if (isConsistent) {
-          direction = currentDirection;
-          strength = 90;
-          filters.push(`Delta ${absDelta.toFixed(2)} >= ${MIN_DELTA}`);
-          filters.push(`Consistência Forte (3 Movimentos)`);
-        } else {
-          reasons.push(`Falta de Consistência (3 Movimentos)`);
-        }
-      } else {
-        reasons.push(`Delta Insuficiente (${absDelta.toFixed(2)} < ${MIN_DELTA})`);
-      }
+      // Delta >= 0 -> CALL, else PUT
+      return delta >= 0 ? 'CALL' : 'PUT';
     }
 
-    if (direction) {
-      if (invertSignal) {
-        const original = direction;
-        direction = direction === 'CALL' ? 'PUT' : 'CALL';
-        filters.push(`🔄 INVERSÃO (Recuperação): ${original} -> ${direction}`);
-      }
-
-      this.logSignalGenerated(state.userId, state.mode.toUpperCase(), direction, filters, strength);
-      return direction;
-    } else {
-      return null;
+    // --- MODO NORMAL ---
+    if (state.mode === 'normal') {
+      if (Math.abs(delta) < 0.25) return null;
+      return delta >= 0 ? 'CALL' : 'PUT';
     }
+
+    // --- MODO PRECISO (LENTO) ---
+    if (state.mode === 'lento') {
+      if (Math.abs(delta) < 0.4) return null; // New threshold 0.4
+      return delta >= 0 ? 'CALL' : 'PUT';
+    }
+
+    return null;
   }
 
   private async executeTrade(state: ApolloUserState, direction: 'CALL' | 'PUT') {
@@ -605,40 +492,63 @@ Status: Sessão Equilibrada`;
     this.logTradeResultV2(state.userId, win ? 'WIN' : 'LOSS', profit, state.capital);
 
     // --- UPDATE STATE ---
+    // --- UPDATE STATE (NEW STATE MACHINE) ---
     if (win) {
-      if (state.consecutiveLosses > 0) {
-        // ✅ RECUPERAÇÃO (MARTINGALE) BEM-SUCEDIDA
-        this.logSuccessfulRecoveryV2(state.userId, state.totalLossAccumulated, profit, state.capital);
+      state.consecutiveLosses = 0;
 
-        state.consecutiveLosses = 0;
-        state.totalLossAccumulated = 0;
-        state.sorosLevel = 0;
-      } else {
-        // ✅ WIN NORMAL (Ciclo de Soros)
-        if (!state['consecutiveWins']) state['consecutiveWins'] = 0;
-        state['consecutiveWins']++;
-        if (state['consecutiveWins'] > 1) {
-          this.logWinStreak(state.userId, state['consecutiveWins'], state.capital - state.capitalInicial);
-        }
+      // -- Recuperação --
+      if (state.isRecovering) {
+        state.recoveryRecovered += profit;
+        if (state.recoveryRecovered >= state.recoveryTarget) {
+          // Finish Recovery
+          state.isRecovering = false;
+          state.mode = 'veloz'; // Reset to Veloz
+          state.consecutiveLosses = 0;
+          state.sessionLoss = 0;
 
-        if (state.sorosLevel === 0) {
-          // Ativar Nível 1
-          state.sorosLevel = 1;
-          const nextStake = state.apostaInicial + profit;
-          this.logSorosActivation(state.userId, 1, profit, nextStake);
-        } else {
-          // Completou Nível 1 -> Reset
-          state.sorosLevel = 0;
-          this.saveLog(state.userId, 'info', `[SOROS] Ciclo Nível 1 Concluído. Retornando à Stake Base.`);
+          this.logSuccessfulRecoveryV2(state.userId, state.recoveryTarget, state.recoveryRecovered, state.capital);
         }
       }
+
+      // -- Switch Mode after Win --
+      if (state.mode === 'normal') {
+        state.mode = 'veloz';
+      }
+
+      // (Soros logic removed)
       state.totalLossAccumulated = 0;
+
     } else {
       // LOSS
       state.consecutiveLosses++;
-      state['consecutiveWins'] = 0;
-      state.totalLossAccumulated += stakeUsed;
-      state.sorosLevel = 0;
+      state.sessionLoss += stakeUsed; // Accumulate for recovery calculation
+      // state.totalLossAccumulated += stakeUsed; // Legacy
+
+      // -- Start Recovery Trigger --
+      if (!state.isRecovering && state.consecutiveLosses >= 2) {
+        state.isRecovering = true;
+        state.recoveryStartLossStreak = state.consecutiveLosses;
+
+        let multiplier = 1.15; // Moderado
+        if (state.riskProfile === 'conservador') multiplier = 1.0;
+        if (state.riskProfile === 'agressivo') multiplier = 1.30;
+
+        state.recoveryTarget = state.sessionLoss * multiplier;
+        state.recoveryRecovered = 0;
+
+        this.saveLog(state.userId, 'alerta', `[RECUPERAÇÃO] Iniciando modo recuperação. Alvo: $${state.recoveryTarget.toFixed(2)}`);
+      }
+
+      // -- Switch Mode on Loss --
+      if (state.isRecovering && state.mode !== 'lento') {
+        state.mode = 'lento'; // Switch to Preciso
+        this.saveLog(state.userId, 'info', `[MODO] Alternando para PRECISO (Lento) durante recuperação.`);
+      }
+
+      if (!state.isRecovering && state.consecutiveLosses === 1) {
+        state.mode = 'normal';
+        this.saveLog(state.userId, 'info', `[MODO] Alternando para NORMAL após 1 perda.`);
+      }
     }
 
     // --- STOP BLINDADO UPDATE ---
@@ -660,39 +570,30 @@ Status: Sessão Equilibrada`;
   // --- LOGIC HELPERS ---
 
   private calculateStake(state: ApolloUserState): number {
-    if (state.consecutiveLosses > 0) {
-      // Modo Conservador: Até M5 (5 perdas), depois reseta
-      if (state.riskProfile === 'conservador' && state.consecutiveLosses > 5) {
-        this.saveLog(state.userId, 'alerta', `[CONSERVADOR] Limite de recuperação atingido (M5). Resetando stake.`);
-        state.consecutiveLosses = 0;
-        state.totalLossAccumulated = 0;
-        return state.apostaInicial;
-      }
+    const baseStake = state.apostaInicial;
+    const PAYOUT_ESTIMATED = 0.84;
 
-      const PAYOUT_RATE = 0.84; // Atualizado: Payout real da Deriv está entre 84% e 85%
-      const lossToRecover = state.totalLossAccumulated || state.apostaInicial;
-      let neededStake = 0;
+    // --- Ajuste para Meta (Smart Target) ---
+    const currentProfit = state.capital - state.capitalInicial;
+    const remaining = state.profitTarget - currentProfit;
 
-      // Cálculo por perfil de risco
-      if (state.riskProfile === 'conservador') {
-        // Recupera 100% da perda + 2% de lucro
-        neededStake = (lossToRecover * 1.02) / PAYOUT_RATE;
-      } else if (state.riskProfile === 'moderado') {
-        // Recupera 100% + 15% de lucro
-        neededStake = (lossToRecover * 1.15) / PAYOUT_RATE;
-      } else if (state.riskProfile === 'agressivo') {
-        // Recupera 100% + 30% de lucro
-        neededStake = (lossToRecover * 1.30) / PAYOUT_RATE;
-      }
-
-      return Number(neededStake.toFixed(2));
-    } else {
-      if (state.sorosLevel === 1 && state.lastResultWin && state.lastProfit > 0) {
-        const nextStake = state.apostaInicial + state.lastProfit;
-        return Number(nextStake.toFixed(2));
-      }
-      return state.apostaInicial;
+    // Se falta pouco para a meta (menos que o lucro de 1 stake base), ajusta a entrada
+    if (remaining > 0 && remaining < baseStake * PAYOUT_ESTIMATED) {
+      return Number((remaining / PAYOUT_ESTIMATED).toFixed(2));
     }
+
+    // --- Se NÃO estiver recuperando, usa Stake Base ---
+    if (!state.isRecovering) return baseStake;
+
+    // --- Lógica de Recuperação ---
+    const toRecover = state.recoveryTarget - state.recoveryRecovered;
+    if (toRecover <= 0) {
+      // Segurança: Se já recuperou, retorna base (o processResult vai limpar o estado, mas por segurança)
+      return baseStake;
+    }
+
+    const recoveryStake = toRecover / PAYOUT_ESTIMATED;
+    return Number(recoveryStake.toFixed(2));
   }
 
   private updateBlindado(state: ApolloUserState) {
@@ -832,7 +733,14 @@ Status: Sessão Equilibrada`;
       stopBlindadoActive: false,
       ticksColetados: 0,
       totalLossAccumulated: 0,
-      sorosLevel: 0
+      sorosLevel: 0,
+
+      // ================== NEW STATE INIT ==================
+      isRecovering: false,
+      recoveryTarget: 0,
+      recoveryRecovered: 0,
+      recoveryStartLossStreak: 0,
+      sessionLoss: 0
     };
 
     this.users.set(userId, initialState);
