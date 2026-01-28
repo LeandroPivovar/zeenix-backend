@@ -23,6 +23,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { UtilsModule } from './utils/utils.module';
 import { KiwifyModule } from './kiwify/kiwify.module';
 import { MarkupModule } from './markup/markup.module';
+import { MarketsModule } from './markets/markets.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { MarkupModule } from './markup/markup.module';
     NotificationsModule,
     KiwifyModule,
     MarkupModule,
+    MarketsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
