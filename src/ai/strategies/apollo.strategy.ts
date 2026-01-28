@@ -719,12 +719,23 @@ Ação: reconectar automaticamente`;
         state.mode = 'veloz';
       }
 
-      // (Soros logic removed)
+      // -- Soros Level 1 (Conservative) --
+      if (!state.isRecovering) {
+        if (state.sorosLevel === 0) {
+          state.sorosLevel = 1;
+
+        } else if (state.sorosLevel === 1) {
+          state.sorosLevel = 0; // Reset after level 1
+        }
+      } else {
+        state.sorosLevel = 0;
+      }
       state.totalLossAccumulated = 0;
 
     } else {
       // LOSS
       state.consecutiveLosses++;
+      state.sorosLevel = 0; // Reset Soros on Loss
       state.sessionLoss += stakeUsed; // Accumulate for recovery calculation
       // state.totalLossAccumulated += stakeUsed; // Legacy
 
@@ -787,7 +798,15 @@ Ação: reconectar automaticamente`;
     }
 
     // --- Se NÃO estiver recuperando, usa Stake Base ---
-    if (!state.isRecovering) return baseStake;
+    if (!state.isRecovering) {
+      // Soros Level 1 Check
+      if (state.sorosLevel === 1) {
+        const sorosStake = baseStake + state.lastProfit;
+        this.logSorosLevel(state.userId, state.lastProfit, baseStake, sorosStake);
+        return Number(sorosStake.toFixed(2));
+      }
+      return baseStake;
+    }
 
     // --- Lógica de Recuperação ---
     const toRecover = state.recoveryTarget - state.recoveryRecovered;
