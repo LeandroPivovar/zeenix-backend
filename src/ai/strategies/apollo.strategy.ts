@@ -265,19 +265,39 @@ Status: Sessão Equilibrada`;
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
-    // 2. DEFENSE MECHANISM (Auto-switch to LENTO after 4 losses)
-    // Updated requirement: Auto-Defense logic switches to LENTO after 4 losses.
-    if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
-      if (!state.defenseMode) {
+    // 2. DEFENSE MECHANISM (Graduated Defense for Veloz, Auto-Lento for others)
+    if (state.originalMode === 'veloz') {
+      // VELOZ DEFENSE LOGIC
+      // Level 2 Defense: 4 losses -> LENTO
+      if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
         state.defenseMode = true;
         state.mode = 'lento';
-        this.logContractChange(state.userId, state.mode, 'LENTO', '4 Perdas Consecutivas - Ativando Defesa');
+        this.logContractChange(state.userId, 'NORMAL', 'LENTO', '4 Perdas (Veloz) - Ativando Defesa Máxima');
       }
-    } else if (state.lastResultWin && state.mode === 'lento' && state.defenseMode) {
-      // Return to NORMAL after 1 win in Lento (Recovery complete)
+      // Level 1 Defense: 2 losses -> NORMAL
+      else if (state.consecutiveLosses >= 2 && state.consecutiveLosses < 4 && state.mode !== 'normal') {
+        state.defenseMode = true;
+        state.mode = 'normal';
+        this.logContractChange(state.userId, 'VELOZ', 'NORMAL', '2 Perdas (Veloz) - Ativando Defesa Nível 1');
+      }
+    } else {
+      // STANDARD DEFENSE LOGIC (Normal/Lento -> Lento)
+      if (state.consecutiveLosses >= 4 && state.mode !== 'lento') {
+        if (!state.defenseMode) {
+          state.defenseMode = true;
+          state.mode = 'lento';
+          this.logContractChange(state.userId, state.mode, 'LENTO', '4 Perdas Consecutivas - Ativando Defesa');
+        }
+      }
+    }
+
+    // RESET DEFENSE ON WIN
+    if (state.lastResultWin && state.defenseMode) {
+      // Return to original mode after 1 win in Defense Mode
       state.defenseMode = false;
-      state.mode = state.originalMode === 'lento' ? 'normal' : state.originalMode;
-      this.logContractChange(state.userId, 'LENTO', state.mode.toUpperCase(), 'Recuperação com Sucesso');
+      const prevMode = state.mode;
+      state.mode = state.originalMode;
+      this.logContractChange(state.userId, prevMode.toUpperCase(), state.mode.toUpperCase(), 'Recuperação com Sucesso - Retornando ao Modo Original');
     }
 
     // 3. ANALYZE SIGNAL
