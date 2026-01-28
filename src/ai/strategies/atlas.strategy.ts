@@ -1671,11 +1671,27 @@ Ação: IA DESATIVADA`
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const activationThreshold = profitTarget * 0.40;
 
+      // ✅ [DEBUG] Log para rastrear valores
+      this.logger.log(`[ATLAS] 🛡️ Verificando Stop Blind ado:
+        profitPeak: ${profitPeak}
+        activationThreshold: ${activationThreshold}
+        profitTarget: ${profitTarget}
+        lucroAtual: ${lucroAtual}
+        capitalSessao: ${capitalSessao}
+        capitalInicial: ${capitalInicial}`);
+
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
         // ✅ Fixed Floor: Protect % of Activation Threshold, not Peak
         const valorProtegidoFixo = activationThreshold * factor;
         const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+        // ✅ [DEBUG] Log para rastrear cálculo do piso
+        this.logger.log(`[ATLAS] 🛡️ Stop Blindado ATIVO:
+          valorProtegidoFixo: ${valorProtegidoFixo}
+          stopBlindado: ${stopBlindado}
+          capitalSessao: ${capitalSessao}
+          Vai parar? ${capitalSessao <= stopBlindado + 0.01}`);
 
         // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
         // Só loga se o profit_peak acabou de passar o limiar (evita spam)
