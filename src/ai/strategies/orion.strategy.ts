@@ -2490,7 +2490,7 @@ Status: Sessão Equilibrada`;
         this.lentaUsers.delete(state.userId);
 
         // Registrar log final
-        this.saveOrionLog(state.userId, this.symbol, 'alerta', `${label} ATINGIDO! (via AJUSTE)\n• Motivo: Limite respeitado.\n• Ação: Encerrando operações.`);
+        this.saveOrionLog(state.userId, this.symbol, 'alerta', `${label} ATINGIDO!\n• Motivo: Limite respeitado.\n• Ação: Encerrando operações.`);
 
         return; // Parar operação
       } else {
@@ -3971,7 +3971,7 @@ Status: Sessão Equilibrada`;
             const lucroProtegido = capitalSessao - capitalInicial;
 
             this.logger.warn(
-              `[ORION][${mode}][${state.userId}] 🛡️ STOP-LOSS BLINDADO ATIVADO! ` +
+              `[ORION][${mode}][${state.userId}] 🛡️ STOP BLINDADO ATINGIDO! ` +
               `Capital Sessão: $${capitalSessao.toFixed(2)} | ` +
               `Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
             );
@@ -3980,7 +3980,7 @@ Status: Sessão Equilibrada`;
               state.userId,
               this.symbol,
               'alerta',
-              `🛡️ STOP-LOSS BLINDADO ATIVADO!\nCapital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
+              `🛡️ STOP BLINDADO ATINGIDO!\nCapital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
             );
 
             const deactivationReason =
