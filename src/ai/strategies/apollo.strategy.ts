@@ -729,7 +729,7 @@ Ação: reconectar automaticamente`;
       // state.totalLossAccumulated += stakeUsed; // Legacy
 
       // -- Start Recovery Trigger --
-      if (!state.isRecovering && state.consecutiveLosses >= 2) {
+      if (!state.isRecovering && state.consecutiveLosses >= 1) {
         state.isRecovering = true;
         state.recoveryStartLossStreak = state.consecutiveLosses;
 
