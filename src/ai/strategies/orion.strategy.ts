@@ -389,7 +389,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `Proteção de Lucro: Ativado\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -413,7 +413,7 @@ class RiskManager {
             logger.log(
               `[META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
             );
-            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO! (via AJUSTE)\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
           } else {
             logger.log(`[STOP LOSS] ${limitType} atingido. Parando operações.`);
             if (saveLog) saveLog('alerta', `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
@@ -2045,7 +2045,7 @@ Status: Sessão Equilibrada`;
                 state.userId,
                 this.symbol,
                 'info',
-                `ℹ️🛡️Stop Blindado: Ativado | Lucro atual $${profitPeak.toFixed(2)} | Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
+                `🛡️ STOP BLINDADO ATIVADO!\n• Lucro atual: $${profitPeak.toFixed(2)}\n• Protegendo ${stopBlindadoPercent}%: $${protectedAmount.toFixed(2)}`
               );
             }
 
@@ -2063,7 +2063,7 @@ Status: Sessão Equilibrada`;
                 state.userId,
                 this.symbol,
                 'alerta',
-                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`,
+                `🛡️ STOP BLINDADO ATINGIDO!\n• Lucro protegido: $${lucroProtegido.toFixed(2)}\n• Motivo: Piso atingido antes da entrada - IA DESATIVADA`,
               );
 
               const deactivationReason =
@@ -3862,7 +3862,7 @@ Status: Sessão Equilibrada`;
               const lucroProtegido = capitalSessao - capitalInicial;
               // ... Log and Stop ...
               this.logger.warn(`[ORION] 🛡️ STOP BLINDADO ATINGIDO APÓS OPERAÇÃO. Peak: ${profitPeak}, Protegido: ${protectedAmount}, Atual: ${lucroAtual}`);
-              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${lucroProtegido.toFixed(2)} - IA DESATIVADA`);
+              this.saveOrionLog(state.userId, this.symbol, 'alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• Lucro protegido: $${lucroProtegido.toFixed(2)}\n• Motivo: Piso atingido após operação - IA DESATIVADA`);
 
               const deactivationReason = `Stop-Loss Blindado ativado: protegeu $${lucroProtegido.toFixed(2)} de lucro`;
 
@@ -3980,7 +3980,7 @@ Status: Sessão Equilibrada`;
               state.userId,
               this.symbol,
               'alerta',
-              `🛡️ STOP BLINDADO ATINGIDO!\nCapital Sessão: $${capitalSessao.toFixed(2)} | Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico máximo)`,
+              `🛡️ STOP BLINDADO ATINGIDO!\n• Capital Sessão: $${capitalSessao.toFixed(2)}\n• Lucro protegido: $${lucroProtegido.toFixed(2)} (${stopBlindadoPercent}% do pico)`,
             );
 
             const deactivationReason =
