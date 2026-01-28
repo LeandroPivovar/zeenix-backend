@@ -655,7 +655,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (!this.canOperate(userId, config, state)) return;
 
         // 2. Are we waiting for contract?
-        if (state.isWaitingContract) return;
+        if (state.isWaitingContract) {
+            const marketAnalysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
+            if (marketAnalysis?.signal) {
+                this.logBlockedEntry(userId, {
+                    reason: 'OPERAÇÃO EM ANDAMENTO',
+                    details: `Sinal ${marketAnalysis.signal} detectado em ${config.symbol}`
+                });
+            }
+            return;
+        }
 
         // 3. Analyze Market
         this.processingLocks.set(userId, true);
@@ -2140,15 +2149,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         reason: string;
         details?: string;
     }) {
-        // ⏸️ ENTRADA BLOQUEADA
+        // ⏸️ ENTRADA BLOQUEADA (Yellow/WARN)
         const message = `⏸️ ENTRADA BLOQUEADA\n` +
             `• Motivo: ${blocked.reason}\n` +
             (blocked.details ? `• Detalhes: ${blocked.details}` : '');
 
-        // Log debug only
-        // this.logger.debug(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
-        // Throttled log logic handled by caller usually, but here we just save
-        this.saveLog(userId, 'INFO', 'ANALYZER', message);
+        this.saveLog(userId, 'WARN', 'ANALYZER', message);
     }
 
     private logSignalGenerated(userId: string, signal: {
