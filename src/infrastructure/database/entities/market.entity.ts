@@ -8,27 +8,27 @@ export class MarketEntity {
     @Column({ unique: true })
     symbol: string;
 
-    @Column()
+    @Column({ name: 'display_name' })
     displayName: string;
 
     @Column()
     market: string;
 
-    @Column()
+    @Column({ name: 'market_display_name' })
     marketDisplayName: string;
 
     @Column()
     submarket: string;
 
-    @Column()
+    @Column({ name: 'submarket_display_name' })
     submarketDisplayName: string;
 
-    @Column({ default: true })
+    @Column({ name: 'is_active', default: true })
     isActive: boolean;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ name: 'created_at' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ name: 'updated_at' })
     updatedAt: Date;
 }
