@@ -5,6 +5,7 @@ import { Tick, DigitParity } from '../ai.service';
 import { IStrategy, ModoMartingale } from './common.types';
 import { CopyTradingService } from '../../copy-trading/copy-trading.service';
 import { TradeEventsService } from '../trade-events.service';
+import { formatCurrency } from '../../utils/currency.utils';
 
 
 /**
@@ -499,7 +500,7 @@ export class TitanStrategy implements IStrategy {
     private logQueue: Array<{
         userId: string;
         symbol: string;
-        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro';
+        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro';
         message: string;
         details?: any;
     }> = [];
@@ -1353,59 +1354,204 @@ export class TitanStrategy implements IStrategy {
             });
         });
     }
-    // ============================================
-    // 🎨 HELPERS DE LOG PADRÃO ZENIX v2.0
-    // ============================================
+
+    // ------------------------------------------------------------------
+    // ✅ PROTEÇÃO DE LIMITES (Stop Blindado, Meta, Stop Loss)
+    // ------------------------------------------------------------------
+
+    /**
+     * Verifica limites de proteção (Meta de Lucro, Stop Blindado, Stop Loss)
+     */
+    private async checkTitanLimits(userId: string): Promise<void> {
+        const state = this.users.get(userId);
+        if (!state) return;
+
+        // Ler configuração atualizada do banco (segunda camada de verificação)
+        const configResult = await this.dataSource.query(
+            `SELECT
+                COALESCE(loss_limit, 0) as lossLimit,
+                COALESCE(profit_target, 0) as profitTarget,
+                COALESCE(session_balance, 0) as sessionBalance,
+                COALESCE(stake_amount, 0) as capitalInicial,
+                COALESCE(profit_peak, 0) as profitPeak,
+                stop_blindado_percent as stopBlindadoPercent,
+                is_active
+            FROM ai_user_config
+            WHERE user_id = ? AND is_active = 1
+            LIMIT 1`,
+            [userId],
+        );
+
+        if (!configResult || configResult.length === 0) return;
+
+        const config = configResult[0];
+        const lossLimit = parseFloat(config.lossLimit) || 0;
+        const profitTarget = parseFloat(config.profitTarget) || 0;
+        const capitalInicial = parseFloat(config.capitalInicial) || 0;
+
+        const lucroAtual = parseFloat(config.sessionBalance) || 0;
+        const capitalSessao = capitalInicial + lucroAtual;
+
+        // 1. Meta de Lucro (Profit Target)
+        if (profitTarget > 0 && lucroAtual >= profitTarget) {
+            this.saveTitanLog(userId, 'SISTEMA', 'info',
+                `META DE LUCRO ATINGIDA
+Título: Meta Alcançada
+Lucro: ${formatCurrency(lucroAtual, state.currency)}
+Meta: ${formatCurrency(profitTarget, state.currency)}
+Ação: IA DESATIVADA`
+            );
+
+            await this.dataSource.query(
+                `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, userId],
+            );
+
+            this.tradeEvents.emit({
+                userId: userId,
+                type: 'stopped_profit',
+                strategy: 'titan',
+                symbol: this.symbol,
+                profitLoss: lucroAtual
+            });
+
+            this.users.delete(userId);
+            return;
+        }
+
+        // 2. Stop Blindado
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+            const profitPeak = parseFloat(config.profitPeak) || 0;
+            const activationThreshold = profitTarget * 0.40;
+
+            if (profitTarget > 0 && profitPeak >= activationThreshold) {
+                const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
+                const valorProtegidoFixo = activationThreshold * factor;
+                const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+                if (capitalSessao <= stopBlindado + 0.01) {
+                    const lucroFinal = capitalSessao - capitalInicial;
+                    this.saveTitanLog(userId, 'SISTEMA', 'info',
+                        `STOP BLINDADO ATINGIDO
+Título: Lucro Protegido
+Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
+Ação: IA DESATIVADA`
+                    );
+
+                    await this.dataSource.query(
+                        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                         WHERE user_id = ? AND is_active = 1`,
+                        [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, userId],
+                    );
+
+                    this.tradeEvents.emit({
+                        userId: userId,
+                        type: 'stopped_blindado',
+                        strategy: 'titan',
+                        symbol: this.symbol,
+                        profitProtected: lucroFinal,
+                        profitLoss: lucroFinal
+                    });
+
+                    this.users.delete(userId);
+                    return;
+                }
+            }
+        }
+
+        // 3. Stop Loss Normal
+        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+        if (lossLimit > 0 && perdaAtual >= lossLimit) {
+            this.saveTitanLog(userId, 'SISTEMA', 'alerta',
+                `STOP LOSS ATINGIDO
+Título: Limite de Perda
+Perda: ${formatCurrency(perdaAtual, state.currency)}
+Limite: ${formatCurrency(lossLimit, state.currency)}
+Ação: IA DESATIVADA`
+            );
+
+            await this.dataSource.query(
+                `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, userId],
+            );
+
+            this.tradeEvents.emit({
+                userId: userId,
+                type: 'stopped_loss',
+                strategy: 'titan',
+                symbol: this.symbol,
+                profitLoss: -perdaAtual
+            });
+
+            this.users.delete(userId);
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // ✅ LOGS PADRONIZADOS ZENIX v3.0 (Titan Refined)
+    // ------------------------------------------------------------------
 
     private logInitialConfigV2(userId: string, mode: string, riskManager: RiskManager) {
-        const message = `CONFIGURAÇÕES INICIAIS
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `INÍCIO DE SESSÃO DIÁRIA
+Título: Configurações Iniciais
 IA: TITAN MASTER
 Modo: ${mode.toUpperCase()}
 Perfil Corretora: ${riskManager['riskMode'].toUpperCase()}
-Meta de Lucro: $${riskManager['profitTarget'].toFixed(2)}
-Limite de Perda: $${riskManager['stopLossLimit'].toFixed(2)}
+Meta de Lucro: ${formatCurrency(riskManager['profitTarget'], currency)}
+Limite de Perda: ${formatCurrency(riskManager['stopLossLimit'], currency)}
 Stop Blindado: ${riskManager['useBlindado'] ? 'ATIVADO' : 'DESATIVADO'}`;
 
         this.saveTitanLog(userId, 'SISTEMA', 'info', message);
     }
 
     private logSessionStart(userId: string, initialBalance: number, meta: number) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
         const message = `INÍCIO DE SESSÃO
-Saldo Inicial: $${initialBalance.toFixed(2)}
-Meta do Dia: $${meta.toFixed(2)}
+Título: Monitoramento Iniciado
+Saldo Inicial: ${formatCurrency(initialBalance, currency)}
+Meta do Dia: ${formatCurrency(meta, currency)}
 IA Ativa: TITAN MASTER
-Status: Monitorando Mercado`;
+Status: Identificando Padrões de Dígitos`;
 
-        this.saveTitanLog(userId, this.symbol, 'info', message);
+        this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logDataCollection(userId: string, current: number, target: number) {
         const message = `COLETA DE DADOS
-Coleta de Dados em Andamento
+Título: Sincronização de Mercado
 Meta de Coleta: ${target} ticks
 Progresso: ${current} / ${target}
-Status: aguardando ticks suficientes`;
+Status: aguardando amostragem mínima
+Ação: coletando dígitos (L-Digits)`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logAnalysisStarted(userId: string, mode: string) {
         const message = `ANÁLISE INICIADA
-Análise de Mercado
-Tipo de Análise: PRINCIPAL
+Título: Varredura de Mercado
+Tipo de Análise: TITAN V3 (Triplo Filtro)
 Modo Ativo: ${mode.toUpperCase()}
-Contrato Avaliado: Digits (1 tick)`;
+Filtros: Maioria, Momentum, Anti-Ruído
+Objetivo: validar sinal de paridade`;
 
         this.saveTitanLog(userId, this.symbol, 'analise', message);
     }
 
     private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
         const filtersText = filters.map(f => `• ${f}`).join('\n');
-        const message = `SINAL DETECTADO
+        const message = `SINAL GERADO
+Título: Sinal de Entrada
 Direção: ${signal}
 ${filtersText}
 Força: ${probability}%
-Tipo de Contrato: Digits`;
+Tipo de Contrato: Digits (5 ticks)`;
 
         this.saveTitanLog(userId, this.symbol, 'sinal', message);
     }
@@ -1417,57 +1563,100 @@ Tipo de Contrato: Digits`;
         balance: number,
         contractInfo?: { exitDigit?: string }
     ) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
         const message = `RESULTADO DA OPERAÇÃO
-Status: ${result}
-Lucro/Perda: $${profit >= 0 ? '+' : ''}${profit.toFixed(2)}
-Saldo Atual: $${balance.toFixed(2)}
-Estado: Operação Finalizada`;
+Título: Resultado da Sessão
+Status: ${result === 'WIN' ? 'VITÓRIA ✅' : 'DERROTA ❌'}
+Lucro/Perda: ${formatCurrency(profit, currency)}
+Saldo Atual: ${formatCurrency(balance, currency)}
+Dígito de Saída: ${contractInfo?.exitDigit || 'N/A'}`;
 
-        this.saveTitanLog(userId, this.symbol, 'resultado', message, contractInfo);
+        this.saveTitanLog(userId, this.symbol, result === 'WIN' ? 'vitoria' : 'derrota', message, contractInfo);
     }
 
     private logMartingaleLevelV2(userId: string, level: number, stake: number) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
         const message = `MARTINGALE NÍVEL ${level}
-Próxima Stake: $${stake.toFixed(2)}
-Objetivo: Recuperação de Capital
-Investimento: Inteligência Artificial
+Título: Recuperação Ativa
+Próxima Stake: ${formatCurrency(stake, currency)}
+Objetivo: Recalcular Posição
 Status: Aguardando Próximo Ciclo`;
 
         this.saveTitanLog(userId, this.symbol, 'alerta', message);
     }
 
     private logSorosActivation(userId: string, level: number, profit: number, newStake: number) {
-        const message = `TITAN | Soros Nível ${level}
-• Lucro Anterior: $${profit.toFixed(2)}
-• Nova Stake: $${newStake.toFixed(2)}`;
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `LÓGICA SOROS (NÍVEL ${level})
+Título: Alavancagem de Lucro
+Lucro Anterior: ${formatCurrency(profit, currency)}
+Nova Stake: ${formatCurrency(newStake, currency)}
+Ação: potencializando rendimentos`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logWinStreak(userId: string, count: number, profit: number) {
-        const message = `TITAN | Sequência: ${count} Vitórias
-• Lucro Acumulado: $${profit.toFixed(2)}`;
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `SEQUÊNCIA DE VITÓRIAS
+Título: Rendimento Positivo
+Vitórias: ${count} seguidas
+Lucro Acumulado: ${formatCurrency(profit, currency)}
+Status: Alta Escalabilidade`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logSuccessfulRecoveryV2(userId: string, totalLoss: number, amountRecovered: number, currentBalance: number) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
         const message = `RECUPERAÇÃO CONCLUÍDA
-Recuperação Bem-Sucedida
-Recuperado: $${totalLoss.toFixed(2)}
-Ação: Retornando à Stake Base
-Status: Sessão Equilibrada`;
+Título: Equilíbrio Restaurado
+Recuperado: ${formatCurrency(amountRecovered, currency)}
+Ação: retornando à stake inicial
+Status: Sessão Estabilizada`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
     private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
-        const message = `TITAN | Ajuste de Operação
-• De: ${oldContract}
-• Para: ${newContract}
-• Motivo: ${reason}`;
+        const message = `AJUSTE DE OPERAÇÃO
+Título: Adaptação Titan
+De: ${oldContract}
+Para: ${newContract}
+Motivo: ${reason}`;
 
         this.saveTitanLog(userId, this.symbol, 'info', message);
+    }
+
+    private logStrategicPause(userId: string, phase: 'AVALIADA' | 'ATIVADA' | 'ENCERRADA', details: string) {
+        const message = `PAUSA ESTRATÉGICA
+Título: Proteção de Capital (${phase})
+Status: ${phase === 'AVALIADA' ? 'em análise' : phase === 'ATIVADA' ? 'suspensão temporária' : 'retomando operações'}
+Motivo: ${details}
+Ação: ${phase === 'ENCERRADA' ? 'reiniciar ciclo' : 'aguardar resfriamento'}`;
+
+        this.saveTitanLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logSessionEnd(userId: string, summary: {
+        result: 'PROFIT' | 'LOSS' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'STOP_BLINDADO';
+        totalProfit: number;
+        trades: number;
+    }) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `ENCERRAMENTO DE SESSÃO
+Título: Sessão Finalizada
+Resultado: ${formatCurrency(summary.totalProfit, currency)}
+Total de Entradas: ${summary.trades}
+Status Final: ${summary.result.replace('_', ' ')}`;
+
+        this.saveTitanLog(userId, 'SISTEMA', 'analise', message);
     }
 
 
@@ -1475,9 +1664,9 @@ Status: Sessão Equilibrada`;
     private async saveTitanLog(
         userId: string,
         symbol: string,
-        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro',
+        type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro',
         message: string,
-        details?: any
+        details?: any,
     ) {
         this.logQueue.push({ userId, symbol, type, message, details });
         this.processLogs();
