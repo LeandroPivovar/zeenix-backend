@@ -2144,12 +2144,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-      // ✅ Garantir que o req_id vá na requisição para roteamento seguro
-      // ✅ CRITICAL FIX: req_id MUST be at the top level for Deriv API 
-      // to return it in the response for routing.
+      // ✅ Garantir que o req_id vá na requisição para roteamento seguro (via passthrough)
       const enrichedPayload = {
         ...payload,
-        req_id: requestId, // ✅ TOP LEVEL (Essential for routing)
         passthrough: {
           ...payload.passthrough,
           req_id: requestId
