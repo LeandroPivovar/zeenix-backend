@@ -258,7 +258,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       dailyLossLimit: config.dailyLossLimit,
       derivToken: config.derivToken,
       currency: config.currency,
-      symbol: '1HZ10V', // ✅ V2: Force 1HZ10V
+      symbol: config.symbol || '1HZ10V', // ✅ V2: Use config symbol (allow user choice)
       initialBalance: config.initialBalance || 0,
       stopLossType: (config as any).stopLossType || 'normal',
       riskProfile: (config as any).riskProfile || 'MODERADO',
@@ -430,7 +430,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // Heartbeat ocasional
-        if (userTicks.length % 10 === 0) {
+        if (userTicks.length % 5 === 0) {
           this.logger.debug(`[Falcon][${userId}] ⏳ Aguardando contrato... (Coletando dados: ${userTicks.length})`);
         }
         return;
@@ -465,8 +465,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ Log de início de análise (Heartbeat a cada 30 ticks de análise sem sinal)
-      if (state.ticksSinceLastAnalysis >= 30) {
+      // ✅ Log de início de análise (Heartbeat a cada 10 ticks = 10s)
+      if (state.ticksSinceLastAnalysis >= 10) {
         state.ticksSinceLastAnalysis = 0;
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
@@ -484,7 +484,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
           `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
 
-        // Throttled: Apenas logar análise completa se houver sinal ou a cada 30 ticks
+        // Throttled: Apenas logar análise completa se houver sinal ou a cada 10 ticks
         if (marketAnalysis.signal || state.ticksSinceLastAnalysis === 0) {
           this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
         }
@@ -537,9 +537,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const digits = recent.map(t => parseInt(t.value.toString().slice(-1))); // Extrai último dígito
 
     // FILTRO 1: Horário de Operação (24/7 sempre ativo)
-    if (!this.isValidTradingHour()) {
-      return null;
-    }
+    // if (!this.isValidTradingHour()) {
+    //   return null;
+    // }
 
     // LOGICA V2: Padrão IPI (Odd-Even-Odd)
     // Dígito 1 (Mais antigo): ÍMPAR
@@ -2377,7 +2377,7 @@ interface FalconUserConfig {
   dailyLossLimit: number;
   derivToken: string;
   currency: string;
-  symbol: '1HZ10V';
+  symbol: string; // ✅ V2: Allow dynamic symbol
   initialBalance: number;
   stopLossType?: 'normal' | 'blindado';
   riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
