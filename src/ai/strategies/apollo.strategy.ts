@@ -368,7 +368,7 @@ Status: Alta Escalabilidade`;
         if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
           state.mode = 'preciso';
           this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
-        } else if (state.consecutiveLosses >= 1 && state.mode === 'veloz') {
+        } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
           state.mode = 'normal';
           this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
         }
