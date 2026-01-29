@@ -515,6 +515,14 @@ Status: Alta Escalabilidade`;
           [isBlindado ? 'stopped_blindado' : 'stopped_loss', msg.split('\n')[0], state.userId]
         );
 
+        this.tradeEvents.emit({
+          userId: state.userId,
+          type: isBlindado ? 'stopped_blindado' : 'stopped_loss',
+          strategy: 'apollo',
+          symbol: state.symbol,
+          profitLoss: isBlindado ? state.stopBlindadoFloor : -state.stopLoss
+        });
+
         this.users.delete(state.userId);
         state.isStopped = true;
         return;
