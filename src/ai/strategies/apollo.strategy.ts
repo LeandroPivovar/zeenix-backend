@@ -427,7 +427,7 @@ Status: Sessão Equilibrada`;
                   percent: percent,
                   entrySpot: entryPrice || 0,
                   entryTime: unixTimestamp,
-                  barrier: barrier
+                  barrier: Number(barrier)
                 },
               );
             }
