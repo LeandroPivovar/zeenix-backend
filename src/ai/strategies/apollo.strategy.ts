@@ -1030,8 +1030,8 @@ Ação: IA DESATIVADA`
     let selectedSymbol = 'R_10';
     const marketInput = (config.symbol || config.selectedMarket || '').toLowerCase();
 
-    if (marketInput === 'r_100' || marketInput.includes('100')) selectedSymbol = 'R_100';
-    else if (marketInput === 'r_10' || marketInput.includes('volatility 10 index')) selectedSymbol = 'R_10';
+    // if (marketInput === 'r_100' || marketInput.includes('100')) selectedSymbol = 'R_100'; // FORCE R_10 by ignoring R_100 input
+    if (marketInput === 'r_10' || marketInput.includes('volatility 10 index')) selectedSymbol = 'R_10';
     else if (marketInput === 'r_25' || marketInput.includes('25')) selectedSymbol = 'R_25';
     else if (marketInput.includes('1hz10v')) selectedSymbol = '1HZ10V';
 
