@@ -73,6 +73,8 @@ export interface ApolloUserState {
   totalLossAccumulated: number;
   lastLogTimePerType: Map<string, number>;
   isStopped: boolean;
+  lastDirection?: string;
+  lastContractType?: string;
 }
 
 @Injectable()
@@ -106,60 +108,67 @@ export class ApolloStrategy implements IStrategy {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
     const message = `INÍCIO DE SESSÃO DIÁRIA
-Título: Configurações Iniciais
-IA: APOLLO (Digits v2.0)
-Modo: ${mode.toUpperCase()}
-Perfil Corretora: ${riskProfile.toUpperCase()}
-Meta de Lucro: ${formatCurrency(profitTarget, currency)}
-Limite de Perda: ${formatCurrency(stopLoss, currency)}
-Stop Blindado: ${useBlindado ? 'ATIVADO' : 'DESATIVADO'}`;
+Título: Início de Sessão
+Estratégia: APOLLO (Price Action)
+Saldo Inicial: ${formatCurrency(state?.capital || 0, currency)}
+Meta de Lucro: ${profitTarget > 0 ? formatCurrency(profitTarget, currency) : 'N/A'}
+Stop Loss: ${stopLoss > 0 ? formatCurrency(stopLoss, currency) : 'N/A'}
+Símbolo: ${state?.symbol || 'N/A'}
+Modo Inicial: ${mode.toUpperCase()}
+Ação: iniciar coleta de dados`;
 
-    this.saveLog(userId, 'info', message);
+    this.saveLog(userId, 'analise', message);
   }
 
   private logSessionStart(userId: string, initialBalance: number, meta: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
     const message = `INÍCIO DE SESSÃO
-Título: Monitoramento Iniciado
+Título: Início de Sessão
 Saldo Inicial: ${formatCurrency(initialBalance, currency)}
-Meta do Dia: ${formatCurrency(meta, currency)}
-IA Ativa: APOLLO
-Status: Identificando Padrões de Price Action`;
+Meta de Lucro: ${formatCurrency(meta, currency)}
+Stop Loss: ${formatCurrency(state?.stopLoss || 0, currency)}
+Estratégia: APOLLO
+Símbolo: ${state?.symbol || 'R_100'}
+Modo Inicial: ${state?.mode.toUpperCase() || 'VELOZ'}
+Ação: iniciar coleta de dados`;
 
     this.saveLog(userId, 'analise', message);
   }
 
   private logDataCollection(userId: string, current: number, target: number) {
     const message = `COLETA DE DADOS
-Título: Sincronização de Mercado
+Título: Coleta de Dados em Andamento
 Meta de Coleta: ${target} ticks
 Progresso: ${current} / ${target}
-Status: aguardando amostragem mínima
-Ação: coletando dígitos (Analise Temporal)`;
+Status: aguardando ticks suficientes
+Ação: aguardar coleta mínima`;
 
     this.saveLog(userId, 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
     const message = `ANÁLISE INICIADA
-Título: Varredura de Mercado
-Tipo de Análise: PRINCIPAL (Price Action + Digits)
+Título: Análise de Mercado
+Tipo de Análise: PRINCIPAL (Price Action)
 Modo Ativo: ${mode.toUpperCase()}
-Contrato Avaliado: Digit Under / Price Action
-Objetivo: validar sinal de entrada`;
+Contrato Avaliado: Under 8 / Under 4
+Objetivo: identificar sinal válido`;
 
     this.saveLog(userId, 'analise', message);
   }
 
   private logSignalGenerated(userId: string, mode: string, signal: string, filters: string[], probability: number) {
-    const filtersText = filters.map((f, i) => `• ${f}`).join('\n');
+    const state = this.users.get(userId);
+    const currency = state?.currency || 'USD';
     const message = `SINAL GERADO
 Título: Sinal de Entrada
+Análise: ${state?.defenseMode ? 'RECUPERAÇÃO' : 'PRINCIPAL'}
+Modo: ${mode.toUpperCase()}
 Direção: ${signal}
-${filtersText}
-Força: ${probability}%
-Tipo de Contrato: Digit Under (1 tick)`;
+Força do Sinal: ${probability}%
+Contrato: Digits ${signal.replace('DIGIT', '')}
+Stake Calculada: ${formatCurrency(state?.apostaInicial || 0, currency)}`;
 
     this.saveLog(userId, 'sinal', message);
   }
@@ -173,66 +182,77 @@ Tipo de Contrato: Digit Under (1 tick)`;
   ) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `RESULTADO DA OPERAÇÃO
-Título: Resultado da Sessão
-Status: ${result === 'WIN' ? 'VITÓRIA ✅' : 'DERROTA ❌'}
-Lucro/Perda: ${formatCurrency(profit, currency)}
-Saldo Atual: ${formatCurrency(balance, currency)}
-Dígito de Saída: ${contractInfo?.exitDigit || 'N/A'}`;
 
-    this.saveLog(userId, 'resultado', message);
+    if (result === 'WIN') {
+      const message = `RESULTADO — WIN
+Título: Resultado da Operação
+Status: WIN
+Direção: ${state?.lastDirection?.toUpperCase() || 'UNDER'}
+Contrato: Digits ${state?.lastContractType?.replace('DIGIT', '') || 'Under'} (1 tick)
+Resultado Financeiro: +${formatCurrency(profit, currency)}
+Saldo Atual: ${formatCurrency(balance, currency)}`;
+      this.saveLog(userId, 'vitoria', message);
+    } else {
+      const message = `RESULTADO — LOSS
+Título: Resultado da Operação
+Status: LOSS
+Direção: ${state?.lastDirection?.toUpperCase() || 'UNDER'}
+Contrato: Digits ${state?.lastContractType?.replace('DIGIT', '') || 'Under'} (1 tick)
+Resultado Financeiro: -${formatCurrency(Math.abs(profit), currency)}
+Saldo Atual: ${formatCurrency(balance, currency)}`;
+      this.saveLog(userId, 'derrota', message);
+    }
   }
 
   private logStopActivated(userId: string, type: 'PROFIT' | 'LOSS' | 'BLINDADO', value: number, limit: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
-    let title = '';
-    let status = '';
 
-    switch (type) {
-      case 'PROFIT':
-        title = 'META DE LUCRO ATINGIDA';
-        status = 'Meta Alcançada';
-        break;
-      case 'LOSS':
-        title = 'STOP LOSS ATINGIDO';
-        status = 'Limite de Perda';
-        break;
-      case 'BLINDADO':
-        title = 'STOP BLINDADO ATINGIDO';
-        status = 'Lucro Protegido';
-        break;
-    }
-
-    const message = `${title}
-Título: ${status}
-Valor: ${type === 'LOSS' ? '-' : ''}${formatCurrency(Math.abs(value), currency)}
-Limite/Meta: ${formatCurrency(limit, currency)}
+    if (type === 'PROFIT') {
+      const message = `META DE LUCRO ATINGIDA
+Status: Meta Alcançada
+Lucro: ${formatCurrency(value, currency)}
+Meta: ${formatCurrency(limit, currency)}
 Ação: IA DESATIVADA`;
-
-    this.saveLog(userId, type === 'PROFIT' ? 'resultado' : 'alerta', message);
+      this.saveLog(userId, 'resultado', message);
+    } else if (type === 'LOSS') {
+      const message = `STOP LOSS ATINGIDO
+Status: Limite de Perda
+Perda: ${formatCurrency(value, currency)}
+Limite: ${formatCurrency(limit, currency)}
+Ação: IA DESATIVADA`;
+      this.saveLog(userId, 'alerta', message);
+    } else if (type === 'BLINDADO') {
+      const message = `STOP BLINDADO ATINGIDO
+Status: Lucro Protegido
+Lucro Protegido: ${formatCurrency(value, currency)}
+Ação: IA DESATIVADA`;
+      this.saveLog(userId, 'info', message);
+    }
   }
 
   private logBlindadoActivation(userId: string, currentProfit: number, protectedFloor: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `STOP BLINDADO ATIVADO
-Título: Proteção Ativa
+    const message = `🛡️ STOP BLINDADO ATIVADO
+Status: Proteção de Lucro Ativa
 Lucro Atual: ${formatCurrency(currentProfit, currency)}
-Piso Garantido: ${formatCurrency(protectedFloor, currency)}
-Ação: monitorando retrocesso`;
+Piso Protegido: ${formatCurrency(protectedFloor, currency)}
+Percentual: 40%
+Ação: monitorando para proteger ganhos`;
 
-    this.saveLog(userId, 'alerta', message);
+    this.saveLog(userId, 'info', message);
   }
 
   private logMartingaleLevelV2(userId: string, level: number | string, stake: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
-    const message = `MARTINGALE NÍVEL ${level}
+    const message = `NÍVEL DE MARTINGALE
 Título: Recuperação Ativa
+Nível Atual: M${level}
+Multiplicador: ${(stake / (state?.apostaInicial || 1)).toFixed(1)}x
 Próxima Stake: ${formatCurrency(stake, currency)}
-Objetivo: Recuperação de Capital
-Status: Aguardando Próximo Ciclo`;
+Limite Máximo: M12`;
 
     this.saveLog(userId, 'alerta', message);
   }
@@ -242,12 +262,12 @@ Status: Aguardando Próximo Ciclo`;
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
     const message = `RECUPERAÇÃO CONCLUÍDA
-Título: Equilíbrio Restaurado
-Recuperado: ${formatCurrency(amountRecovered, currency)}
-Ação: retornando à stake inicial
-Status: Sessão Estabilizada`;
+Título: Recuperação Finalizada
+Alvo Atingido: ${formatCurrency(amountRecovered, currency)}
+Saldo Atual: ${formatCurrency(currentBalance, currency)}
+Ação: reset para análise principal`;
 
-    this.saveLog(userId, 'info', message);
+    this.saveLog(userId, 'resultado', message);
   }
 
   private logContractChange(userId: string, oldContract: string, newContract: string, reason: string) {
@@ -511,6 +531,9 @@ Status: Alta Escalabilidade`;
 
     const contractType = 'DIGITUNDER';
     const barrier = signal === 'DIGITUNDER_8' ? '8' : '4';
+
+    state.lastDirection = signal.replace('DIGIT', '');
+    state.lastContractType = `Digits ${state.lastDirection}`;
 
     try {
       const tradeId = await this.createTradeRecord(state, contractType, stake, barrier);
@@ -1013,10 +1036,21 @@ Ação: IA DESATIVADA`
   getUserState(userId: string) { return this.users.get(userId); }
 
   private saveLog(userId: string, type: string, message: string) {
-    const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌', 'analise': '📊' };
+    const icons: any = {
+      info: 'ℹ️',
+      tick: '⏱️',
+      analise: '🔍',
+      sinal: '🟢',
+      operacao: '🚀',
+      resultado: '�',
+      vitoria: '✅',
+      derrota: '❌',
+      alerta: '⚠️',
+      erro: '�',
+    };
 
     this.dataSource.query(`INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
-      [userId, type, iconMap[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
+      [userId, type, icons[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
     ).catch(e => console.error('Error saving log', e));
 
     this.tradeEvents.emitLog({
