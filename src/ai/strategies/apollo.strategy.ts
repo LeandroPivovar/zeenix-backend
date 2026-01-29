@@ -58,6 +58,7 @@ export interface ApolloUserState {
   recoveryTarget: number;
   recoveredAmount: number;
   lossStreakRecovery: number;
+  skipSorosNext: boolean;
 
   // Defense / Blindado
   defenseMode: boolean; // Active after 3 losses
@@ -494,6 +495,7 @@ Status: Sessão Equilibrada`;
       if (state.analysisType === 'RECUPERACAO') {
         state.recoveredAmount += profit;
         state.lossStreakRecovery = 0;
+        state.skipSorosNext = true; // Resetar após vitória na recuperação
 
         // CONDIÇÃO DE FECHAMENTO DA RECUPERAÇÃO: lucro_recuperado >= alvo_recuperacao
         if (state.recoveredAmount >= state.recoveryTarget) {
@@ -507,6 +509,7 @@ Status: Sessão Equilibrada`;
         }
       } else {
         // WIN NORMAL
+        if (state.consecutiveLosses > 0) state.skipSorosNext = true; // Resetar após vitória no Martingale
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
       }
@@ -560,6 +563,12 @@ Status: Sessão Equilibrada`;
     } else {
       // 4️⃣ CÁLCULO DE STAKE — META (PRINCIPAL)
 
+      // ✅ RESET APÓS RECUPERAÇÃO/MARTINGALE: Se a flag estiver ativa, ignora Soros desta vez
+      if (state.skipSorosNext) {
+        state.skipSorosNext = false;
+        return state.apostaInicial;
+      }
+
       // ✅ SOROS: Se a última foi WIN, entra com (Base + Lucro)
       if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveLosses === 0) {
         return Number((state.apostaInicial + state.lastProfit).toFixed(2));
@@ -567,8 +576,10 @@ Status: Sessão Equilibrada`;
 
       // ✅ MARTINGALE (1ª Perda): Tenta recuperar no próximo Under 8
       if (state.consecutiveLosses === 1) {
-        // Recupera a perda anterior + margem de 5% sobre o total
-        const stakeMartingale = (state.totalLossAccumulated * 1.05) / PAYOUT_UNDER_8;
+        // ⚠️ SEGURANÇA: Usamos 0.18 como payout para garantir recuperação em R_100/R_25
+        // e margem de 10% (em vez de 5%) sobre o total perdido
+        const payoutSeguro = 0.18;
+        const stakeMartingale = (state.totalLossAccumulated * 1.10) / payoutSeguro;
         return Number(stakeMartingale.toFixed(2));
       }
 
@@ -713,6 +724,7 @@ Status: Sessão Equilibrada`;
       recoveryTarget: 0,
       recoveredAmount: 0,
       lossStreakRecovery: 0,
+      skipSorosNext: false,
 
       defenseMode: false,
       peakProfit: 0,
