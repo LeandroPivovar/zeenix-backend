@@ -155,8 +155,8 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                const fixedProtectedAmount = activationTrigger * 0.5; // 50% dos 40% = 20% da meta
-                logCallback(userId, symbol, 'alerta', `🛡️ Proteção de Lucro: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção FIXA: $${fixedProtectedAmount.toFixed(2)} (20% da Meta) garantidos.`);
+                const fixedProtectedAmount = activationTrigger; // 40% da meta
+                logCallback(userId, symbol, 'alerta', `🛡️ Proteção de Lucro: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção FIXA: $${fixedProtectedAmount.toFixed(2)} (40% da Meta) garantidos.`);
             }
         }
 
@@ -175,7 +175,7 @@ class RiskManager {
             // Ativação: 40% da Meta
             // Piso: 50% do valor de ATIVAÇÃO (Fixo, não sobe)
             const activationPoint = this.profitTarget * 0.40;
-            const fixedGuaranteedProfit = activationPoint * 0.50; // Piso fixo
+            const fixedGuaranteedProfit = activationPoint; // Piso fixo (40% da Meta)
             const guaranteedBalance = this.initialBalance + fixedGuaranteedProfit;
             const potentialBalanceAfterLoss = currentBalance - nextStake;
 

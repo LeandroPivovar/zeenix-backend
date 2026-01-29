@@ -706,15 +706,15 @@ Entrada: DIGIT OVER 2`
 
           if (currentPeak >= activationThreshold && !state.blindadoActive) {
             state.blindadoActive = true;
-            const fixedProtectedAmount = activationThreshold * 0.50; // 20% da meta
-            this.logStrategicPause(state.userId, 'ATIVADA', `🛡️ Stop Blindado Ativado! (META: ${formatCurrency(profitTarget, state.currency)})\n• LUCRO ATUAL: +${formatCurrency(currentPeak, state.currency)}\n• PROTEÇÃO FIXA: +${formatCurrency(fixedProtectedAmount, state.currency)} (20% da Meta)`);
+            const fixedProtectedAmount = activationThreshold; // 40% da meta
+            this.logStrategicPause(state.userId, 'ATIVADA', `🛡️ Stop Blindado Ativado! (META: ${formatCurrency(profitTarget, state.currency)})\n• LUCRO ATUAL: +${formatCurrency(currentPeak, state.currency)}\n• PROTEÇÃO FIXA: +${formatCurrency(fixedProtectedAmount, state.currency)} (40% da Meta)`);
           }
         }
 
         if (profitTarget > 0 && currentPeak >= activationThreshold) {
           // [ZENIX v3.5] Stop Blindado Fixo: 
-          // Piso: 50% do valor de ATIVAÇÃO (20% do TP)
-          const fixedGuaranteedProfit = activationThreshold * 0.50;
+          // Piso: 100% do valor de ATIVAÇÃO (40% do TP)
+          const fixedGuaranteedProfit = activationThreshold;
           const stopBlindado = capitalInicial + fixedGuaranteedProfit;
 
           if (capitalSessao <= stopBlindado) {
