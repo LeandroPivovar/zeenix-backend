@@ -1362,13 +1362,15 @@ Ação: aguardar próximo ciclo`
     // ------------------------------------------------------------------
 
     /**
-     * Verifica limites de proteção (Meta de Lucro, Stop Blindado, Stop Loss)
+     * ✅ TITAN: Verifica limites (meta, stop-loss) - COPIADO DO ATLAS
      */
     private async checkTitanLimits(userId: string): Promise<void> {
         const state = this.users.get(userId);
         if (!state) return;
 
-        // Ler configuração atualizada do banco (segunda camada de verificação)
+        const symbol = this.symbol || 'SISTEMA';
+
+        // ✅ [ORION PARALLEL CHECK] - Reverificar limites do banco (Segunda Camada)
         const configResult = await this.dataSource.query(
             `SELECT
                 COALESCE(loss_limit, 0) as lossLimit,
@@ -1396,9 +1398,9 @@ Ação: aguardar próximo ciclo`
 
         // 1. Meta de Lucro (Profit Target)
         if (profitTarget > 0 && lucroAtual >= profitTarget) {
-            this.saveTitanLog(userId, 'SISTEMA', 'info',
+            this.saveTitanLog(userId, symbol, 'info',
                 `META DE LUCRO ATINGIDA
-Título: Meta Alcançada
+Status: Meta Alcançada
 Lucro: ${formatCurrency(lucroAtual, state.currency)}
 Meta: ${formatCurrency(profitTarget, state.currency)}
 Ação: IA DESATIVADA`
@@ -1414,7 +1416,7 @@ Ação: IA DESATIVADA`
                 userId: userId,
                 type: 'stopped_profit',
                 strategy: 'titan',
-                symbol: this.symbol,
+                symbol: symbol,
                 profitLoss: lucroAtual
             });
 
@@ -1422,21 +1424,38 @@ Ação: IA DESATIVADA`
             return;
         }
 
-        // 2. Stop Blindado
+        // 2. Stop-loss blindado
         if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
             const profitPeak = parseFloat(config.profitPeak) || 0;
             const activationThreshold = profitTarget * 0.40;
 
+            // ✅ [DEBUG] Log para rastrear valores
+            this.logger.log(`[TITAN] 🛡️ Verificando Stop Blindado:
+      profitPeak: ${profitPeak}
+      activationThreshold: ${activationThreshold}
+      profitTarget: ${profitTarget}
+      lucroAtual: ${lucroAtual}
+      capitalSessao: ${capitalSessao}
+      capitalInicial: ${capitalInicial}`);
+
             if (profitTarget > 0 && profitPeak >= activationThreshold) {
                 const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
+                // ✅ Fixed Floor: Protect % of Activation Threshold, not Peak
                 const valorProtegidoFixo = activationThreshold * factor;
                 const stopBlindado = capitalInicial + valorProtegidoFixo;
 
-                if (capitalSessao <= stopBlindado + 0.01) {
+                // ✅ [DEBUG] Log para rastrear cálculo do piso
+                this.logger.log(`[TITAN] 🛡️ Stop Blindado ATIVO:
+        valorProtegidoFixo: ${valorProtegidoFixo}
+        stopBlindado: ${stopBlindado}
+        capitalSessao: ${capitalSessao}
+        Vai parar? ${capitalSessao <= stopBlindado + 0.01}`);
+
+                if (capitalSessao <= stopBlindado + 0.01) { // Added tolerance again just in case
                     const lucroFinal = capitalSessao - capitalInicial;
-                    this.saveTitanLog(userId, 'SISTEMA', 'info',
+                    this.saveTitanLog(userId, symbol, 'info',
                         `STOP BLINDADO ATINGIDO
-Título: Lucro Protegido
+Status: Lucro Protegido
 Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
 Ação: IA DESATIVADA`
                     );
@@ -1447,16 +1466,22 @@ Ação: IA DESATIVADA`
                         [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, userId],
                     );
 
+                    // ✅ [DEBUG] Confirmar que UPDATE foi executado
+                    this.logger.warn(`[TITAN] 🛡️ STOP BLINDADO - UPDATE executado! session_status = 'stopped_blindado', userId: ${userId}`);
+
                     this.tradeEvents.emit({
                         userId: userId,
                         type: 'stopped_blindado',
                         strategy: 'titan',
-                        symbol: this.symbol,
+                        symbol: symbol,
                         profitProtected: lucroFinal,
                         profitLoss: lucroFinal
                     });
 
                     this.users.delete(userId);
+
+                    // ✅ [FIX] Log final e RETURN imediatamente
+                    this.logger.warn(`[TITAN] 🛡️ STOP BLINDADO - IA parada, saindo de checkTitanLimits()...`);
                     return;
                 }
             }
@@ -1465,9 +1490,9 @@ Ação: IA DESATIVADA`
         // 3. Stop Loss Normal
         const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
         if (lossLimit > 0 && perdaAtual >= lossLimit) {
-            this.saveTitanLog(userId, 'SISTEMA', 'alerta',
+            this.saveTitanLog(userId, symbol, 'alerta',
                 `STOP LOSS ATINGIDO
-Título: Limite de Perda
+Status: Limite de Perda
 Perda: ${formatCurrency(perdaAtual, state.currency)}
 Limite: ${formatCurrency(lossLimit, state.currency)}
 Ação: IA DESATIVADA`
@@ -1483,7 +1508,7 @@ Ação: IA DESATIVADA`
                 userId: userId,
                 type: 'stopped_loss',
                 strategy: 'titan',
-                symbol: this.symbol,
+                symbol: symbol,
                 profitLoss: -perdaAtual
             });
 
