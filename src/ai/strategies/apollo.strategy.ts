@@ -339,11 +339,12 @@ Status: Sessão Equilibrada`;
     }
 
     if (stake > limitRemaining) {
+      const originalStake = stake;
       if (limitRemaining < 0.35) {
         const isBlindado = state.stopBlindadoActive;
         const msg = isBlindado
-          ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
-          : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+          ? `🛡️ STOP BLINDADO ATINGIDO!\n• Lucro Protegido: $${state.stopBlindadoFloor.toFixed(2)}\n• Ação: Parando IA para preservar lucros.`
+          : `🛑 STOP LOSS ATINGIDO!\n• Limite de Perda: $${state.stopLoss.toFixed(2)}\n• Ação: Parando IA imediatamente.`;
 
         this.saveLog(state.userId, 'alerta', msg);
         this.handleStopInternal(state, isBlindado ? 'blindado' : 'loss', isBlindado ? state.stopBlindadoFloor : -state.stopLoss);
@@ -351,8 +352,8 @@ Status: Sessão Equilibrada`;
       }
       stake = Number(limitRemaining.toFixed(2));
       const adjMsg = state.stopBlindadoActive
-        ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${stake.toFixed(2)}\n• Lucro Protegido Restante: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para não violar a proteção.`
-        : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${stake.toFixed(2)}\n• Saldo Restante até Stop: $${limitRemaining.toFixed(2)}\n• Ação: Stake reduzida para $${stake.toFixed(2)} para respeitar o Stop Loss.`;
+        ? `⚠️ AJUSTE DE SEGURANÇA (PROTEÇÃO)\n• Stake Original: $${originalStake.toFixed(2)}\n• Limite Disponível: $${limitRemaining.toFixed(2)}\n• Ação: Reduzindo para $${stake.toFixed(2)} para proteger o capital.`
+        : `⚠️ AJUSTE DE SEGURANÇA (STOP LOSS)\n• Stake Original: $${originalStake.toFixed(2)}\n• Limite Disponível: $${limitRemaining.toFixed(2)}\n• Ação: Reduzindo para $${stake.toFixed(2)} para respeitar o Stop Loss.`;
 
       this.saveLog(state.userId, 'alerta', adjMsg);
     }
@@ -557,28 +558,22 @@ Status: Sessão Equilibrada`;
       const stake = (lossToRecover * (1 + perfil)) / PAYOUT_UNDER_4;
       return Number(stake.toFixed(2));
     } else {
-      // 4️⃣ CÁLCULO DE STAKE — META (IMUTÁVEL)
-      // stake_meta = lucro_faltante / payout_liquido
-      const profitFaltante = state.profitTarget - (state.capital - state.capitalInicial);
+      // 4️⃣ CÁLCULO DE STAKE — META (PRINCIPAL)
 
-      // We don't want to use all profitTarget in one go if initial stake is small
-      // But according to formula: stake_meta = lucro_faltante / payout_liquido
-      const stakeMeta = profitFaltante / PAYOUT_UNDER_8;
+      // ✅ SOROS: Se a última foi WIN, entra com (Base + Lucro)
+      if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveLosses === 0) {
+        return Number((state.apostaInicial + state.lastProfit).toFixed(2));
+      }
 
-      // If stakeMeta is too high (e.g. > apostaInicial * 10), we might want to cap it
-      // but the spec says IMUTÁVEL. I will use a reasonable minimum/maximum based on apostaInicial if profitFaltante is small.
-      if (profitFaltante <= 0) return 0.35; // Already target reached? Should be stopped.
+      // ✅ MARTINGALE (1ª Perda): Tenta recuperar no próximo Under 8
+      if (state.consecutiveLosses === 1) {
+        // Recupera a perda anterior + margem de 5% sobre o total
+        const stakeMartingale = (state.totalLossAccumulated * 1.05) / PAYOUT_UNDER_8;
+        return Number(stakeMartingale.toFixed(2));
+      }
 
-      // We actually want a stake that yields 'apostaInicial * PAYOUT_UNDER_8' or something?
-      // No, spec says: stake_meta = lucro_faltante / payout_liquido
-      // This means it tries to hit the goal in ONE shot. 
-      // This is risky if meta is large. 
-      // Re-reading: "Generating high volume with simple statistical edge."
-      // Usually "lucro_faltante" in these bots refers to the goal of the CURRENT cycle or a portion.
-      // However, I will follow the formula literally as requested ("IMUTÁVEL").
-
-      const stake = Math.min(stakeMeta, state.capital * 0.5); // Safety cap to 50% of capital nonetheless
-      return Math.max(0.35, Number(stake.toFixed(2)));
+      // ✅ PADRÃO: Usa o Stake Base
+      return state.apostaInicial;
     }
   }
 
@@ -1004,7 +999,7 @@ Status: Sessão Equilibrada`;
           readyState === WebSocket.CLOSING ? 'CLOSING' :
             readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
 
-      this.logger.debug(`[APOLLO] � [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
+      this.logger.debug(`[APOLLO]  [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
 
       if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
         this.logger.debug(`[APOLLO] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
@@ -1184,9 +1179,6 @@ Status: Sessão Equilibrada`;
     }
   }
 
-  /**
-   * ✅ Envia requisição via conexão existente
-   */
   /**
    * ✅ Envia requisição via conexão existente
    */
