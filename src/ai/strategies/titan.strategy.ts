@@ -730,6 +730,10 @@ export class TitanStrategy implements IStrategy {
     getUserState(userId: string) { return this.users.get(userId); }
 
     private async executeOperation(state: TitanUserState, direction: DigitParity): Promise<void> {
+        // ✅ [TITAN] Verificação de LIMITES antes de qualquer cálculo (Previne loop)
+        await this.checkTitanLimits(state.userId);
+        if (!this.users.has(state.userId)) return; // Usuário parado
+
         const riskManager = this.riskManagers.get(state.userId)!;
         const saveTitanLogCallback = (userId: string, symbol: string, type: string, message: string) => {
             this.saveTitanLog(userId, symbol, type as any, message);
@@ -768,10 +772,35 @@ export class TitanStrategy implements IStrategy {
             return;
         }
 
-        // ✅ [FIX] Se RiskManager retornar stake 0 (Stop Blindado/Loss atingido), verificar limites
+        // ✅ [FIX FAIL-SAFE] Stop Blindado/Loss via RiskManager
         if (stake <= 0) {
-            this.logger.warn(`[TITAN] ⚠️ Stake calculada = ${stake}. Verificando limites de proteção...`);
+            this.logger.warn(`[TITAN] ⚠️ Stake calculada = ${stake}. Proteção acionada.`);
+
+            // Tenta parar via checkTitanLimits (ideal para logs padronizados)
             await this.checkTitanLimits(state.userId);
+
+            // 🚨 FAIL-SAFE: Se ainda estiver ativo na memória, força desativação manual
+            if (this.users.has(state.userId)) {
+                this.logger.warn(`[TITAN] 💀 Check falhou em parar. Forçando parada manual (Fail-Safe Loop Prevention).`);
+
+                const hasProfit = state.capital > state.capitalInicial;
+                const status = hasProfit ? 'stopped_blindado' : 'stopped_loss';
+                const reason = hasProfit ? 'Proteção de Lucro (Forçada)' : 'Limite de Perda (Forçado)';
+
+                await this.deactivateUser(state.userId);
+
+                // Forçar update do DB para garantir modal
+                this.dataSource.query(
+                    `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ?`,
+                    [status, reason, state.userId]
+                ).catch(e => this.logger.error(`[TITAN] Erro fail-safe DB: ${e.message}`));
+
+                this.tradeEvents.emit({
+                    userId: state.userId,
+                    type: status,
+                    strategy: 'titan'
+                });
+            }
             return;
         }
 
@@ -922,6 +951,14 @@ export class TitanStrategy implements IStrategy {
         if (riskManager.consecutiveLosses > 0) {
             this.logMartingaleLevelV2(state.userId, riskManager.consecutiveLosses, stake);
         }
+
+        // ✅ [LOG] Início de Entrada (Igual Atlas)
+        this.saveTitanLog(state.userId, this.symbol, 'operacao',
+            `INICIANDO ENTRADA
+• Contrato: ${direction === 'PAR' ? 'DIGIT EVEN' : 'DIGIT ODD'}
+• Stake: $${stake.toFixed(2)}
+• Status: Enviando ordem...`
+        );
 
         state.isOperationActive = true;
         state.lastOperationStart = Date.now();
