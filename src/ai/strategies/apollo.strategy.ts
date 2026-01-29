@@ -72,6 +72,7 @@ export interface ApolloUserState {
   ticksColetados: number;
   totalLossAccumulated: number;
   lastLogTimePerType: Map<string, number>;
+  isStopped: boolean;
 }
 
 @Injectable()
@@ -291,7 +292,8 @@ Status: Alta Escalabilidade`;
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[], digits: number[]) {
     // 1. CHECK STOPS AND BLINDADO
-    if (!this.checkStops(state)) return;
+    await this.checkApolloLimits(state);
+    if (state.isStopped) return;
 
     // 2. TRIGGER RECOVERY & MODE DEGRADATION
     // Active if loss_streak >= 2
@@ -625,17 +627,33 @@ Status: Alta Escalabilidade`;
     }
 
     // --- STOP BLINDADO UPDATE ---
-    this.updateBlindado(state);
+    // Removido: Lógica movida para checkApolloLimits (idêntico Atlas)
 
-    // --- DB SESSION UPDATE ---
-    const sessionBalance = state.capital - state.capitalInicial;
-    this.dataSource.query(
-      `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
-      [sessionBalance, state.userId]
-    ).catch(e => { });
+    // ✅ [ZENIX v3.1] Lucro da SESSÃO (Recalculado após a trade)
+    const lucroSessao = state.capital - state.capitalInicial;
+
+    // ✅ [STOP BLINDADO FIX] Atualizar profit_peak se lucro atual for maior
+    // Isso é essencial para o Stop Blindado funcionar corretamente
+    if (lucroSessao > 0) {
+      await this.dataSource.query(
+        `UPDATE ai_user_config 
+         SET session_balance = ?, 
+             profit_peak = GREATEST(COALESCE(profit_peak, 0), ?)
+         WHERE user_id = ? AND is_active = 1`,
+        [lucroSessao, lucroSessao, state.userId]
+      ).catch(e => {
+        this.logger.error(`[APOLLO] Erro ao atualizar session_balance e profit_peak:`, e);
+      });
+    } else {
+      // Se está em prejuízo, só atualizar session_balance
+      await this.dataSource.query(
+        `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
+        [lucroSessao, state.userId]
+      ).catch(e => { });
+    }
 
     // --- CHECK STOPS (Post-Trade) ---
-    this.checkStops(state);
+    await this.checkApolloLimits(state);
 
     state.isOperationActive = false;
   }
@@ -690,87 +708,164 @@ Status: Alta Escalabilidade`;
     }
   }
 
-  private updateBlindado(state: ApolloUserState) {
-    if (!state.useBlindado) return;
+  /**
+   * ✅ APOLLO: Verifica limites (meta, stop-loss) - CLONE ATLAS
+   */
+  private async checkApolloLimits(state: ApolloUserState): Promise<void> {
+    const symbol = state.symbol || 'SISTEMA';
 
-    const profit = state.capital - state.capitalInicial;
-    const target = state.profitTarget;
-    const activationThreshold = target * 0.40;
+    // ✅ [ORION PARALLEL CHECK] - Reerificar limites do banco (Segunda Camada)
+    const configResult = await this.dataSource.query(
+      `SELECT
+        COALESCE(loss_limit, 0) as lossLimit,
+        COALESCE(profit_target, 0) as profitTarget,
+        COALESCE(session_balance, 0) as sessionBalance,
+        COALESCE(stake_amount, 0) as capitalInicial,
+        COALESCE(profit_peak, 0) as profitPeak,
+        stop_blindado_percent as stopBlindadoPercent,
+        is_active
+       FROM ai_user_config
+       WHERE user_id = ? AND is_active = 1
+       LIMIT 1`,
+      [state.userId],
+    );
 
-    if (!state.stopBlindadoActive) {
-      if (profit >= activationThreshold) {
-        state.stopBlindadoActive = true;
-        state.peakProfit = profit;
-        // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
-        state.stopBlindadoFloor = activationThreshold * 0.50;
-        const currency = state.currency || 'USD';
-        this.saveLog(state.userId, 'alerta',
-          `STOP BLINDADO ATIVADO
-Título: Proteção Ativa
-Lucro Atual: ${formatCurrency(profit, currency)}
-Piso Garantido: ${formatCurrency(state.stopBlindadoFloor, currency)}
-Ação: monitorando retrocesso`);
-        this.tradeEvents.emit({
-          userId: state.userId,
-          type: 'blindado_activated',
-          strategy: 'apollo',
-          profitPeak: state.peakProfit,
-          protectedAmount: state.stopBlindadoFloor
-        });
-      }
-    } else {
-      // ✅ FIXED FLOOR: Only update peak for tracking, floor stays fixed
-      if (profit > state.peakProfit) {
-        state.peakProfit = profit;
-        // Floor remains fixed at activationThreshold * 0.50
-      }
-    }
-  }
+    if (!configResult || configResult.length === 0) return;
 
-  private checkStops(state: ApolloUserState): boolean {
-    const profit = state.capital - state.capitalInicial;
+    const config = configResult[0];
+    const lossLimit = parseFloat(config.lossLimit) || 0;
+    const profitTarget = parseFloat(config.profitTarget) || 0;
+    const capitalInicial = parseFloat(config.capitalInicial) || 0;
 
-    // 1. PROFIT TARGET
-    if (profit >= state.profitTarget) {
-      const currency = state.currency || 'USD';
-      this.saveLog(state.userId, 'resultado',
+    const lucroAtual = parseFloat(config.sessionBalance) || 0;
+    const capitalSessao = capitalInicial + lucroAtual;
+
+    // 1. Meta de Lucro (Profit Target)
+    if (profitTarget > 0 && lucroAtual >= profitTarget) {
+      this.saveLog(state.userId, 'info',
         `META DE LUCRO ATINGIDA
-Título: Meta Alcançada
-Lucro: ${formatCurrency(profit, currency)}
-Meta: ${formatCurrency(state.profitTarget, currency)}
-Ação: IA DESATIVADA`);
-      this.handleStopInternal(state, 'profit', profit);
-      return false;
+Status: Meta Alcançada
+Lucro: ${formatCurrency(lucroAtual, state.currency)}
+Meta: ${formatCurrency(profitTarget, state.currency)}
+Ação: IA DESATIVADA`
+      );
+
+      await this.dataSource.query(
+        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+         WHERE user_id = ? AND is_active = 1`,
+        [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, state.userId],
+      );
+
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'stopped_profit',
+        strategy: 'apollo',
+        symbol: symbol,
+        profitLoss: lucroAtual
+      });
+
+      this.users.delete(state.userId);
+      state.isStopped = true;
+      return;
     }
 
-    // 2. STOP LOSS NORMAL
-    if (profit <= -state.stopLoss) {
-      const currency = state.currency || 'USD';
-      const loss = Math.abs(profit);
+    // 2. Stop-loss blindado (Lógica Atlas)
+    if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+      const profitPeak = parseFloat(config.profitPeak) || 0;
+      const activationThreshold = profitTarget * 0.40;
+
+      if (profitTarget > 0 && profitPeak >= activationThreshold) {
+        const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
+        // ✅ Fixed Floor: Protect % of Activation Threshold
+        const valorProtegidoFixo = activationThreshold * factor;
+        const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+        // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
+        const justActivated = profitPeak >= activationThreshold && profitPeak < (activationThreshold + 0.50);
+        if (justActivated && !state.stopBlindadoActive) {
+          state.stopBlindadoActive = true;
+          state.stopBlindadoFloor = valorProtegidoFixo;
+          this.saveLog(state.userId, 'info',
+            `🛡️ STOP BLINDADO ATIVADO
+Status: Proteção de Lucro Ativa
+Lucro Atual: ${formatCurrency(lucroAtual, state.currency)}
+Piso Protegido: ${formatCurrency(valorProtegidoFixo, state.currency)}
+Percentual: ${config.stopBlindadoPercent}%
+Ação: monitorando para proteger ganhos`
+          );
+        }
+
+        if (capitalSessao <= stopBlindado + 0.01) {
+          const lucroFinal = capitalSessao - capitalInicial;
+          this.saveLog(state.userId, 'info',
+            `STOP BLINDADO ATINGIDO
+Status: Lucro Protegido
+Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
+Ação: IA DESATIVADA`
+          );
+
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
+          );
+
+          this.tradeEvents.emit({
+            userId: state.userId,
+            type: 'stopped_blindado',
+            strategy: 'apollo',
+            symbol: symbol,
+            profitProtected: lucroFinal,
+            profitLoss: lucroFinal
+          });
+
+          this.users.delete(state.userId);
+          state.isStopped = true;
+          return;
+        }
+      }
+    }
+
+    // 3. Stop Loss Normal
+    if (state.isStopped) return;
+
+    // Na Atlas o loss é comparado com perdaAtual (positivo) >= lossLimit (positivo)
+    // lossLimit vem do banco como positivo geralmente? Na Atlas: parseFloat(config.lossLimit) || 0;
+    // O usuário configura Stop Loss como valor positivo (ex: 100).
+    // Se lucroAtual for -101, perdaAtual = 101. 101 >= 100 -> Stop.
+
+    const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+    if (lossLimit > 0 && perdaAtual >= lossLimit) {
       this.saveLog(state.userId, 'alerta',
         `STOP LOSS ATINGIDO
-Título: Limite de Perda
-Perda: ${formatCurrency(loss, currency)}
-Limite: ${formatCurrency(state.stopLoss, currency)}
-Ação: IA DESATIVADA`);
-      this.handleStopInternal(state, 'loss', profit);
-      return false;
-    }
+Status: Limite de Perda
+Perda: ${formatCurrency(perdaAtual, state.currency)}
+Limite: ${formatCurrency(lossLimit, state.currency)}
+Ação: IA DESATIVADA`
+      );
 
-    // 3. STOP BLINDADO
-    if (state.stopBlindadoActive && profit <= state.stopBlindadoFloor) {
-      const currency = state.currency || 'USD';
-      this.saveLog(state.userId, 'alerta',
-        `STOP BLINDADO ATINGIDO
-Título: Lucro Protegido
-Lucro Protegido: ${formatCurrency(state.stopBlindadoFloor, currency)}
-Ação: IA DESATIVADA`);
-      this.handleStopInternal(state, 'blindado', state.stopBlindadoFloor);
-      return false;
-    }
+      await this.dataSource.query(
+        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+         WHERE user_id = ? AND is_active = 1`,
+        [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
+      );
 
-    return true;
+      this.tradeEvents.emit({
+        userId: state.userId,
+        type: 'stopped_loss',
+        strategy: 'apollo',
+        symbol: symbol,
+        profitLoss: -perdaAtual
+      });
+
+      this.users.delete(state.userId);
+      state.isStopped = true;
+      return;
+    }
   }
+
+  // Helper para desativar usuário (para uso interno)
+  // private async deactivateUser(userId: string) { this.users.delete(userId); } // Usar o público existente
 
   private async handleStopInternal(state: ApolloUserState, reason: 'profit' | 'loss' | 'blindado' | 'insufficient_balance', finalAmount: number) {
     let type = 'stopped_loss';
@@ -781,22 +876,11 @@ Ação: IA DESATIVADA`);
     state.isOperationActive = false;
     this.tradeEvents.emit({ userId: state.userId, type: type as any, strategy: 'apollo', profitLoss: finalAmount });
 
-    // ✅ 1. IMPORTANTE: Chamar deactivateUser para garantir que a IA seja pausada completamente
-    // Feito ANTES do banco para evitar loops se o banco falhar
     await this.deactivateUser(state.userId);
 
-    // ✅ 2. Atualizar Banco
     try {
       await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
-    } catch (dbError) {
-      this.logger.error(`[APOLLO] ⚠️ Erro ao atualizar status '${type}' no DB: ${dbError.message}`);
-      // Fallback para stopped_loss se der erro (ex: ENUM inválido)
-      if (type === 'stopped_insufficient_balance') {
-        try {
-          await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status='stopped_loss', deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [state.userId]);
-        } catch (e) { console.error('[APOLLO] Falha crítica no fallback DB', e); }
-      }
-    }
+    } catch (e) { }
   }
 
   // --- INFRASTRUCTURE ---
@@ -832,6 +916,8 @@ Ação: IA DESATIVADA`);
       useBlindado: config.useBlindado !== false,
       symbol: selectedSymbol,
 
+      // State Controls
+      isStopped: false,
       isOperationActive: false,
       consecutiveLosses: 0,
       lastProfit: 0,
