@@ -572,13 +572,19 @@ Status: Sessão Equilibrada`;
       // 4️⃣ CÁLCULO DE STAKE — META (PRINCIPAL)
 
       // ✅ RESET APÓS RECUPERAÇÃO/MARTINGALE: Se a flag estiver ativa, ignora Soros desta vez
-      if (state.skipSorosNext || state.consecutiveWins >= 2) {
+      if (state.skipSorosNext) {
         state.skipSorosNext = false;
-        if (state.consecutiveWins >= 2) state.consecutiveWins = 0; // Reinicia ciclo de Soros
+        state.consecutiveWins = 0; // Importante: Reiniciar contagem para que a PRÓXIMA vitória inicie o Soros
         return state.apostaInicial;
       }
 
-      // ✅ SOROS: Se a última foi WIN (Nível 1), entra com (Base + Lucro)
+      // ✅ CICLO DE SOROS (Fim): Se já ganhou o Soros (2 consecutivas), volta pro base
+      if (state.consecutiveWins >= 2) {
+        state.consecutiveWins = 0;
+        return state.apostaInicial;
+      }
+
+      // ✅ SOROS (Meta): Se a última foi WIN (Base), entra com (Base + Lucro)
       if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveWins === 1) {
         return Number((state.apostaInicial + state.lastProfit).toFixed(2));
       }
