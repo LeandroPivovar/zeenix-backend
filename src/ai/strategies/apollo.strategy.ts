@@ -182,6 +182,48 @@ Dígito de Saída: ${contractInfo?.exitDigit || 'N/A'}`;
     this.saveLog(userId, 'resultado', message);
   }
 
+  private logStopActivated(userId: string, type: 'PROFIT' | 'LOSS' | 'BLINDADO', value: number, limit: number) {
+    const state = this.users.get(userId);
+    const currency = state?.currency || 'USD';
+    let title = '';
+    let status = '';
+
+    switch (type) {
+      case 'PROFIT':
+        title = 'META DE LUCRO ATINGIDA';
+        status = 'Meta Alcançada';
+        break;
+      case 'LOSS':
+        title = 'STOP LOSS ATINGIDO';
+        status = 'Limite de Perda';
+        break;
+      case 'BLINDADO':
+        title = 'STOP BLINDADO ATINGIDO';
+        status = 'Lucro Protegido';
+        break;
+    }
+
+    const message = `${title}
+Título: ${status}
+Valor: ${type === 'LOSS' ? '-' : ''}${formatCurrency(Math.abs(value), currency)}
+Limite/Meta: ${formatCurrency(limit, currency)}
+Ação: IA DESATIVADA`;
+
+    this.saveLog(userId, type === 'PROFIT' ? 'resultado' : 'alerta', message);
+  }
+
+  private logBlindadoActivation(userId: string, currentProfit: number, protectedFloor: number) {
+    const state = this.users.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `STOP BLINDADO ATIVADO
+Título: Proteção Ativa
+Lucro Atual: ${formatCurrency(currentProfit, currency)}
+Piso Garantido: ${formatCurrency(protectedFloor, currency)}
+Ação: monitorando retrocesso`;
+
+    this.saveLog(userId, 'alerta', message);
+  }
+
   private logMartingaleLevelV2(userId: string, level: number | string, stake: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
@@ -703,13 +745,10 @@ Status: Alta Escalabilidade`;
         state.peakProfit = profit;
         // ✅ FIXED FLOOR: Protect % of activation threshold, not peak
         state.stopBlindadoFloor = activationThreshold * 0.50;
-        const currency = state.currency || 'USD';
-        this.saveLog(state.userId, 'alerta',
-          `STOP BLINDADO ATIVADO
-Título: Proteção Ativa
-Lucro Atual: ${formatCurrency(profit, currency)}
-Piso Garantido: ${formatCurrency(state.stopBlindadoFloor, currency)}
-Ação: monitorando retrocesso`);
+
+        // ✅ Log Padronizado V2
+        this.logBlindadoActivation(state.userId, profit, state.stopBlindadoFloor);
+
         this.tradeEvents.emit({
           userId: state.userId,
           type: 'blindado_activated',
@@ -732,39 +771,21 @@ Ação: monitorando retrocesso`);
 
     // 1. PROFIT TARGET
     if (profit >= state.profitTarget) {
-      const currency = state.currency || 'USD';
-      this.saveLog(state.userId, 'resultado',
-        `META DE LUCRO ATINGIDA
-Título: Meta Alcançada
-Lucro: ${formatCurrency(profit, currency)}
-Meta: ${formatCurrency(state.profitTarget, currency)}
-Ação: IA DESATIVADA`);
+      this.logStopActivated(state.userId, 'PROFIT', profit, state.profitTarget);
       this.handleStopInternal(state, 'profit', profit);
       return false;
     }
 
     // 2. STOP LOSS NORMAL
     if (profit <= -state.stopLoss) {
-      const currency = state.currency || 'USD';
-      const loss = Math.abs(profit);
-      this.saveLog(state.userId, 'alerta',
-        `STOP LOSS ATINGIDO
-Título: Limite de Perda
-Perda: ${formatCurrency(loss, currency)}
-Limite: ${formatCurrency(state.stopLoss, currency)}
-Ação: IA DESATIVADA`);
+      this.logStopActivated(state.userId, 'LOSS', profit, state.stopLoss);
       this.handleStopInternal(state, 'loss', profit);
       return false;
     }
 
     // 3. STOP BLINDADO
     if (state.stopBlindadoActive && profit <= state.stopBlindadoFloor) {
-      const currency = state.currency || 'USD';
-      this.saveLog(state.userId, 'alerta',
-        `STOP BLINDADO ATINGIDO
-Título: Lucro Protegido
-Lucro Protegido: ${formatCurrency(state.stopBlindadoFloor, currency)}
-Ação: IA DESATIVADA`);
+      this.logStopActivated(state.userId, 'BLINDADO', state.stopBlindadoFloor, state.stopBlindadoFloor);
       this.handleStopInternal(state, 'blindado', state.stopBlindadoFloor);
       return false;
     }
