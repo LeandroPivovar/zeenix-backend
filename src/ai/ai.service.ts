@@ -4296,6 +4296,9 @@ export class AiService implements OnModuleInit {
     // ✅ Usar StrategyManager para ativar usuário na estratégia correta
     if (this.strategyManager) {
       try {
+        // ✅ FIX: Garantir que nenhuma outra estratégia esteja rodando em memória antes de ativar a nova
+        await this.strategyManager.deactivateUser(userId);
+
         this.logger.log(`[ActivateAI] 🔵 Ativando usuário ${userId} na estratégia ${strategy} via StrategyManager...`);
         await this.strategyManager.activateUser(userId, strategy, {
           mode: mode || 'veloz',
@@ -4328,12 +4331,12 @@ export class AiService implements OnModuleInit {
   }
 
   /**
-   * Desativa a IA para um usuário (desativa apenas a sessão ativa)
+   * Desativa a IA para um usuário (Garante desativação total de todas as sessões)
    */
   async deactivateUserAI(userId: string): Promise<void> {
     this.logger.log(`Desativando IA para usuário ${userId}`);
 
-    // Desativar apenas a sessão ativa (is_active = TRUE)
+    // 1. Desativar TODAS as sessões ativas no banco de dados (Garantia de Parada)
     await this.dataSource.query(
       `UPDATE ai_user_config 
        SET is_active = FALSE, 
@@ -4344,18 +4347,21 @@ export class AiService implements OnModuleInit {
       [userId],
     );
 
-    this.logger.log(`IA desativada para usuário ${userId}`);
+    // 2. Limpar cache de configuração para forçar releitura
+    this.userConfigCache.delete(userId);
 
-    // ✅ Usar StrategyManager para desativar usuário de todas as estratégias
+    // 3. Desativar de todas as estratégias modernas (StrategyManager)
     if (this.strategyManager) {
       await this.strategyManager.deactivateUser(userId);
-    } else {
-      // Fallback para código legado
-      this.removeVelozUserState(userId);
-      this.removeModeradoUserState(userId);
-      this.removePrecisoUserState(userId);
-      // TRINITY REMOVIDO
     }
+
+    // 4. Limpar estados legados da AiService (Veloz, Moderado, Preciso)
+    this.removeVelozUserState(userId);
+    this.removeModeradoUserState(userId);
+    this.removePrecisoUserState(userId);
+    this.userSessionIds.delete(userId);
+
+    this.logger.log(`IA desativada com sucesso para o usuário ${userId} em todos os módulos.`);
   }
 
   /**
