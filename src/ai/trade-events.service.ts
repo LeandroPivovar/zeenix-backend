@@ -20,6 +20,7 @@ interface TradeEventPayload {
   profitProtected?: number; // ✅ Para eventos 'stopped_blindado' - lucro garantido
   profitPeak?: number; // ✅ Para evento 'blindado_activated' - pico de lucro
   protectedAmount?: number; // ✅ Para evento 'blindado_activated' - valor protegido
+  isWin?: boolean; // ✅ Indica vitória/derrota no evento updated
   data?: any; // Para compatibilidade com emitLog
 }
 

@@ -733,6 +733,16 @@ Status: Alta Escalabilidade`;
       ).catch(e => { });
     }
 
+    // ✅ EMIT UPDATE EVENT FOR FRONTEND (Real-time Balance/Wins/Losses)
+    this.tradeEvents.emit({
+      userId: state.userId,
+      strategy: 'apollo',
+      symbol: state.symbol, // Use symbol from state
+      type: 'updated',
+      profitLoss: result.profit, // Pass the profit/loss of this trade
+      isWin: won,
+    });
+
     // --- CHECK STOPS (Post-Trade) ---
     await this.checkApolloLimits(state);
 
