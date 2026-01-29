@@ -463,7 +463,7 @@ Status: Alta Escalabilidade`;
       const count89_short = last30.filter(d => d === 8 || d === 9).length;
 
       // ✅ CONDIÇÕES DE ENTRADA DINÂMICAS:
-      let minP = 0.47;
+      let minP = 0.30; // Veloz (30% - User Request)
       if (state.mode === 'normal') minP = 0.50;
       else if (state.mode === 'preciso') minP = 0.53;
 
@@ -471,7 +471,7 @@ Status: Alta Escalabilidade`;
       const cond2 = (P_short - P_long) >= 0.02;
       const cond3 = count89_short <= 8;
       const now = Date.now();
-      const throttleTime = 30000; // 30 segundos
+      const throttleTime = 5000; // 5 segundos (Mais feedback visual)
 
       if (cond1 && cond2 && cond3) {
         this.logSignalGenerated(state.userId, 'RECUPERACAO', 'UNDER 4', [
