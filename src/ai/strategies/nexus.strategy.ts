@@ -319,9 +319,9 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
-        // ✅ [NEXUS COMPATIBILITY] Define Window Size (Batch Mode for Log Parity)
-        // VELOZ: 10 ticks, NORMAL: 15 ticks, LENTO: 20 ticks
-        const windowSize = state.mode === 'VELOZ' ? 10 : (state.mode === 'NORMAL' ? 15 : 20);
+        // ✅ [NEXUS COMPATIBILITY] Define Window Size (Spec Oficial)
+        // VELOZ: 10 ticks, NORMAL: 20 ticks, PRECISO: 40 ticks
+        const windowSize = state.mode === 'VELOZ' ? 10 : (state.mode === 'NORMAL' ? 20 : 40);
 
         // 1. Coleta de Dados
         if (state.ticksColetados < windowSize) {
@@ -346,10 +346,10 @@ export class NexusStrategy implements IStrategy {
         // 3. Executar Análise
         if (!riskManager) return;
 
-        const result = this.analyzeNexus(state, riskManager);
+        const result = this.check_signal(state, riskManager);
 
-        if (!result.hasSignal) {
-            this.logBlockedEntry(state.userId, result.reason || 'Padrão não identificado', 'FILTRO');
+        if (!result) {
+            this.logBlockedEntry(state.userId, 'Padrão não identificado', 'FILTRO');
             // ✅ [ZENIX v3.5] Re-analisar no próximo tick
             state.ticksColetados = windowSize - 1;
             return;
@@ -359,7 +359,7 @@ export class NexusStrategy implements IStrategy {
         state.ticksColetados = 0;
 
         // 4. Executar Operação
-        await this.executeOperation(state, result.signal as DigitParity);
+        await this.executeOperation(state, result);
     }
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
@@ -711,7 +711,7 @@ export class NexusStrategy implements IStrategy {
                 }
             } else {
                 // Fallback seguro se não houver dynamicBarrier (não deve acontecer na principal)
-                barrier = direction === 'PAR' ? '+0.15' : '-0.15';
+                barrier = direction === 'PAR' ? '+0.10' : '-0.10';
             }
         } else {
             // ✅ Recuperação: Rise/Fall (Sem Barreira)
@@ -762,7 +762,7 @@ export class NexusStrategy implements IStrategy {
                                 stake,
                                 percent,
                                 0, // multiplier
-                                5, // duration (Nexus uses 5 ticks)
+                                1, // duration (Spec: 1 tick)
                                 't', // duration_unit
                                 direction === 'PAR' ? 'CALL' : 'PUT',
                                 'OPEN',
@@ -777,7 +777,7 @@ export class NexusStrategy implements IStrategy {
                                     contractId: contractId || '',
                                     contractType: direction === 'PAR' ? 'CALL' : 'PUT',
                                     symbol: this.symbol,
-                                    duration: 5,
+                                    duration: 1,
                                     durationUnit: 't',
                                     stakeAmount: stake,
                                     percent: percent,
@@ -804,14 +804,14 @@ export class NexusStrategy implements IStrategy {
                     if (wasRecovery) {
                         // ✅ LOG PADRONIZADO V2: Recuperação Bem-Sucedida
                         this.logSuccessfulRecoveryV2(state.userId, {
-                            recoveredLoss: 0, // Nexus RiskManager não expõe histórico fácil após reset
+                            recoveredLoss: riskManager.totalLoss,
                             additionalProfit: result.profit,
                             profitPercentage: 0,
                             stakeBase: state.apostaInicial
                         });
 
                         state.vitoriasConsecutivas = 0;
-                        state.mode = state.originalMode;
+                        state.mode = 'VELOZ'; // ✅ SPEC: Volta para VELOZ após recuperação
                         state.recovering = false; // ✅ Desativa recuperação
                     } else {
                         state.vitoriasConsecutivas++;
@@ -1002,7 +1002,7 @@ export class NexusStrategy implements IStrategy {
 
         const r = await this.dataSource.query(
             `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, contract_type, created_at, analysis_data, symbol, gemini_duration, strategy)
-             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 5, 'nexus')`,
+             VALUES (?, ?, ?, ?, 'PENDING', ?, NOW(), ?, ?, 1, 'nexus')`,
             [state.userId, signalLabel, entryPrice, stake, signalLabel.toUpperCase(), JSON.stringify(analysisData), this.symbol]
         );
         const tradeId = r.insertId || r[0]?.insertId;
@@ -1027,7 +1027,7 @@ export class NexusStrategy implements IStrategy {
                 basis: 'stake',
                 contract_type: params.contract_type,
                 currency: params.currency || 'USD',
-                duration: 5,
+                duration: 1,
                 duration_unit: 't',
                 symbol: this.symbol,
                 barrier: params.barrier
