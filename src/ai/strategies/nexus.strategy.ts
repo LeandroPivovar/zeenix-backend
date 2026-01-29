@@ -1635,18 +1635,34 @@ Status: Sessão Equilibrada`;
     private async saveNexusLog(userId: string, symbol: string, type: any, message: string) {
         if (!userId || !type || !message) return;
 
-        // Salvar no banco de dados de forma assíncrona (sem bloquear)
-        // ✅ Mantendo compatibilidade com Orion: ícone vazio no banco, pois já vem na mensagem
-        const icon = '';
+        // ✅ Mapeamento de ícones (igual ao Titan)
+        const iconMap: any = {
+            'info': 'ℹ️',
+            'alerta': '⚠️',
+            'sinal': '🎯',
+            'operacao': '🚀',
+            'resultado': '💰',
+            'erro': '❌',
+            'analise': '🔍',
+            'tick': '📊'
+        };
+        const icon = iconMap[type] || '📝';
 
+        // Prepare details
+        const detailsObj = {
+            strategy: 'nexus',
+            symbol: symbol
+        };
+
+        // Salvar no banco de dados
         this.dataSource.query(
             `INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
-            [userId, type, icon, message, JSON.stringify({ strategy: 'nexus' })]
+            [userId, type, icon, message, JSON.stringify(detailsObj)]
         ).catch(err => {
             this.logger.error(`[NEXUS][LOG] Erro ao salvar log: ${err.message}`);
         });
 
-        // ✅ Emitir evento SSE para atualizar frontend em tempo real (Igual Orion)
+        // ✅ Emitir evento SSE para atualizar frontend em tempo real
         this.tradeEvents.emit({
             userId,
             type: 'updated',
@@ -1660,7 +1676,7 @@ Status: Sessão Equilibrada`;
     }
 
     private getIconForType(type: string): string {
-        // Ícones definidos apenas para referência interna ou display legado se necessário
+        // ✅ DEPRECATED: Icons now added directly in saveNexusLog
         const icons: Record<string, string> = {
             'info': 'ℹ️', 'analise': '🔍', 'operacao': '⚡', 'resultado': '💰', 'alerta': '🛡️', 'erro': '❌'
         };
