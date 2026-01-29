@@ -51,7 +51,8 @@ export class StrategyManagerService implements OnModuleInit {
     // ✅ FIX: Sempre enviar ticks para TODAS as estratégias
     // Cada estratégia filtra internamente qual symbol ela processa
 
-    // ORION, TITAN, NEXUS: Processam R_100 (filtro interno)
+    // ORION, TITAN: Processam 1HZ100V (filtro interno)
+    // NEXUS: Processa R_25
     promises.push(
       this.orionStrategy.processTick(tick, symbol || 'R_100').catch(error => {
         this.logger.error('[StrategyManager][Orion] Erro:', error);
@@ -59,7 +60,7 @@ export class StrategyManagerService implements OnModuleInit {
       this.titanStrategy.processTick(tick, symbol || 'R_100').catch(error => {
         this.logger.error('[StrategyManager][Titan] Erro:', error);
       }),
-      this.nexusStrategy.processTick(tick, symbol || 'R_100').catch(error => {
+      this.nexusStrategy.processTick(tick, symbol || 'R_25').catch(error => {
         this.logger.error('[StrategyManager][Nexus] Erro:', error);
       })
     );
