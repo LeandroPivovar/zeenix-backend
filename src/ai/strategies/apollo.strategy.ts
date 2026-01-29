@@ -502,14 +502,18 @@ Status: Sessão Equilibrada`;
           this.logSuccessfulRecoveryV2(state.userId, state.recoveryTarget, state.recoveredAmount, state.capital);
           this.logContractChange(state.userId, 'UNDER 4', 'UNDER 8', 'Recuperação com Sucesso - Retornando à Meta Principal');
           state.analysisType = 'PRINCIPAL';
+          state.mode = state.originalMode || 'veloz'; // Resetar Modo (Igual Atlas)
           state.consecutiveLosses = 0;
           state.totalLossAccumulated = 0;
           state.recoveryTarget = 0;
           state.recoveredAmount = 0;
         }
       } else {
-        // WIN NORMAL
-        if (state.consecutiveLosses > 0) state.skipSorosNext = true; // Resetar após vitória no Martingale
+        // WIN NORMAL (Bônus: Se ganhou no Martingale, reseta modo também)
+        if (state.consecutiveLosses > 0) {
+          state.skipSorosNext = true;
+          state.mode = state.originalMode || 'veloz'; // Resetar Modo (Igual Atlas)
+        }
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
       }
@@ -547,18 +551,19 @@ Status: Sessão Equilibrada`;
   // --- LOGIC HELPERS ---
 
   private calculateStake(state: ApolloUserState): number {
-    const PAYOUT_UNDER_8 = 0.225;
-    const PAYOUT_UNDER_4 = 1.3842;
+    const PAYOUT_UNDER_8 = 0.18; // Payout conservador (safe-payout)
+    const PAYOUT_UNDER_4 = 1.20; // Payout conservador para Under 4 (safe-payout)
+
+    // Perfil de Lucro na Recuperação (Igual Atlas)
+    let percentualPerfil = 0.15; // Moderado default (15%)
+    if (state.riskProfile === 'conservador') percentualPerfil = 0.02; // (2%)
+    else if (state.riskProfile === 'agressivo') percentualPerfil = 0.30; // (30%)
 
     if (state.analysisType === 'RECUPERACAO') {
       // 5️⃣ CÁLCULO DE STAKE — RECUPERAÇÃO (IMUTÁVEL)
       // stake_recuperacao = (perdas_acumuladas × (1 + percentual_perfil)) / payout_liquido
       const lossToRecover = state.recoveryTarget - state.recoveredAmount;
-      let perfil = 0.15; // Moderado default
-      if (state.riskProfile === 'conservador') perfil = 0.00;
-      else if (state.riskProfile === 'agressivo') perfil = 0.30;
-
-      const stake = (lossToRecover * (1 + perfil)) / PAYOUT_UNDER_4;
+      const stake = (lossToRecover * (1 + percentualPerfil)) / PAYOUT_UNDER_4;
       return Number(stake.toFixed(2));
     } else {
       // 4️⃣ CÁLCULO DE STAKE — META (PRINCIPAL)
@@ -576,10 +581,8 @@ Status: Sessão Equilibrada`;
 
       // ✅ MARTINGALE (1ª Perda): Tenta recuperar no próximo Under 8
       if (state.consecutiveLosses === 1) {
-        // ⚠️ SEGURANÇA: Usamos 0.18 como payout para garantir recuperação em R_100/R_25
-        // e margem de 10% (em vez de 5%) sobre o total perdido
-        const payoutSeguro = 0.18;
-        const stakeMartingale = (state.totalLossAccumulated * 1.10) / payoutSeguro;
+        // Recupera perda + margem baseada no perfil (2%, 15% ou 30%)
+        const stakeMartingale = (state.totalLossAccumulated * (1 + percentualPerfil)) / PAYOUT_UNDER_8;
         return Number(stakeMartingale.toFixed(2));
       }
 
