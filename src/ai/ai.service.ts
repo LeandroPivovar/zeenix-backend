@@ -4732,6 +4732,9 @@ export class AiService implements OnModuleInit {
         betAmount = betAmount * FAST_MODE_CONFIG.betPercent;
       }
 
+      // ✅ Fix: Arredondar para 2 casas decimais para evitar erro na API Deriv
+      betAmount = Math.round(betAmount * 100) / 100;
+
       // Garantir valor mínimo da Deriv
       if (betAmount < FAST_MODE_CONFIG.minStake) {
         betAmount = FAST_MODE_CONFIG.minStake;
