@@ -613,9 +613,19 @@ export class NexusStrategy implements IStrategy {
             return;
         }
 
+        // ✅ [FIX FAIL-SAFE] Stop Blindado/Loss via RiskManager
         if (stake <= 0) {
+            this.logger.warn(`[NEXUS] ⚠️ Stake calculada = ${stake}. Proteção acionada.`);
             const reason = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
+
+            // Tenta parar via stopUser (que deve fazer tudo: Evento, DB, Memória)
             await this.stopUser(state, reason);
+
+            // 🚨 FAIL-SAFE: Se ainda estiver ativo na memória, força desativação
+            if (this.users.has(state.userId)) {
+                this.logger.warn(`[NEXUS] 💀 stopUser falhou em remover da memória. Forçando parada manual.`);
+                await this.deactivateUser(state.userId);
+            }
             return;
         }
 
@@ -644,6 +654,15 @@ export class NexusStrategy implements IStrategy {
                 });
             }
         }
+
+        // ✅ [LOG] Início de Entrada (Igual Atlas/Titan)
+        const barrierMsg = barrier ? `\n• Barreira: ${barrier}` : '';
+        this.saveNexusLog(state.userId, this.symbol, 'operacao',
+            `INICIANDO ENTRADA
+• Contrato: ${direction === 'PAR' ? 'CALL' : 'PUT'}
+• Stake: $${stake.toFixed(2)}${barrierMsg}
+• Status: Enviando ordem...`
+        );
 
         state.isOperationActive = true;
         try {
