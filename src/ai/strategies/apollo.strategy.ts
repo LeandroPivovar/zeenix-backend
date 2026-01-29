@@ -796,7 +796,7 @@ Status: Alta Escalabilidade`;
   // --- LOGIC HELPERS ---
 
   private calculateStake(state: ApolloUserState): number {
-    const PAYOUT_UNDER_8 = 0.225; // Adjusted to ~22.50% (User Requirement)
+    const PAYOUT_UNDER_8 = 0.19; // Adjusted to 19% (User Request)
     const PAYOUT_UNDER_4 = 1.384; // Adjusted to ~138.42% (User Requirement)
 
     // Perfil de Lucro na Recuperação (Igual Atlas)
