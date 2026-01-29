@@ -790,25 +790,48 @@ Entrada: DIGIT OVER 2`
       // Safety Checks (Existing)
       const minStake = getMinStakeByCurrency(state.currency);
       const decimals = ['BTC', 'ETH'].includes(state.currency.toUpperCase()) ? 8 : 2;
+      // --- AJUSTE PREVENTIVO DE STOPS (Zenix Pro Standard) ---
       const stopLossDisponivel = this.calculateAvailableStopLoss(state);
+      let limitRemaining = stopLossDisponivel;
 
-      if (stakeAmount > stopLossDisponivel) {
-        // Keep existing Stop Loss Logic
-        if (stopLossDisponivel < minStake) {
-          // ... (Logic to stop if no balance for min stake)
-          // Copying existing logic below for safety
+      // Se o Stop Blindado estiver ativo, o limite é o lucro acima do piso protegido
+      if (state.blindadoActive) {
+        // [ZENIX v3.5] Stop Blindado Fixo: Piso = capitalInicial + activationThreshold
+        const activationThreshold = profitTarget * 0.40;
+        const stopBlindadoFloor = capitalInicial + activationThreshold;
+        limitRemaining = (capitalInicial + (lucroAtual)) - stopBlindadoFloor;
+        // Na prática: capitalSessao - stopBlindadoFloor
+      }
+
+      if (stakeAmount > limitRemaining) {
+        const originalStake = stakeAmount;
+        if (limitRemaining < minStake) {
           const isBlindado = state.blindadoActive;
           const msg = isBlindado
-            ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!`
-            : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!`;
+            ? `🛡️ STOP BLINDADO ATINGIDO!\n• Lucro Protegido: ${formatCurrency(lucroAtual, state.currency)}\n• Ação: Parando IA para preservar lucros.`
+            : `🛑 STOP LOSS ATINGIDO!\n• Limite de Perda: ${formatCurrency(lossLimit, state.currency)}\n• Ação: Parando IA imediatamente.`;
 
           this.saveAtlasLog(state.userId, symbol, 'alerta', msg);
           state.isStopped = true;
           state.isOperationActive = false;
+
+          // Desativar via DB para garantir
+          await this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW()
+             WHERE user_id = ? AND is_active = 1`,
+            [isBlindado ? 'stopped_blindado' : 'stopped_loss', msg.split('\n')[0], state.userId]
+          );
+
           await this.deactivateUser(state.userId);
           return;
         }
-        stakeAmount = stopLossDisponivel;
+        stakeAmount = Number(limitRemaining.toFixed(decimals));
+
+        const adjMsg = state.blindadoActive
+          ? `⚠️ AJUSTE DE SEGURANÇA (PROTEÇÃO)\n• Stake Original: ${formatCurrency(originalStake, state.currency)}\n• Limite Disponível: ${formatCurrency(limitRemaining, state.currency)}\n• Ação: Reduzindo para ${formatCurrency(stakeAmount, state.currency)} para proteger o capital.`
+          : `⚠️ AJUSTE DE SEGURANÇA (STOP LOSS)\n• Stake Original: ${formatCurrency(originalStake, state.currency)}\n• Limite Disponível: ${formatCurrency(limitRemaining, state.currency)}\n• Ação: Reduzindo para ${formatCurrency(stakeAmount, state.currency)} para respeitar o Stop Loss.`;
+
+        this.saveAtlasLog(state.userId, symbol, 'alerta', adjMsg);
       }
 
       // ✅ FORCE 2 DECIMAL PLACES - Prevent "Stake can not have more than 2 decimal places" error

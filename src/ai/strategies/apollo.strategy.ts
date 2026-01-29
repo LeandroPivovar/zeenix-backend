@@ -482,19 +482,20 @@ Status: Alta Escalabilidade`;
     }
     */
 
-    // 2. ADJUST FOR STOPS
-    // ✅ REMOVIDO PARA ALINHAMENTO COM ATLAS:
-    // Atlas não impede a trade prévia baseada no stop (retorna Infinity).
-    // Isso evita "parada prematura" quando o saldo está próximo do floor/stop.
-    // O Stop real será acionado no pós-trade (checkApolloLimits).
-    /*
-    const currentBalance = state.capital - state.capitalInicial;
+    // 2. ADJUST FOR STOPS (PREVENTIVE)
+    // ✅ [ZENIX v3.5] Ajuste preventivo para respeitar Stop Loss e Stop Blindado antes da entrada
+    const currentLucro = state.capital - state.capitalInicial;
     let limitRemaining: number;
 
     if (state.stopBlindadoActive) {
-      limitRemaining = currentBalance - state.stopBlindadoFloor;
+      // Piso Blindado: capitalInicial + valorProtegidoFixo (salvo em stopBlindadoFloor)
+      limitRemaining = (state.capitalInicial + state.stopBlindadoFloor) - state.capital;
+      // Opa, na verdade o limitRemaining para PERDA é: saldo atual - piso
+      limitRemaining = state.capital - (state.capitalInicial + state.stopBlindadoFloor);
     } else {
-      limitRemaining = state.stopLoss + currentBalance;
+      // Stop Loss Normal: quanto posso perder antes de atingir o stop_loss
+      // stopLoss é positivo no config (ex: 50)
+      limitRemaining = state.stopLoss + currentLucro;
     }
 
     if (stake > limitRemaining) {
@@ -506,9 +507,19 @@ Status: Alta Escalabilidade`;
           : `🛑 STOP LOSS ATINGIDO!\n• Limite de Perda: $${state.stopLoss.toFixed(2)}\n• Ação: Parando IA imediatamente.`;
 
         this.saveLog(state.userId, 'alerta', msg);
-        this.handleStopInternal(state, isBlindado ? 'blindado' : 'loss', isBlindado ? state.stopBlindadoFloor : -state.stopLoss);
+
+        // Desativar via DB (Garantir que não entre mais)
+        await this.dataSource.query(
+          `UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW()
+           WHERE user_id = ? AND is_active = 1`,
+          [isBlindado ? 'stopped_blindado' : 'stopped_loss', msg.split('\n')[0], state.userId]
+        );
+
+        this.users.delete(state.userId);
+        state.isStopped = true;
         return;
       }
+
       stake = Number(limitRemaining.toFixed(2));
       const adjMsg = state.stopBlindadoActive
         ? `⚠️ AJUSTE DE SEGURANÇA (PROTEÇÃO)\n• Stake Original: $${originalStake.toFixed(2)}\n• Limite Disponível: $${limitRemaining.toFixed(2)}\n• Ação: Reduzindo para $${stake.toFixed(2)} para proteger o capital.`
@@ -516,7 +527,6 @@ Status: Alta Escalabilidade`;
 
       this.saveLog(state.userId, 'alerta', adjMsg);
     }
-    */
 
     state.currentStake = stake;
 
