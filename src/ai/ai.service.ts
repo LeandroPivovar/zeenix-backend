@@ -4460,8 +4460,6 @@ export class AiService implements OnModuleInit {
           updated_at as updatedAt
          FROM ai_user_config 
          WHERE user_id = ? 
-           AND (is_active = TRUE 
-                OR session_status IN ('stopped_loss', 'stopped_profit'))
          ORDER BY created_at DESC
          LIMIT 1`,
         [userId],
