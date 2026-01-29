@@ -807,10 +807,10 @@ Meta: ${formatCurrency(profitTarget, state.currency)}
 Ação: IA DESATIVADA`
       );
 
-      // ✅ [ROBUST UPDATE] Usar ORDER BY created_at DESC LIMIT 1 para garantir update mesmo se is_active falhar
+      // ✅ [REVERT] Alinhado com Atlas: Usar AND is_active = 1
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+         WHERE user_id = ? AND is_active = 1`,
         [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, state.userId],
       );
 
@@ -864,7 +864,7 @@ Ação: IA DESATIVADA`
 
           await this.dataSource.query(
             `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+             WHERE user_id = ? AND is_active = 1`,
             [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
@@ -904,7 +904,7 @@ Ação: IA DESATIVADA`
 
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+         WHERE user_id = ? AND is_active = 1`,
         [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
       );
 
@@ -938,7 +938,7 @@ Ação: IA DESATIVADA`
     await this.deactivateUser(state.userId);
 
     try {
-      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? ORDER BY created_at DESC LIMIT 1`, [type, state.userId]);
+      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
     } catch (e) { }
   }
 
