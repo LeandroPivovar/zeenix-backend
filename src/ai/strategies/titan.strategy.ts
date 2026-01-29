@@ -1660,6 +1660,71 @@ Motivo: ${reason}`;
         this.saveTitanLog(userId, this.symbol, 'info', message);
     }
 
+    private logModeEvaluation(userId: string, mode: string, winRate: number, losses: number) {
+        const message = `AVALIAÇÃO DE MODO
+Título: Avaliação de Modo
+Modo Atual: ${mode.toUpperCase()}
+Win Rate Local: ${winRate.toFixed(1)}%
+Perdas Consecutivas: ${losses}
+Decisão: manter modo`;
+
+        this.saveTitanLog(userId, 'SISTEMA', 'analise', message);
+    }
+
+    private logRecoveryPartial(userId: string, recovered: number, target: number) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `RECUPERAÇÃO PARCIAL
+Título: Recuperação Parcial
+Recuperado até agora: ${formatCurrency(recovered, currency)}
+Falta para concluir: ${formatCurrency(target - recovered, currency)}
+Ação: recalcular stake`;
+
+        this.saveTitanLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logRecoveryStarted(userId: string, accumulatedLoss: number, target: number, riskProfile: string) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `INÍCIO DA RECUPERAÇÃO
+Título: Entrada em Recuperação
+Perfil de Risco: ${riskProfile.toUpperCase()}
+Perdas Acumuladas: ${formatCurrency(accumulatedLoss, currency)}
+Alvo de Recuperação: ${formatCurrency(target, currency)}
+Contrato: Rise/Fall (1 tick)`;
+
+        this.saveTitanLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logAnalysisSwitch(userId: string, from: string, to: string, reason: string) {
+        const message = `TROCA DE ANÁLISE
+Título: Troca de Análise
+Análise Anterior: ${from}
+Nova Análise: ${to}
+Motivo: ${reason}`;
+
+        this.saveTitanLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logBlockedEntry(userId: string, reason: string, type: 'FILTRO' | 'ESTADO') {
+        const message = `ENTRADA BLOQUEADA — ${type}
+Título: Entrada Bloqueada
+Motivo: ${reason}
+${type === 'FILTRO' ? 'Critério Avaliado: filtros' : 'Estado Atual: bloqueado'}
+Ação: aguardar próximo ciclo`;
+
+        this.saveTitanLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logStateReset(userId: string, reason: string) {
+        const message = `RESET DE ESTADO
+Título: Reset de Estado
+Motivo: ${reason}
+Ação: reiniciar ciclo`;
+
+        this.saveTitanLog(userId, 'SISTEMA', 'info', message);
+    }
+
     private logStrategicPause(userId: string, phase: 'AVALIADA' | 'ATIVADA' | 'ENCERRADA', details: string) {
         const message = `PAUSA ESTRATÉGICA
 Título: Proteção de Capital (${phase})
