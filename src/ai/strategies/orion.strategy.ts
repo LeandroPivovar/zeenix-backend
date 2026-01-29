@@ -406,7 +406,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO FIXA: $${guaranteedProfit.toFixed(2)}\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PROTEÇÃO FIXA: $${guaranteedProfit.toFixed(2)} (20% da Meta)\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {

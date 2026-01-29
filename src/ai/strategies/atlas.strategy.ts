@@ -704,27 +704,30 @@ Entrada: DIGIT OVER 2`
           currentPeak = lucroAtual;
           await this.dataSource.query(`UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`, [currentPeak, state.userId]);
 
-          if (currentPeak >= activationThreshold) {
-            const protectedAmount = currentPeak * (stopBlindadoPercent / 100);
-            this.logStrategicPause(state.userId, 'ATIVADA', `Stop Blindado (Lucro Atual: +${formatCurrency(currentPeak, state.currency)} | Piso: +${formatCurrency(protectedAmount, state.currency)})`);
+          if (currentPeak >= activationThreshold && !state.blindadoActive) {
+            state.blindadoActive = true;
+            const fixedProtectedAmount = activationThreshold * 0.50; // 20% da meta
+            this.logStrategicPause(state.userId, 'ATIVADA', `🛡️ Stop Blindado Ativado! (META: ${formatCurrency(profitTarget, state.currency)})\n• LUCRO ATUAL: +${formatCurrency(currentPeak, state.currency)}\n• PROTEÇÃO FIXA: +${formatCurrency(fixedProtectedAmount, state.currency)} (20% da Meta)`);
           }
         }
 
         if (profitTarget > 0 && currentPeak >= activationThreshold) {
-          const factor = stopBlindadoPercent / 100;
-          const stopBlindado = capitalInicial + (currentPeak * factor);
+          // [ZENIX v3.5] Stop Blindado Fixo: 
+          // Piso: 50% do valor de ATIVAÇÃO (20% do TP)
+          const fixedGuaranteedProfit = activationThreshold * 0.50;
+          const stopBlindado = capitalInicial + fixedGuaranteedProfit;
 
           if (capitalSessao <= stopBlindado) {
             const lucroFinal = capitalSessao - capitalInicial;
             this.logSessionEnd(state.userId, {
-              result: 'STOP_LOSS', // Usando stop loss como genérico para "interrupção"
+              result: 'STOP_LOSS',
               totalProfit: lucroFinal,
-              trades: state.consecutiveWins + state.consecutiveLosses // Usando como aproximação
+              trades: state.consecutiveWins + state.consecutiveLosses
             });
 
             await this.dataSource.query(
               `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-               WHERE user_id = ? AND is_active = 1`,
+             WHERE user_id = ? AND is_active = 1`,
               [`Stop Blindado atingido com lucro de $${lucroFinal.toFixed(2)}`, state.userId],
             );
 

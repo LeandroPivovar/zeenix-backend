@@ -155,7 +155,8 @@ class RiskManager {
         if (this.useBlindado && profitAccumulatedAtPeak >= activationTrigger && !this._blindadoActive) {
             this._blindadoActive = true;
             if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', `🛡️ Proteção de Lucro: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção: 50% ($${(profitAccumulatedAtPeak * 0.5).toFixed(2)}) garantidos.`);
+                const fixedProtectedAmount = activationTrigger * 0.5; // 50% dos 40% = 20% da meta
+                logCallback(userId, symbol, 'alerta', `🛡️ Proteção de Lucro: Ativado\n• Lucro Atual: $${profitAccumulatedAtPeak.toFixed(2)}\n• Proteção FIXA: $${fixedProtectedAmount.toFixed(2)} (20% da Meta) garantidos.`);
             }
         }
 
