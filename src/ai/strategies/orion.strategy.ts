@@ -4607,7 +4607,7 @@ Status: Proteção Ativada`;
         lastLowDigitsCount: 0, // ✅ Inicializar contagem de dígitos baixos
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
+      this.logInitialConfig(params.userId, 'VELOZ', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 0, params.lossLimit || 0, !!params.stopLossBlindado);
     }
   }
 
@@ -4670,7 +4670,7 @@ Status: Proteção Ativada`;
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfig(params.userId, 'MODERADO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -4733,7 +4733,7 @@ Status: Proteção Ativada`;
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfig(params.userId, 'PRECISO', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
@@ -4796,7 +4796,7 @@ Status: Proteção Ativada`;
         lastLowDigitsCount: 0,
       });
       // ✅ Log de Configurações Iniciais (Novo Usuário) - USA VALORES REAIS
-      this.logInitialConfigFixed(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
+      this.logInitialConfig(params.userId, 'LENTA', params.modoMartingale || 'CONSERVADOR', params.profitTarget || 50.00, params.lossLimit || 50.00, !!params.stopLossBlindado);
     }
   }
 
