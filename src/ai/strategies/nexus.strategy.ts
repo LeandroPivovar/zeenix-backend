@@ -588,6 +588,10 @@ export class NexusStrategy implements IStrategy {
     getUserState(userId: string) { return this.users.get(userId); }
 
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
+        // ✅ [NEXUS] Check limits BEFORE calculating stake or trading
+        await this.checkNexusLimits(state.userId);
+        if (!this.users.has(state.userId)) return; // User stopped
+
         const riskManager = this.riskManagers.get(state.userId)!;
         const stake = riskManager.calculateStake(
             state.capital,

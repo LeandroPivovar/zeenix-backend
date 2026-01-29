@@ -628,6 +628,15 @@ export class TitanStrategy implements IStrategy {
         }
 
         // Executar Análise Titan
+        // ✅ [LOG] Análise de Mercado (Antes de processar)
+        if (state.ticksColetados === 0 && this.ticks.length >= config.windowSize) {
+            const message = `ANÁLISE DE MERCADO
+• Modo: ${analysisMode}
+• Janela: ${config.windowSize} ticks
+• Status: Processando padrões...`;
+            this.saveTitanLog(state.userId, this.symbol, 'analise', message);
+        }
+
         const result = analyzeTitan(this.ticks, analysisMode);
 
         // ✅ Reset incremental para garantir que esperará novos dados após cada análise
