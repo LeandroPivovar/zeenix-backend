@@ -167,41 +167,37 @@ class RiskManager {
             }
         }
 
-        // ✅ Lógica de Proteção de Capital (Diferenciando Normal de Blindado)
-        let limitType = '';
-        if (this._blindadoActive) {
-            // No modo Blindado, o stop é o piso (50% do pico de lucro)
-            const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
-            minAllowedBalance = this.initialBalance + guaranteedProfit;
-            limitType = 'PISO DE LUCRO PROTEGIDO';
-        } else {
-            minAllowedBalance = this.initialBalance - this.stopLossLimit;
-            limitType = 'STOP LOSS NORMAL';
-        }
+        // ✅ Lógica de Proteção de Capital
+        // IMPORTANTE: Para Stop Blindado, NÃO fazemos ajuste preventivo
+        // Deixamos a trade acontecer e checamos o piso DEPOIS do resultado (igual Atlas)
+        // Apenas para Stop Loss Normal fazemos ajuste preventivo
 
-        const potentialBalanceAfterLoss = currentBalance - nextStake;
-        if (potentialBalanceAfterLoss < minAllowedBalance) {
-            let adjustedStake = currentBalance - minAllowedBalance;
-            adjustedStake = Math.round(adjustedStake * 100) / 100;
+        if (!this._blindadoActive) {
+            // Stop Loss Normal: Preventivo (ajusta antes da trade)
+            const minAllowedBalance = this.initialBalance - this.stopLossLimit;
+            const potentialBalanceAfterLoss = currentBalance - nextStake;
 
-            if (adjustedStake < 0.35) {
-                const msg = this._blindadoActive
-                    ? `🛡️ STOP BLINDADO ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Proteção de lucro alcançada.\n• Ação: Encerrando operações para preservar o lucro.`
-                    : `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
-                if (userId && symbol && logCallback) {
-                    logCallback(userId, symbol, 'alerta', msg);
+            if (potentialBalanceAfterLoss < minAllowedBalance) {
+                let adjustedStake = currentBalance - minAllowedBalance;
+                adjustedStake = Math.round(adjustedStake * 100) / 100;
+
+                if (adjustedStake < 0.35) {
+                    const msg = `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
+                    if (userId && symbol && logCallback) {
+                        logCallback(userId, symbol, 'alerta', msg);
+                    }
+                    return 0.0;
                 }
-                return 0.0;
-            }
 
-            if (userId && symbol && logCallback) {
-                const adjMsg = this._blindadoActive
-                    ? `⚠️ AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção.`
-                    : `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`;
-                logCallback(userId, symbol, 'alerta', adjMsg);
+                if (userId && symbol && logCallback) {
+                    logCallback(userId, symbol, 'alerta',
+                        `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`
+                    );
+                }
+                return adjustedStake;
             }
-            return adjustedStake;
         }
+        // Stop Blindado: Reativo (deixa trade acontecer, checa depois em checkNexusLimits)
 
         return Math.round(nextStake * 100) / 100;
     }
