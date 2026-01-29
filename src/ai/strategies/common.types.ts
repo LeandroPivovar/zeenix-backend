@@ -122,3 +122,43 @@ export const ATLAS_PRECISO_CONFIG: ModeConfig = {
 // Alias para compatibilidade
 export const ATLAS_LENTO_CONFIG = ATLAS_PRECISO_CONFIG;
 
+// ✅ NEXUS: Configurações para R_25 (Volatility 25) + Barrier Dinâmico
+// MODO VELOZ: 10 ticks, filtros leves
+export const NEXUS_VELOZ_CONFIG: ModeConfig = {
+  amostraInicial: 10, // Janela 10 ticks
+  intervaloSegundos: 2,
+  desequilibrioMin: 0.0,
+  confianciaMin: 0.0,
+  taxaAcertoEsperada: 0.65,
+  payout: 0.90, // Barrier típico
+  minStake: 0.35,
+  betPercent: 0.005,
+};
+
+// MODO NORMAL: 20 ticks, filtros moderados
+export const NEXUS_NORMAL_CONFIG: ModeConfig = {
+  amostraInicial: 20,
+  intervaloSegundos: 3,
+  desequilibrioMin: 0.0,
+  confianciaMin: 0.0,
+  taxaAcertoEsperada: 0.70,
+  payout: 0.90,
+  minStake: 0.35,
+  betPercent: 0.0075,
+};
+
+// MODO PRECISO: 40 ticks, filtros rigorosos
+export const NEXUS_PRECISO_CONFIG: ModeConfig = {
+  amostraInicial: 40,
+  intervaloSegundos: 4,
+  desequilibrioMin: 0.0,
+  confianciaMin: 0.0,
+  taxaAcertoEsperada: 0.75,
+  payout: 0.90,
+  minStake: 0.35,
+  betPercent: 0.01,
+};
+
+// Alias para compatibilidade
+export const NEXUS_LENTO_CONFIG = NEXUS_PRECISO_CONFIG;
+

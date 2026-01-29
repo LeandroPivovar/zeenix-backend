@@ -252,6 +252,8 @@ interface NexusUserState {
     ultimoLucro: number;
     ticksColetados: number;
     rejectedAnalysisCount: number;
+    recovering?: boolean; // ✅ Modo de recuperação ativo
+    dynamicBarrier?: number; // ✅ Barreira dinâmica calculada na análise principal
 }
 
 @Injectable()
@@ -261,7 +263,7 @@ export class NexusStrategy implements IStrategy {
     private users = new Map<string, NexusUserState>();
     private riskManagers = new Map<string, RiskManager>();
     private ticks: Tick[] = [];
-    private symbol = 'R_100';
+    private symbol = 'R_25'; // ✅ NEXUS: Mercado oficial R_25 (Volatility 25)
     private appId: string;
 
     private wsConnections: Map<string, WsConnection> = new Map();
@@ -368,211 +370,154 @@ export class NexusStrategy implements IStrategy {
         // Perda 2 (M1): Contrato Inicial (Rise/Fall) -> Main Logic (Persistência de Contrato)
         // Perda 3+ (M2+): Troca de Contrato (Higher -0.15) -> Recovery Logic
 
-        const isRecovering = riskManager.consecutiveLosses >= 2;
+        const isRecovering = state.recovering || riskManager.consecutiveLosses >= 2;
 
         if (!isRecovering) {
             // ═══════════════════════════════════════════════════════════════
-            // ANÁLISE PRINCIPAL (ENTRADA BARREIRA - M0/M1)
+            // ANÁLISE PRINCIPAL (BARRIER HIGHER/LOWER)
             // ═══════════════════════════════════════════════════════════════
 
+            let windowSize: number;
+            let kMove: number;
+            let kBarrier: number;
+            let minConsecTicks: number;
+
             if (state.mode === 'VELOZ') {
-                // VELOZ: 1 tick consecutivo na mesma direção + delta >= 0.1
-                const lastTwo = this.ticks.slice(-2);
-                const delta = Math.abs(lastTwo[1].value - lastTwo[0].value);
-
-                if (lastTwo[1].value > lastTwo[0].value && delta >= 0.1) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
-                        trigger: 'Tendência Imediata (Veloz)',
-                        probability: 60,
-                        contractType: 'HIGHER',
-                        direction: 'CALL'
-                    });
-                    return 'PAR';
-                } else if (lastTwo[1].value < lastTwo[0].value && delta >= 0.1) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
-                        trigger: 'Tendência Imediata (Veloz)',
-                        probability: 60,
-                        contractType: 'LOWER',
-                        direction: 'PUT'
-                    });
-                    return 'IMPAR';
-                }
-
+                windowSize = 10;
+                kMove = 1.5;
+                kBarrier = 0.8;
+                minConsecTicks = 1;
             } else if (state.mode === 'NORMAL') {
-                // NORMAL: 3 ticks consecutivos na mesma direção + delta >= 0.3
-                if (this.ticks.length < 4) return null;
+                windowSize = 20;
+                kMove = 2.2;
+                kBarrier = 1.1;
+                minConsecTicks = 1;
+            } else { // LENTO/PRECISO
+                windowSize = 40;
+                kMove = 3.0;
+                kBarrier = 1.4;
+                minConsecTicks = 2;
+            }
 
-                const last4 = this.ticks.slice(-4);
-                const prices = last4.map(t => t.value);
+            // Filtro 1: Dados suficientes
+            if (this.ticks.length < windowSize) return null;
 
-                // Verifica momentum de alta (3 ticks consecutivos)
-                const upMomentum = prices[1] > prices[0] &&
-                    prices[2] > prices[1] &&
-                    prices[3] > prices[2];
+            const window = this.ticks.slice(-windowSize);
+            const prices = window.map(t => t.value);
 
-                // Verifica momentum de baixa (3 ticks consecutivos)
-                const downMomentum = prices[1] < prices[0] &&
-                    prices[2] < prices[1] &&
-                    prices[3] < prices[2];
+            // Filtro 2: Momentum Direcional
+            let consecUp = 0;
+            let consecDown = 0;
 
-                const delta = prices[3] - prices[0];
-
-                if (upMomentum && delta >= 0.3) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.3)`],
-                        trigger: 'Momentum de Alta',
-                        probability: 75,
-                        contractType: 'HIGHER',
-                        direction: 'CALL'
-                    });
-                    return 'PAR';
-                } else if (downMomentum && delta <= -0.3) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.3)`],
-                        trigger: 'Momentum de Baixa',
-                        probability: 75,
-                        contractType: 'LOWER',
-                        direction: 'PUT'
-                    });
-                    return 'IMPAR';
-                }
-
-            } else if (state.mode === 'LENTO') {
-                // LENTO / PRECISO: 3 ticks consecutivos na mesma direção + delta >= 0.5
-                if (this.ticks.length < 4) return null;
-
-                const last4 = this.ticks.slice(-4);
-                const prices = last4.map(t => t.value);
-
-                // Verifica momentum de alta (3 ticks consecutivos)
-                const upMomentum = prices[1] > prices[0] &&
-                    prices[2] > prices[1] &&
-                    prices[3] > prices[2];
-
-                // Verifica momentum de baixa (3 ticks consecutivos)
-                const downMomentum = prices[1] < prices[0] &&
-                    prices[2] < prices[1] &&
-                    prices[3] < prices[2];
-
-                const delta = prices[3] - prices[0];
-
-                if (upMomentum && delta >= 0.5) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.5)`],
-                        trigger: 'Momentum Forte (Alta)',
-                        probability: 85,
-                        contractType: 'HIGHER',
-                        direction: 'CALL'
-                    });
-                    return 'PAR';
-                } else if (downMomentum && delta <= -0.5) {
-                    // ✅ LOG PADRONIZADO V2: Sinal Gerado
-                    this.logSignalGenerated(state.userId, {
-                        mode: state.mode,
-                        isRecovery: false,
-                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.5)`],
-                        trigger: 'Momentum Forte (Baixa)',
-                        probability: 85,
-                        contractType: 'LOWER',
-                        direction: 'PUT'
-                    });
-                    return 'IMPAR';
+            for (let i = window.length - 1; i > 0; i--) {
+                const delta = prices[i] - prices[i - 1];
+                if (delta > 0) {
+                    consecUp++;
+                    if (consecDown > 0) break;
+                } else if (delta < 0) {
+                    consecDown++;
+                    if (consecUp > 0) break;
+                } else {
+                    break;
                 }
             }
+
+            if (consecUp < minConsecTicks && consecDown < minConsecTicks) {
+                return null; // Bloqueado
+            }
+
+            // Filtro 3: Movimento mínimo normalizado
+            const medianAbsDelta = this.calculateMedianAbsDelta(windowSize);
+            const move = Math.abs(prices[prices.length - 1] - prices[0]);
+            const minMove = medianAbsDelta * kMove;
+
+            if (move < minMove) {
+                return null; // Bloqueado
+            }
+
+            // Filtro 4: Direção
+            const direction = consecUp >= minConsecTicks ? 'CALL' : 'PUT';
+
+            // Cálculo da Barreira Dinâmica
+            const minOffset = 0.10; // offset mínimo
+            const barrierOffset = Math.max(minOffset, medianAbsDelta * kBarrier);
+            const currentPrice = prices[prices.length - 1];
+
+            // Armazenar barreira no state para usar na compra
+            state.dynamicBarrier = direction === 'CALL'
+                ? currentPrice + barrierOffset
+                : currentPrice - barrierOffset;
+
+            // ✅ LOG PADRONIZADO V2: Sinal Gerado
+            this.logSignalGenerated(state.userId, {
+                mode: state.mode,
+                isRecovery: false,
+                filters: [
+                    `Janela: ${windowSize} ticks`,
+                    `Momentum: ${direction === 'CALL' ? consecUp : consecDown} ticks`,
+                    `Move: ${move.toFixed(3)} (≥ ${minMove.toFixed(3)})`,
+                    `Barreira: ${state.dynamicBarrier.toFixed(2)}`
+                ],
+                trigger: direction === 'CALL' ? 'Momentum Alta' : 'Momentum Baixa',
+                probability: state.mode === 'VELOZ' ? 65 : (state.mode === 'NORMAL' ? 70 : 75),
+                contractType: `BARRIER ${direction}`,
+                direction: direction
+            });
+
+            return direction === 'CALL' ? 'PAR' : 'IMPAR';
         } else {
             // ═══════════════════════════════════════════════════════════════
-            // RECUPERAÇÃO (RISE/FALL)
+            // ANÁLISE DE RECUPERAÇÃO (RISE/FALL)
             // ═══════════════════════════════════════════════════════════════
 
-            let requiredTicks: number;
-            let minDelta: number;
-            let modeInfo: string;
-
-            if (state.mode === 'VELOZ') {
-                // VELOZ: 2 ticks consecutivos na mesma direção + delta >= 0.2
-                requiredTicks = 2;
-                minDelta = 0.2;
-                modeInfo = '2 ticks + delta >= 0.2';
-            } else if (state.mode === 'NORMAL') {
-                // NORMAL: 3 ticks consecutivos na mesma direção + delta >= 0.5
-                requiredTicks = 3;
-                minDelta = 0.5;
-                modeInfo = '3 ticks + delta >= 0.5';
-            } else {
-                // LENTO / PRECISO: 3 ticks consecutivos na mesma direção + delta >= 0.7
-                requiredTicks = 3;
-                minDelta = 0.7;
-                modeInfo = '3 ticks + delta >= 0.7';
+            // Filtro 1: Herança de Modo
+            let effectiveMode = state.mode;
+            if (effectiveMode === 'VELOZ') {
+                effectiveMode = 'NORMAL'; // VELOZ herda NORMAL
             }
 
-            if (this.ticks.length < requiredTicks + 1) return null;
-
-            const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
-
-            // === CALL (ALTA) ===
-            let upMomentum = true;
-            for (let i = 0; i < requiredTicks; i++) {
-                if (prices[i + 1] <= prices[i]) {
-                    upMomentum = false;
-                    break;
-                }
-            }
-            const deltaUp = prices[prices.length - 1] - prices[0];
-
-            if (upMomentum && deltaUp >= minDelta) {
-                // ✅ LOG PADRONIZADO V2: Sinal Recuperação
-                this.logSignalGenerated(state.userId, {
-                    mode: state.mode,
-                    isRecovery: true,
-                    filters: [modeInfo, `Delta: ${deltaUp.toFixed(2)} (>= ${minDelta})`],
-                    trigger: 'Recuperação Alta',
-                    probability: 80,
-                    contractType: 'RISE/FALL',
-                    direction: 'CALL'
-                });
-                return 'PAR'; // CALL
+            let minConsecTicks: number;
+            if (effectiveMode === 'NORMAL') {
+                minConsecTicks = 1;
+            } else { // PRECISO/LENTO
+                minConsecTicks = 2;
             }
 
-            // === PUT (BAIXA) ===
-            let downMomentum = true;
-            for (let i = 0; i < requiredTicks; i++) {
-                if (prices[i + 1] >= prices[i]) {
-                    downMomentum = false;
-                    break;
-                }
-            }
-            const deltaDown = prices[0] - prices[prices.length - 1];
+            if (this.ticks.length < minConsecTicks + 1) return null;
 
-            if (downMomentum && deltaDown >= minDelta) {
-                // ✅ LOG PADRONIZADO V2: Sinal Recuperação
-                this.logSignalGenerated(state.userId, {
-                    mode: state.mode,
-                    isRecovery: true,
-                    filters: [modeInfo, `Delta: ${deltaDown.toFixed(2)} (>= ${minDelta})`],
-                    trigger: 'Recuperação Baixa',
-                    probability: 80,
-                    contractType: 'RISE/FALL',
-                    direction: 'PUT'
-                });
-                return 'IMPAR'; // PUT
+            const prices = this.ticks.slice(-(minConsecTicks + 1)).map(t => t.value);
+
+            // Filtro 2: Momentum Direcional
+            let consecUp = 0;
+            let consecDown = 0;
+
+            for (let i = 1; i < prices.length; i++) {
+                if (prices[i] > prices[i - 1]) consecUp++;
+                else if (prices[i] < prices[i - 1]) consecDown++;
+                else break; // Interrompe se houver empate
             }
+
+            if (consecUp < minConsecTicks && consecDown < minConsecTicks) {
+                return null;
+            }
+
+            const direction = consecUp >= minConsecTicks ? 'CALL' : 'PUT';
+
+            // ✅ LOG PADRONIZADO V2: Sinal Recuperação
+            this.logSignalGenerated(state.userId, {
+                mode: effectiveMode,
+                isRecovery: true,
+                filters: [
+                    `Modo Efetivo: ${effectiveMode}`,
+                    `Momentum: ${direction === 'CALL' ? consecUp : consecDown} ticks consecutivos`
+                ],
+                trigger: `Recuperação ${direction === 'CALL' ? 'Alta' : 'Baixa'}`,
+                probability: effectiveMode === 'NORMAL' ? 70 : 80,
+                contractType: 'RISE/FALL',
+                direction: direction
+            });
+
+            return direction === 'CALL' ? 'PAR' : 'IMPAR';
         }
 
         return null;
@@ -602,6 +547,28 @@ export class NexusStrategy implements IStrategy {
         if (avgLoss === 0) return 100;
         const rs = avgGain / avgLoss;
         return 100 - (100 / (1 + rs));
+    }
+
+    /**
+     * ✅ NEXUS: Calcula mediana de abs(delta) para normalização por volatilidade
+     */
+    private calculateMedianAbsDelta(windowSize: number): number {
+        if (this.ticks.length < windowSize) return 0.01; // fallback mínimo
+
+        const window = this.ticks.slice(-windowSize);
+        const deltas: number[] = [];
+
+        for (let i = 1; i < window.length; i++) {
+            deltas.push(Math.abs(window[i].value - window[i - 1].value));
+        }
+
+        deltas.sort((a, b) => a - b);
+        const mid = Math.floor(deltas.length / 2);
+
+        if (deltas.length % 2 === 0) {
+            return (deltas[mid - 1] + deltas[mid]) / 2;
+        }
+        return deltas[mid];
     }
 
     async activateUser(userId: string, config: any): Promise<void> {
@@ -710,28 +677,45 @@ export class NexusStrategy implements IStrategy {
 
         let barrier: string | undefined = undefined;
 
-        // 🧩 [NEXUS V3] Lógica de Contratos Invertida (Fix)
-        // Main Entry (M0/M1): Higher -0.15 (Barrier)
-        // Recovery (M2+): Rise/Fall (No Barrier)
+        // 🧩 [NEXUS V3] Lógica de Contratos (Spec Oficial)
+        // Main Entry: Barrier definida dinamicamente na análise principal
+        // Recovery: Rise/Fall (Sem Barreira)
 
-        if (riskManager.consecutiveLosses < 2) {
-            // ✅ Entrada Principal: Higher -0.15 / Lower +0.15
-            barrier = direction === 'PAR' ? '-0.15' : '+0.15';
+        if (!state.recovering) {
+            // ✅ Entrada Principal: Barrier Dinâmico
+            if (state.dynamicBarrier) {
+                // Formatar para offset relativo (API Deriv aceita offset +0.xxx ou -0.xxx)
+                // Mas aqui dynamicBarrier é o preço ABSOLUTO calculado na análise
+                // A API da Deriv para contract_type 'CALL'/'PUT' aceita 'barrier' como valor absoluto ou relativo.
+                // Na análise calculamos o preço alvo. Vamos usar o offset relativo para garantir precisão?
+                // Spec: "CALL → barrier = preço_atual + barrierOffset"
+                // Se o ativo moveu desde a análise, o preço absoluto pode ser perigoso de usar como barrier fixa se o preço atual mudou muito.
+                // Mas geralmente usa-se offset. Vamos recalcular o offset relativo baseado no preço ATUAL da execução?
+                // Recalculando offset para segurança:
+                const entryPrice = this.ticks[this.ticks.length - 1].value;
+                const calculatedBarrier = state.dynamicBarrier;
+
+                // Se for CALL, barrier deve ser > entryPrice
+                // Se for PUT, barrier deve ser < entryPrice
+                // API Deriv: barrier "+0.15" significa spot + 0.15
+
+                let offset = calculatedBarrier - entryPrice;
+
+                // Garantir offset mínimo de segurança
+                if (direction === 'PAR') { // CALL
+                    if (offset < 0.1) offset = 0.1;
+                    barrier = `+${offset.toFixed(3)}`;
+                } else { // PUT
+                    if (offset > -0.1) offset = -0.1;
+                    barrier = `${offset.toFixed(3)}`;
+                }
+            } else {
+                // Fallback seguro se não houver dynamicBarrier (não deve acontecer na principal)
+                barrier = direction === 'PAR' ? '+0.15' : '-0.15';
+            }
         } else {
             // ✅ Recuperação: Rise/Fall (Sem Barreira)
             barrier = undefined;
-
-            // ✅ LOG PADRONIZADO V2: Troca de Contrato
-            // Apenas logar se for a primeira vez que entra em recuperação (consecutiveLosses === 2)
-            if (riskManager.consecutiveLosses === 2) {
-                const riskMode = (riskManager as any).riskMode;
-                this.logContractChange(state.userId, {
-                    reason: '2+ Perdas Consecutivas (Recovery)',
-                    oldContract: 'BARRIER (-0.15/+0.15)',
-                    newContract: 'RISE/FALL',
-                    analysis: `Modo Recuperação em ${riskMode}`
-                });
-            }
         }
 
         // ✅ [LOG] Início de Entrada (Igual Atlas/Titan)
@@ -810,7 +794,7 @@ export class NexusStrategy implements IStrategy {
             });
 
             if (result) {
-                const wasRecovery = riskManager.consecutiveLosses > 0;
+                const wasRecovery = riskManager.consecutiveLosses > 0 || state.recovering;
                 riskManager.updateResult(result.profit, stake);
                 state.capital += result.profit;
                 state.ultimoLucro = result.profit;
@@ -819,13 +803,6 @@ export class NexusStrategy implements IStrategy {
                 if (status === 'WON') {
                     if (wasRecovery) {
                         // ✅ LOG PADRONIZADO V2: Recuperação Bem-Sucedida
-                        // Precisamos do valor recuperado (totalLoss) ANTES de resetar?
-                        // O RiskManager já atualizou no updateResult? Sim, mas consecutiveLosses resetou se lucro > 0 e cobriu tudo?
-                        // O RiskManager do Nexus reseta consecutiveLosses se profit >= 0.
-                        // Então temos que pegar os dados antes ou estimar.
-                        // Como updateResult já rodou, consecutiveLosses é 0.
-                        // Vamos simplificar o log de recuperação para Nexus.
-
                         this.logSuccessfulRecoveryV2(state.userId, {
                             recoveredLoss: 0, // Nexus RiskManager não expõe histórico fácil após reset
                             additionalProfit: result.profit,
@@ -835,6 +812,7 @@ export class NexusStrategy implements IStrategy {
 
                         state.vitoriasConsecutivas = 0;
                         state.mode = state.originalMode;
+                        state.recovering = false; // ✅ Desativa recuperação
                     } else {
                         state.vitoriasConsecutivas++;
                         // ✅ LOG PADRONIZADO V2: Win Streak / Soros
@@ -864,20 +842,24 @@ export class NexusStrategy implements IStrategy {
                         balance: state.capital
                     });
 
-                    // ✅ LOG PADRONIZADO V2: Martingale (Opcional aqui, pois já logamos na entrada da próxima)
-                    // Mas podemos logar que entrou em ciclo de perdas se quiser.
-                    // Mantendo foco no Resultado.
-
-                    // ✅ Python Nexus v2: Defesa após 4 perdas consecutivas
-                    if (riskManager.consecutiveLosses >= 4 && state.mode === 'VELOZ') {
-                        // ✅ LOG PADRONIZADO V2: Defesa / Troca de Contrato
+                    // ✅ NEXUS SPEC: Ativar recuperação após 2 perdas consecutivas
+                    if (riskManager.consecutiveLosses >= 2 && !state.recovering) {
+                        state.recovering = true;
                         this.logContractChange(state.userId, {
-                            reason: '4 Perdas Consecutivas (Stop Defense)',
-                            oldContract: 'VELOZ (2 ticks)',
-                            newContract: 'LENTO (5 ticks)',
-                            analysis: 'Proteção de Capital Ativada'
+                            reason: '2 Perdas Consecutivas',
+                            oldContract: 'Barrier Higher/Lower',
+                            newContract: 'Rise/Fall',
+                            analysis: 'Modo Recuperação Ativado'
                         });
-                        state.mode = 'LENTO';
+                    }
+
+                    // ✅ NEXUS SPEC: Escalada de modo após LOSS na recuperação
+                    if (state.recovering && state.mode !== 'LENTO') {
+                        const oldMode = state.mode;
+                        state.mode = 'LENTO'; // Escala para PRECISO/LENTO
+                        this.saveNexusLog(state.userId, this.symbol, 'alerta',
+                            `ESCALADA DE MODO NA RECUPERAÇÃO\nTítulo: Modo Ajustado\nModo Anterior: ${oldMode}\nNovo Modo: PRECISO\nMotivo: Loss na recuperação`
+                        );
                     }
                 }
 
