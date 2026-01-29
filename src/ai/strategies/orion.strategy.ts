@@ -13,6 +13,21 @@ import { gerarSinalZenix } from './signal-generator';
 export type OrionPhase = 'ATAQUE' | 'DEFESA';
 export type OrionSignal = DigitParity | 'DIGITOVER' | 'CALL' | 'PUT' | null;
 
+/**
+ * ✅ [ZENIX v3.5] Orion Log Icons
+ */
+const ORION_ICONS = {
+  COLETA: 'ℹ️',
+  ANALISE: '🔍',
+  BLOQUEIO: '⚠️',
+  SINAL: '🎯',
+  ORDEM: '🚀',
+  RESULTADO: '💰',
+  START: 'ℹ️',
+  SISTEMA: '⚙️',
+  ALERTA: '🚨'
+};
+
 export interface VelozUserState {
   userId: string;
   derivToken: string;
@@ -378,8 +393,10 @@ class RiskManager {
 
     if (this._blindadoActive) {
       // MODO BLINDADO ATIVO: O Stop Loss Normal é DESABILITADO.
-      // Regra: Garantir 50% do lucro máximo atingido.
-      const guaranteedProfit = profitAccumulatedAtPeak * 0.5;
+      // Regra [ZENIX v3.5]: Garantir 50% do lucro da ATIVAÇÃO.
+      // Ativação trigger = meta * 0.40
+      const activationPoint = this.profitTarget * 0.40;
+      const guaranteedProfit = activationPoint * 0.5; // Piso fixo: 50% de 40% da meta
       minAllowedBalance = this.initialBalance + guaranteedProfit;
       limitType = 'PISO DE LUCRO PROTEGIDO';
 
@@ -389,7 +406,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO: 50% ($${guaranteedProfit.toFixed(2)})\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO FIXA: $${guaranteedProfit.toFixed(2)}\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
@@ -481,13 +498,14 @@ export class OrionStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    const message = `CONFIGURAÇÕES INICIAIS
-IA: ${config.strategyName}
-Modo: ${config.operationMode}
-Perfil Corretora: ${config.riskProfile}
-Meta de Lucro: $${config.profitTarget.toFixed(2)}
-Limite de Perda: $${config.stopLoss.toFixed(2)}
-Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+    const message = `${ORION_ICONS.START}
+CONFIGURAÇÕES INICIAIS
+• IA: ${config.strategyName}
+• Modo: ${config.operationMode}
+• Perfil Corretora: ${config.riskProfile}
+• Meta de Lucro: $${config.profitTarget.toFixed(2)}
+• Limite de Perda: $${config.stopLoss.toFixed(2)}
+• Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
     this.saveOrionLog(userId, this.symbol, 'config', message);
   }
@@ -500,11 +518,12 @@ Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
     mode: string;
     strategyName: string;
   }) {
-    const message = `INÍCIO DE SESSÃO
-Saldo Inicial: $${session.initialBalance.toFixed(2)}
-Meta do Dia: $${session.profitTarget.toFixed(2)}
-IA Ativa: ${session.strategyName}
-Status: Monitorando Mercado`;
+    const message = `${ORION_ICONS.START}
+INÍCIO DE SESSÃO
+• Saldo Inicial: $${session.initialBalance.toFixed(2)}
+• Meta do Dia: $${session.profitTarget.toFixed(2)}
+• IA Ativa: ${session.strategyName}
+• Status: Monitorando Mercado`;
 
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
@@ -516,20 +535,21 @@ Status: Monitorando Mercado`;
     currentCount: number;
     mode?: string;
   }) {
-    const message = `COLETA DE DADOS
-Coleta de Dados em Andamento
-Meta de Coleta: ${data.targetCount} ticks
-Progresso: ${data.currentCount} / ${data.targetCount}
-Status: aguardando ticks suficientes`;
+    const message = `${ORION_ICONS.COLETA}
+COLETA DE DADOS
+• Coleta de Dados em Andamento
+• Meta de Coleta: ${data.targetCount} ticks
+• Progresso: ${data.currentCount} / ${data.targetCount}
+• Status: aguardando ticks suficientes`;
     this.saveOrionLog(userId, this.symbol, 'info', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `ANÁLISE INICIADA
-Análise de Mercado
-Tipo de Análise: PRINCIPAL
-Modo Ativo: ${mode.toUpperCase()}
-Contrato Avaliado: Digits/Price Action (1 tick)`;
+    const message = `${ORION_ICONS.ANALISE}
+ANÁLISE DE MERCADO
+• Tipo de Análise: PRINCIPAL
+• Modo Ativo: ${mode.toUpperCase()}
+• Janela: 1 tick`;
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
@@ -547,7 +567,8 @@ Contrato Avaliado: Digits/Price Action (1 tick)`;
     // Variação A: Filtro
     // Variação B: Delta
 
-    let message = `ENTRADA BLOQUEADA\n`;
+    let message = `${ORION_ICONS.BLOQUEIO}
+ORION | Entrada Bloqueada — FILTRO\n`;
     if (blocked.reason === 'filter' && blocked.details.digits) {
       message += `• Motivo: Filtro não atendido\n` +
         `• Dígitos Analisados: [${blocked.details.digits.join(', ')}]\n` +
@@ -577,11 +598,12 @@ Contrato Avaliado: Digits/Price Action (1 tick)`;
     direction?: 'CALL' | 'PUT';
   }) {
     const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `SINAL DETECTADO
-Direção: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
+    const message = `${ORION_ICONS.SINAL}
+SINAL DETECTADO
+• Direção: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
 ${filtersText}
-Força: ${signal.probability}%
-Tipo de Contrato: Zenix Hybrid`;
+• Força: ${signal.probability}%
+• Tipo: Zenix Hybrid`;
 
     this.saveOrionLog(userId, this.symbol, 'sinal', message);
   }
@@ -594,11 +616,12 @@ Tipo de Contrato: Zenix Hybrid`;
     stake: number;
     balance: number;
   }) {
-    const message = `RESULTADO DA OPERAÇÃO
-Status: ${result.status}
-Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
-Saldo Atual: $${result.balance.toFixed(2)}
-Estado: Operação Finalizada`;
+    const message = `${ORION_ICONS.RESULTADO}
+RESULTADO DA OPERAÇÃO
+• Status: ${result.status}
+• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
+• Saldo Atual: $${result.balance.toFixed(2)}
+• Estado: Operação Finalizada`;
 
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }
@@ -2647,7 +2670,9 @@ Status: Sessão Equilibrada`;
     const payoutPercent = operation === 'DIGITOVER' ? 56 : 82.5;
 
     this.logger.log(`📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
-    this.saveOrionLog(state.userId, this.symbol, 'operacao', `📤 ENTRADA EXECUTADA\n• Tipo: ${operation}\n• Investimento: $${stakeAmount.toFixed(2)}\n• Payout: ${payoutPercent}%\n______________`);
+    this.saveOrionLog(state.userId, this.symbol, 'operacao',
+      `${ORION_ICONS.ORDEM}\nINICIANDO ENTRADA\n• Contrato: ${operation}\n• Stake: $${stakeAmount.toFixed(2)}\n• Status: Enviando ordem...`,
+    );
 
     try {
       // Criar registro de trade

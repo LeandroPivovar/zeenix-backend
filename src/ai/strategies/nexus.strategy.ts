@@ -170,7 +170,12 @@ class RiskManager {
         // ✅ Lógica de Proteção de Capital
         // [NEXUS v3.5] Stop Blindado: Preventivo (recalcula ANTES para proteger o piso)
         if (this._blindadoActive) {
-            const guaranteedBalance = this.initialBalance + this.guaranteedProfit;
+            // [NEXUS v3.5] Stop Blindado Fixo: 
+            // Ativação: 40% da Meta
+            // Piso: 50% do valor de ATIVAÇÃO (Fixo, não sobe)
+            const activationPoint = this.profitTarget * 0.40;
+            const fixedGuaranteedProfit = activationPoint * 0.50; // Piso fixo
+            const guaranteedBalance = this.initialBalance + fixedGuaranteedProfit;
             const potentialBalanceAfterLoss = currentBalance - nextStake;
 
             if (potentialBalanceAfterLoss < guaranteedBalance) {
@@ -300,15 +305,17 @@ export class NexusStrategy implements IStrategy {
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
-        // Reset ticks for next batch (Discrete Window)
-        state.ticksColetados = 0;
-
         const result = this.analyzeNexus(state, riskManager);
 
         if (!result.hasSignal) {
             this.logBlockedEntry(state.userId, result.reason || 'Padrão não identificado', 'FILTRO');
+            // ✅ [ZENIX v3.5] Re-analisar no próximo tick
+            state.ticksColetados = windowSize - 1;
             return;
         }
+
+        // Reset ticks ONLY when trade is actually executed or succeeds
+        state.ticksColetados = 0;
 
         // 4. Executar Operação
         await this.executeOperation(state, result.signal as DigitParity);
