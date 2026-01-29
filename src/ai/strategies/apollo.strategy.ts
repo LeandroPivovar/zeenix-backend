@@ -183,6 +183,48 @@ Dígito de Saída: ${contractInfo?.exitDigit || 'N/A'}`;
     this.saveLog(userId, 'resultado', message);
   }
 
+  private logStopActivated(userId: string, type: 'PROFIT' | 'LOSS' | 'BLINDADO', value: number, limit: number) {
+    const state = this.users.get(userId);
+    const currency = state?.currency || 'USD';
+    let title = '';
+    let status = '';
+
+    switch (type) {
+      case 'PROFIT':
+        title = 'META DE LUCRO ATINGIDA';
+        status = 'Meta Alcançada';
+        break;
+      case 'LOSS':
+        title = 'STOP LOSS ATINGIDO';
+        status = 'Limite de Perda';
+        break;
+      case 'BLINDADO':
+        title = 'STOP BLINDADO ATINGIDO';
+        status = 'Lucro Protegido';
+        break;
+    }
+
+    const message = `${title}
+Título: ${status}
+Valor: ${type === 'LOSS' ? '-' : ''}${formatCurrency(Math.abs(value), currency)}
+Limite/Meta: ${formatCurrency(limit, currency)}
+Ação: IA DESATIVADA`;
+
+    this.saveLog(userId, type === 'PROFIT' ? 'resultado' : 'alerta', message);
+  }
+
+  private logBlindadoActivation(userId: string, currentProfit: number, protectedFloor: number) {
+    const state = this.users.get(userId);
+    const currency = state?.currency || 'USD';
+    const message = `STOP BLINDADO ATIVADO
+Título: Proteção Ativa
+Lucro Atual: ${formatCurrency(currentProfit, currency)}
+Piso Garantido: ${formatCurrency(protectedFloor, currency)}
+Ação: monitorando retrocesso`;
+
+    this.saveLog(userId, 'alerta', message);
+  }
+
   private logMartingaleLevelV2(userId: string, level: number | string, stake: number) {
     const state = this.users.get(userId);
     const currency = state?.currency || 'USD';
@@ -730,12 +772,15 @@ Status: Alta Escalabilidade`;
       [state.userId],
     );
 
+
     if (!configResult || configResult.length === 0) return;
+
 
     const config = configResult[0];
     const lossLimit = parseFloat(config.lossLimit) || 0;
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
+
 
     const lucroAtual = parseFloat(config.sessionBalance) || 0;
     const capitalSessao = capitalInicial + lucroAtual;
@@ -849,6 +894,7 @@ Ação: IA DESATIVADA`
          WHERE user_id = ? AND is_active = 1`,
         [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
       );
+
 
       this.tradeEvents.emit({
         userId: state.userId,
