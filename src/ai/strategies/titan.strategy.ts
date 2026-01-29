@@ -652,9 +652,24 @@ export class TitanStrategy implements IStrategy {
                     this.logDataCollection(state.userId, parseInt(progressMatch[1]), parseInt(progressMatch[2]));
                 }
             } else {
-                // Log da análise sem sinal (Se quiser reduzir spam, pode remover ou throtar)
-                // this.logAnalysisStarted(state.userId, analysisMode);
+                // Log de entrada bloqueada por filtros
+                const details = result.details;
+                const blockReason = result.reason.includes('MAIORIA') ? 'maioria' :
+                    result.reason.includes('MOMENTUM') ? 'momentum' :
+                        result.reason.includes('RUÍDO') ? 'anti-ruído' : 'filtro';
+
+                this.saveTitanLog(state.userId, this.symbol, 'alerta',
+                    `ENTRADA BLOQUEADA — FILTRO
+Título: Entrada Bloqueada
+Motivo: filtro não atendido
+Critério Avaliado: ${blockReason}
+Ação: aguardar próximo ciclo`
+                );
+
+                // Log da análise sem sinal para mostrar que a IA está ativa
+                this.logAnalysisStarted(state.userId, analysisMode);
             }
+
             return null;
         }
 
@@ -731,41 +746,25 @@ export class TitanStrategy implements IStrategy {
             saveTitanLogCallback
         );
 
-        if (stake <= 0 || state.capital < stake) {
-            let sessionStatus: 'stopped_blindado' | 'stopped_loss' | 'stopped_insufficient_balance';
-            let logMsg = '';
-
-            if (stake <= 0) {
-                sessionStatus = riskManager.blindadoActive ? 'stopped_blindado' : 'stopped_loss';
-                logMsg = riskManager.blindadoActive
-                    ? `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: $${riskManager.guaranteedProfit.toFixed(2)} - IA DESATIVADA`
-                    : `🛑 STOP LOSS ATINGIDO! Perda: $${Math.abs(state.capital - state.capitalInicial).toFixed(2)} - IA DESATIVADA`;
-            } else {
-                sessionStatus = 'stopped_insufficient_balance';
-                logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`;
-            }
+        // ✅ Verificação de saldo insuficiente (apenas)
+        if (state.capital < stake) {
+            const logMsg = `❌ SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${stake.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`;
 
             this.saveTitanLog(state.userId, this.symbol, 'alerta', logMsg);
 
             // Emit event for frontend modal
             this.tradeEvents.emit({
                 userId: state.userId,
-                type: sessionStatus,
-                strategy: 'titan',
-                profitProtected: sessionStatus === 'stopped_blindado' ? riskManager.guaranteedProfit : undefined
+                type: 'stopped_insufficient_balance',
+                strategy: 'titan'
             });
 
             await this.deactivateUser(state.userId);
 
             try {
-                await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = ?, deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [sessionStatus, logMsg, state.userId]);
+                await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [logMsg, state.userId]);
             } catch (dbError) {
-                this.logger.error(`[TITAN] ⚠️ Erro ao atualizar status '${sessionStatus}' no DB: ${dbError.message}`);
-                if (sessionStatus === 'stopped_insufficient_balance') {
-                    try {
-                        await this.dataSource.query(`UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`, [logMsg, state.userId]);
-                    } catch (e) { console.error('[TITAN] Falha crítica no fallback DB', e); }
-                }
+                this.logger.error(`[TITAN] ⚠️ Erro ao atualizar status no DB: ${dbError.message}`);
             }
             return;
         }
