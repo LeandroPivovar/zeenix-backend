@@ -360,7 +360,7 @@ Status: Sessão Equilibrada`;
     return null;
   }
 
-  private async executeTrade(state: ApolloUserState, signal: 'DIGITUNDER_8' | 'DIGITUNDER_4') {
+  private async executeTrade(state: ApolloUserState, signal: 'DIGITEVEN' | 'DIGITODD' | 'CALL' | 'PUT' | 'DIGITUNDER_8' | 'DIGITUNDER_4') {
     // 1. CALCULATE STAKE
     let stake = this.calculateStake(state);
 
@@ -416,11 +416,20 @@ Status: Sessão Equilibrada`;
     // 4. EXECUTE
     state.isOperationActive = true;
 
-    const contractType = 'DIGITUNDER';
-    const barrier = signal === 'DIGITUNDER_8' ? '8' : '4';
+    let contractType: string = signal;
+    let barrier: string | undefined;
+
+    if (signal === 'DIGITUNDER_8') {
+      contractType = 'DIGITUNDER';
+      barrier = '8';
+    } else if (signal === 'DIGITUNDER_4') {
+      contractType = 'DIGITUNDER';
+      barrier = '4';
+    }
+    // For DIGITEVEN, DIGITODD, CALL, PUT -> contractType is the signal string itself, barrier is undefined.
 
     try {
-      const tradeId = await this.createTradeRecord(state, contractType, stake, barrier);
+      const tradeId = await this.createTradeRecord(state, contractType, stake, barrier || '0');
       if (!tradeId) {
         state.isOperationActive = false;
         return;
@@ -450,7 +459,7 @@ Status: Sessão Equilibrada`;
                 state.userId,
                 state.symbol,
                 contractType,
-                barrier,
+                barrier || 0, // DB fallback
                 stake,
                 percent,
                 0, // multiplier
@@ -475,7 +484,7 @@ Status: Sessão Equilibrada`;
                   percent: percent,
                   entrySpot: entryPrice || 0,
                   entryTime: unixTimestamp,
-                  barrier: Number(barrier)
+                  barrier: barrier ? Number(barrier) : 0
                 },
               );
             }
