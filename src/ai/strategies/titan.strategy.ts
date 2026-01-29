@@ -1010,8 +1010,8 @@ Ação: aguardar próximo ciclo`
                 // ✅ Atualizar session_balance no banco de dados para sincronia com o frontend e RiskManager
                 const lucroSessao = state.capital - state.capitalInicial;
                 await this.dataSource.query(
-                    `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
-                    [lucroSessao, state.userId]
+                    `UPDATE ai_user_config SET session_balance = ?, profit_peak = GREATEST(COALESCE(profit_peak, 0), ?) WHERE user_id = ? AND is_active = 1`,
+                    [lucroSessao, lucroSessao, state.userId]
                 ).catch(err => this.logger.error(`[TITAN] Erro ao atualizar session_balance:`, err));
 
                 // ✅ Verificar limites de proteção (Stop Blindado, Profit Target, Stop Loss)
