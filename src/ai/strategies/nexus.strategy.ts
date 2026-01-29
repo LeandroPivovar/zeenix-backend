@@ -579,7 +579,7 @@ export class NexusStrategy implements IStrategy {
 
         this.riskManagers.set(userId, new RiskManager(
             stakeAmount, lossLimit || 50, profitTarget || 100,
-            modoMartingale.toUpperCase(), false // ✅ Disable internal blindado to avoid 'alerta' on activation
+            modoMartingale.toUpperCase(), stopLossBlindado !== false // ✅ Enable blindado based on config
         ));
 
         this.logger.log(`[NEXUS] ${userId} ativado em ${nexusMode} (Input: ${inputMode})`);
