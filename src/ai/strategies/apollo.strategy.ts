@@ -766,18 +766,20 @@ Status: Sessão Equilibrada`;
       mode: state.mode,
       analysisType: state.analysisType,
       lossStreak: state.consecutiveLosses,
-      barrier: barrier
+      barrier: barrier // Mantido no JSON para referência
     };
 
     try {
+      // ✅ [BUG FIX] Removida coluna 'barrier' que não existe no BD (user solicitou ignorar)
       const result: any = await this.dataSource.query(
-        `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, barrier, created_at, analysis_data, symbol, strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)`,
-        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo Digit - ${direction}`, direction, barrier, JSON.stringify(analysisData), state.symbol, 'apollo']
+        `INSERT INTO ai_trades (user_id, gemini_signal, entry_price, stake_amount, status, gemini_duration, gemini_reasoning, contract_type, created_at, analysis_data, symbol, strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)`,
+        [state.userId, direction, 0, stake, 'PENDING', 1, `Apollo Digit - ${direction}`, direction, JSON.stringify(analysisData), state.symbol, 'apollo']
       );
       const tradeId = result.insertId;
       return tradeId;
     } catch (e) {
       this.logger.error(`[APOLLO] DB Insert Error: ${e}`);
+      this.saveLog(state.userId, 'erro', `Erro ao registrar operação: ${e.message}`);
       return 0;
     }
   }
