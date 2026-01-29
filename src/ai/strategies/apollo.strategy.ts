@@ -82,7 +82,7 @@ export class ApolloStrategy implements IStrategy {
   private marketDigits = new Map<string, number[]>(); // Store last digits per market (max 200)
   private lastLogTimeNodes = new Map<string, number>(); // ✅ Heartbeat per symbol
   private lastRejectionLog = new Map<string, number>(); // ✅ Throttling for rejection logs
-  private defaultSymbol = 'R_25';
+  private defaultSymbol = 'R_10';
   private appId: string;
 
   // WebSocket Pool
@@ -250,27 +250,21 @@ Status: Sessão Equilibrada`;
 
     // 2. TRIGGER RECOVERY & MODE DEGRADATION
     // Active if loss_streak >= 2
-    if (state.consecutiveLosses >= 2 && state.analysisType === 'PRINCIPAL') {
-      state.analysisType = 'RECUPERACAO';
-      state.recoveredAmount = 0;
-      state.recoveryTarget = state.totalLossAccumulated;
-
-      // Regra de Troca Principal -> Recuperação:
-      // Se estava VELOZ -> Sobe para NORMAL
-      if (state.mode === 'veloz') {
+    if (state.consecutiveLosses >= 2) {
+      // Degradação de Modo (Igual Atlas)
+      if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
+        state.mode = 'preciso';
+        this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
+      } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
         state.mode = 'normal';
-        this.saveLog(state.userId, 'info', `📉 MODO AJUSTADO: Veloz -> Normal para Recuperação.`);
+        this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
       }
 
-      this.logContractChange(state.userId, 'Digits Even/Odd', 'Rise/Fall', '2 Losses Seguidos - Iniciando Recuperação');
-    }
-
-    if (state.analysisType === 'RECUPERACAO') {
-      // Regra de Degradação na Recuperação:
-      // Se houver 1 loss dentro da recuperação -> modo vai para PRECISO
-      if (state.lossStreakRecovery >= 1 && state.mode !== 'preciso') {
-        state.mode = 'preciso';
-        this.saveLog(state.userId, 'info', `📉 DEFESA RECUPERAÇÃO: Loss detectado. Modo ajustado para PRECISO.`);
+      if (state.analysisType === 'PRINCIPAL') {
+        state.analysisType = 'RECUPERACAO';
+        state.recoveredAmount = 0;
+        state.recoveryTarget = state.totalLossAccumulated;
+        this.logContractChange(state.userId, 'UNDER 8', 'UNDER 4', 'Sequência de perdas - Ativando Recuperação');
       }
     }
 
@@ -282,77 +276,77 @@ Status: Sessão Equilibrada`;
     }
   }
 
-  private analyzeSignal(state: ApolloUserState, digits: number[], ticks?: number[]): 'DIGITEVEN' | 'DIGITODD' | 'CALL' | 'PUT' | null {
+  private analyzeSignal(state: ApolloUserState, digits: number[]): 'DIGITUNDER_8' | 'DIGITUNDER_4' | null {
     if (state.analysisType === 'PRINCIPAL') {
-      // 1) ANÁLISE PRINCIPAL (Digits Even/Odd)
-      // Parâmetros por modo:
-      // VELOZ: window = 12, threshold = 5
-      // NORMAL: window = 25, threshold = 9
-      // PRECISO: window = 40, threshold = 13
+      // ANÁLISE PRINCIPAL — DIGITS UNDER 8
+      // N = 20
+      if (digits.length < 20) return null;
 
-      let window = 25;
-      let threshold = 9;
+      const last20 = digits.slice(-20);
+      const count89 = last20.filter(d => d === 8 || d === 9).length;
 
-      if (state.mode === 'veloz') { window = 12; threshold = 5; }
-      else if (state.mode === 'normal') { window = 25; threshold = 9; }
-      else if (state.mode === 'preciso') { window = 40; threshold = 13; }
-      else if (state.mode === 'lento') { window = 40; threshold = 13; } // Fallback
+      // CONDIÇÃO DE ENTRADA DINÂMICA (Baseada no Modo):
+      let threshold = 6; // Veloz
+      if (state.mode === 'normal') threshold = 5;
+      else if (state.mode === 'preciso') threshold = 4;
 
-      if (digits.length < window) return null;
-
-      const slice = digits.slice(-window);
-      const evens = slice.filter(d => d % 2 === 0).length;
-      const odds = slice.filter(d => d % 2 !== 0).length;
-
-      const diff = Math.abs(evens - odds);
-
-      if (diff >= threshold) {
-        // Direção: evens > odds -> EVEN, odds > evens -> ODD
-        const signal = evens > odds ? 'DIGITEVEN' : 'DIGITODD';
-        const reason = `Diff: ${diff} >= ${threshold} (E:${evens}/O:${odds})`;
-
-        this.logSignalGenerated(state.userId, 'PRINCIPAL', signal, [reason, `Janela: ${window}`], 80);
-        return signal;
+      if (count89 < threshold) {
+        this.logSignalGenerated(state.userId, 'PRINCIPAL', 'UNDER 8', [`Dígitos 8,9: ${count89} < ${threshold} (N=20)`], 77);
+        return 'DIGITUNDER_8';
       } else {
-        // Throttled Rejection Log
+        // LOG DE REJEIÇÃO (Throttled)
         const now = Date.now();
-        if (now - (state.lastLogTimePerType.get('REJ_PRINCIPAL') || 0) > 30000) {
-          this.saveLog(state.userId, 'analise', `PRINCIPAL: Aguardando Desequilíbrio\n• Modo: ${state.mode.toUpperCase()}\n• Diff Atual: ${diff} < ${threshold}\n• E:${evens} / O:${odds}`);
-          state.lastLogTimePerType.set('REJ_PRINCIPAL', now);
+        const lastLog = state.lastLogTimePerType.get('REJ_UNDER8') || 0;
+        if (now - lastLog > 30000) {
+          this.saveLog(state.userId, 'analise', `META: Sinal Rejeitado\n• Motivo: Dígitos 8,9 em excesso (${count89} >= ${threshold})\n• Amostra: N=20\n• Modo: ${state.mode.toUpperCase()}`);
+          state.lastLogTimePerType.set('REJ_UNDER8', now);
         }
       }
-
     } else {
-      // 2) ANÁLISE DE RECUPERAÇÃO (Rise/Fall)
-      // Contrato: Rise/Fall (1 tick) based on Delta
-      // delta = price[t] - price[t-1]
-      // R_25 Thresholds:
-      // NORMAL: abs(delta) >= 0.10
-      // PRECISO: abs(delta) >= 0.25
-      // VELOZ não é usado (mínimo Normal)
+      // ANÁLISE DE RECUPERAÇÃO — DIGITS UNDER 4
+      // N_short = 30, N_long = 200
+      if (digits.length < 200) return null;
 
-      if (!ticks || ticks.length < 2) return null;
+      const last30 = digits.slice(-30);
+      const last200 = digits.slice(-200);
 
-      const currentPrice = ticks[ticks.length - 1];
-      const prevPrice = ticks[ticks.length - 2];
-      const delta = currentPrice - prevPrice;
-      const absDelta = Math.abs(delta);
+      const count03_short = last30.filter(d => d >= 0 && d <= 3).length;
+      const count03_long = last200.filter(d => d >= 0 && d <= 3).length;
 
-      let threshold = 0.10; // Normal default for R_25
-      if (state.mode === 'preciso') threshold = 0.25;
-      // Note: If somehow in veloz, we treat as normal or upgrade (logic upgrades veloz to normal on entry)
+      const P_short = count03_short / 30;
+      const P_long = count03_long / 200;
 
-      if (absDelta >= threshold && delta !== 0) {
-        const signal = delta > 0 ? 'CALL' : 'PUT';
-        const reason = `Delta: ${delta.toFixed(3)} (Abs >= ${threshold})`;
+      const count89_short = last30.filter(d => d === 8 || d === 9).length;
 
-        this.logSignalGenerated(state.userId, 'RECUPERACAO', signal, [reason], 85);
-        return signal;
+      // ✅ CONDIÇÕES DE ENTRADA DINÂMICAS:
+      let minP = 0.47;
+      if (state.mode === 'normal') minP = 0.50;
+      else if (state.mode === 'preciso') minP = 0.53;
+
+      const cond1 = P_short >= minP;
+      const cond2 = (P_short - P_long) >= 0.02;
+      const cond3 = count89_short <= 8;
+      const now = Date.now();
+      const throttleTime = 30000; // 30 segundos
+
+      if (cond1 && cond2 && cond3) {
+        this.logSignalGenerated(state.userId, 'RECUPERACAO', 'UNDER 4', [
+          `P_short: ${P_short.toFixed(2)} >= ${minP}`,
+          `Delta P: ${(P_short - P_long).toFixed(2)} >= 0.02`,
+          `C_8_9_short: ${count89_short} <= 8`
+        ], 54);
+        return 'DIGITUNDER_4';
       } else {
-        const now = Date.now();
-        if (now - (state.lastLogTimePerType.get('REJ_RECUPERACAO') || 0) > 30000) {
-          this.saveLog(state.userId, 'analise', `RECUPERAÇÃO: Aguardando Volatilidade\n• Delta: ${delta.toFixed(3)}\n• Threshold: ${threshold}\n• Modo: ${state.mode.toUpperCase()}`);
-          state.lastLogTimePerType.set('REJ_RECUPERACAO', now);
+        // LOGS DE REJEIÇÃO (Throttled)
+        const lastLog = state.lastLogTimePerType.get('REJ_UNDER4') || 0;
+        if (now - lastLog > throttleTime) {
+          let reason = 'Densidade insuficiente';
+          if (!cond1) reason = `P_short baixa (${P_short.toFixed(2)} < ${minP})`;
+          else if (!cond2) reason = `Delta P insuficiente (${(P_short - P_long).toFixed(2)} < 0.02)`;
+          else if (!cond3) reason = `Dígitos 8,9 altos em N=30 (${count89_short} > 8)`;
+
+          this.saveLog(state.userId, 'analise', `RECUPERAÇÃO: Sinal Rejeitado\n• Motivo: ${reason}\n• P_short: ${P_short.toFixed(2)}\n• P_long: ${P_long.toFixed(2)}\n• Modo: ${state.mode.toUpperCase()}`);
+          state.lastLogTimePerType.set('REJ_UNDER4', now);
         }
       }
     }
@@ -360,7 +354,7 @@ Status: Sessão Equilibrada`;
     return null;
   }
 
-  private async executeTrade(state: ApolloUserState, signal: 'DIGITEVEN' | 'DIGITODD' | 'CALL' | 'PUT' | 'DIGITUNDER_8' | 'DIGITUNDER_4') {
+  private async executeTrade(state: ApolloUserState, signal: 'DIGITUNDER_8' | 'DIGITUNDER_4') {
     // 1. CALCULATE STAKE
     let stake = this.calculateStake(state);
 
@@ -416,20 +410,11 @@ Status: Sessão Equilibrada`;
     // 4. EXECUTE
     state.isOperationActive = true;
 
-    let contractType: string = signal;
-    let barrier: string | undefined;
-
-    if (signal === 'DIGITUNDER_8') {
-      contractType = 'DIGITUNDER';
-      barrier = '8';
-    } else if (signal === 'DIGITUNDER_4') {
-      contractType = 'DIGITUNDER';
-      barrier = '4';
-    }
-    // For DIGITEVEN, DIGITODD, CALL, PUT -> contractType is the signal string itself, barrier is undefined.
+    const contractType = 'DIGITUNDER';
+    const barrier = signal === 'DIGITUNDER_8' ? '8' : '4';
 
     try {
-      const tradeId = await this.createTradeRecord(state, contractType, stake, barrier || '0');
+      const tradeId = await this.createTradeRecord(state, contractType, stake, barrier);
       if (!tradeId) {
         state.isOperationActive = false;
         return;
@@ -459,7 +444,7 @@ Status: Sessão Equilibrada`;
                 state.userId,
                 state.symbol,
                 contractType,
-                barrier || 0, // DB fallback
+                barrier,
                 stake,
                 percent,
                 0, // multiplier
@@ -484,7 +469,7 @@ Status: Sessão Equilibrada`;
                   percent: percent,
                   entrySpot: entryPrice || 0,
                   entryTime: unixTimestamp,
-                  barrier: barrier ? Number(barrier) : 0
+                  barrier: Number(barrier)
                 },
               );
             }
