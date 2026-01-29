@@ -24,7 +24,7 @@ import { TradeEventsService } from '../trade-events.service';
  * - Risk: Smart Martingale (Rise/Fall Payout ~95%).
  */
 
-export type ApolloMode = 'veloz' | 'normal' | 'lento';
+export type ApolloMode = 'veloz' | 'normal' | 'lento' | 'preciso';
 
 export interface ApolloUserState {
   userId: string;
@@ -248,13 +248,24 @@ Status: Sessão Equilibrada`;
     // 1. CHECK STOPS AND BLINDADO
     if (!this.checkStops(state)) return;
 
-    // 2. TRIGGER RECOVERY
+    // 2. TRIGGER RECOVERY & MODE DEGRADATION
     // Active if loss_streak >= 2
-    if (state.consecutiveLosses >= 2 && state.analysisType === 'PRINCIPAL') {
-      state.analysisType = 'RECUPERACAO';
-      state.recoveredAmount = 0;
-      state.recoveryTarget = state.totalLossAccumulated;
-      this.logContractChange(state.userId, 'UNDER 8', 'UNDER 4', 'Sequência de 2 perdas - Ativando Recuperação');
+    if (state.consecutiveLosses >= 2) {
+      // Degradação de Modo (Igual Atlas)
+      if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
+        state.mode = 'preciso';
+        this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
+      } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
+        state.mode = 'normal';
+        this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
+      }
+
+      if (state.analysisType === 'PRINCIPAL') {
+        state.analysisType = 'RECUPERACAO';
+        state.recoveredAmount = 0;
+        state.recoveryTarget = state.totalLossAccumulated;
+        this.logContractChange(state.userId, 'UNDER 8', 'UNDER 4', 'Sequência de perdas - Ativando Recuperação');
+      }
     }
 
     // 3. ANALYZE SIGNAL
@@ -274,16 +285,20 @@ Status: Sessão Equilibrada`;
       const last20 = digits.slice(-20);
       const count89 = last20.filter(d => d === 8 || d === 9).length;
 
-      // CONDIÇÃO DE ENTRADA: C_8_9 < 6
-      if (count89 < 6) {
-        this.logSignalGenerated(state.userId, 'PRINCIPAL', 'UNDER 8', [`Dígitos 8,9: ${count89} < 6 (N=20)`], 77);
+      // CONDIÇÃO DE ENTRADA DINÂMICA (Baseada no Modo):
+      let threshold = 6; // Veloz
+      if (state.mode === 'normal') threshold = 5;
+      else if (state.mode === 'preciso') threshold = 4;
+
+      if (count89 < threshold) {
+        this.logSignalGenerated(state.userId, 'PRINCIPAL', 'UNDER 8', [`Dígitos 8,9: ${count89} < ${threshold} (N=20)`], 77);
         return 'DIGITUNDER_8';
       } else {
         // LOG DE REJEIÇÃO (Throttled)
         const now = Date.now();
         const lastLog = state.lastLogTimePerType.get('REJ_UNDER8') || 0;
         if (now - lastLog > 30000) {
-          this.saveLog(state.userId, 'analise', `META: Sinal Rejeitado\n• Motivo: Dígitos 8,9 em excesso (${count89} >= 6)\n• Amostra: N=20`);
+          this.saveLog(state.userId, 'analise', `META: Sinal Rejeitado\n• Motivo: Dígitos 8,9 em excesso (${count89} >= ${threshold})\n• Amostra: N=20\n• Modo: ${state.mode.toUpperCase()}`);
           state.lastLogTimePerType.set('REJ_UNDER8', now);
         }
       }
@@ -303,11 +318,12 @@ Status: Sessão Equilibrada`;
 
       const count89_short = last30.filter(d => d === 8 || d === 9).length;
 
-      // ✅ CONDIÇÕES DE ENTRADA (TODAS):
-      // 1. P_short >= 0.47
-      // 2. P_short - P_long >= 0.02
-      // 3. C_8_9_short <= 8
-      const cond1 = P_short >= 0.47;
+      // ✅ CONDIÇÕES DE ENTRADA DINÂMICAS:
+      let minP = 0.47;
+      if (state.mode === 'normal') minP = 0.50;
+      else if (state.mode === 'preciso') minP = 0.53;
+
+      const cond1 = P_short >= minP;
       const cond2 = (P_short - P_long) >= 0.02;
       const cond3 = count89_short <= 8;
       const now = Date.now();
@@ -315,7 +331,7 @@ Status: Sessão Equilibrada`;
 
       if (cond1 && cond2 && cond3) {
         this.logSignalGenerated(state.userId, 'RECUPERACAO', 'UNDER 4', [
-          `P_short: ${P_short.toFixed(2)} >= 0.47`,
+          `P_short: ${P_short.toFixed(2)} >= ${minP}`,
           `Delta P: ${(P_short - P_long).toFixed(2)} >= 0.02`,
           `C_8_9_short: ${count89_short} <= 8`
         ], 54);
@@ -325,11 +341,11 @@ Status: Sessão Equilibrada`;
         const lastLog = state.lastLogTimePerType.get('REJ_UNDER4') || 0;
         if (now - lastLog > throttleTime) {
           let reason = 'Densidade insuficiente';
-          if (!cond1) reason = `P_short baixa (${P_short.toFixed(2)} < 0.47)`;
+          if (!cond1) reason = `P_short baixa (${P_short.toFixed(2)} < ${minP})`;
           else if (!cond2) reason = `Delta P insuficiente (${(P_short - P_long).toFixed(2)} < 0.02)`;
           else if (!cond3) reason = `Dígitos 8,9 altos em N=30 (${count89_short} > 8)`;
 
-          this.saveLog(state.userId, 'analise', `RECUPERAÇÃO: Sinal Rejeitado\n• Motivo: ${reason}\n• P_short: ${P_short.toFixed(2)}\n• P_long: ${P_long.toFixed(2)}`);
+          this.saveLog(state.userId, 'analise', `RECUPERAÇÃO: Sinal Rejeitado\n• Motivo: ${reason}\n• P_short: ${P_short.toFixed(2)}\n• P_long: ${P_long.toFixed(2)}\n• Modo: ${state.mode.toUpperCase()}`);
           state.lastLogTimePerType.set('REJ_UNDER4', now);
         }
       }
@@ -521,9 +537,9 @@ Status: Sessão Equilibrada`;
         state.lossStreakRecovery = 0;
         state.skipSorosNext = true; // Resetar após vitória na recuperação
 
-        // CONDIÇÃO DE FECHAMENTO DA RECUPERAÇÃO: lucro_recuperado >= alvo_recuperacao
-        if (state.recoveredAmount >= state.recoveryTarget) {
-          this.logSuccessfulRecoveryV2(state.userId, state.recoveryTarget, state.recoveredAmount, state.capital);
+        // CONDIÇÃO DE FECHAMENTO DA RECUPERAÇÃO: lucro_recuperado >= total_perdido_no_ciclo
+        if (state.recoveredAmount >= state.totalLossAccumulated) {
+          this.logSuccessfulRecoveryV2(state.userId, state.totalLossAccumulated, state.recoveredAmount, state.capital);
           this.logContractChange(state.userId, 'UNDER 4', 'UNDER 8', 'Recuperação com Sucesso - Retornando à Meta Principal');
           state.analysisType = 'PRINCIPAL';
           state.mode = state.originalMode || 'veloz'; // Resetar Modo (Igual Atlas)
@@ -586,9 +602,9 @@ Status: Sessão Equilibrada`;
     else if (state.riskProfile === 'agressivo') percentualPerfil = 0.30; // (30%)
 
     if (state.analysisType === 'RECUPERACAO') {
-      // 5️⃣ CÁLCULO DE STAKE — RECUPERAÇÃO (IMUTÁVEL)
-      // stake_recuperacao = (perdas_acumuladas × (1 + percentual_perfil)) / payout_liquido
-      const lossToRecover = state.recoveryTarget - state.recoveredAmount;
+      // 5️⃣ CÁLCULO DE STAKE — RECUPERAÇÃO (DINÂMICA)
+      // Recupera o déficit ATUAL (Total de perdas acumuladas no ciclo - já recuperado)
+      const lossToRecover = state.totalLossAccumulated - state.recoveredAmount;
       const stake = (lossToRecover * (1 + percentualPerfil)) / PAYOUT_UNDER_4;
       return Number(stake.toFixed(2));
     } else {
@@ -794,7 +810,7 @@ Status: Sessão Equilibrada`;
   getUserState(userId: string) { return this.users.get(userId); }
 
   private saveLog(userId: string, type: string, message: string) {
-    const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌' };
+    const iconMap: any = { 'info': 'ℹ️', 'alerta': '⚠️', 'sinal': '🎯', 'resultado': '💰', 'erro': '❌', 'analise': '📊' };
 
     this.dataSource.query(`INSERT INTO ai_logs (user_id, type, icon, message, details, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`,
       [userId, type, iconMap[type] || '📝', message, JSON.stringify({ strategy: 'apollo' })]
