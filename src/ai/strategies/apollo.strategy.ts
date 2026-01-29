@@ -451,14 +451,23 @@ Status: Alta Escalabilidade`;
     stake = Math.max(0.35, stake);
 
     // ✅ CHECK INSUFFICIENT BALANCE (Before Trade)
+    // REMOVIDO: state.capital é inicializado com stakeAmount (entrada), não banca total.
+    // A verificação real de saldo deve ser delegada à Deriv API.
+    /*
     const requiredBalance = stake * 1.1;
     if (state.capital < requiredBalance) {
       this.saveLog(state.userId, 'erro', `SALDO INSUFICIENTE! Capital atual ($${state.capital.toFixed(2)}) é menor que o necessário ($${requiredBalance.toFixed(2)}) para o stake calculado ($${stake.toFixed(2)}). IA DESATIVADA.`);
       await this.handleStopInternal(state, 'insufficient_balance', state.capital);
       return;
     }
+    */
 
     // 2. ADJUST FOR STOPS
+    // ✅ REMOVIDO PARA ALINHAMENTO COM ATLAS:
+    // Atlas não impede a trade prévia baseada no stop (retorna Infinity).
+    // Isso evita "parada prematura" quando o saldo está próximo do floor/stop.
+    // O Stop real será acionado no pós-trade (checkApolloLimits).
+    /*
     const currentBalance = state.capital - state.capitalInicial;
     let limitRemaining: number;
 
@@ -487,6 +496,7 @@ Status: Alta Escalabilidade`;
 
       this.saveLog(state.userId, 'alerta', adjMsg);
     }
+    */
 
     state.currentStake = stake;
 
@@ -780,10 +790,12 @@ Status: Alta Escalabilidade`;
     const lossLimit = parseFloat(config.lossLimit) || 0;
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
+    const profitPeak = parseFloat(config.profitPeak) || 0; // ✅ Peak do Banco (Atualizado no processResult)
 
-
-    const lucroAtual = parseFloat(config.sessionBalance) || 0;
-    const capitalSessao = capitalInicial + lucroAtual;
+    // ✅ [FIX] Usar saldo em memória para precisão imediata (evita lag de leitura do DB)
+    // O DB é atualizado no processResult, mas a leitura imediata pode pegar valor antigo em réplicas/cache
+    const lucroAtual = state.capital - state.capitalInicial; // ✅ Memória
+    const capitalSessao = state.capital; // ✅ Memória
 
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
@@ -795,9 +807,10 @@ Meta: ${formatCurrency(profitTarget, state.currency)}
 Ação: IA DESATIVADA`
       );
 
+      // ✅ [ROBUST UPDATE] Usar ORDER BY created_at DESC LIMIT 1 para garantir update mesmo se is_active falhar
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? AND is_active = 1`,
+         WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
         [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, state.userId],
       );
 
@@ -851,7 +864,7 @@ Ação: IA DESATIVADA`
 
           await this.dataSource.query(
             `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
-             WHERE user_id = ? AND is_active = 1`,
+             WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
             [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
@@ -891,7 +904,7 @@ Ação: IA DESATIVADA`
 
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
-         WHERE user_id = ? AND is_active = 1`,
+         WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
         [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
       );
 
@@ -925,7 +938,7 @@ Ação: IA DESATIVADA`
     await this.deactivateUser(state.userId);
 
     try {
-      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
+      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? ORDER BY created_at DESC LIMIT 1`, [type, state.userId]);
     } catch (e) { }
   }
 
