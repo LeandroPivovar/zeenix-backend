@@ -1015,6 +1015,9 @@ export class TitanStrategy implements IStrategy {
                     [lucroSessao, state.userId]
                 ).catch(err => this.logger.error(`[TITAN] Erro ao atualizar session_balance:`, err));
 
+                // ✅ Verificar limites de proteção (Stop Blindado, Profit Target, Stop Loss)
+                await this.checkTitanLimits(state.userId);
+
                 const status = result.profit >= 0 ? 'WON' : 'LOST';
                 const previousWins = state.vitoriasConsecutivas;
 
@@ -1572,7 +1575,7 @@ Lucro/Perda: ${formatCurrency(profit, currency)}
 Saldo Atual: ${formatCurrency(balance, currency)}
 Dígito de Saída: ${contractInfo?.exitDigit || 'N/A'}`;
 
-        this.saveTitanLog(userId, this.symbol, result === 'WIN' ? 'vitoria' : 'derrota', message, contractInfo);
+        this.saveTitanLog(userId, this.symbol, 'resultado', message, contractInfo);
     }
 
     private logMartingaleLevelV2(userId: string, level: number, stake: number) {
