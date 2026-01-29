@@ -463,21 +463,22 @@ Status: Alta Escalabilidade`;
       const count89_short = last30.filter(d => d === 8 || d === 9).length;
 
       // ✅ CONDIÇÕES DE ENTRADA DINÂMICAS:
-      let minP = 0.47;
-      if (state.mode === 'normal') minP = 0.50;
-      else if (state.mode === 'preciso') minP = 0.53;
+      let minP = 0.15; // Veloz (15% - Halved from 30%)
+      if (state.mode === 'normal') minP = 0.25; // Halved from 50%
+      else if (state.mode === 'preciso') minP = 0.26; // Halved from 53%
 
       const cond1 = P_short >= minP;
-      const cond2 = (P_short - P_long) >= 0.02;
-      const cond3 = count89_short <= 8;
+      const cond2 = (P_short - P_long) >= 0.01; // Halved from 0.02
+      const cond3 = count89_short <= 16; // Doubled allowance (from 8 to 16)
+
       const now = Date.now();
       const throttleTime = 5000; // 5 segundos (Mais feedback visual)
 
       if (cond1 && cond2 && cond3) {
         this.logSignalGenerated(state.userId, 'RECUPERACAO', 'UNDER 4', [
           `P_short: ${P_short.toFixed(2)} >= ${minP}`,
-          `Delta P: ${(P_short - P_long).toFixed(2)} >= 0.02`,
-          `C_8_9_short: ${count89_short} <= 8`
+          `Delta P: ${(P_short - P_long).toFixed(2)} >= 0.01`,
+          `C_8_9_short: ${count89_short} <= 16`
         ], 54);
         return 'DIGITUNDER_4';
       } else {
