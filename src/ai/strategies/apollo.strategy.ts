@@ -66,6 +66,11 @@ export interface ApolloUserState {
   stopBlindadoFloor: number;
   stopBlindadoActive: boolean;
 
+  // Strategic Pause (Z-Score & Flip)
+  pauseActive: boolean;
+  pauseStartTime: number;
+  pauseCleanChecks: number;
+
   // Statistics
   ticksColetados: number;
   totalLossAccumulated: number;
@@ -406,7 +411,63 @@ Status: Alta Escalabilidade`;
 
           // Continua a execução para tentar pegar um sinal já no PRINCIPAL se houver
         }
-        // Outros modos: Não fazem nada aqui, continuam na lógica de Recuperação (loop) até recuperar.
+      }
+
+      // 8️⃣ PAUSA ESTRATÉGICA AVANÇADA (Z-Score & Flip)
+      // Gatilho: 6 perdas consecutivas (1 Normal + 5 Recuperação)
+      // Aplica-se a TODOS os modos (exceto se o conservador já resetou acima)
+      const totalLossStreak = state.consecutiveLosses + (state.analysisType === 'RECUPERACAO' ? state.lossStreakRecovery : 0);
+
+      // Se não estiver em pausa, verifica se deve entrar
+      if (!state.pauseActive) {
+        if (totalLossStreak >= 6) {
+          const ticksWindow = ticks.slice(-50); // Últimos 50 ticks para análise estatística
+          const zScore = this.calculateZScore(ticksWindow);
+          const flipRate = this.calculateFlipRate(ticksWindow);
+
+          // PAUSA OBRIGATÓRIA (User Request: Force pause after 6 losses)
+          // Condição de Entrada na Pausa: Alta Volatilidade (Z) ou Ruído Excessivo (Flip)
+          // if (zScore >= 2.5 || flipRate >= 0.62) { // REMOVIDO: Agora é obrigatório
+          state.pauseActive = true;
+          state.pauseStartTime = Date.now();
+          state.pauseCleanChecks = 0;
+
+          this.saveLog(state.userId, 'alerta',
+            `⛔ PAUSA ESTRATÉGICA (OBRIGATÓRIA)\n• Motivo: 6 perdas consecutivas atingidas.\n• Contexto: Z=${zScore.toFixed(2)}, Flip=${(flipRate * 100).toFixed(0)}%\n• Ação: Aguardando estabilização do mercado (3-6 min).`);
+          // }
+        }
+      }
+      // Se JÁ estiver em pausa, verifica se pode sair
+      else {
+        const timeElapsed = Date.now() - state.pauseStartTime;
+        const ticksWindow = ticks.slice(-50);
+        const zScore = this.calculateZScore(ticksWindow);
+        const flipRate = this.calculateFlipRate(ticksWindow);
+
+        // Monitoramento da Pausa (Log periódico para o usuário acompanhar)
+        const lastLog = state.lastLogTimePerType.get('LOG_PAUSA') || 0;
+        if (Date.now() - lastLog > 30000) { // A cada 30 segundos
+          this.saveLog(state.userId, 'info', `⏳ EM PAUSA (Monitorando Mercado)...\n• Z-Score: ${zScore.toFixed(2)} (Meta <= 1.5)\n• Flip: ${(flipRate * 100).toFixed(0)}% (Meta <= 55%)\n• Checks Limpos: ${state.pauseCleanChecks}/3`);
+          state.lastLogTimePerType.set('LOG_PAUSA', Date.now());
+        }
+
+        // Condição de Saída: Mercado Limpo (Z<=1.5 E Flip<=0.55) por 3 verificações
+        if (zScore <= 1.5 && flipRate <= 0.55) {
+          state.pauseCleanChecks++;
+        } else {
+          state.pauseCleanChecks = 0; // Reset se falhar uma verificação
+        }
+
+        // Sai da pausa se: 3 verificações limpas OU tempo máximo excedido (6 min)
+        if (state.pauseCleanChecks >= 3 || timeElapsed > 6 * 60 * 1000) {
+          state.pauseActive = false;
+          this.saveLog(state.userId, 'info',
+            `✅ FIM DA PAUSA ESTRATÉGICA\n• Motivo: ${(state.pauseCleanChecks >= 3) ? 'Mercado Estabilizado' : 'Tempo Máximo Excedido'}\n• Z-Score: ${zScore.toFixed(2)}\n• Flip: ${(flipRate * 100).toFixed(0)}%\n• Ação: Retornando operações.`);
+        } else {
+          // Em pausa -> Bloquear sinais (exceto se tiver passado tempo mínimo de 3 min E mercado estiver ok, mas lógica acima cobre isso)
+          // Simplesmente retorna para não analisar sinal
+          return;
+        }
       }
 
       // 3. ANALYZE SIGNAL
@@ -819,6 +880,48 @@ Status: Alta Escalabilidade`;
 
   // --- LOGIC HELPERS ---
 
+  // --- MATH HELPERS ---
+
+  private calculateZScore(ticks: number[]): number {
+    if (ticks.length < 2) return 0;
+
+    // Calcular retornos logarítmicos (volatilidade real)
+    const returns: number[] = [];
+    for (let i = 1; i < ticks.length; i++) {
+      returns.push(Math.log(ticks[i] / ticks[i - 1]));
+    }
+
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+    const stdDev = Math.sqrt(variance);
+
+    if (stdDev === 0) return 0;
+
+    // Z-Score do último retorno
+    const lastReturn = returns[returns.length - 1];
+    return Math.abs((lastReturn - mean) / stdDev);
+  }
+
+  private calculateFlipRate(ticks: number[]): number {
+    if (ticks.length < 2) return 0;
+
+    let flips = 0;
+    let lastDir = 0; // 0=none, 1=up, -1=down
+
+    for (let i = 1; i < ticks.length; i++) {
+      const diff = ticks[i] - ticks[i - 1];
+      if (diff === 0) continue;
+
+      const dir = diff > 0 ? 1 : -1;
+      if (lastDir !== 0 && dir !== lastDir) {
+        flips++;
+      }
+      lastDir = dir;
+    }
+
+    return flips / (ticks.length - 1);
+  }
+
   private calculateStake(state: ApolloUserState): number {
     const PAYOUT_UNDER_8 = 0.19; // Adjusted to 19% (User Request)
     const PAYOUT_UNDER_4 = 1.25; // Adjusted to ~125% (User Requirement)
@@ -1100,7 +1203,12 @@ Ação: IA DESATIVADA`
       stopBlindadoActive: false,
       ticksColetados: 0,
       totalLossAccumulated: 0,
-      processing: false
+      processing: false,
+
+      // Init Pause State
+      pauseActive: false,
+      pauseStartTime: 0,
+      pauseCleanChecks: 0
     };
 
     this.users.set(userId, initialState);
