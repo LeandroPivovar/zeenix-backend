@@ -206,7 +206,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getTradeHistory(@Param('userId') userId: string, @Query('limit') limit?: string) {
     try {
-      const limitNum = limit ? parseInt(limit, 10) : 500;
+      const limitNum = limit ? parseInt(limit, 10) : 50000;
       const history = await this.agentService.getTradeHistory(userId, limitNum);
 
       // Verificar se há trades com valores zerados no resultado
@@ -474,7 +474,7 @@ export class AutonomousAgentController {
       res.setHeader('X-Accel-Buffering', 'no'); // Desabilitar buffering do nginx
 
       // Enviar logs históricos primeiro
-      const historicalLogs = this.logsStreamService.getLogs(userId, 500);
+      const historicalLogs = this.logsStreamService.getLogs(userId, 5000);
       for (const log of historicalLogs) {
         res.write(`data: ${JSON.stringify(log)}\n\n`);
       }
@@ -521,7 +521,7 @@ export class AutonomousAgentController {
   @UseGuards(AuthGuard('jwt'))
   async getConsoleLogs(@Param('userId') userId: string, @Query('limit') limit?: string) {
     try {
-      const limitNum = limit ? parseInt(limit, 10) : 500;
+      const limitNum = limit ? parseInt(limit, 10) : 2000;
       const logs = this.logsStreamService.getLogs(userId, limitNum);
 
       return {

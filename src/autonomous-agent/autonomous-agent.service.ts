@@ -1174,7 +1174,7 @@ export class AutonomousAgentService implements OnModuleInit {
   private sessionDateCache: Map<string, { date: Date | string | null; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 30000; // 30 segundos
 
-  async getLogs(userId: string, limit: number = 500): Promise<any[]> {
+  async getLogs(userId: string, limit: number = 50000): Promise<any[]> {
     const limitClause = `LIMIT ${limit}`;
 
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)

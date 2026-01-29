@@ -13,7 +13,7 @@ export interface ConsoleLogEntry {
 export class AutonomousAgentLogsStreamService {
   private readonly logger = new Logger(AutonomousAgentLogsStreamService.name);
   private readonly logBuffer: Map<string, ConsoleLogEntry[]> = new Map();
-  private readonly maxBufferSize = 1000; // Máximo de logs por usuário
+  private readonly maxBufferSize = 5000; // Máximo de logs por usuário
   private readonly subscribers: Map<string, Set<(log: ConsoleLogEntry) => void>> = new Map();
 
   // Interceptar logs do Logger do NestJS
@@ -38,28 +38,28 @@ export class AutonomousAgentLogsStreamService {
 
     // Interceptar logs do AutonomousAgentService
     const self = this;
-    Logger.prototype.log = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.log = function (message: any, ...optionalParams: any[]) {
       originalLogger.call(this, message, ...optionalParams);
       if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
         self.addLog('log', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.error = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.error = function (message: any, ...optionalParams: any[]) {
       originalError.call(this, message, ...optionalParams);
       if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
         self.addLog('error', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.warn = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.warn = function (message: any, ...optionalParams: any[]) {
       originalWarn.call(this, message, ...optionalParams);
       if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
         self.addLog('warn', this.context, message, optionalParams);
       }
     };
 
-    Logger.prototype.debug = function(message: any, ...optionalParams: any[]) {
+    Logger.prototype.debug = function (message: any, ...optionalParams: any[]) {
       originalDebug.call(this, message, ...optionalParams);
       if (this.context === 'AutonomousAgentService' || this.context?.includes('AutonomousAgent')) {
         self.addLog('debug', this.context, message, optionalParams);
@@ -109,7 +109,7 @@ export class AutonomousAgentLogsStreamService {
   private extractUserIdFromMessage(message: any, context: string): string | null {
     try {
       const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
-      
+
       // Tentar extrair userId de padrões como [ProcessAgent][userId] ou [userId]
       const userIdMatch = messageStr.match(/\[.*?\]\[(.*?)\]/) || messageStr.match(/\[(.*?)\]/);
       if (userIdMatch && userIdMatch[1]) {
@@ -191,7 +191,7 @@ export class AutonomousAgentLogsStreamService {
     };
   }
 
-  getLogs(userId: string, limit: number = 500): ConsoleLogEntry[] {
+  getLogs(userId: string, limit: number = 5000): ConsoleLogEntry[] {
     const userLogs = this.logBuffer.get(userId) || [];
     return userLogs.slice(-limit);
   }
