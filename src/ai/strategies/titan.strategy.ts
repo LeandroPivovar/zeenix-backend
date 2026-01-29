@@ -25,22 +25,22 @@ interface ModeConfig {
 
 const MODE_CONFIGS: Record<OperationMode, ModeConfig> = {
     VELOZ: {
-        windowSize: 10,
-        majorityThreshold: 0.50, // 50% = 5 de 10
-        momentumThreshold: 3,
-        noiseThreshold: 6,
+        windowSize: 14,
+        majorityThreshold: 0.55, // 55%
+        momentumThreshold: 2,
+        noiseThreshold: 4,
     },
     NORMAL: {
-        windowSize: 20,
-        majorityThreshold: 0.60, // 60% = 12 de 20
-        momentumThreshold: 4,
+        windowSize: 24,
+        majorityThreshold: 0.60, // 60%
+        momentumThreshold: 3,
         noiseThreshold: 8,
     },
     LENTO: {
-        windowSize: 30,
-        majorityThreshold: 0.60, // 60% = 18 de 30
-        momentumThreshold: 5,
-        noiseThreshold: 8,
+        windowSize: 28,
+        majorityThreshold: 0.60, // 60%
+        momentumThreshold: 4, // 4 ticks na segunda metade
+        noiseThreshold: 10,
     },
 };
 
@@ -481,7 +481,7 @@ export class TitanStrategy implements IStrategy {
     private users = new Map<string, TitanUserState>();
     private riskManagers = new Map<string, RiskManager>();
     private ticks: Tick[] = [];
-    private symbol = 'R_100';
+    private symbol = 'R_75';
     private appId: string;
 
     // ✅ Pool de conexões WebSocket por token
