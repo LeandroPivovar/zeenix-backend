@@ -12,10 +12,8 @@ import { formatCurrency } from '../../utils/currency.utils';
  * 🛡️ APOLLO v1.0 (OFFICIAL) - Price Action Strategy
  * 
  * CORE: Price Action (Trend + Volatility)
- * Market: Volatility 10 (1s) Index (R_10) - *Adjusted to R_100 based on standard if needed, user said R_10 index in doc but previous code was R_100. Sticking to R_100 default or R_10 if specified.*
- * *Correction*: Doc image says "Volatility 10 (1s) Index". Prev code was R_100.
- * *User Prompt*: The user provided python code uses `api.buy(signal['contract'])` and doesn't explicitly force a symbol, but doc image says Volatility 10 (1s).
- * *Decision*: I will keep `R_100` as default symbol for now to match the existing ecosystem unless explicit instruction to change symbol, OR I will add support for it.
+ * Market: Volatility 10 (1s) Index (R_10)
+ * *Updated*: Default symbol set to R_10 as per user request.
  * *WAIT*: The user provided code in `on_tick` uses `self.ticks`.
  * 
  * FEATURES:
@@ -75,6 +73,7 @@ export interface ApolloUserState {
   isStopped: boolean;
   lastDirection?: string;
   lastContractType?: string;
+  processing?: boolean; // ✅ Concurrency Guard
 }
 
 @Injectable()
@@ -129,7 +128,7 @@ Saldo Inicial: ${formatCurrency(initialBalance, currency)}
 Meta de Lucro: ${formatCurrency(meta, currency)}
 Stop Loss: ${formatCurrency(state?.stopLoss || 0, currency)}
 Estratégia: APOLLO
-Símbolo: ${state?.symbol || 'R_100'}
+Símbolo: ${state?.symbol || 'R_10'}
 Modo Inicial: ${state?.mode.toUpperCase() || 'VELOZ'}
 Ação: iniciar coleta de dados`;
 
@@ -353,35 +352,71 @@ Status: Alta Escalabilidade`;
   }
 
   private async checkAndExecute(state: ApolloUserState, ticks: number[], digits: number[]) {
-    // 1. CHECK STOPS AND BLINDADO
-    await this.checkApolloLimits(state);
-    if (state.isStopped) return;
+    // ✅ PREVENT RACE CONDITIONS (Parallel Ticks)
+    if (state.processing) return;
+    state.processing = true;
 
-    // 2. TRIGGER RECOVERY & MODE DEGRADATION
-    // Active if loss_streak >= 2
-    if (state.consecutiveLosses >= 2) {
-      // Degradação de Modo (Igual Atlas)
-      if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
-        state.mode = 'preciso';
-        this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
-      } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
-        state.mode = 'normal';
-        this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
+    try {
+      // 1. CHECK STOPS AND BLINDADO
+      await this.checkApolloLimits(state);
+      if (state.isStopped) return;
+
+      // 2. TRIGGER RECOVERY & MODE DEGRADATION
+      // Active if loss_streak >= 2
+      if (state.consecutiveLosses >= 2) {
+        // Degradação de Modo (Igual Atlas)
+        if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
+          state.mode = 'preciso';
+          this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
+        } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
+          state.mode = 'normal';
+          this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
+        }
+
+        if (state.analysisType === 'PRINCIPAL') {
+          state.analysisType = 'RECUPERACAO';
+          state.recoveredAmount = 0;
+          state.recoveryTarget = state.totalLossAccumulated;
+          this.logContractChange(state.userId, 'UNDER 8', 'UNDER 4', 'Sequência de perdas - Ativando Recuperação');
+        }
       }
 
-      if (state.analysisType === 'PRINCIPAL') {
-        state.analysisType = 'RECUPERACAO';
-        state.recoveredAmount = 0;
-        state.recoveryTarget = state.totalLossAccumulated;
-        this.logContractChange(state.userId, 'UNDER 8', 'UNDER 4', 'Sequência de perdas - Ativando Recuperação');
+      // 7️⃣ LIMITADOR CONSERVADOR (Modificação solicitada)
+      // "no modo conservador após a 5 perda ele reseta para o stake base e continua a operar normalmente aceitando a perda"
+      // "os outros modos seguem até recuperar" -> Removemos a Pausa Estratégica geral.
+      if (state.analysisType === 'RECUPERACAO' && state.lossStreakRecovery >= 5) {
+        if (state.riskProfile === 'conservador') {
+          const now = Date.now();
+          // Log (throttled)
+          const lastLog = state.lastLogTimePerType.get('LIMITE_CONSERVADOR') || 0;
+          if (now - lastLog > 5000) {
+            this.saveLog(state.userId, 'info', `🛡️ LIMITE CONSERVADOR: 5 tentativas de recuperação falharam. Aceitando perda e resetando ciclo.`);
+            state.lastLogTimePerType.set('LIMITE_CONSERVADOR', now);
+          }
+
+          // Reset Total - Aceita a perda e volta ao início
+          state.analysisType = 'PRINCIPAL';
+          state.mode = state.originalMode || 'veloz';
+          state.consecutiveLosses = 0;
+          state.totalLossAccumulated = 0; // Zera o acumulado (aceita o prejuízo)
+          state.recoveryTarget = 0;
+          state.recoveredAmount = 0;
+          state.lossStreakRecovery = 0;
+          state.skipSorosNext = false;
+
+          // Continua a execução para tentar pegar um sinal já no PRINCIPAL se houver
+        }
+        // Outros modos: Não fazem nada aqui, continuam na lógica de Recuperação (loop) até recuperar.
       }
-    }
 
-    // 3. ANALYZE SIGNAL
-    const signal = this.analyzeSignal(state, digits);
+      // 3. ANALYZE SIGNAL
+      const signal = this.analyzeSignal(state, digits);
 
-    if (signal) {
-      await this.executeTrade(state, signal);
+      if (signal) {
+        await this.executeTrade(state, signal);
+      }
+    } finally {
+      state.processing = false;
     }
   }
 
@@ -681,9 +716,10 @@ Status: Alta Escalabilidade`;
         // CONDIÇÃO DE FECHAMENTO DA RECUPERAÇÃO: lucro_recuperado >= total_perdido_no_ciclo
         if (state.recoveredAmount >= state.totalLossAccumulated) {
           this.logSuccessfulRecoveryV2(state.userId, state.totalLossAccumulated, state.recoveredAmount, state.capital);
-          this.logContractChange(state.userId, 'UNDER 4', 'UNDER 8', 'Recuperação com Sucesso - Retornando à Meta Principal');
-          state.analysisType = 'PRINCIPAL';
           state.mode = state.originalMode || 'veloz'; // Resetar Modo (Igual Atlas)
+          state.analysisType = 'PRINCIPAL';
+          this.logContractChange(state.userId, 'UNDER 4', 'UNDER 8', `Recuperação com Sucesso - Retornando à Meta Principal (Modo: ${state.mode.toUpperCase()})`);
+
           state.consecutiveLosses = 0;
           state.totalLossAccumulated = 0;
           state.recoveryTarget = 0;
@@ -760,12 +796,12 @@ Status: Alta Escalabilidade`;
   // --- LOGIC HELPERS ---
 
   private calculateStake(state: ApolloUserState): number {
-    const PAYOUT_UNDER_8 = 0.18; // Payout conservador (safe-payout)
-    const PAYOUT_UNDER_4 = 1.20; // Payout conservador para Under 4 (safe-payout)
+    const PAYOUT_UNDER_8 = 0.225; // Adjusted to ~22.50% (User Requirement)
+    const PAYOUT_UNDER_4 = 1.384; // Adjusted to ~138.42% (User Requirement)
 
     // Perfil de Lucro na Recuperação (Igual Atlas)
     let percentualPerfil = 0.15; // Moderado default (15%)
-    if (state.riskProfile === 'conservador') percentualPerfil = 0.02; // (2%)
+    if (state.riskProfile === 'conservador') percentualPerfil = 0.00; // (0%) - User Requirement
     else if (state.riskProfile === 'agressivo') percentualPerfil = 0.30; // (30%)
 
     if (state.analysisType === 'RECUPERACAO') {
@@ -1039,7 +1075,8 @@ Ação: IA DESATIVADA`
       stopBlindadoFloor: 0,
       stopBlindadoActive: false,
       ticksColetados: 0,
-      totalLossAccumulated: 0
+      totalLossAccumulated: 0,
+      processing: false
     };
 
     this.users.set(userId, initialState);
