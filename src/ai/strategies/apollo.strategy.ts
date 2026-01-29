@@ -59,6 +59,7 @@ export interface ApolloUserState {
   recoveredAmount: number;
   lossStreakRecovery: number;
   skipSorosNext: boolean;
+  consecutiveWins: number;
 
   // Defense / Blindado
   defenseMode: boolean; // Active after 3 losses
@@ -517,9 +518,11 @@ Status: Sessão Equilibrada`;
         state.consecutiveLosses = 0;
         state.totalLossAccumulated = 0;
       }
+      state.consecutiveWins++;
     } else {
       // LOSS
       state.consecutiveLosses++;
+      state.consecutiveWins = 0;
       state.totalLossAccumulated += stakeUsed;
 
       if (state.analysisType === 'RECUPERACAO') {
@@ -569,13 +572,14 @@ Status: Sessão Equilibrada`;
       // 4️⃣ CÁLCULO DE STAKE — META (PRINCIPAL)
 
       // ✅ RESET APÓS RECUPERAÇÃO/MARTINGALE: Se a flag estiver ativa, ignora Soros desta vez
-      if (state.skipSorosNext) {
+      if (state.skipSorosNext || state.consecutiveWins >= 2) {
         state.skipSorosNext = false;
+        if (state.consecutiveWins >= 2) state.consecutiveWins = 0; // Reinicia ciclo de Soros
         return state.apostaInicial;
       }
 
-      // ✅ SOROS: Se a última foi WIN, entra com (Base + Lucro)
-      if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveLosses === 0) {
+      // ✅ SOROS: Se a última foi WIN (Nível 1), entra com (Base + Lucro)
+      if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveWins === 1) {
         return Number((state.apostaInicial + state.lastProfit).toFixed(2));
       }
 
@@ -728,6 +732,7 @@ Status: Sessão Equilibrada`;
       recoveredAmount: 0,
       lossStreakRecovery: 0,
       skipSorosNext: false,
+      consecutiveWins: 0,
 
       defenseMode: false,
       peakProfit: 0,
