@@ -396,7 +396,7 @@ class RiskManager {
       // Regra [ZENIX v3.5]: Garantir 50% do lucro da ATIVAÇÃO.
       // Ativação trigger = meta * 0.40
       const activationPoint = this.profitTarget * 0.40;
-      const guaranteedProfit = activationPoint * 0.5; // Piso fixo: 50% de 40% da meta
+      const guaranteedProfit = activationPoint; // Piso fixo: 40% da meta
       minAllowedBalance = this.initialBalance + guaranteedProfit;
       limitType = 'PISO DE LUCRO PROTEGIDO';
 
@@ -406,7 +406,7 @@ class RiskManager {
         if (saveLog && currentBalance > this.initialBalance) { // Apenas salvar se tiver lucro real
           // Log apenas se mudou significativamente ou é novo?
           // Para "Atualização/Ativação Stop Blindado":
-          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PICO DO LUCRO: $${profitAccumulatedAtPeak.toFixed(2)}\n• PROTEÇÃO FIXA: $${guaranteedProfit.toFixed(2)}\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
+          saveLog('info', `🛡️ STOP BLINDADO ATIVADO!\n• LUCRO ATUAL: $${(currentBalance - this.initialBalance).toFixed(2)}\n• PROTEÇÃO FIXA: $${guaranteedProfit.toFixed(2)} (40% da Meta)\n• NOVO STOP LOSS: $${minAllowedBalance.toFixed(2)}`);
         }
       }
     } else {
