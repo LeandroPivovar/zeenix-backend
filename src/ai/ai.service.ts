@@ -2686,7 +2686,8 @@ export class AiService implements OnModuleInit {
         modo_martingale as modoMartingale
        FROM ai_user_config
        WHERE is_active = TRUE
-         AND LOWER(mode) = 'veloz'`,
+         AND LOWER(mode) = 'veloz'
+         AND (strategy IS NULL OR strategy = '' OR LOWER(strategy) = 'orion')`,
     );
 
     if (configs.length > 0) {
@@ -4562,7 +4563,8 @@ export class AiService implements OnModuleInit {
                 mode
              FROM ai_user_config 
              WHERE is_active = TRUE 
-             AND LOWER(mode) IN ('fast', 'veloz')`
+             AND LOWER(mode) IN ('fast', 'veloz')
+             AND (strategy IS NULL OR strategy = '' OR LOWER(strategy) IN ('fast', 'veloz'))`
       );
 
       this.logger.debug(`[Fast Mode] Encontrados ${fastModeUsers.length} usuários ativos`);
@@ -4612,6 +4614,7 @@ export class AiService implements OnModuleInit {
              WHERE is_active = TRUE 
              AND LOWER(mode) NOT IN ('fast', 'veloz')
              AND (next_trade_at IS NULL OR next_trade_at <= NOW())
+             AND (strategy IS NULL OR strategy = '')
              LIMIT 10`
       );
 
@@ -6618,7 +6621,8 @@ export class AiService implements OnModuleInit {
           modo_martingale as modoMartingale
          FROM ai_user_config
          WHERE is_active = TRUE
-           AND LOWER(mode) = 'moderado'`,
+           AND LOWER(mode) = 'moderado'
+           AND (strategy IS NULL OR strategy = '' OR LOWER(strategy) = 'moderado')`,
       );
 
       this.logger.log(`[SyncModerado] Sincronizando ${activeUsers.length} usuários do banco`);
@@ -7414,7 +7418,8 @@ export class AiService implements OnModuleInit {
           modo_martingale as modoMartingale
          FROM ai_user_config
          WHERE is_active = TRUE
-           AND LOWER(mode) = 'preciso'`,
+           AND LOWER(mode) = 'preciso'
+           AND (strategy IS NULL OR strategy = '' OR LOWER(strategy) = 'preciso')`,
       );
 
       this.logger.log(`[SyncPreciso] Sincronizando ${activeUsers.length} usuários do banco`);
