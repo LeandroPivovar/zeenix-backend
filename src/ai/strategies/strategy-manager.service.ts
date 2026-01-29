@@ -56,7 +56,8 @@ export class StrategyManagerService implements OnModuleInit {
       this.orionStrategy.processTick(tick, symbol || 'R_100').catch(error => {
         this.logger.error('[StrategyManager][Orion] Erro:', error);
       }),
-      this.titanStrategy.processTick(tick, symbol || 'R_100').catch(error => {
+      // ✅ FIX: Titan configurado para R_75
+      this.titanStrategy.processTick(tick, symbol || 'R_75').catch(error => {
         this.logger.error('[StrategyManager][Titan] Erro:', error);
       }),
       this.nexusStrategy.processTick(tick, symbol || 'R_100').catch(error => {
