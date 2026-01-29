@@ -209,28 +209,25 @@ Saldo Atual: ${formatCurrency(balance, currency)}`;
     const currency = state?.currency || 'USD';
 
     if (type === 'PROFIT') {
-      const message = `META ATINGIDA
-Título: Objetivo Alcançado
-Status: Meta Batida
-Lucro Total: ${formatCurrency(value, currency)}
+      const message = `META DE LUCRO ATINGIDA
+Status: Meta Alcançada
+Lucro: ${formatCurrency(value, currency)}
 Meta: ${formatCurrency(limit, currency)}
-Ação: encerrar sessão`;
+Ação: IA DESATIVADA`;
       this.saveLog(userId, 'resultado', message);
     } else if (type === 'LOSS') {
       const message = `STOP LOSS ATINGIDO
-Título: Limite de Perda Alcançado
-Status: Sessão Encerrada
-Perda Total: -${formatCurrency(Math.abs(value), currency)}
+Status: Limite de Perda
+Perda: ${formatCurrency(value, currency)}
 Limite: ${formatCurrency(limit, currency)}
-Ação: encerrar operações`;
+Ação: IA DESATIVADA`;
       this.saveLog(userId, 'alerta', message);
     } else if (type === 'BLINDADO') {
       const message = `STOP BLINDADO ATINGIDO
-Título: Lucro Protegido (40%)
-Status: Lucro Preservado
-Piso Protegido: ${formatCurrency(value, currency)}
-Ação: encerrar sessão`;
-      this.saveLog(userId, 'resultado', message);
+Status: Lucro Protegido
+Lucro Protegido: ${formatCurrency(value, currency)}
+Ação: IA DESATIVADA`;
+      this.saveLog(userId, 'info', message);
     }
   }
 
