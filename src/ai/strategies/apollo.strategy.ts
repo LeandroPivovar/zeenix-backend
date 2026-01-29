@@ -362,13 +362,13 @@ Status: Alta Escalabilidade`;
       if (state.isStopped) return;
 
       // 2. TRIGGER RECOVERY & MODE DEGRADATION
-      // Active if loss_streak >= 2
-      if (state.consecutiveLosses >= 2) {
+      // Active if loss_streak >= 1 (User Request: change from 2 to 1)
+      if (state.consecutiveLosses >= 1) {
         // Degradação de Modo (Igual Atlas)
         if (state.consecutiveLosses >= 4 && state.mode !== 'preciso') {
           state.mode = 'preciso';
           this.saveLog(state.userId, 'info', `📉 ALTA VOLATILIDADE (${state.consecutiveLosses}x): Modo alterado para PRECISO.`);
-        } else if (state.consecutiveLosses >= 2 && state.mode === 'veloz') {
+        } else if (state.consecutiveLosses >= 1 && state.mode === 'veloz') {
           state.mode = 'normal';
           this.saveLog(state.userId, 'info', `📉 DEFESA ATIVADA (${state.consecutiveLosses}x): Modo alterado para NORMAL.`);
         }
@@ -571,20 +571,43 @@ Status: Alta Escalabilidade`;
       this.saveLog(state.userId, 'alerta', adjMsg);
     }
 
+    // 4. PREPARE EXECUTION
+    state.isOperationActive = true;
+
+    const contractType = 'DIGITUNDER';
+    // ✅ Fix barrier scope: Define barrier derived from signal BEFORE using it in logic
+    const barrier = signal === 'DIGITUNDER_8' ? '8' : '4';
+
+    // 3. ADJUST FOR PROFIT TARGET (SMART TAKE PROFIT)
+    // ✅ Se faltar pouco para a meta, reduzir a mão para expor apenas o necessário
+    if (state.profitTarget > 0 && currentLucro < state.profitTarget) {
+      const profitRemaining = state.profitTarget - currentLucro;
+      const payout = barrier === '4' ? 1.384 : 0.19; // Estimativa baseada nos payouts definidos
+      const potentialProfit = stake * payout;
+
+      if (potentialProfit > profitRemaining + 0.10) { // Margem de $0.10 para garantir batida da meta
+        // Calcular stake necessária: stake = lucro_necessario / payout
+        const idealStake = profitRemaining / payout;
+
+        // Se a ideal for menor que a calculada, usa a ideal (respeitando minimo da deriv)
+        if (idealStake < stake && idealStake >= 0.35) {
+          const originalStake = stake;
+          stake = Number(idealStake.toFixed(2));
+          this.saveLog(state.userId, 'alerta',
+            `🎯 AJUSTE DE META (SMART CHECK)\n• Stake Original: $${originalStake.toFixed(2)}\n• Falta para Meta: $${profitRemaining.toFixed(2)}\n• Ação: Reduzindo para $${stake.toFixed(2)} para bater a meta com risco mínimo.`);
+        }
+      }
+    }
+
     state.currentStake = stake;
 
-    // 3. RECUPERAÇÃO / MARTINGALE LOG
+    // 5. RECUPERAÇÃO / MARTINGALE LOG
     if (state.consecutiveLosses > 0 || state.analysisType === 'RECUPERACAO') {
       const level = state.analysisType === 'RECUPERACAO' ? `RECUPERAÇÃO (${state.lossStreakRecovery})` : state.consecutiveLosses;
       this.logMartingaleLevelV2(state.userId, level as any, stake);
     }
 
     // 4. EXECUTE
-    state.isOperationActive = true;
-
-    const contractType = 'DIGITUNDER';
-    const barrier = signal === 'DIGITUNDER_8' ? '8' : '4';
-
     state.lastDirection = signal.replace('DIGIT', '');
     state.lastContractType = `Digits ${state.lastDirection}`;
 
