@@ -263,22 +263,47 @@ export class NexusStrategy implements IStrategy {
 
     private async processUser(state: NexusUserState): Promise<void> {
         if (state.isOperationActive) return;
+
+        // ✅ [NEXUS COMPATIBILITY] Define Window Size (Batch Mode for Log Parity)
+        // VELOZ: 10 ticks, NORMAL: 15 ticks, LENTO: 20 ticks
+        const windowSize = state.mode === 'VELOZ' ? 10 : (state.mode === 'NORMAL' ? 15 : 20);
+
+        // 1. Coleta de Dados
+        if (state.ticksColetados < windowSize) {
+            // Log apenas periodicamente (par ou 0)
+            if (state.ticksColetados === 0 || state.ticksColetados % 2 === 0) {
+                this.logDataCollection(state.userId, {
+                    currentCount: state.ticksColetados,
+                    targetCount: windowSize,
+                    mode: state.mode
+                });
+            }
+            return;
+        }
+
+        // 2. Análise de Mercado (Ao atingir janela)
+        const message = `ANÁLISE DE MERCADO
+• Modo: ${state.mode}
+• Janela: ${windowSize} ticks
+• Status: Processando padrões...`;
+        this.saveNexusLog(state.userId, this.symbol, 'analise', message);
+
+        // 3. Executar Análise
         const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
-        // ✅ Feedback periódico para o usuário não achar que o bot parou
-        if (state.ticksColetados % 30 === 0) {
-            // ✅ Feedback periódico para o usuário não achar que o bot parou
-            if (state.ticksColetados % 30 === 0) {
-                // ✅ LOG PADRONIZADO V2: Coleta de Dados / Análise
-                this.logAnalysisStarted(state.userId, state.mode);
-            }
+        // Reset ticks for next batch (Discrete Window)
+        state.ticksColetados = 0;
+
+        const result = this.analyzeNexus(state, riskManager);
+
+        if (!result.hasSignal) {
+            this.logBlockedEntry(state.userId, result.reason || 'Padrão não identificado', 'FILTRO');
+            return;
         }
 
-        const signal = this.check_signal(state, riskManager);
-        if (!signal) return;
-
-        await this.executeOperation(state, signal);
+        // 4. Executar Operação
+        await this.executeOperation(state, result.signal as DigitParity);
     }
 
     private check_signal(state: NexusUserState, riskManager: RiskManager): DigitParity | null {
@@ -1705,4 +1730,179 @@ Status: Sessão Equilibrada`;
         };
         return icons[type] || '🎯';
     }
+
+    private analyzeNexus(state: NexusUserState, riskManager: RiskManager): { hasSignal: boolean, signal?: DigitParity, reason?: string } {
+        // ✅ Python Nexus v2: Entrada Principal (Higher -0.15) + Recuperação (Rise/Fall)
+
+        const isRecovering = riskManager.consecutiveLosses >= 2;
+
+        if (!isRecovering) {
+            // ═══════════════════════════════════════════════════════════════
+            // ANÁLISE PRINCIPAL (ENTRADA BARREIRA - M0/M1)
+            // ═══════════════════════════════════════════════════════════════
+
+            if (state.mode === 'VELOZ') {
+                // VELOZ: 1 tick consecutivo na mesma direção + delta >= 0.1
+                const lastTwo = this.ticks.slice(-2);
+                if (lastTwo.length < 2) return { hasSignal: false, reason: 'Aguardando ticks (VELOZ)' };
+
+                const delta = Math.abs(lastTwo[1].value - lastTwo[0].value);
+
+                if (lastTwo[1].value > lastTwo[0].value && delta >= 0.1) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
+                        trigger: 'Tendência Imediata (Veloz)',
+                        probability: 60,
+                        contractType: 'HIGHER',
+                        direction: 'CALL'
+                    });
+                    return { hasSignal: true, signal: 'PAR' };
+                } else if (lastTwo[1].value < lastTwo[0].value && delta >= 0.1) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['1 tick consecutivo', `Delta: ${delta.toFixed(2)} (>= 0.1)`],
+                        trigger: 'Tendência Imediata (Veloz)',
+                        probability: 60,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return { hasSignal: true, signal: 'IMPAR' };
+                }
+
+            } else if (state.mode === 'NORMAL') {
+                // NORMAL: 3 ticks consecutivos na mesma direção + delta >= 0.3
+                if (this.ticks.length < 4) return { hasSignal: false, reason: 'Aguardando ticks (NORMAL)' };
+
+                const last4 = this.ticks.slice(-4);
+                const prices = last4.map(t => t.value);
+
+                const upMomentum = prices[1] > prices[0] && prices[2] > prices[1] && prices[3] > prices[2];
+                const downMomentum = prices[1] < prices[0] && prices[2] < prices[1] && prices[3] < prices[2];
+                const delta = prices[3] - prices[0];
+
+                if (upMomentum && delta >= 0.3) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.3)`],
+                        trigger: 'Momentum de Alta',
+                        probability: 75,
+                        contractType: 'HIGHER',
+                        direction: 'CALL'
+                    });
+                    return { hasSignal: true, signal: 'PAR' };
+                } else if (downMomentum && delta <= -0.3) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.3)`],
+                        trigger: 'Momentum de Baixa',
+                        probability: 75,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return { hasSignal: true, signal: 'IMPAR' };
+                }
+
+            } else if (state.mode === 'LENTO') {
+                // LENTO / PRECISO: 3 ticks consecutivos na mesma direção + delta >= 0.5
+                if (this.ticks.length < 4) return { hasSignal: false, reason: 'Aguardando ticks (LENTO)' };
+
+                const last4 = this.ticks.slice(-4);
+                const prices = last4.map(t => t.value);
+
+                const upMomentum = prices[1] > prices[0] && prices[2] > prices[1] && prices[3] > prices[2];
+                const downMomentum = prices[1] < prices[0] && prices[2] < prices[1] && prices[3] < prices[2];
+                const delta = prices[3] - prices[0];
+
+                if (upMomentum && delta >= 0.5) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (>= 0.5)`],
+                        trigger: 'Momentum Forte (Alta)',
+                        probability: 85,
+                        contractType: 'HIGHER',
+                        direction: 'CALL'
+                    });
+                    return { hasSignal: true, signal: 'PAR' };
+                } else if (downMomentum && delta <= -0.5) {
+                    this.logSignalGenerated(state.userId, {
+                        mode: state.mode,
+                        isRecovery: false,
+                        filters: ['3 ticks consecutivos', `Delta: ${delta.toFixed(2)} (<= -0.5)`],
+                        trigger: 'Momentum Forte (Baixa)',
+                        probability: 85,
+                        contractType: 'LOWER',
+                        direction: 'PUT'
+                    });
+                    return { hasSignal: true, signal: 'IMPAR' };
+                }
+            }
+        } else {
+            // Recovers
+            let requiredTicks: number;
+            let minDelta: number;
+            let modeInfo: string;
+
+            if (state.mode === 'VELOZ') {
+                requiredTicks = 2; minDelta = 0.2; modeInfo = '2 ticks + delta >= 0.2';
+            } else if (state.mode === 'NORMAL') {
+                requiredTicks = 3; minDelta = 0.5; modeInfo = '3 ticks + delta >= 0.5';
+            } else {
+                requiredTicks = 3; minDelta = 0.7; modeInfo = '3 ticks + delta >= 0.7';
+            }
+
+            if (this.ticks.length < requiredTicks + 1) return { hasSignal: false, reason: `Aguardando ${requiredTicks} ticks (RECUPERAÇÃO)` };
+
+            const prices = this.ticks.slice(-(requiredTicks + 1)).map(t => t.value);
+
+            // CALL
+            let upMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] <= prices[i]) { upMomentum = false; break; }
+            }
+            const deltaUp = prices[prices.length - 1] - prices[0];
+
+            if (upMomentum && deltaUp >= minDelta) {
+                this.logSignalGenerated(state.userId, {
+                    mode: state.mode,
+                    isRecovery: true,
+                    filters: [modeInfo, `Delta: ${deltaUp.toFixed(2)} (>= ${minDelta})`],
+                    trigger: 'Recuperação Alta',
+                    probability: 80,
+                    contractType: 'RISE/FALL',
+                    direction: 'CALL'
+                });
+                return { hasSignal: true, signal: 'PAR' };
+            }
+
+            // PUT
+            let downMomentum = true;
+            for (let i = 0; i < requiredTicks; i++) {
+                if (prices[i + 1] >= prices[i]) { downMomentum = false; break; }
+            }
+            const deltaDown = prices[0] - prices[prices.length - 1];
+
+            if (downMomentum && deltaDown >= minDelta) {
+                this.logSignalGenerated(state.userId, {
+                    mode: state.mode,
+                    isRecovery: true,
+                    filters: [modeInfo, `Delta: ${deltaDown.toFixed(2)} (>= ${minDelta})`],
+                    trigger: 'Recuperação Baixa',
+                    probability: 80,
+                    contractType: 'RISE/FALL',
+                    direction: 'PUT'
+                });
+                return { hasSignal: true, signal: 'IMPAR' };
+            }
+        }
+
+        return { hasSignal: false, reason: 'Filtros não atendidos (Tendência/Momentum)' };
+    }
+
+
 }
