@@ -208,13 +208,29 @@ class RiskManager {
             }
         }
 
-        if (nextStake < 0.35) {
-            const reason = this._blindadoActive ? 'STOP BLINDADO' : 'STOP LOSS';
-            const msg = `🛑 ${reason} ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de proteção alcançado.\n• Ação: Encerrando operações imediatamente.`;
-            if (userId && symbol && logCallback) {
-                logCallback(userId, symbol, 'alerta', msg);
-            }
+        let finalFloor = this.initialBalance;
+        if (this._blindadoActive) {
+            const activationPoint = this.profitTarget * 0.40;
+            finalFloor += activationPoint;
+        } else {
+            finalFloor -= this.stopLossLimit;
+        }
+
+        const maxRisk = currentBalance - finalFloor;
+
+        if (nextStake > maxRisk) {
+            nextStake = Math.max(0, maxRisk);
+        }
+
+        // ✅ [ZENIX v3.5] ATLAS STYLE: 
+        // Se a stake for menor que 0.35, usamos 0.35 para tentar a última operação.
+        // Se já estivermos exatamente no piso ou abaixo, retornamos 0 para parar.
+        if (currentBalance <= finalFloor) {
             return 0.0;
+        }
+
+        if (nextStake < 0.35) {
+            nextStake = 0.35;
         }
 
         return Math.round(nextStake * 100) / 100;
@@ -278,6 +294,28 @@ export class NexusStrategy implements IStrategy {
     private async processUser(state: NexusUserState): Promise<void> {
         if (state.isOperationActive) return;
 
+        // ✅ [ZENIX v3.5] ATLAS STYLE STOP CHECK (NO INÍCIO DO CICLO)
+        const riskManager = this.riskManagers.get(state.userId)!;
+        const currentProfit = state.capital - riskManager.getInitialBalance();
+
+        // Check Stop Blindado Floor
+        if (riskManager.blindadoActive) {
+            const floor = riskManager.getProfitTarget() * 0.40;
+            if (currentProfit <= floor) {
+                this.logger.log(`[NEXUS][${state.userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+                await this.stopUser(state, 'stopped_blindado');
+                return;
+            }
+        }
+
+        // Check Meta (TP) - Para evitar erro de modal trocado
+        const profitTargetLimit = riskManager.getProfitTarget();
+        if (profitTargetLimit > 0 && currentProfit >= profitTargetLimit) {
+            this.logger.log(`[NEXUS][${state.userId}] 🎯 META ALCANÇADA NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)}`);
+            await this.stopUser(state, 'stopped_profit');
+            return;
+        }
+
         // ✅ [NEXUS COMPATIBILITY] Define Window Size (Batch Mode for Log Parity)
         // VELOZ: 10 ticks, NORMAL: 15 ticks, LENTO: 20 ticks
         const windowSize = state.mode === 'VELOZ' ? 10 : (state.mode === 'NORMAL' ? 15 : 20);
@@ -303,7 +341,6 @@ export class NexusStrategy implements IStrategy {
         this.saveNexusLog(state.userId, this.symbol, 'analise', message);
 
         // 3. Executar Análise
-        const riskManager = this.riskManagers.get(state.userId);
         if (!riskManager) return;
 
         const result = this.analyzeNexus(state, riskManager);
