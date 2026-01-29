@@ -582,7 +582,7 @@ Status: Alta Escalabilidade`;
     // ✅ Se faltar pouco para a meta, reduzir a mão para expor apenas o necessário
     if (state.profitTarget > 0 && currentLucro < state.profitTarget) {
       const profitRemaining = state.profitTarget - currentLucro;
-      const payout = barrier === '4' ? 1.384 : 0.19; // Estimativa baseada nos payouts definidos
+      const payout = barrier === '4' ? 1.25 : 0.19; // Estimativa baseada nos payouts definidos
       const potentialProfit = stake * payout;
 
       if (potentialProfit > profitRemaining + 0.10) { // Margem de $0.10 para garantir batida da meta
@@ -820,7 +820,7 @@ Status: Alta Escalabilidade`;
 
   private calculateStake(state: ApolloUserState): number {
     const PAYOUT_UNDER_8 = 0.19; // Adjusted to 19% (User Request)
-    const PAYOUT_UNDER_4 = 1.384; // Adjusted to ~138.42% (User Requirement)
+    const PAYOUT_UNDER_4 = 1.25; // Adjusted to ~125% (User Requirement)
 
     // Perfil de Lucro na Recuperação (Igual Atlas)
     let percentualPerfil = 0.15; // Moderado default (15%)
