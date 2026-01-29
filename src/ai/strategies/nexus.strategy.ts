@@ -588,86 +588,6 @@ export class NexusStrategy implements IStrategy {
     getUserState(userId: string) { return this.users.get(userId); }
 
     private async executeOperation(state: NexusUserState, direction: DigitParity): Promise<void> {
-        // ✅ [NEXUS] Verificar Stop Loss Blindado ANTES de calcular stake
-        try {
-            const blindadoConfig = await this.dataSource.query(
-                `SELECT profit_peak, stop_blindado_percent, profit_target,
-                        stake_amount as capitalInicial, session_balance
-                 FROM ai_user_config WHERE user_id = ? AND is_active = 1
-                 LIMIT 1`,
-                [state.userId]
-            );
-
-            if (blindadoConfig && blindadoConfig.length > 0) {
-                const config = blindadoConfig[0];
-                const sessionBalance = parseFloat(config.session_balance) || 0;
-                const capitalInicial = parseFloat(config.capitalInicial) || 0;
-                const profitTarget = parseFloat(config.profit_target) || 0;
-                const capitalSessao = capitalInicial + sessionBalance;
-                const lucroAtual = sessionBalance;
-
-                // ✅ VERIFICAR STOP WIN (profit target)
-                if (profitTarget > 0 && lucroAtual >= profitTarget) {
-                    this.saveNexusLog(state.userId, this.symbol, 'info',
-                        `🎯 META DE LUCRO ATINGIDA! Lucro: $${lucroAtual.toFixed(2)} | Meta: $${profitTarget.toFixed(2)} - IA DESATIVADA`);
-                    await this.stopUser(state, 'stopped_profit');
-                    return;
-                }
-
-                // Update profit peak if current profit is higher
-                let profitPeak = parseFloat(config.profit_peak) || 0;
-                if (lucroAtual > profitPeak) {
-                    profitPeak = lucroAtual;
-                    this.dataSource.query(
-                        `UPDATE ai_user_config SET profit_peak = ? WHERE user_id = ?`,
-                        [profitPeak, state.userId]
-                    ).catch(err => this.logger.error(`[NEXUS] Erro ao atualizar profit_peak:`, err));
-
-                    // ✅ ATLAS LOGIC: Log Activation (INFO) - Avoids modal trigger
-                    if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
-                        const activationThreshold = profitTarget * 0.40;
-                        if (profitPeak >= activationThreshold) {
-                            const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-                            const protectedAmount = profitPeak * (stopBlindadoPercent / 100);
-
-                            this.saveNexusLog(state.userId, this.symbol, 'info',
-                                `🛡️ Proteção de Lucro: Ativado | Lucro atual ${formatCurrency(profitPeak, state.currency)} | Protegendo ${stopBlindadoPercent}%: ${formatCurrency(protectedAmount, state.currency)}`
-                            );
-                        }
-                    }
-                }
-
-                // ✅ VERIFICAR STOP BLINDADO (Dynamic Trailing - Copied from Atlas)
-                if (config.stop_blindado_percent !== null && config.stop_blindado_percent !== undefined) {
-                    let currentPeak = profitPeak;
-                    const activationThreshold = profitTarget * 0.40;
-
-                    if (currentPeak >= activationThreshold) {
-                        const stopBlindadoPercent = parseFloat(config.stop_blindado_percent) || 50.0;
-                        const factor = stopBlindadoPercent / 100;
-
-                        // ✅ ATLAS LOGIC: Trailing Stop based on Peak High (not fixed threshold)
-                        // Atlas: const stopBlindado = capitalInicial + (currentPeak * factor);
-                        const stopBlindado = capitalInicial + (currentPeak * factor);
-
-                        if (capitalSessao <= stopBlindado) {
-                            const lucroFinal = capitalSessao - capitalInicial;
-
-                            this.saveNexusLog(state.userId, this.symbol, 'info',
-                                `🛡️ STOP BLINDADO ATINGIDO! Lucro protegido: ${formatCurrency(lucroFinal, state.currency)} - IA DESATIVADA`
-                            );
-
-                            await this.stopUser(state, 'stopped_blindado');
-                            return;
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            this.logger.error(`[NEXUS][${state.userId}] Erro ao verificar Stop Loss Blindado:`, error);
-            // Continue even if there's an error (fail-open)
-        }
-
         const riskManager = this.riskManagers.get(state.userId)!;
         const stake = riskManager.calculateStake(
             state.capital,
@@ -861,16 +781,20 @@ export class NexusStrategy implements IStrategy {
 
                 await this.dataSource.query(`UPDATE ai_trades SET status = ?, profit_loss = ?, exit_price = ?, closed_at = NOW() WHERE id = ?`, [status, result.profit, result.exitSpot, tradeId]);
 
-
-
                 this.tradeEvents.emit({ userId: state.userId, type: 'updated', tradeId, status, strategy: 'nexus', profitLoss: result.profit });
 
-                // ✅ [ZENIX v3.5] Sync session_balance to DB for Stop Blindado check (Copied from Atlas)
+                // ✅ [ATLAS LOGIC] Update session_balance AND profit_peak
                 const lucroSessao = state.capital - riskManager.getInitialBalance();
-                this.dataSource.query(
-                    `UPDATE ai_user_config SET session_balance = ? WHERE user_id = ? AND is_active = 1`,
-                    [lucroSessao, state.userId]
+                await this.dataSource.query(
+                    `UPDATE ai_user_config 
+                     SET session_balance = ?, 
+                         profit_peak = GREATEST(COALESCE(profit_peak, 0), ?)
+                     WHERE user_id = ? AND is_active = 1`,
+                    [lucroSessao, lucroSessao, state.userId]
                 ).catch(e => this.logger.error(`[NEXUS] Erro ao atualizar session_balance: ${e.message}`));
+
+                // ✅ [ATLAS LOGIC] Check protection limits after updating balance
+                await this.checkNexusLimits(state.userId);
 
                 // ✅ [NEXUS] Master Trader Result Update
                 try {
@@ -1464,6 +1388,248 @@ Status: Sessão Equilibrada`;
 • Motivo: ${change.reason}`;
 
         this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    // ✅ MISSING LOGS FROM ATLAS
+
+    private logModeEvaluation(userId: string, mode: string, winRate: number, losses: number) {
+        const message = `NEXUS | Avaliação de Modo
+• Modo Atual: ${mode.toUpperCase()}
+• Win Rate Local: ${winRate.toFixed(1)}%
+• Perdas Consecutivas: ${losses}
+• Decisão: manter modo`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
+    }
+
+    private logRecoveryPartial(userId: string, recovered: number, target: number) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `NEXUS | Recuperação Parcial
+• Recuperado até agora: ${formatCurrency(recovered, currency)}
+• Falta para concluir: ${formatCurrency(target - recovered, currency)}
+• Ação: recalcular stake`;
+
+        this.saveNexusLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logRecoveryStarted(userId: string, accumulatedLoss: number, target: number, riskProfile: string) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `NEXUS | Início da Recuperação
+• Perfil de Risco: ${riskProfile.toUpperCase()}
+• Perdas Acumuladas: ${formatCurrency(accumulatedLoss, currency)}
+• Alvo de Recuperação: ${formatCurrency(target, currency)}
+• Contrato: Rise/Fall`;
+
+        this.saveNexusLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logAnalysisSwitch(userId: string, from: string, to: string, reason: string) {
+        const message = `NEXUS | Troca de Análise
+• Análise Anterior: ${from}
+• Nova Análise: ${to}
+• Motivo: ${reason}`;
+
+        this.saveNexusLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logBlockedEntry(userId: string, reason: string, type: 'FILTRO' | 'ESTADO') {
+        const message = `NEXUS | Entrada Bloqueada — ${type}
+• Motivo: ${reason}
+• ${type === 'FILTRO' ? 'Critério Avaliado: filtros' : 'Estado Atual: bloqueado'}
+• Ação: aguardar próximo ciclo`;
+
+        this.saveNexusLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logStateReset(userId: string, reason: string) {
+        const message = `NEXUS | Reset de Estado
+• Motivo: ${reason}
+• Ação: reiniciar ciclo`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'info', message);
+    }
+
+    private logStrategicPause(userId: string, phase: 'AVALIADA' | 'ATIVADA' | 'ENCERRADA', details: string) {
+        const message = `NEXUS | Pausa Estratégica
+• Título: Proteção de Capital (${phase})
+• Status: ${phase === 'AVALIADA' ? 'em análise' : phase === 'ATIVADA' ? 'suspensão temporária' : 'retomando operações'}
+• Motivo: ${details}
+• Ação: ${phase === 'ENCERRADA' ? 'reiniciar ciclo' : 'aguardar resfriamento'}`;
+
+        this.saveNexusLog(userId, this.symbol, 'alerta', message);
+    }
+
+    private logSessionEnd(userId: string, summary: {
+        result: 'PROFIT' | 'LOSS' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'STOP_BLINDADO';
+        totalProfit: number;
+        trades: number;
+    }) {
+        const state = this.users.get(userId);
+        const currency = state?.currency || 'USD';
+        const message = `NEXUS | Encerramento de Sessão
+• Resultado: ${formatCurrency(summary.totalProfit, currency)}
+• Total de Entradas: ${summary.trades}
+• Status Final: ${summary.result.replace('_', ' ')}`;
+
+        this.saveNexusLog(userId, 'SISTEMA', 'analise', message);
+    }
+
+    /**
+     * ✅ NEXUS: Verifica limites (meta, stop-loss) - COPIADO DO ATLAS
+     */
+    private async checkNexusLimits(userId: string): Promise<void> {
+        const state = this.users.get(userId);
+        if (!state) return;
+
+        const symbol = this.symbol || 'SISTEMA';
+
+        // ✅ [ATLAS LOGIC] - Reverificar limites do banco (Segunda Camada)
+        const configResult = await this.dataSource.query(
+            `SELECT
+                COALESCE(loss_limit, 0) as lossLimit,
+                COALESCE(profit_target, 0) as profitTarget,
+                COALESCE(session_balance, 0) as sessionBalance,
+                COALESCE(stake_amount, 0) as capitalInicial,
+                COALESCE(profit_peak, 0) as profitPeak,
+                stop_blindado_percent as stopBlindadoPercent,
+                is_active
+            FROM ai_user_config
+            WHERE user_id = ? AND is_active = 1
+            LIMIT 1`,
+            [userId],
+        );
+
+        if (!configResult || configResult.length === 0) return;
+
+        const config = configResult[0];
+        const lossLimit = parseFloat(config.lossLimit) || 0;
+        const profitTarget = parseFloat(config.profitTarget) || 0;
+        const capitalInicial = parseFloat(config.capitalInicial) || 0;
+
+        const lucroAtual = parseFloat(config.sessionBalance) || 0;
+        const capitalSessao = capitalInicial + lucroAtual;
+
+        // 1. Meta de Lucro (Profit Target)
+        if (profitTarget > 0 && lucroAtual >= profitTarget) {
+            this.saveNexusLog(userId, symbol, 'info',
+                `NEXUS | Meta de Lucro Atingida
+• Status: Meta Alcançada
+• Lucro: ${formatCurrency(lucroAtual, state.currency)}
+• Meta: ${formatCurrency(profitTarget, state.currency)}
+• Ação: IA DESATIVADA`
+            );
+
+            await this.dataSource.query(
+                `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [`Meta de lucro atingida: +${formatCurrency(lucroAtual, state.currency)}`, userId],
+            );
+
+            this.tradeEvents.emit({
+                userId: userId,
+                type: 'stopped_profit',
+                strategy: 'nexus',
+                symbol: symbol,
+                profitLoss: lucroAtual
+            });
+
+            this.users.delete(userId);
+            return;
+        }
+
+        // 2. Stop-loss blindado
+        if (config.stopBlindadoPercent !== null && config.stopBlindadoPercent !== undefined) {
+            const profitPeak = parseFloat(config.profitPeak) || 0;
+            const activationThreshold = profitTarget * 0.40;
+
+            // ✅ [DEBUG] Log para rastrear valores
+            this.logger.log(`[NEXUS] 🛡️ Verificando Stop Blindado:
+      profitPeak: ${profitPeak}
+      activationThreshold: ${activationThreshold}
+      profitTarget: ${profitTarget}
+      lucroAtual: ${lucroAtual}
+      capitalSessao: ${capitalSessao}
+      capitalInicial: ${capitalInicial}`);
+
+            if (profitTarget > 0 && profitPeak >= activationThreshold) {
+                const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
+                // ✅ Fixed Floor: Protect % of Activation Threshold, not Peak
+                const valorProtegidoFixo = activationThreshold * factor;
+                const stopBlindado = capitalInicial + valorProtegidoFixo;
+
+                // ✅ [DEBUG] Log para rastrear cálculo do piso
+                this.logger.log(`[NEXUS] 🛡️ Stop Blindado ATIVO:
+        valorProtegidoFixo: ${valorProtegidoFixo}
+        stopBlindado: ${stopBlindado}
+        capitalSessao: ${capitalSessao}
+        Vai parar? ${capitalSessao <= stopBlindado + 0.01}`);
+
+                if (capitalSessao <= stopBlindado + 0.01) {
+                    const lucroFinal = capitalSessao - capitalInicial;
+                    this.saveNexusLog(userId, symbol, 'info',
+                        `NEXUS | Stop Blindado Atingido
+• Status: Lucro Protegido
+• Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
+• Ação: IA DESATIVADA`
+                    );
+
+                    await this.dataSource.query(
+                        `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_blindado', deactivation_reason = ?, deactivated_at = NOW()
+                         WHERE user_id = ? AND is_active = 1`,
+                        [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, userId],
+                    );
+
+                    // ✅ [DEBUG] Confirmar que UPDATE foi executado
+                    this.logger.warn(`[NEXUS] 🛡️ STOP BLINDADO - UPDATE executado! session_status = 'stopped_blindado', userId: ${userId}`);
+
+                    this.tradeEvents.emit({
+                        userId: userId,
+                        type: 'stopped_blindado',
+                        strategy: 'nexus',
+                        symbol: symbol,
+                        profitProtected: lucroFinal,
+                        profitLoss: lucroFinal
+                    });
+
+                    this.users.delete(userId);
+
+                    // ✅ [FIX] Log final e RETURN imediatamente
+                    this.logger.warn(`[NEXUS] 🛡️ STOP BLINDADO - IA parada, saindo de checkNexusLimits()...`);
+                    return;
+                }
+            }
+        }
+
+        // 3. Stop Loss Normal
+        const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
+        if (lossLimit > 0 && perdaAtual >= lossLimit) {
+            this.saveNexusLog(userId, symbol, 'alerta',
+                `NEXUS | Stop Loss Atingido
+• Status: Limite de Perda
+• Perda: ${formatCurrency(perdaAtual, state.currency)}
+• Limite: ${formatCurrency(lossLimit, state.currency)}
+• Ação: IA DESATIVADA`
+            );
+
+            await this.dataSource.query(
+                `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_loss', deactivation_reason = ?, deactivated_at = NOW()
+                 WHERE user_id = ? AND is_active = 1`,
+                [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, userId],
+            );
+
+            this.tradeEvents.emit({
+                userId: userId,
+                type: 'stopped_loss',
+                strategy: 'nexus',
+                symbol: symbol,
+                profitLoss: -perdaAtual
+            });
+
+            this.users.delete(userId);
+            return;
+        }
     }
 
     private async saveNexusLog(userId: string, symbol: string, type: any, message: string) {

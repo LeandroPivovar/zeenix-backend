@@ -653,21 +653,11 @@ export class TitanStrategy implements IStrategy {
                 }
             } else {
                 // Log de entrada bloqueada por filtros
-                const details = result.details;
                 const blockReason = result.reason.includes('MAIORIA') ? 'maioria' :
                     result.reason.includes('MOMENTUM') ? 'momentum' :
                         result.reason.includes('RUÍDO') ? 'anti-ruído' : 'filtro';
 
-                this.saveTitanLog(state.userId, this.symbol, 'alerta',
-                    `ENTRADA BLOQUEADA — FILTRO
-Título: Entrada Bloqueada
-Motivo: filtro não atendido
-Critério Avaliado: ${blockReason}
-Ação: aguardar próximo ciclo`
-                );
-
-                // Log da análise sem sinal para mostrar que a IA está ativa
-                this.logAnalysisStarted(state.userId, analysisMode);
+                this.logBlockedEntry(state.userId, `filtro não atendido (${blockReason})`, 'FILTRO');
             }
 
             return null;
