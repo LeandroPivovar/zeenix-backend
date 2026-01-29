@@ -168,12 +168,24 @@ class RiskManager {
         }
 
         // ✅ Lógica de Proteção de Capital
-        // IMPORTANTE: Para Stop Blindado, NÃO fazemos ajuste preventivo
-        // Deixamos a trade acontecer e checamos o piso DEPOIS do resultado (igual Atlas)
-        // Apenas para Stop Loss Normal fazemos ajuste preventivo
+        // [NEXUS v3.5] Stop Blindado: Preventivo (recalcula ANTES para proteger o piso)
+        if (this._blindadoActive) {
+            const guaranteedBalance = this.initialBalance + this.guaranteedProfit;
+            const potentialBalanceAfterLoss = currentBalance - nextStake;
 
-        if (!this._blindadoActive) {
-            // Stop Loss Normal: Preventivo (ajusta antes da trade)
+            if (potentialBalanceAfterLoss < guaranteedBalance) {
+                let adjustedStake = currentBalance - guaranteedBalance;
+                adjustedStake = Math.round(adjustedStake * 100) / 100;
+
+                if (userId && symbol && logCallback) {
+                    logCallback(userId, symbol, 'alerta',
+                        `⚠️ AJUSTE DE RISCO (STOP BLINDADO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Piso: $${(currentBalance - guaranteedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para proteger o lucro.`
+                    );
+                }
+                nextStake = adjustedStake;
+            }
+        } else {
+            // [NEXUS v3.5] Stop Loss Normal: Preventivo (ajusta antes da trade)
             const minAllowedBalance = this.initialBalance - this.stopLossLimit;
             const potentialBalanceAfterLoss = currentBalance - nextStake;
 
@@ -181,23 +193,23 @@ class RiskManager {
                 let adjustedStake = currentBalance - minAllowedBalance;
                 adjustedStake = Math.round(adjustedStake * 100) / 100;
 
-                if (adjustedStake < 0.35) {
-                    const msg = `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`;
-                    if (userId && symbol && logCallback) {
-                        logCallback(userId, symbol, 'alerta', msg);
-                    }
-                    return 0.0;
-                }
-
                 if (userId && symbol && logCallback) {
                     logCallback(userId, symbol, 'alerta',
                         `⚠️ AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss.`
                     );
                 }
-                return adjustedStake;
+                nextStake = adjustedStake;
             }
         }
-        // Stop Blindado: Reativo (deixa trade acontecer, checa depois em checkNexusLimits)
+
+        if (nextStake < 0.35) {
+            const reason = this._blindadoActive ? 'STOP BLINDADO' : 'STOP LOSS';
+            const msg = `🛑 ${reason} ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de proteção alcançado.\n• Ação: Encerrando operações imediatamente.`;
+            if (userId && symbol && logCallback) {
+                logCallback(userId, symbol, 'alerta', msg);
+            }
+            return 0.0;
+        }
 
         return Math.round(nextStake * 100) / 100;
     }
@@ -1612,11 +1624,11 @@ Status: Sessão Equilibrada`;
 
                 if (capitalSessao <= stopBlindado + 0.01) {
                     const lucroFinal = capitalSessao - capitalInicial;
-                    this.saveNexusLog(userId, symbol, 'info',
-                        `NEXUS | Stop Blindado Atingido
-• Status: Lucro Protegido
-• Lucro Protegido: ${formatCurrency(lucroFinal, state.currency)}
-• Ação: IA DESATIVADA`
+
+                    // ✅ [NEXUS v3.5] Forçar tipo 'alerta' para garantir que saveNexusLog emita 'blindado_activated' se necessário
+                    // Embora o ideal aqui seja já disparar a parada.
+                    this.saveNexusLog(userId, symbol, 'alerta',
+                        `🛡️ STOP BLINDADO ATINGIDO!\nStoploss blindado atingido, o sistema parou as operações com um lucro de ${formatCurrency(lucroFinal, state.currency)} para proteger o seu capital.`
                     );
 
                     await this.dataSource.query(
