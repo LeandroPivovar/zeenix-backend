@@ -430,7 +430,7 @@ Status: Alta Escalabilidade`;
       const count89 = last20.filter(d => d === 8 || d === 9).length;
 
       // CONDIÇÃO DE ENTRADA DINÂMICA (Baseada no Modo):
-      let threshold = 6; // Veloz
+      let threshold = 21; // Veloz (User Request: Accept up to 20 losers - effectively disabled)
       if (state.mode === 'normal') threshold = 5;
       else if (state.mode === 'preciso') threshold = 4;
 
@@ -463,7 +463,7 @@ Status: Alta Escalabilidade`;
       const count89_short = last30.filter(d => d === 8 || d === 9).length;
 
       // ✅ CONDIÇÕES DE ENTRADA DINÂMICAS:
-      let minP = 0.30; // Veloz (30% - User Request)
+      let minP = 0.47;
       if (state.mode === 'normal') minP = 0.50;
       else if (state.mode === 'preciso') minP = 0.53;
 
