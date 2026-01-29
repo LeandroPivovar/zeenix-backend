@@ -759,6 +759,13 @@ export class TitanStrategy implements IStrategy {
             return;
         }
 
+        // ✅ [FIX] Se RiskManager retornar stake 0 (Stop Blindado/Loss atingido), verificar limites
+        if (stake <= 0) {
+            this.logger.warn(`[TITAN] ⚠️ Stake calculada = ${stake}. Verificando limites de proteção...`);
+            await this.checkTitanLimits(state.userId);
+            return;
+        }
+
         // ✅ VERIFICAR STOP LOSS BLINDADO (antes de executar trade)
         try {
             const blindadoConfig = await this.dataSource.query(
