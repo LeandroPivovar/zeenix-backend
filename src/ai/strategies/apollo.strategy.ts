@@ -740,7 +740,7 @@ Status: Alta Escalabilidade`;
       symbol: state.symbol, // Use symbol from state
       type: 'updated',
       profitLoss: result.profit, // Pass the profit/loss of this trade
-      isWin: won,
+      isWin: result.profit > 0,
     });
 
     // --- CHECK STOPS (Post-Trade) ---
