@@ -228,9 +228,9 @@ class RiskManager {
   private _blindadoActive: boolean;
   private lastWasRecovery: boolean; // ✅ Flag para detectar se último win foi recuperação
 
-  public isBlindadoActive(): boolean {
-    return this._blindadoActive;
-  }
+  get initialBalanceValue(): number { return this.initialBalance; }
+  get profitTargetValue(): number { return this.profitTarget; }
+  get isBlindadoActive(): boolean { return this._blindadoActive; }
 
   constructor(
     initialBalance: number,
@@ -423,38 +423,40 @@ class RiskManager {
       let adjustedStake = currentBalance - minAllowedBalance;
       adjustedStake = Math.round(adjustedStake * 100) / 100;
 
-      // Se a stake ajustada for menor que o mínimo da corretora (0.35), paramos.
-      if (adjustedStake < 0.35) {
-        if (logger) {
-          if (this._blindadoActive) {
-            logger.log(
-              `[META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
-            );
-            if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
-          } else {
-            logger.log(`[STOP LOSS] ${limitType} atingido. Parando operações.`);
-            if (saveLog) saveLog('alerta', `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
-          }
-        }
-        return 0.0; // Sinal de parada
-      }
+      nextStake = adjustedStake;
+    }
 
+    // ✅ [ZENIX v3.5] ATLAS STYLE:
+    // Se a stake for menor que 0.35, usamos 0.35 para tentar a última operação.
+    // O stop real acontecerá no loop principal se o saldo for <= piso.
+    if (currentBalance <= minAllowedBalance) {
+      if (logger) {
+        if (this._blindadoActive) {
+          logger.log(
+            `[META PARCIAL] ${limitType} atingido. Lucro no bolso!`,
+          );
+          if (saveLog) saveLog('alerta', `🛡️ STOP BLINDADO ATINGIDO!\n• TIPO: ${limitType}\n• SALDO FINAL: $${currentBalance.toFixed(2)}`);
+        } else {
+          logger.log(`[STOP LOSS] ${limitType} atingido. Parando operações.`);
+          if (saveLog) saveLog('alerta', `STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
+        }
+      }
+      return 0.0;
+    }
+
+    if (nextStake < 0.35) {
       if (logger) {
         logger.log(
-          `⚠️ [PRECISÃO] Stake ajustada de $${nextStake.toFixed(2)} para $${adjustedStake.toFixed(2)}`,
+          `⚠️ [PRECISÃO] Stake ajustada de $${nextStake.toFixed(2)} para $${0.35.toFixed(2)}`,
         );
         logger.log(
-          ` • Motivo: Respeitar ${limitType} (Piso: $${minAllowedBalance.toFixed(2)})`,
+          ` • Motivo: Stake calculada abaixo do mínimo da corretora (0.35).`,
         );
         if (saveLog) {
-          if (limitType.includes('PISO')) {
-            saveLog('alerta', `AJUSTE DE RISCO (PROTEÇÃO DE LUCRO)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Lucro Protegido Restante: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para não violar a proteção de lucro.`);
-          } else {
-            saveLog('alerta', `AJUSTE DE RISCO (STOP LOSS)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Saldo Restante até Stop: $${(currentBalance - minAllowedBalance).toFixed(2)}\n• Ação: Stake reduzida para $${adjustedStake.toFixed(2)} para respeitar o Stop Loss exato.`);
-          }
+          saveLog('alerta', `AJUSTE DE RISCO (STAKE MÍNIMA)\n• Stake Calculada: $${nextStake.toFixed(2)}\n• Ação: Stake ajustada para o mínimo da corretora ($0.35) para permitir a operação.`);
         }
       }
-      return adjustedStake;
+      nextStake = 0.35;
     }
 
     return Math.round(nextStake * 100) / 100;
@@ -498,16 +500,16 @@ export class OrionStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    const message = `${ORION_ICONS.START}
-CONFIGURAÇÕES INICIAIS
-• IA: ${config.strategyName}
-• Modo: ${config.operationMode}
-• Perfil Corretora: ${config.riskProfile}
-• Meta de Lucro: $${config.profitTarget.toFixed(2)}
-• Limite de Perda: $${config.stopLoss.toFixed(2)}
-• Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+    const message = `CONFIGURAÇÕES INICIAIS
+Título: Configurações Iniciais
+Estratégia: ${config.strategyName}
+Modo: ${config.operationMode}
+Perfil de Risco: ${config.riskProfile}
+Meta de Lucro: $${config.profitTarget.toFixed(2)}
+Limite de Perda: $${config.stopLoss.toFixed(2)}
+Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
 
-    this.saveOrionLog(userId, this.symbol, 'config', message);
+    this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
   private logSessionStart(userId: string, session: {
@@ -518,14 +520,16 @@ CONFIGURAÇÕES INICIAIS
     mode: string;
     strategyName: string;
   }) {
-    const message = `${ORION_ICONS.START}
-INÍCIO DE SESSÃO
-• Saldo Inicial: $${session.initialBalance.toFixed(2)}
-• Meta do Dia: $${session.profitTarget.toFixed(2)}
-• IA Ativa: ${session.strategyName}
-• Status: Monitorando Mercado`;
+    const message = `INÍCIO DE SESSÃO
+Título: Início de Sessão
+Saldo Inicial: $${session.initialBalance.toFixed(2)}
+Meta de Lucro: $${session.profitTarget.toFixed(2)}
+Stop Loss: $${session.stopLoss.toFixed(2)}
+Estratégia: ${session.strategyName}
+Modo Inicial: ${session.mode.toUpperCase()}
+Ação: iniciar coleta de dados`;
 
-    this.saveOrionLog(userId, this.symbol, 'info', message);
+    this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
   // --- CATEGORIA 2: COLETA E ANÁLISE ---
@@ -535,21 +539,22 @@ INÍCIO DE SESSÃO
     currentCount: number;
     mode?: string;
   }) {
-    const message = `${ORION_ICONS.COLETA}
-COLETA DE DADOS
-• Coleta de Dados em Andamento
-• Meta de Coleta: ${data.targetCount} ticks
-• Progresso: ${data.currentCount} / ${data.targetCount}
-• Status: aguardando ticks suficientes`;
-    this.saveOrionLog(userId, this.symbol, 'info', message);
+    const message = `COLETA DE DADOS
+Título: Coleta de Dados em Andamento
+Meta de Coleta: ${data.targetCount} ticks
+Progresso: ${data.currentCount} / ${data.targetCount}
+Status: aguardando ticks suficientes
+Ação: aguardar coleta mínima`;
+    this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
   private logAnalysisStarted(userId: string, mode: string) {
-    const message = `${ORION_ICONS.ANALISE}
-ANÁLISE DE MERCADO
-• Tipo de Análise: PRINCIPAL
-• Modo Ativo: ${mode.toUpperCase()}
-• Janela: 1 tick`;
+    const message = `ANÁLISE INICIADA
+Título: Análise de Mercado
+Tipo de Análise: PRINCIPAL
+Modo Ativo: ${mode.toUpperCase()}
+Janela: 1 tick
+Objetivo: identificar sinal válido`;
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
 
@@ -597,13 +602,15 @@ ORION | Entrada Bloqueada — FILTRO\n`;
     contractType: string;
     direction?: 'CALL' | 'PUT';
   }) {
-    const filtersText = signal.filters.map(f => `• ${f}`).join('\n');
-    const message = `${ORION_ICONS.SINAL}
-SINAL DETECTADO
-• Direção: ${signal.contractType}${signal.direction ? ` (${signal.direction})` : ''}
-${filtersText}
-• Força: ${signal.probability}%
-• Tipo: Zenix Hybrid`;
+    const filtersText = signal.filters.map(f => `${f}`).join('\n');
+    const message = `SINAL GERADO
+Título: Sinal de Entrada
+Análise: ${signal.isRecovery ? 'RECUPERAÇÃO' : 'PRINCIPAL'}
+Modo: ${signal.mode.toUpperCase()}
+Direção: ${signal.direction || signal.contractType}
+Força do Sinal: ${signal.probability}%
+Contrato: ${signal.contractType}
+${filtersText}`;
 
     this.saveOrionLog(userId, this.symbol, 'sinal', message);
   }
@@ -616,14 +623,14 @@ ${filtersText}
     stake: number;
     balance: number;
   }) {
-    const message = `${ORION_ICONS.RESULTADO}
-RESULTADO DA OPERAÇÃO
-• Status: ${result.status}
-• Lucro/Perda: $${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(2)}
-• Saldo Atual: $${result.balance.toFixed(2)}
-• Estado: Operação Finalizada`;
+    const logType = result.status === 'WIN' ? 'vitoria' : 'derrota';
+    const message = `RESULTADO — ${result.status}
+Título: Resultado da Operação
+Status: ${result.status}
+Resultado Financeiro: ${result.profit >= 0 ? '+' : ''}$${Math.abs(result.profit).toFixed(2)}
+Saldo Atual: $${result.balance.toFixed(2)}`;
 
-    this.saveOrionLog(userId, this.symbol, 'resultado', message);
+    this.saveOrionLog(userId, this.symbol, logType, message);
   }
 
   private logSorosActivation(userId: string, soros: {
@@ -635,12 +642,12 @@ RESULTADO DA OPERAÇÃO
     const newStake = soros.stakeBase + soros.previousProfit;
 
     const message = `SOROS NÍVEL ${level}
-Ativação: Soros Alavancagem
-Lucro Anterior: $${soros.previousProfit.toFixed(2)}
-Nova Stake: $${newStake.toFixed(2)}
-Objetivo: Lucro Exponencial`;
+Título: Soros Nível ${level} Aplicado
+Lucro Anterior: +$${soros.previousProfit.toFixed(2)}
+Stake Base: $${soros.stakeBase.toFixed(2)}
+Nova Stake: $${newStake.toFixed(2)}`;
 
-    this.saveOrionLog(userId, this.symbol, 'info', message);
+    this.saveOrionLog(userId, this.symbol, 'vitoria', message);
   }
 
   private logWinStreak(userId: string, streak: {
@@ -679,11 +686,11 @@ Objetivo: Lucro Exponencial`;
     profitPercentage: number;
     contractType: string;
   }) {
-    const message = `MARTINGALE NÍVEL ${martingale.level}
+    const message = `NÍVEL DE MARTINGALE
+Título: Recuperação Ativa
+Nível Atual: M${martingale.level}
 Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
-Objetivo: Recuperação de Capital
-Perda Acumulada: $${martingale.accumulatedLoss.toFixed(2)}
-Status: Aguardando Próximo Ciclo`;
+Perda Acumulada: $${martingale.accumulatedLoss.toFixed(2)}`;
 
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
@@ -718,9 +725,9 @@ Status: Aguardando Próximo Ciclo`;
     stakeBase: number;
   }) {
     const message = `RECUPERAÇÃO CONCLUÍDA
-Recuperação Bem-Sucedida
-Recuperado: $${recovery.recoveredLoss.toFixed(2)}
-Ação: Retornando à Stake Base
+Título: Recuperação Finalizada
+Alvo Atingido: $${(recovery.recoveredLoss + recovery.additionalProfit).toFixed(2)}
+Ação: reset para análise principal
 Status: Sessão Equilibrada`;
 
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
@@ -729,8 +736,11 @@ Status: Sessão Equilibrada`;
   private logConservativeReset(userId: string, reset: {
     stakeBase: number;
   }) {
-    const message = `❄️ ORION | ⚠️ Limite de Recuperação (Conservador)
-• Ação: Resetando para Stake Base ($${reset.stakeBase.toFixed(2)})`;
+    const message = `LIMITE DE SEGURANÇA
+Limite Conservador Atingido
+Ação: Resetando para Stake Base
+Nova Stake: $${reset.stakeBase.toFixed(2)}
+Status: Proteção Ativada`;
 
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
@@ -798,7 +808,7 @@ Status: Sessão Equilibrada`;
   private logQueue: Array<{
     userId: string;
     symbol: string;
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'config';
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro' | 'config';
     message: string;
     details?: any;
   }> = [];
@@ -1293,6 +1303,39 @@ Status: Sessão Equilibrada`;
 
     // Processar cada usuário
     for (const [userId, state] of this.velozUsers.entries()) {
+      const riskManager = this.riskManagers.get(userId);
+      if (riskManager) {
+        const currentProfit = state.capital - riskManager.initialBalanceValue;
+
+        // 🛡️ STOP BLINDADO CHECK (ATLAS STYLE)
+        if (riskManager.isBlindadoActive) {
+          const floor = riskManager.profitTargetValue * 0.40;
+          if (currentProfit <= floor) {
+            this.logger.log(`[ORION][Veloz][${userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+            this.tradeEvents.emit({
+              userId,
+              type: 'stopped_blindado',
+              strategy: 'orion',
+              profitLoss: currentProfit
+            });
+            await this.deactivateUser(userId);
+            continue;
+          }
+        }
+
+        // 🎯 META CHECK
+        if (riskManager.profitTargetValue > 0 && currentProfit >= riskManager.profitTargetValue) {
+          this.logger.log(`[ORION][Veloz][${userId}] 🎯 META ALCANÇADA NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)}`);
+          this.tradeEvents.emit({
+            userId,
+            type: 'stopped_profit',
+            strategy: 'orion',
+            profitLoss: currentProfit
+          });
+          await this.deactivateUser(userId);
+          continue;
+        }
+      }
       if (state.ticksColetados < VELOZ_CONFIG.amostraInicial) {
         const ticksAtuais = state.ticksColetados;
         const amostraNecessaria = VELOZ_CONFIG.amostraInicial;
@@ -1345,14 +1388,13 @@ Status: Sessão Equilibrada`;
 
       // ✅ ORION v3.0: Recuperação Híbrida
       // M1: Continua em Over 3 (mesmo contrato)
-      // M2-M3: Rise/Fall VELOZ (2 ticks + delta 0.3)
+      // M2-M3: Rise/Fall VELOZ (2 ticks + delta 0.2)
       // M4+: Rise/Fall LENTO (2 ticks + delta 0.7)
       if (state.perdaAcumulada > 0) {
         const entryNumber = (state.martingaleStep || 0) + 1;
 
         // M1: Continua em Over 3 (Aguardando sinal: 1 dígito perdedor)
         if (consecutiveLosses === 1) {
-          const riskManager = this.riskManagers.get(userId);
           const sinal = this.check_signal(state, 'veloz', riskManager);
 
           if (!sinal) {
@@ -1463,7 +1505,6 @@ Status: Sessão Equilibrada`;
       }
 
       const modoSinal = defesaAtiva ? 'veloz' : 'veloz';
-      const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) {
         // ✅ Se estiver em modo de defesa (recuperação) e sem sinal, logar periodicamente para feedback
@@ -1505,6 +1546,39 @@ Status: Sessão Equilibrada`;
 
     // Processar cada usuário
     for (const [userId, state] of this.moderadoUsers.entries()) {
+      const riskManager = this.riskManagers.get(userId);
+      if (riskManager) {
+        const currentProfit = state.capital - riskManager.initialBalanceValue;
+
+        // 🛡️ STOP BLINDADO CHECK (ATLAS STYLE)
+        if (riskManager.isBlindadoActive) {
+          const floor = riskManager.profitTargetValue * 0.40;
+          if (currentProfit <= floor) {
+            this.logger.log(`[ORION][Moderado][${userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+            this.tradeEvents.emit({
+              userId,
+              type: 'stopped_blindado',
+              strategy: 'orion',
+              profitLoss: currentProfit
+            });
+            await this.deactivateUser(userId);
+            continue;
+          }
+        }
+
+        // 🎯 META CHECK
+        if (riskManager.profitTargetValue > 0 && currentProfit >= riskManager.profitTargetValue) {
+          this.logger.log(`[ORION][Moderado][${userId}] 🎯 META ALCANÇADA NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)}`);
+          this.tradeEvents.emit({
+            userId,
+            type: 'stopped_profit',
+            strategy: 'orion',
+            profitLoss: currentProfit
+          });
+          await this.deactivateUser(userId);
+          continue;
+        }
+      }
       if (state.ticksColetados < MODERADO_CONFIG.amostraInicial) {
         const ticksAtuais = state.ticksColetados;
         const amostraNecessaria = MODERADO_CONFIG.amostraInicial;
@@ -1553,7 +1627,6 @@ Status: Sessão Equilibrada`;
         // M1: Continua em Over 3 (mesmo contrato da entrada)
         if (consecutiveLosses === 1) {
           // Usa a mesma lógica de entrada (3 dígitos < 4 para MODERADO)
-          const riskManager = this.riskManagers.get(userId);
           const sinal = this.check_signal(state, 'moderado', riskManager);
 
           if (!sinal) {
@@ -1629,7 +1702,6 @@ Status: Sessão Equilibrada`;
       }
 
       const modoSinal = defesaAtiva ? 'moderado' : 'moderado';
-      const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, modoSinal, riskManager);
       if (!sinal) {
         // ✅ Feedback visual: Aguardando sinal de defesa
@@ -1667,6 +1739,39 @@ Status: Sessão Equilibrada`;
 
     // Processar cada usuário
     for (const [userId, state] of this.precisoUsers.entries()) {
+      const riskManager = this.riskManagers.get(userId);
+      if (riskManager) {
+        const currentProfit = state.capital - riskManager.initialBalanceValue;
+
+        // 🛡️ STOP BLINDADO CHECK (ATLAS STYLE)
+        if (riskManager.isBlindadoActive) {
+          const floor = riskManager.profitTargetValue * 0.40;
+          if (currentProfit <= floor) {
+            this.logger.log(`[ORION][Preciso][${userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+            this.tradeEvents.emit({
+              userId,
+              type: 'stopped_blindado',
+              strategy: 'orion',
+              profitLoss: currentProfit
+            });
+            await this.deactivateUser(userId);
+            continue;
+          }
+        }
+
+        // 🎯 META CHECK
+        if (riskManager.profitTargetValue > 0 && currentProfit >= riskManager.profitTargetValue) {
+          this.logger.log(`[ORION][Preciso][${userId}] 🎯 META ALCANÇADA NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)}`);
+          this.tradeEvents.emit({
+            userId,
+            type: 'stopped_profit',
+            strategy: 'orion',
+            profitLoss: currentProfit
+          });
+          await this.deactivateUser(userId);
+          continue;
+        }
+      }
       if (state.ticksColetados < PRECISO_CONFIG.amostraInicial) {
         const ticksAtuais = state.ticksColetados;
         const amostraNecessaria = PRECISO_CONFIG.amostraInicial;
@@ -1710,7 +1815,6 @@ Status: Sessão Equilibrada`;
 
         // M1: Continua em Over 3 (Usa check_signal com filtro de 5 dígitos)
         if (consecutiveLosses === 1) {
-          const riskManager = this.riskManagers.get(userId);
           const sinal = this.check_signal(state, 'preciso', riskManager);
           if (!sinal) continue;
 
@@ -1737,7 +1841,6 @@ Status: Sessão Equilibrada`;
       }
 
       // ✅ NOVO: Usar check_signal (Estratégia Híbrida Dual-Core)
-      const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, 'preciso', riskManager);
       if (!sinal) continue;
 
@@ -1767,6 +1870,39 @@ Status: Sessão Equilibrada`;
 
     // Processar cada usuário
     for (const [userId, state] of this.lentaUsers.entries()) {
+      const riskManager = this.riskManagers.get(userId);
+      if (riskManager) {
+        const currentProfit = state.capital - riskManager.initialBalanceValue;
+
+        // 🛡️ STOP BLINDADO CHECK (ATLAS STYLE)
+        if (riskManager.isBlindadoActive) {
+          const floor = riskManager.profitTargetValue * 0.40;
+          if (currentProfit <= floor) {
+            this.logger.log(`[ORION][Lenta][${userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+            this.tradeEvents.emit({
+              userId,
+              type: 'stopped_blindado',
+              strategy: 'orion',
+              profitLoss: currentProfit
+            });
+            await this.deactivateUser(userId);
+            continue;
+          }
+        }
+
+        // 🎯 META CHECK
+        if (riskManager.profitTargetValue > 0 && currentProfit >= riskManager.profitTargetValue) {
+          this.logger.log(`[ORION][Lenta][${userId}] 🎯 META ALCANÇADA NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)}`);
+          this.tradeEvents.emit({
+            userId,
+            type: 'stopped_profit',
+            strategy: 'orion',
+            profitLoss: currentProfit
+          });
+          await this.deactivateUser(userId);
+          continue;
+        }
+      }
       if (state.ticksColetados < LENTA_CONFIG.amostraInicial) {
         // ✅ Incrementar contador de ticks coletados
         state.ticksColetados++;
@@ -1824,10 +1960,9 @@ Status: Sessão Equilibrada`;
       if (state.perdaAcumulada > 0) {
         const entryNumber = (state.martingaleStep || 0) + 1;
 
-        // M1: Continua em Over 3 (Usa check_signal com filtro de 5 dígitos)
+        // M1: Continua em Over 3 (Aguardando sinal: 1 dígito perdedor)
         if (consecutiveLosses === 1) {
-          const riskManager = this.riskManagers.get(userId);
-          const sinal = this.check_signal(state, 'lenta', riskManager);
+          const sinal = this.check_signal(state, 'veloz', riskManager);
           if (!sinal) continue;
 
           state.ultimaDirecaoMartingale = sinal;
@@ -1865,7 +2000,6 @@ Status: Sessão Equilibrada`;
         }
       }
 
-      const riskManager = this.riskManagers.get(userId);
       const sinal = this.check_signal(state, 'lenta', riskManager);
       if (!sinal) {
         // ✅ Feedback visual: Aguardando sinal de defesa
@@ -2491,7 +2625,7 @@ Status: Sessão Equilibrada`;
       );
       if (adjustedStake === 0) {
         // ✅ Se RiskManager retornou 0, parar operações (Stop Loss atingido)
-        const isBlindado = riskManager.isBlindadoActive();
+        const isBlindado = riskManager.isBlindadoActive;
         const status = isBlindado ? 'stopped_blindado' : 'stopped_loss';
         const label = isBlindado ? '🛡️ STOP BLINDADO' : '🛑 STOP LOSS';
 
@@ -4690,7 +4824,7 @@ Status: Sessão Equilibrada`;
   private saveOrionLog(
     userId: string,
     symbol: string,
-    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'alerta' | 'erro' | 'config',
+    type: 'info' | 'tick' | 'analise' | 'sinal' | 'operacao' | 'resultado' | 'vitoria' | 'derrota' | 'alerta' | 'erro' | 'config',
     message: string,
     details?: any,
   ): void {
