@@ -500,14 +500,14 @@ export class OrionStrategy implements IStrategy {
     stopLoss: number;
     stopBlindadoEnabled: boolean;
   }) {
-    const message = `CONFIGURAÇÕES INICIAIS
-Título: Configurações Iniciais
-Estratégia: ${config.strategyName}
-Modo: ${config.operationMode}
-Perfil de Risco: ${config.riskProfile}
-Meta de Lucro: $${config.profitTarget.toFixed(2)}
-Limite de Perda: $${config.stopLoss.toFixed(2)}
-Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVADO' : 'DESATIVADO'}`;
+    const message = `INÍCIO DE SESSÃO DIÁRIA
+Título: Início de Sessão
+Estratégia: ORION
+Meta de Lucro: ${config.profitTarget > 0 ? `$${config.profitTarget.toFixed(2)}` : 'N/A'}
+Stop Loss: ${config.stopLoss > 0 ? `$${config.stopLoss.toFixed(2)}` : 'N/A'}
+Símbolo: ${this.symbol}
+Modo Inicial: ${config.operationMode.toUpperCase()}
+Ação: iniciar coleta de dados`;
 
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
@@ -525,7 +525,8 @@ Título: Início de Sessão
 Saldo Inicial: $${session.initialBalance.toFixed(2)}
 Meta de Lucro: $${session.profitTarget.toFixed(2)}
 Stop Loss: $${session.stopLoss.toFixed(2)}
-Estratégia: ${session.strategyName}
+Estratégia: ORION
+Símbolo: ${this.symbol}
 Modo Inicial: ${session.mode.toUpperCase()}
 Ação: iniciar coleta de dados`;
 
@@ -553,7 +554,7 @@ Ação: aguardar coleta mínima`;
 Título: Análise de Mercado
 Tipo de Análise: PRINCIPAL
 Modo Ativo: ${mode.toUpperCase()}
-Janela: 1 tick
+Contrato Avaliado: Digits Over 3 (1 tick)
 Objetivo: identificar sinal válido`;
     this.saveOrionLog(userId, this.symbol, 'analise', message);
   }
@@ -602,15 +603,14 @@ ORION | Entrada Bloqueada — FILTRO\n`;
     contractType: string;
     direction?: 'CALL' | 'PUT';
   }) {
-    const filtersText = signal.filters.map(f => `${f}`).join('\n');
     const message = `SINAL GERADO
 Título: Sinal de Entrada
 Análise: ${signal.isRecovery ? 'RECUPERAÇÃO' : 'PRINCIPAL'}
 Modo: ${signal.mode.toUpperCase()}
-Direção: ${signal.direction || signal.contractType}
+Direção: ${signal.direction || 'N/A'}
 Força do Sinal: ${signal.probability}%
-Contrato: ${signal.contractType}
-${filtersText}`;
+Contrato: ${signal.contractType} (1 tick)
+Stake Calculada: $0.00`;
 
     this.saveOrionLog(userId, this.symbol, 'sinal', message);
   }
@@ -623,14 +623,25 @@ ${filtersText}`;
     stake: number;
     balance: number;
   }) {
-    const logType = result.status === 'WIN' ? 'vitoria' : 'derrota';
-    const message = `RESULTADO — ${result.status}
+    if (result.status === 'WIN') {
+      const message = `RESULTADO — WIN
 Título: Resultado da Operação
-Status: ${result.status}
-Resultado Financeiro: ${result.profit >= 0 ? '+' : ''}$${Math.abs(result.profit).toFixed(2)}
+Status: WIN
+Direção: DIGITOVER
+Contrato: Digits Over 3 (1 tick)
+Resultado Financeiro: +$${result.profit.toFixed(2)}
 Saldo Atual: $${result.balance.toFixed(2)}`;
-
-    this.saveOrionLog(userId, this.symbol, logType, message);
+      this.saveOrionLog(userId, this.symbol, 'vitoria', message);
+    } else {
+      const message = `RESULTADO — LOSS
+Título: Resultado da Operação
+Status: LOSS
+Direção: DIGITOVER
+Contrato: Digits Over 3 (1 tick)
+Resultado Financeiro: -$${Math.abs(result.profit).toFixed(2)}
+Saldo Atual: $${result.balance.toFixed(2)}`;
+      this.saveOrionLog(userId, this.symbol, 'derrota', message);
+    }
   }
 
   private logSorosActivation(userId: string, soros: {
@@ -689,8 +700,9 @@ Nova Stake: $${newStake.toFixed(2)}`;
     const message = `NÍVEL DE MARTINGALE
 Título: Recuperação Ativa
 Nível Atual: M${martingale.level}
+Multiplicador: ${(martingale.calculatedStake / 1).toFixed(1)}x
 Próxima Stake: $${martingale.calculatedStake.toFixed(2)}
-Perda Acumulada: $${martingale.accumulatedLoss.toFixed(2)}`;
+Limite Máximo: M12`;
 
     this.saveOrionLog(userId, this.symbol, 'alerta', message);
   }
@@ -727,8 +739,8 @@ Perda Acumulada: $${martingale.accumulatedLoss.toFixed(2)}`;
     const message = `RECUPERAÇÃO CONCLUÍDA
 Título: Recuperação Finalizada
 Alvo Atingido: $${(recovery.recoveredLoss + recovery.additionalProfit).toFixed(2)}
-Ação: reset para análise principal
-Status: Sessão Equilibrada`;
+Saldo Atual: $0.00
+Ação: reset para análise principal`;
 
     this.saveOrionLog(userId, this.symbol, 'resultado', message);
   }
