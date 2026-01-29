@@ -70,6 +70,7 @@ export interface ApolloUserState {
   // Statistics
   ticksColetados: number;
   totalLossAccumulated: number;
+  lastLogTimePerType: Map<string, number>;
 }
 
 @Injectable()
@@ -277,6 +278,14 @@ Status: Sessão Equilibrada`;
       if (count89 < 6) {
         this.logSignalGenerated(state.userId, 'PRINCIPAL', 'UNDER 8', [`Dígitos 8,9: ${count89} < 6 (N=20)`], 77);
         return 'DIGITUNDER_8';
+      } else {
+        // LOG DE REJEIÇÃO (Throttled)
+        const now = Date.now();
+        const lastLog = state.lastLogTimePerType.get('REJ_UNDER8') || 0;
+        if (now - lastLog > 30000) {
+          this.saveLog(state.userId, 'analise', `META: Sinal Rejeitado\n• Motivo: Dígitos 8,9 em excesso (${count89} >= 6)\n• Amostra: N=20`);
+          state.lastLogTimePerType.set('REJ_UNDER8', now);
+        }
       }
     } else {
       // ANÁLISE DE RECUPERAÇÃO — DIGITS UNDER 4
@@ -301,6 +310,8 @@ Status: Sessão Equilibrada`;
       const cond1 = P_short >= 0.47;
       const cond2 = (P_short - P_long) >= 0.02;
       const cond3 = count89_short <= 8;
+      const now = Date.now();
+      const throttleTime = 30000; // 30 segundos
 
       if (cond1 && cond2 && cond3) {
         this.logSignalGenerated(state.userId, 'RECUPERACAO', 'UNDER 4', [
@@ -309,6 +320,18 @@ Status: Sessão Equilibrada`;
           `C_8_9_short: ${count89_short} <= 8`
         ], 54);
         return 'DIGITUNDER_4';
+      } else {
+        // LOGS DE REJEIÇÃO (Throttled)
+        const lastLog = state.lastLogTimePerType.get('REJ_UNDER4') || 0;
+        if (now - lastLog > throttleTime) {
+          let reason = 'Densidade insuficiente';
+          if (!cond1) reason = `P_short baixa (${P_short.toFixed(2)} < 0.47)`;
+          else if (!cond2) reason = `Delta P insuficiente (${(P_short - P_long).toFixed(2)} < 0.02)`;
+          else if (!cond3) reason = `Dígitos 8,9 altos em N=30 (${count89_short} > 8)`;
+
+          this.saveLog(state.userId, 'analise', `RECUPERAÇÃO: Sinal Rejeitado\n• Motivo: ${reason}\n• P_short: ${P_short.toFixed(2)}\n• P_long: ${P_long.toFixed(2)}`);
+          state.lastLogTimePerType.set('REJ_UNDER4', now);
+        }
       }
     }
 
@@ -739,6 +762,7 @@ Status: Sessão Equilibrada`;
       lossStreakRecovery: 0,
       skipSorosNext: false,
       consecutiveWins: 0,
+      lastLogTimePerType: new Map<string, number>(),
 
       defenseMode: false,
       peakProfit: 0,
