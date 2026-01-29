@@ -82,24 +82,24 @@ export const LENTA_CONFIG: ModeConfig = {
   betPercent: 0.01,
 };
 
-// ✅ ATLAS v2.0: Configurações para Extrema Alta Frequência (EHF)
-// Modo VELOZ: 3.000 ops/dia (~125 ops/minuto), intervalo 4.8s, sem loss virtual
+// ✅ ATLAS v3.5: Configurações para R_50 (Volatility 50)
+// MODO VELOZ: 6 ticks, alvo 3000 ops/dia
 export const ATLAS_VELOZ_CONFIG: ModeConfig = {
-  amostraInicial: 1, // Analisa apenas o último dígito
-  intervaloSegundos: 4.8, // Uma operação a cada ~4.8 segundos
+  amostraInicial: 6,
+  intervaloSegundos: 4.8,
   desequilibrioMin: 0.0,
   confianciaMin: 0.0,
-  taxaAcertoEsperada: 0.70, // ~70% Win rate para Over 2
-  payout: 0.35, // Payout para Digit Over 2
+  taxaAcertoEsperada: 0.70,
+  payout: 0.35,
   minStake: 0.35,
   betPercent: 0.005,
 };
 
-// Modo NORMAL: Gatilho de 3 dígitos perdedores (<= 2)
+// MODO NORMAL: 10 ticks, alvo 1500 ops/dia
 export const ATLAS_NORMAL_CONFIG: ModeConfig = {
-  amostraInicial: 3, // Analisa últimos 3 dígitos
+  amostraInicial: 10,
   intervaloSegundos: 2.9,
-  desequilibrioMin: 1.0, // Gatilho: 3/3 <= 2
+  desequilibrioMin: 1.0,
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
   payout: 0.35,
@@ -107,15 +107,18 @@ export const ATLAS_NORMAL_CONFIG: ModeConfig = {
   betPercent: 0.0075,
 };
 
-// Modo LENTO: Gatilho de 5 dígitos perdedores (<= 2)
-export const ATLAS_LENTO_CONFIG: ModeConfig = {
-  amostraInicial: 5, // Analisa últimos 5 dígitos
+// MODO PRECISO: 15 ticks, alvo 700 ops/dia
+export const ATLAS_PRECISO_CONFIG: ModeConfig = {
+  amostraInicial: 15,
   intervaloSegundos: 1.8,
-  desequilibrioMin: 1.0, // Gatilho: 5/5 <= 2
+  desequilibrioMin: 1.0,
   confianciaMin: 0.0,
   taxaAcertoEsperada: 0.70,
   payout: 0.35,
   minStake: 0.35,
   betPercent: 0.01,
 };
+
+// Alias para compatibilidade
+export const ATLAS_LENTO_CONFIG = ATLAS_PRECISO_CONFIG;
 

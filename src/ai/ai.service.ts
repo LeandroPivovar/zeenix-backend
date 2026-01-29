@@ -616,6 +616,7 @@ export class AiService implements OnModuleInit {
         // ✅ Subscritar também R_10, R_25, 1HZ10V (Vol 10 1s) e 1HZ100V (Vol 100 1s) para Atlas/Orion/Apollo
         this.subscribeToSymbol('R_10');
         this.subscribeToSymbol('R_25');
+        this.subscribeToSymbol('R_50');
         this.subscribeToSymbol('1HZ10V');
         this.subscribeToSymbol('1HZ100V');
         // ✅ Iniciar keep-alive (ping a cada 90 segundos para evitar expiração de 2 minutos)
@@ -836,7 +837,7 @@ export class AiService implements OnModuleInit {
             this.logger.log(`[AiService] 📋 Subscription ID capturado: ${this.subscriptionId}`);
           }
           // Mapear subscriptionId para símbolo
-          if (symbolFromReq && ['R_10', 'R_25', 'R_100', '1HZ10V', '1HZ100V'].includes(symbolFromReq)) {
+          if (symbolFromReq && ['R_10', 'R_25', 'R_50', 'R_100', '1HZ10V', '1HZ100V'].includes(symbolFromReq)) {
             this.subscriptionIds.set(symbolFromReq, subId);
             this.logger.log(`[AiService] 📋 Subscription ID ${subId} mapeado para símbolo ${symbolFromReq}`);
           }
