@@ -1142,7 +1142,22 @@ Ação: IA DESATIVADA`
         if (errorCode === 'WrongResponse' || errorMessage.includes('WrongResponse')) {
           userMessage = `❌ Erro temporário (WrongResponse). Tentando novamente...`;
         } else if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
-          userMessage = `💡 Saldo insuficiente na Deriv.`;
+          userMessage = `💡 Saldo insuficiente na Deriv. Parando IA...`;
+
+          // ✅ STOP AUTOMATICAMENTE POR SUPORTE A SALDO
+          this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+            ['Saldo insuficiente na corretora', userId]
+          ).catch(e => this.logger.error(`[APOLLO] Erro ao parar user por saldo: ${e}`));
+
+          this.tradeEvents.emit({
+            userId: userId,
+            type: 'stopped_insufficient_balance',
+            strategy: 'apollo',
+            symbol: symbol
+          });
+
+          this.users.delete(userId);
         } else if (errorMessage.toLowerCase().includes('rate') || errorMessage.toLowerCase().includes('limit')) {
           userMessage = `💡 Rate limit atingido. Aguarde.`;
         }
@@ -1171,6 +1186,21 @@ Ação: IA DESATIVADA`
         this.saveLog(userId, 'erro', `FALHA NA ENTRADA: ${errorMessage}`);
 
         if (errorMessage.toLowerCase().includes('insufficient') || errorMessage.toLowerCase().includes('balance')) {
+          // ✅ STOP AUTOMATICAMENTE POR SUPORTE A SALDO
+          this.dataSource.query(
+            `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_insufficient_balance', deactivation_reason = ?, deactivated_at = NOW() WHERE user_id = ? AND is_active = 1`,
+            ['Saldo insuficiente na corretora', userId]
+          ).catch(e => this.logger.error(`[APOLLO] Erro ao parar user por saldo: ${e}`));
+
+          this.tradeEvents.emit({
+            userId: userId,
+            type: 'stopped_insufficient_balance',
+            strategy: 'apollo',
+            symbol: symbol
+          });
+
+          this.users.delete(userId);
+
           // ✅ Buscando contas do usuário para log detalhado
           this.dataSource.query(`SELECT deriv_raw FROM users WHERE id = ?`, [userId])
             .then((userDerivData) => {
