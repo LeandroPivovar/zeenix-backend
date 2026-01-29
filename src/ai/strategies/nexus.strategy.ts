@@ -300,9 +300,10 @@ export class NexusStrategy implements IStrategy {
 
         // Check Stop Blindado Floor
         if (riskManager.blindadoActive) {
-            const floor = riskManager.getProfitTarget() * 0.40;
-            if (currentProfit <= floor) {
-                this.logger.log(`[NEXUS][${state.userId}] 🛡️ STOP BLINDADO ATINGIDO NO INÍCIO DO CICLO | Lucro: $${currentProfit.toFixed(2)} <= Piso: $${floor.toFixed(2)}`);
+            const fixedGuaranteedProfit = riskManager.getProfitTarget() * 0.40;
+            const protectedFloor = riskManager.getInitialBalance() + fixedGuaranteedProfit;
+            if (state.capital <= protectedFloor) {
+                this.logger.log(`[NEXUS][${state.userId}] 🛡️ STOP BLINDADO ATINGIDO | Saldo: $${state.capital.toFixed(2)} <= Piso: $${protectedFloor.toFixed(2)}`);
                 await this.stopUser(state, 'stopped_blindado');
                 return;
             }
