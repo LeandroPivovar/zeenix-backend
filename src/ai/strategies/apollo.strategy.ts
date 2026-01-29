@@ -670,11 +670,7 @@ Status: Alta Escalabilidade`;
 
       if (state.analysisType === 'RECUPERACAO') {
         state.lossStreakRecovery++;
-        // PAUSA ESTRATÉGICA: loss_streak_recuperado >= 5
-        if (state.lossStreakRecovery >= 5) {
-          this.saveLog(state.userId, 'alerta', `⚠️ PAUSA ESTRATÉGICA: 5 perdas seguidas na recuperação. IA DESATIVADA.`);
-          await this.handleStopInternal(state, 'loss', -state.totalLossAccumulated);
-        }
+
       }
     }
 
@@ -782,20 +778,16 @@ Status: Alta Escalabilidade`;
       [state.userId],
     );
 
-
     if (!configResult || configResult.length === 0) return;
-
 
     const config = configResult[0];
     const lossLimit = parseFloat(config.lossLimit) || 0;
     const profitTarget = parseFloat(config.profitTarget) || 0;
     const capitalInicial = parseFloat(config.capitalInicial) || 0;
-    const profitPeak = parseFloat(config.profitPeak) || 0; // ✅ Peak do Banco (Atualizado no processResult)
 
-    // ✅ [FIX] Usar saldo em memória para precisão imediata (evita lag de leitura do DB)
-    // O DB é atualizado no processResult, mas a leitura imediata pode pegar valor antigo em réplicas/cache
-    const lucroAtual = state.capital - state.capitalInicial; // ✅ Memória
-    const capitalSessao = state.capital; // ✅ Memória
+    // ✅ [ATLAS ALIGNMENT] Usar valores do DB para garantir paridade estrita
+    const lucroAtual = parseFloat(config.sessionBalance) || 0;
+    const capitalSessao = capitalInicial + lucroAtual;
 
     // 1. Meta de Lucro (Profit Target)
     if (profitTarget > 0 && lucroAtual >= profitTarget) {
@@ -807,7 +799,6 @@ Meta: ${formatCurrency(profitTarget, state.currency)}
 Ação: IA DESATIVADA`
       );
 
-      // ✅ [REVERT] Alinhado com Atlas: Usar AND is_active = 1
       await this.dataSource.query(
         `UPDATE ai_user_config SET is_active = 0, session_status = 'stopped_profit', deactivation_reason = ?, deactivated_at = NOW()
          WHERE user_id = ? AND is_active = 1`,
@@ -832,17 +823,33 @@ Ação: IA DESATIVADA`
       const profitPeak = parseFloat(config.profitPeak) || 0;
       const activationThreshold = profitTarget * 0.40;
 
+      // ✅ [DEBUG] Log para rastrear valores (Igual Atlas)
+      this.logger.log(`[APOLLO] 🛡️ Verificando Stop Blindado:
+        profitPeak: ${profitPeak}
+        activationThreshold: ${activationThreshold}
+        profitTarget: ${profitTarget}
+        lucroAtual: ${lucroAtual}
+        capitalSessao: ${capitalSessao}
+        capitalInicial: ${capitalInicial}`);
+
       if (profitTarget > 0 && profitPeak >= activationThreshold) {
         const factor = (parseFloat(config.stopBlindadoPercent) || 50.0) / 100;
         // ✅ Fixed Floor: Protect % of Activation Threshold
         const valorProtegidoFixo = activationThreshold * factor;
         const stopBlindado = capitalInicial + valorProtegidoFixo;
 
+        // ✅ [DEBUG] Log para rastrear cálculo do piso
+        this.logger.log(`[APOLLO] 🛡️ Stop Blindado ATIVO:
+          valorProtegidoFixo: ${valorProtegidoFixo}
+          stopBlindado: ${stopBlindado}
+          capitalSessao: ${capitalSessao}
+          Vai parar? ${capitalSessao <= stopBlindado + 0.01}`);
+
         // ✅ [LOG] Notificar ativação do Stop Blindado (primeira vez)
         const justActivated = profitPeak >= activationThreshold && profitPeak < (activationThreshold + 0.50);
         if (justActivated && !state.stopBlindadoActive) {
           state.stopBlindadoActive = true;
-          state.stopBlindadoFloor = valorProtegidoFixo;
+          state.stopBlindadoFloor = valorProtegidoFixo; // Manter state update por compatibilidade de logs
           this.saveLog(state.userId, 'info',
             `🛡️ STOP BLINDADO ATIVADO
 Status: Proteção de Lucro Ativa
@@ -868,6 +875,8 @@ Ação: IA DESATIVADA`
             [`Stop Blindado: +${formatCurrency(lucroFinal, state.currency)}`, state.userId],
           );
 
+          this.logger.warn(`[APOLLO] 🛡️ STOP BLINDADO - UPDATE executado! session_status = 'stopped_blindado', userId: ${state.userId}`);
+
           this.tradeEvents.emit({
             userId: state.userId,
             type: 'stopped_blindado',
@@ -885,12 +894,10 @@ Ação: IA DESATIVADA`
     }
 
     // 3. Stop Loss Normal
-    if (state.isStopped) return;
-
-    // Na Atlas o loss é comparado com perdaAtual (positivo) >= lossLimit (positivo)
-    // lossLimit vem do banco como positivo geralmente? Na Atlas: parseFloat(config.lossLimit) || 0;
-    // O usuário configura Stop Loss como valor positivo (ex: 100).
-    // Se lucroAtual for -101, perdaAtual = 101. 101 >= 100 -> Stop.
+    if (state.isStopped) {
+      this.logger.log(`[APOLLO] ⏸️ IA já foi parada, ignorando verificação de Stop Loss Normal`);
+      return;
+    }
 
     const perdaAtual = lucroAtual < 0 ? Math.abs(lucroAtual) : 0;
     if (lossLimit > 0 && perdaAtual >= lossLimit) {
@@ -908,7 +915,6 @@ Ação: IA DESATIVADA`
         [`Stop Loss atingido: -${formatCurrency(perdaAtual, state.currency)}`, state.userId],
       );
 
-
       this.tradeEvents.emit({
         userId: state.userId,
         type: 'stopped_loss',
@@ -923,24 +929,8 @@ Ação: IA DESATIVADA`
     }
   }
 
-  // Helper para desativar usuário (para uso interno)
-  // private async deactivateUser(userId: string) { this.users.delete(userId); } // Usar o público existente
 
-  private async handleStopInternal(state: ApolloUserState, reason: 'profit' | 'loss' | 'blindado' | 'insufficient_balance', finalAmount: number) {
-    let type = 'stopped_loss';
-    if (reason === 'profit') type = 'stopped_profit';
-    if (reason === 'blindado') type = 'stopped_blindado';
-    if (reason === 'insufficient_balance') type = 'stopped_insufficient_balance';
 
-    state.isOperationActive = false;
-    this.tradeEvents.emit({ userId: state.userId, type: type as any, strategy: 'apollo', profitLoss: finalAmount });
-
-    await this.deactivateUser(state.userId);
-
-    try {
-      await this.dataSource.query(`UPDATE ai_user_config SET is_active=0, session_status=?, deactivated_at=NOW() WHERE user_id=? AND is_active=1`, [type, state.userId]);
-    } catch (e) { }
-  }
 
   // --- INFRASTRUCTURE ---
 

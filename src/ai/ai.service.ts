@@ -4295,6 +4295,9 @@ export class AiService implements OnModuleInit {
     // ✅ Usar StrategyManager para ativar usuário na estratégia correta
     if (this.strategyManager) {
       try {
+        // ✅ FIX: Garantir que nenhuma outra estratégia esteja rodando em memória antes de ativar a nova
+        await this.strategyManager.deactivateUser(userId);
+
         this.logger.log(`[ActivateAI] 🔵 Ativando usuário ${userId} na estratégia ${strategy} via StrategyManager...`);
         await this.strategyManager.activateUser(userId, strategy, {
           mode: mode || 'veloz',
