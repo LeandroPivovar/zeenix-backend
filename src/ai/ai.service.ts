@@ -4147,13 +4147,16 @@ export class AiService implements OnModuleInit {
     // ✅ ZENIX v2.0: Stop-Loss Blindado - se ativado, usar 50% (padrão da documentação)
     const stopBlindadoPercent = stopLossBlindado === true ? 50.00 : null; // null = desativado, 50.00 = ativado
 
+    // ✅ Append '_ V2' to strategy name as requested
+    const strategyName = strategy ? `${strategy} _ V2` : strategy;
+
     // ✅ Adicionar entry_value e stop_blindado_percent se as colunas existirem
     try {
       await this.dataSource.query(
         `INSERT INTO ai_user_config 
          (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, token_deriv, amount_deriv, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, symbol, next_trade_at, created_at, updated_at) 
          VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, tokenDeriv, initialAmountDeriv, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
+        [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, tokenDeriv, initialAmountDeriv, normalizedCurrency, mode, modoMartingale, strategyName, profitTarget || null, lossLimit || null, stopBlindadoPercent, symbol, nextTradeAt],
       );
     } catch (error: any) {
       // Se alguma coluna não existir, tentar inserir sem ela
@@ -4168,7 +4171,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, entry_value, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, nextTradeAt],
+              [userId, stakeAmount, entryValue || getMinStakeByCurrency(normalizedCurrency), finalToken, normalizedCurrency, mode, modoMartingale, strategyName, profitTarget || null, lossLimit || null, nextTradeAt],
             );
           } catch (error2: any) {
             // Se entry_value também não existir
@@ -4190,7 +4193,7 @@ export class AiService implements OnModuleInit {
               `INSERT INTO ai_user_config 
                (user_id, is_active, session_status, session_balance, stake_amount, deriv_token, currency, mode, modo_martingale, strategy, profit_target, loss_limit, stop_blindado_percent, next_trade_at, created_at, updated_at) 
                VALUES (?, TRUE, 'active', 0.00, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), CURRENT_TIMESTAMP)`,
-              [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategy, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
+              [userId, stakeAmount, finalToken, normalizedCurrency, mode, modoMartingale, strategyName, profitTarget || null, lossLimit || null, stopBlindadoPercent, nextTradeAt],
             );
           } catch (error2: any) {
             // Se stop_blindado_percent também não existir
