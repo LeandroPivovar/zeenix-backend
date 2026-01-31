@@ -1,0 +1,44 @@
+﻿diff --git a/src/ai/strategies/apollo.strategy.ts b/src/ai/strategies/apollo.strategy.ts
+index 0706cd2..1b08809 100644
+--- a/src/ai/strategies/apollo.strategy.ts
++++ b/src/ai/strategies/apollo.strategy.ts
+@@ -209,25 +209,28 @@ Saldo Atual: ${formatCurrency(balance, currency)}`;
+     const currency = state?.currency || 'USD';
+ 
+     if (type === 'PROFIT') {
+-      const message = `META DE LUCRO ATINGIDA
+-Status: Meta Alcan├ºada
+-Lucro: ${formatCurrency(value, currency)}
++      const message = `META ATINGIDA
++T├¡tulo: Objetivo Alcan├ºado
++Status: Meta Batida
++Lucro Total: ${formatCurrency(value, currency)}
+ Meta: ${formatCurrency(limit, currency)}
+-A├º├úo: IA DESATIVADA`;
++A├º├úo: encerrar sess├úo`;
+       this.saveLog(userId, 'resultado', message);
+     } else if (type === 'LOSS') {
+       const message = `STOP LOSS ATINGIDO
+-Status: Limite de Perda
+-Perda: ${formatCurrency(value, currency)}
++T├¡tulo: Limite de Perda Alcan├ºado
++Status: Sess├úo Encerrada
++Perda Total: -${formatCurrency(Math.abs(value), currency)}
+ Limite: ${formatCurrency(limit, currency)}
+-A├º├úo: IA DESATIVADA`;
++A├º├úo: encerrar opera├º├Áes`;
+       this.saveLog(userId, 'alerta', message);
+     } else if (type === 'BLINDADO') {
+       const message = `STOP BLINDADO ATINGIDO
+-Status: Lucro Protegido
+-Lucro Protegido: ${formatCurrency(value, currency)}
+-A├º├úo: IA DESATIVADA`;
+-      this.saveLog(userId, 'info', message);
++T├¡tulo: Lucro Protegido (40%)
++Status: Lucro Preservado
++Piso Protegido: ${formatCurrency(value, currency)}
++A├º├úo: encerrar sess├úo`;
++      this.saveLog(userId, 'resultado', message);
+     }
+   }
+ 

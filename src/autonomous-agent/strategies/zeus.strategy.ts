@@ -138,7 +138,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          JOIN users u ON c.user_id = u.id
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
-           AND c.agent_type = 'Zeus'
+           AND c.agent_type = 'zeus'
            AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
             );
 
