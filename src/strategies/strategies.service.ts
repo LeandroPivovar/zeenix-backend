@@ -8,7 +8,9 @@ export class StrategiesService {
 
     constructor() {
         // Path to frontend strategies directory
-        this.strategiesPath = path.join(__dirname, '../../../frontend/src/utils/strategies');
+        // __dirname in compiled code: /var/www/zeenix/backend/dist/strategies
+        // Need to go up 4 levels to reach /var/www/zeenix
+        this.strategiesPath = path.join(__dirname, '../../../../frontend/src/utils/strategies');
     }
 
     async updateStrategyFile(strategyName: string, strategyData: any): Promise<void> {
