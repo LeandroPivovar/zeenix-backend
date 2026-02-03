@@ -7,6 +7,15 @@ import { StrategiesService } from './strategies.service';
 export class StrategiesController {
     constructor(private readonly strategiesService: StrategiesService) { }
 
+    @Get()
+    async listStrategies() {
+        const strategies = await this.strategiesService.listStrategyFiles();
+        return {
+            success: true,
+            data: strategies,
+        };
+    }
+
     @Put(':strategyName')
     async updateStrategy(
         @Param('strategyName') strategyName: string,

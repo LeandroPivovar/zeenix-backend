@@ -5,7 +5,6 @@ import * as path from 'path';
 @Injectable()
 export class StrategiesService {
     private readonly strategiesPath: string;
-    private readonly allowedStrategies = ['apollo', 'atlas', 'nexus', 'orion', 'titan'];
 
     constructor() {
         // Path to frontend strategies directory
@@ -13,12 +12,10 @@ export class StrategiesService {
     }
 
     async updateStrategyFile(strategyName: string, strategyData: any): Promise<void> {
-        // Validate strategy name
-        const normalizedName = strategyName.toLowerCase().trim();
-        if (!this.allowedStrategies.includes(normalizedName)) {
-            throw new BadRequestException(
-                `Strategy name must be one of: ${this.allowedStrategies.join(', ')}`
-            );
+        // Validate strategy name (no path traversal)
+        const normalizedName = strategyName.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '');
+        if (!normalizedName || normalizedName.length < 2) {
+            throw new BadRequestException('Invalid strategy name');
         }
 
         // Validate data structure
@@ -47,11 +44,10 @@ export class StrategiesService {
     }
 
     async getStrategyFile(strategyName: string): Promise<any> {
-        const normalizedName = strategyName.toLowerCase().trim();
-        if (!this.allowedStrategies.includes(normalizedName)) {
-            throw new BadRequestException(
-                `Strategy name must be one of: ${this.allowedStrategies.join(', ')}`
-            );
+        // Validate strategy name (no path traversal)
+        const normalizedName = strategyName.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '');
+        if (!normalizedName || normalizedName.length < 2) {
+            throw new BadRequestException('Invalid strategy name');
         }
 
         const filePath = path.join(this.strategiesPath, `${normalizedName}.json`);
@@ -62,6 +58,16 @@ export class StrategiesService {
         } catch (error) {
             console.error(`[StrategiesService] Failed to read strategy file:`, error);
             throw new InternalServerErrorException('Failed to read strategy file');
+        }
+    }
+
+    async listStrategyFiles(): Promise<string[]> {
+        try {
+            const files = await fs.promises.readdir(this.strategiesPath);
+            return files.filter(f => f.endsWith('.json')).map(f => f.replace('.json', ''));
+        } catch (error) {
+            console.error(`[StrategiesService] Failed to list strategy files:`, error);
+            return [];
         }
     }
 }
