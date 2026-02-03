@@ -943,19 +943,22 @@ Status: Alta Escalabilidade`;
       // ✅ RESET APÓS RECUPERAÇÃO/MARTINGALE: Se a flag estiver ativa, ignora Soros desta vez
       if (state.skipSorosNext) {
         state.skipSorosNext = false;
-        state.consecutiveWins = 0; // Importante: Reiniciar contagem para que a PRÓXIMA vitória inicie o Soros
+        // ❌ NÃO resetar consecutiveWins aqui! Deixa incrementar naturalmente
         return state.apostaInicial;
       }
 
-      // ✅ CICLO DE SOROS (Fim): Se já ganhou o Soros (2 consecutivas), volta pro base
-      if (state.consecutiveWins >= 2) {
+      // ✅ SOROS LEVEL 1 (Apollo Style): Aplica no SEGUNDO WIN (consecutiveWins === 2)
+      // Win1: consecutiveWins = 1 → Próximo stake = BASE
+      // Win2: consecutiveWins = 2 → Próximo stake = BASE + LUCRO (Soros)
+      // Win3: consecutiveWins = 3 → Reset → BASE
+      if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveWins === 2) {
+        return Number((state.apostaInicial + state.lastProfit).toFixed(2));
+      }
+
+      // ✅ CICLO DE SOROS (Fim): Se já ganhou 3 ou mais, reseta
+      if (state.consecutiveWins >= 3) {
         state.consecutiveWins = 0;
         return state.apostaInicial;
-      }
-
-      // ✅ SOROS (Meta): Se a última foi WIN (Base), entra com (Base + Lucro)
-      if (state.lastResultWin && state.lastProfit > 0 && state.consecutiveWins === 1) {
-        return Number((state.apostaInicial + state.lastProfit).toFixed(2));
       }
 
       // ✅ MARTINGALE (1ª Perda): Tenta recuperar no próximo Under 8

@@ -24,6 +24,7 @@ import { UtilsModule } from './utils/utils.module';
 import { KiwifyModule } from './kiwify/kiwify.module';
 import { MarkupModule } from './markup/markup.module';
 import { MarketsModule } from './markets/markets.module';
+import { StrategiesModule } from './strategies/strategies.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { MarketsModule } from './markets/markets.module';
     KiwifyModule,
     MarkupModule,
     MarketsModule,
+    StrategiesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
