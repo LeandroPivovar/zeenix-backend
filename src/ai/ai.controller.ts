@@ -603,6 +603,50 @@ export class AiController {
     }
   }
 
+  @Post('sessions/start')
+  async startSession(@Body() body: { userId: string; aiName: string }) {
+    try {
+      const result = await this.aiService.createSession(body.userId, body.aiName);
+      if (result.success) {
+        return {
+          success: true,
+          data: { sessionId: result.sessionId },
+        };
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao iniciar sessão',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('sessions/update')
+  async updateSession(@Body() body: { sessionId: number; stats: any }) {
+    try {
+      await this.aiService.updateSession(body.sessionId, body.stats);
+      return {
+        success: true,
+        message: 'Sessão atualizada',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao atualizar sessão',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('performance/weekly/:userId')
   @UseGuards(AuthGuard('jwt'))
   async getWeeklyPerformance(@Param('userId') userId: string, @Req() req: any) {

@@ -7547,5 +7547,57 @@ export class AiService implements OnModuleInit {
   }
 
   // ======================== TRINITY REMOVIDO ========================
+
+  /**
+   * ✅ Cria uma nova sessão de IA na tabela ai_sessions
+   */
+  async createSession(userId: string, aiName: string, config?: any): Promise<any> {
+    try {
+      this.logger.debug(`[Sessions] 🆕 Criando sessão para user=${userId}, AI=${aiName}`);
+
+      const result = await this.dataSource.query(
+        `INSERT INTO ai_sessions (user_id, ai_name, status, start_time, total_wins, total_losses, total_profit, total_trades, created_at) 
+         VALUES (?, ?, 'active', NOW(), 0, 0, 0, 0, NOW())`,
+        [userId, aiName]
+      );
+
+      this.logger.log(`[Sessions] ✅ Sessão criada com sucesso: ID=${result.insertId}`);
+      return { success: true, sessionId: result.insertId };
+    } catch (error) {
+      this.logger.error(`[Sessions] ❌ Erro ao criar sessão:`, error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * ✅ Atualiza estatísticas de uma sessão de IA existente
+   */
+  async updateSession(sessionId: number, stats: any): Promise<void> {
+    try {
+      let query = `UPDATE ai_sessions SET updated_at = NOW()`;
+      const params: any[] = [];
+
+      if (stats.wins !== undefined) { query += `, total_wins = ?`; params.push(stats.wins); }
+      if (stats.losses !== undefined) { query += `, total_losses = ?`; params.push(stats.losses); }
+      if (stats.profit !== undefined) { query += `, total_profit = ?`; params.push(stats.profit); }
+      if (stats.totalTrades !== undefined) { query += `, total_trades = ?`; params.push(stats.totalTrades); }
+
+      if (stats.status) {
+        query += `, status = ?`;
+        params.push(stats.status);
+        if (stats.status === 'stopped' || stats.status === 'stopped_profit' || stats.status === 'stopped_loss') {
+          query += `, end_time = NOW()`;
+        }
+      }
+
+      query += ` WHERE id = ?`;
+      params.push(sessionId);
+
+      await this.dataSource.query(query, params);
+      // Silent update
+    } catch (error) {
+      this.logger.error(`[Sessions] ❌ Erro ao atualizar sessão ${sessionId}:`, error);
+    }
+  }
 }
 
