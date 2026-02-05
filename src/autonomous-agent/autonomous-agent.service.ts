@@ -26,7 +26,10 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly maxTicks = 100;
   private readonly appId: string;
   private symbol = 'R_100'; // Default
-  private activeSymbols = new Set<string>(['R_100', 'R_50', '1HZ10V', '1HZ100V']); // ✅ Adicionado Markets V2 (Zeus/Falcon)
+  private activeSymbols = new Set<string>([
+    'R_100', 'R_10', 'R_25', 'R_50', 'R_75',
+    '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'
+  ]); // ✅ Adicionado Markets V2 e V3 (Todos Volatility Indices)
   private subscriptions = new Map<string, string>(); // ✅ Mapeia símbolo -> subscriptionId
   private isConnected = false;
   private subscriptionId: string | null = null;
