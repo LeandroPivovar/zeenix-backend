@@ -30,7 +30,7 @@ import { LogQueueService } from '../../utils/log-queue.service';
  */
 // ⚡ ZEUS V2 - TYPES
 export type NegotiationMode = "NORMAL" | "PRECISO";
-export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO";
+export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO" | "FIXO";
 export type AnalysisType = "PRINCIPAL" | "RECUPERACAO";
 export type ContractKind = "DIGITS_OVER3" | "RISE_FALL";
 
@@ -562,6 +562,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // Form: stake = perdas * 1.30 * 100 / 126
                 stake = (perdas * 1.30 * 100) / payoutLiq;
                 break;
+            case 'FIXO':
+                return config.baseStake;
             default: // FIXA (assume base if not matched, or default logic)
                 // Se o usuário selecionou algo que não mapeia para esses perfis, assume FIXA (neste caso, stakeBase)
                 // Mas se tem perdas e estamos aqui, tecnicamente "FIXA" não recupera.
