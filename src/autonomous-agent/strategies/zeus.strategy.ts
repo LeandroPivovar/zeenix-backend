@@ -350,7 +350,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             martingaleMaxLevel: ZEUS_CONSTANTS.martingaleMaxLevel,
             martingaleMultiplier: ZEUS_CONSTANTS.martingaleMultiplier,
-            recoveryExtraProfitPct: risk === 'CONSERVADOR' ? 0 : (risk === 'AGRESSIVO' ? 0.30 : 0.15),
+            recoveryExtraProfitPct: risk === 'CONSERVADOR' ? 0.02 : (risk === 'AGRESSIVO' ? 0.30 : 0.15),
 
             hasContractSwitch: true,
             strategicPauseEnabled: true,
