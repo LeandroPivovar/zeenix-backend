@@ -5431,107 +5431,68 @@ export class AiService implements OnModuleInit {
   async getUserSessions(userId: string, limit: number = 10): Promise<any[]> {
     this.logger.log(`[GetUserSessions] 📊 Buscando histórico de sessões para userId=${userId}`);
 
-    // Buscar todas as sessões (ativas e inativas)
+    // Buscar todas as sessões da tabela ai_sessions
     const sessions = await this.dataSource.query(
       `SELECT 
         id,
-        is_active as isActive,
-        session_status as sessionStatus,
-        session_balance as sessionBalance,
-        stake_amount as stakeAmount,
-        currency,
-        mode,
-        profit_target as profitTarget,
-        loss_limit as lossLimit,
+        user_id as userId,
+        ai_name as aiName,
+        status,
         total_trades as totalTrades,
         total_wins as totalWins,
         total_losses as totalLosses,
-        deactivation_reason as deactivationReason,
-        deactivated_at as deactivatedAt,
+        total_profit as totalProfit,
+        start_time as startTime,
+        end_time as endTime,
         created_at as createdAt,
         updated_at as updatedAt
-       FROM ai_user_config 
+       FROM ai_sessions 
        WHERE user_id = ?
-       ORDER BY created_at DESC
+       ORDER BY start_time DESC
        LIMIT ?`,
       [userId, limit],
     );
 
-    // Para cada sessão, buscar estatísticas de trades
-    const sessionsWithStats = await Promise.all(
-      sessions.map(async (session) => {
-        const tradeStats = await this.dataSource.query(
-          `SELECT 
-            COUNT(*) as totalTrades,
-            SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
-            SUM(COALESCE(profit_loss, 0)) as profitLoss,
-            SUM(COALESCE(stake_amount, 0)) as volume,
-            MIN(created_at) as firstTrade,
-            MAX(COALESCE(closed_at, created_at)) as lastTrade
-           FROM ai_trades
-           WHERE user_id = ?
-             AND created_at >= ?
-             AND (? IS NULL OR created_at <= ?)
-             AND status IN ('WON', 'LOST')`,
-          [
-            userId,
-            session.createdAt,
-            session.deactivatedAt || null,
-            session.deactivatedAt || null,
-          ],
-        );
+    // Processar as sessões
+    const processedSessions = sessions.map((session) => {
+      const totalTrades = parseInt(session.totalTrades) || 0;
+      const wins = parseInt(session.totalWins) || 0;
+      const losses = parseInt(session.totalLosses) || 0;
+      const profitLoss = parseFloat(session.totalProfit) || 0;
+      const winrate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
 
-        const stats = tradeStats[0];
-        const totalTrades = parseInt(stats.totalTrades) || 0;
-        const wins = parseInt(stats.wins) || 0;
-        const losses = parseInt(stats.losses) || 0;
-        const profitLoss = parseFloat(stats.profitLoss) || 0;
-        const volume = parseFloat(stats.volume) || 0;
-        const winrate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+      // Calcular duração da sessão
+      const startTime = new Date(session.startTime);
+      const endTime = session.endTime ? new Date(session.endTime) : new Date();
+      const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
 
-        // Calcular duração da sessão
-        const startTime = new Date(session.createdAt);
-        const endTime = session.deactivatedAt
-          ? new Date(session.deactivatedAt)
-          : new Date();
-        const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
+      return {
+        sessionId: session.id,
+        userId: session.userId,
+        aiName: session.aiName,
+        status: session.status,
 
-        return {
-          sessionId: session.id,
-          isActive: Boolean(session.isActive),
-          sessionStatus: session.sessionStatus || 'active',
-          sessionBalance: session.sessionBalance ? parseFloat(session.sessionBalance) : profitLoss, // Usar saldo do banco ou calcular
-          stakeAmount: parseFloat(session.stakeAmount),
-          currency: session.currency,
-          mode: session.mode,
-          profitTarget: session.profitTarget ? parseFloat(session.profitTarget) : null,
-          lossLimit: session.lossLimit ? parseFloat(session.lossLimit) : null,
+        // Estatísticas
+        stats: {
+          totalTrades,
+          wins,
+          losses,
+          profitLoss,
+          winrate: parseFloat(winrate.toFixed(2)),
+        },
 
-          // Estatísticas
-          stats: {
-            totalTrades,
-            wins,
-            losses,
-            profitLoss,
-            volume,
-            winrate: parseFloat(winrate.toFixed(2)),
-          },
+        // Datas
+        startTime: session.startTime,
+        endTime: session.endTime,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        durationMinutes,
+      };
+    });
 
-          // Datas
-          createdAt: session.createdAt,
-          deactivatedAt: session.deactivatedAt,
-          durationMinutes,
+    this.logger.log(`[GetUserSessions] ✅ ${processedSessions.length} sessões processadas`);
 
-          // Motivo de desativação
-          deactivationReason: session.deactivationReason,
-        };
-      }),
-    );
-
-    this.logger.log(`[GetUserSessions] ✅ ${sessionsWithStats.length} sessões processadas`);
-
-    return sessionsWithStats;
+    return processedSessions;
   }
 
   /**

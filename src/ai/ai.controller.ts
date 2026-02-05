@@ -612,9 +612,11 @@ export class AiController {
       const limitNumber = limit ? parseInt(limit, 10) : 20;
       const sessions = await this.aiService.getUserSessions(userId, limitNumber);
 
-      // Calculate aggregated stats
-      const totalOperations = sessions.reduce((sum, s) => sum + (s.total_trades || 0), 0);
-      const totalProfit = sessions.reduce((sum, s) => sum + (parseFloat(s.total_profit) || 0), 0);
+      // Calculate aggregated stats (accessing stats object)
+      const totalOperations = sessions.reduce((sum, s) => sum + (s.stats?.totalTrades || 0), 0);
+      const totalProfit = sessions.reduce((sum, s) => sum + (s.stats?.profitLoss || 0), 0);
+
+      this.logger.log(`[SessionHistory] ✅ Agregação: ${totalOperations} operações, $${totalProfit.toFixed(2)} lucro`);
 
       return {
         success: true,
