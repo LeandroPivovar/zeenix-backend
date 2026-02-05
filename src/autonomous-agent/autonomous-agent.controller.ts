@@ -57,7 +57,7 @@ export class AutonomousAgentController {
         symbol: body.symbol,
         strategy: normalizedStrategy,
         agentType: normalizedStrategy,
-        riskLevel: body.riskLevel,
+        riskProfile: body.risco || body.riskLevel || body.riskProfile,
         tradingMode: body.tradingMode || 'normal',
         stopLossType: body.stopLossType || 'normal',
         initialBalance: parseFloat(body.initialBalance) || 0,

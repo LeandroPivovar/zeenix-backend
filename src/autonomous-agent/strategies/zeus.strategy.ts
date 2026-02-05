@@ -751,7 +751,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Heartbeat log
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-        if (state.ticksSinceLastAnalysis >= 20) {
+        if (state.ticksSinceLastAnalysis >= 10) {
             state.ticksSinceLastAnalysis = 0;
             this.logAnalysisStarted(userId, state.mode, digits.length, state.lastRejectionReason);
         }
@@ -1008,10 +1008,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     ): Promise<string | null> {
         const roundedStake = Math.round(stake * 100) / 100;
         let lastError: Error | null = null;
-
-        // ✅ CORREÇÃO: Delay inicial de 3000ms antes da primeira tentativa
-        // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR
-        await new Promise(resolve => setTimeout(resolve, 3000));
 
         // ✅ Retry com backoff exponencial
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -2133,7 +2129,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     private logAnalysisStarted(userId: string, mode: string, tickCount?: number, reason?: string) {
         const countStr = tickCount ? ` (Ticks: ${tickCount})` : '';
-        const actionStr = reason ? `⏸️ ENTRADA BLOQUEADA: ${reason}` : 'Aguardando oportunidade...';
+        const actionStr = reason ? `⏸️ ENTRADA BLOQUEADA: ${reason}` : 'Aguardando padrões...';
         const message = `🧠 ANÁLISE DO MERCADO\n` +
             `• MODO: ${mode}\n` +
             `• STATUS: Monitorando padrões${countStr}\n` +
