@@ -781,7 +781,6 @@ export class AutonomousAgentService implements OnModuleInit {
                trading_mode = ?,
                stop_loss_type = ?,
                initial_balance = ?,
-               risk_profile = ?,
                session_status = 'active',
                session_date = NOW(),
                daily_profit = 0,
@@ -801,7 +800,6 @@ export class AutonomousAgentService implements OnModuleInit {
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
             config.initialBalance || 0,
-            this.normalizeRiskProfile(config.riskProfile),
             userId,
           ],
         );
@@ -815,9 +813,9 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance, risk_profile,
+            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance,
             session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -832,7 +830,6 @@ export class AutonomousAgentService implements OnModuleInit {
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
             config.initialBalance || 0,
-            this.normalizeRiskProfile(config.riskProfile),
           ],
         );
         this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
@@ -847,7 +844,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // ✅ Suportar Orion, Sentinel, Falcon e Zeus
       if (strategy !== 'orion' && strategy !== 'sentinel' && strategy !== 'falcon' && strategy !== 'zeus') {
-        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel', 'falcon' e 'zeus' estão disponíveis.Usando 'orion'.`);
+        this.logger.warn(`[ActivateAgent] Estratégia '${strategy}' solicitada, mas apenas 'orion', 'sentinel', 'falcon' e 'zeus' estão disponíveis. Usando 'orion'.`);
         strategy = 'orion';
       }
 
@@ -862,7 +859,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
         if (!this.subscriptions.has(agentSymbol)) {
-          this.logger.log(`📡 Inscrevendo - se em ${agentSymbol} para usuário ${userId}...`);
+          this.logger.log(`📡 Inscrevendo-se em ${agentSymbol} para usuário ${userId}...`);
           const subscriptionPayload = {
             ticks_history: agentSymbol,
             adjust_start_time: 1,
@@ -881,7 +878,7 @@ export class AutonomousAgentService implements OnModuleInit {
         // ✅ Log para confirmar qual token está sendo usado
         const tokenToUse = tokenDeriv || config.derivToken;
         this.logger.log(
-          `[ActivateAgent] 🔑 Token a ser usado: ${tokenDeriv ? 'token_deriv (conta padrão)' : 'deriv_token (fornecido)'} | Token: ${tokenToUse ? tokenToUse.substring(0, 8) + '...' : 'N/A'} `
+          `[ActivateAgent] 🔑 Token a ser usado: ${tokenDeriv ? 'token_deriv (conta padrão)' : 'deriv_token (fornecido)'} | Token: ${tokenToUse ? tokenToUse.substring(0, 8) + '...' : 'N/A'}`
         );
 
         await this.strategyManager.activateUser(strategy, userId, {
@@ -901,28 +898,15 @@ export class AutonomousAgentService implements OnModuleInit {
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
-        this.logger.error(`[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}: `, strategyError);
+        this.logger.error(`[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}:`, strategyError);
         throw new Error(`Erro ao ativar agente na estratégia ${strategy}: ${strategyError.message}`);
       }
+
+      this.logger.log(`[ActivateAgent] ✅ Agente autônomo ativado para usuário ${userId}`);
     } catch (error) {
-      this.logger.error(`[ActivateAgent] Erro crítico ao ativar agente para usuário ${userId}:`, error);
+      this.logger.error(`[ActivateAgent] Erro ao ativar agente:`, error);
       throw error;
     }
-  }
-
-  /**
-   * Normaliza o perfil de risco para o padrão esperado pelas estratégias (Caps)
-   */
-  private normalizeRiskProfile(risk: string): string {
-    if (!risk) return 'MODERADO';
-
-    const r = risk.toLowerCase();
-    if (r === 'fixed' || r === 'fixo') return 'FIXO';
-    if (r === 'conservative' || r === 'conservador') return 'CONSERVADOR';
-    if (r === 'balanced' || r === 'moderado' || r === 'moderada') return 'MODERADO';
-    if (r === 'aggressive' || r === 'agressivo' || r === 'agressiva') return 'AGRESSIVO';
-
-    return risk.toUpperCase();
   }
 
   /**
@@ -939,9 +923,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       await this.strategyManager.deactivateUser(userId);
 
-      this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId} `);
+      this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`);
     } catch (error) {
-      this.logger.error(`[DeactivateAgent] Erro ao desativar agente: `, error);
+      this.logger.error(`[DeactivateAgent] Erro ao desativar agente:`, error);
       throw error;
     }
   }
@@ -983,10 +967,10 @@ export class AutonomousAgentService implements OnModuleInit {
     // ✅ Filtrar apenas operações criadas após o início da sessão atual
     return await this.dataSource.query(
       `SELECT * FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND created_at >= ?
-            ORDER BY COALESCE(closed_at, created_at) DESC
-        LIMIT ? `,
+       WHERE user_id = ? 
+         AND created_at >= ?
+       ORDER BY COALESCE(closed_at, created_at) DESC 
+       LIMIT ?`,
       [userId, sessionDate, limit],
     );
   }
@@ -998,16 +982,16 @@ export class AutonomousAgentService implements OnModuleInit {
   async getSessionStats(userId: string): Promise<any> {
     // ✅ Buscar configuração do agente
     const config = await this.dataSource.query(
-      `SELECT
-        daily_profit,
-          daily_loss,
-          total_trades,
-          total_wins,
-          total_losses,
-          session_status,
-          session_date,
-          initial_stake as totalCapital,
-          initial_balance
+      `SELECT 
+         daily_profit,
+         daily_loss,
+         total_trades,
+         total_wins,
+         total_losses,
+         session_status,
+         session_date,
+         initial_stake as totalCapital,
+         initial_balance
        FROM autonomous_agent_config 
        WHERE user_id = ? AND is_active = TRUE
        LIMIT 1`,
@@ -1061,17 +1045,17 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Filtrar apenas operações criadas após o início da sessão atual
     const sessionTrades = await this.dataSource.query(
-      `SELECT
-        status,
-          profit_loss,
-          created_at,
-          closed_at
+      `SELECT 
+         status,
+         profit_loss,
+         created_at,
+         closed_at
        FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND status IN('WON', 'LOST')
+       WHERE user_id = ? 
+         AND status IN ('WON', 'LOST')
          AND profit_loss IS NOT NULL
          AND created_at >= ?
-          ORDER BY COALESCE(closed_at, created_at) DESC`,
+       ORDER BY COALESCE(closed_at, created_at) DESC`,
       [userId, sessionDate],
     );
 
@@ -1082,14 +1066,14 @@ export class AutonomousAgentService implements OnModuleInit {
     let lossesToday = 0;
 
     this.logger.debug(
-      `[GetSessionStats][${userId}] 📊 Operações encontradas da sessão(após ${sessionDate}): ${sessionTrades?.length || 0} `,
+      `[GetSessionStats][${userId}] 📊 Operações encontradas da sessão (após ${sessionDate}): ${sessionTrades?.length || 0}`,
     );
 
     if (sessionTrades && sessionTrades.length > 0) {
       for (const trade of sessionTrades) {
         const profitLoss = parseFloat(trade.profit_loss) || 0;
         this.logger.debug(
-          `[GetSessionStats][${userId}] 📊 Trade: status = ${trade.status}, profit_loss = ${profitLoss} `,
+          `[GetSessionStats][${userId}] 📊 Trade: status=${trade.status}, profit_loss=${profitLoss}`,
         );
         if (trade.status === 'WON') {
           dailyProfitFromTrades += profitLoss;
@@ -1101,7 +1085,7 @@ export class AutonomousAgentService implements OnModuleInit {
       }
     } else {
       this.logger.debug(
-        `[GetSessionStats][${userId}] ⚠️ Nenhuma operação finalizada encontrada para a sessão atual(após ${sessionDate})`,
+        `[GetSessionStats][${userId}] ⚠️ Nenhuma operação finalizada encontrada para a sessão atual (após ${sessionDate})`,
       );
     }
 
@@ -1113,9 +1097,9 @@ export class AutonomousAgentService implements OnModuleInit {
     // ✅ Log para debug
     this.logger.debug(
       `[GetSessionStats][${userId}] 📊 Estatísticas do dia: ` +
-      `trades = ${totalTradesToday}, wins = ${winsToday}, losses = ${lossesToday}, ` +
-      `profit = $${dailyProfitFromTrades.toFixed(2)}, loss = $${dailyLossFromTrades.toFixed(2)}, ` +
-      `netProfit = $${netProfitToday.toFixed(2)} `,
+      `trades=${totalTradesToday}, wins=${winsToday}, losses=${lossesToday}, ` +
+      `profit=$${dailyProfitFromTrades.toFixed(2)}, loss=$${dailyLossFromTrades.toFixed(2)}, ` +
+      `netProfit=$${netProfitToday.toFixed(2)}`,
     );
 
     // ✅ Calcular saldo inicial para porcentagem (usar initial_balance se disponível, senão usar initial_stake)
@@ -1176,7 +1160,7 @@ export class AutonomousAgentService implements OnModuleInit {
         timestamp: tick.timestamp,
       }));
     } catch (error) {
-      this.logger.error(`[GetPriceHistoryForUser] Erro ao buscar histórico: `, error);
+      this.logger.error(`[GetPriceHistoryForUser] Erro ao buscar histórico:`, error);
       // Em caso de erro, retornar últimos ticks globais
       return this.ticks.slice(-limit).map((tick) => ({
         value: tick.value,
@@ -1194,7 +1178,7 @@ export class AutonomousAgentService implements OnModuleInit {
   private readonly CACHE_TTL = 30000; // 30 segundos
 
   async getLogs(userId: string, limit: number = 50000): Promise<any[]> {
-    const limitClause = `LIMIT ${limit} `;
+    const limitClause = `LIMIT ${limit}`;
 
     // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;
@@ -1231,25 +1215,25 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
     const whereClause = sessionStartTime
-      ? `WHERE user_id = ? AND timestamp >= ? `
-      : `WHERE user_id = ? `;
+      ? `WHERE user_id = ? AND timestamp >= ?`
+      : `WHERE user_id = ?`;
     const params = sessionStartTime
       ? [userId, sessionStartTime]
       : [userId];
 
     const logs = await this.dataSource.query(
-      `SELECT
-        id,
-          user_id,
-          timestamp,
-          log_level,
-          module,
-          message,
-          metadata
+      `SELECT 
+         id,
+         user_id,
+         timestamp,
+         log_level,
+         module,
+         message,
+         metadata
        FROM autonomous_agent_logs 
        ${whereClause}
        ORDER BY timestamp DESC 
-       ${limitClause} `,
+       ${limitClause}`,
       params,
     );
 
@@ -1309,27 +1293,27 @@ export class AutonomousAgentService implements OnModuleInit {
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
        FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND created_at < ?
-            AND status IN('WON', 'LOST')
-         ${strategyFilter} `,
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
       prevParams
     );
     const prevProgress = parseFloat(prevTrades[0]?.total) || 0;
 
     const trades = await this.dataSource.query(
-      `SELECT
-        DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) as date,
-          SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as profit,
-          SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as loss,
-          COUNT(*) as ops,
-          SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
-          MIN(created_at) as first_op,
-          MAX(created_at) as last_op
+      `SELECT 
+         DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) as date,
+         SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as profit,
+         SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as loss,
+         COUNT(*) as ops,
+         SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
+         MIN(created_at) as first_op,
+         MAX(created_at) as last_op
        FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND created_at BETWEEN ? AND ?
-            AND status IN('WON', 'LOST')
+       WHERE user_id = ? 
+         AND created_at BETWEEN ? AND ?
+         AND status IN ('WON', 'LOST')
          ${strategyFilter}
        GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '-03:00'))
        ORDER BY date ASC`, // ASC para calcular acumulado corretamente
@@ -1354,7 +1338,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const first = new Date(day.first_op).getTime();
         const last = new Date(day.last_op).getTime();
         const diffMin = Math.round((last - first) / (60000 * (ops - 1)));
-        avgTime = diffMin >= 60 ? `${Math.floor(diffMin / 60)}h ${diffMin % 60} m` : `${diffMin} min`;
+        avgTime = diffMin >= 60 ? `${Math.floor(diffMin / 60)}h ${diffMin % 60}m` : `${diffMin}min`;
       }
 
       return {
@@ -1400,15 +1384,15 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Fetch trades for the period
     const trades = await this.dataSource.query(
-      `SELECT
-        created_at,
-          profit_loss,
-          status,
-          strategy
+      `SELECT 
+            created_at,
+            profit_loss,
+            status,
+            strategy
          FROM autonomous_agent_trades 
-         WHERE user_id = ?
-          AND created_at >= ?
-            AND status IN('WON', 'LOST')
+         WHERE user_id = ? 
+           AND created_at >= ?
+           AND status IN ('WON', 'LOST')
            ${strategyFilter}
          ORDER BY created_at ASC`,
       params
@@ -1444,7 +1428,7 @@ export class AutonomousAgentService implements OnModuleInit {
       } else if (groupBy === 'month') {
         startOfGroup.setDate(1);
         startOfGroup.setHours(0, 0, 0, 0);
-        key = `${startOfGroup.getFullYear()} -${startOfGroup.getMonth()} `; // unique key
+        key = `${startOfGroup.getFullYear()}-${startOfGroup.getMonth()}`; // unique key
 
         endOfGroup = new Date(startOfGroup);
         endOfGroup.setMonth(startOfGroup.getMonth() + 1);
@@ -1455,7 +1439,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const semesterStartMonth = month < 6 ? 0 : 6;
         startOfGroup.setMonth(semesterStartMonth, 1);
         startOfGroup.setHours(0, 0, 0, 0);
-        key = `${startOfGroup.getFullYear()} -S${month < 6 ? 1 : 2} `;
+        key = `${startOfGroup.getFullYear()}-S${month < 6 ? 1 : 2}`;
 
         endOfGroup = new Date(startOfGroup);
         endOfGroup.setMonth(startOfGroup.getMonth() + 6);
@@ -1464,7 +1448,7 @@ export class AutonomousAgentService implements OnModuleInit {
       } else if (groupBy === 'year') {
         startOfGroup.setMonth(0, 1);
         startOfGroup.setHours(0, 0, 0, 0);
-        key = `${startOfGroup.getFullYear()} `;
+        key = `${startOfGroup.getFullYear()}`;
 
         endOfGroup = new Date(startOfGroup);
         endOfGroup.setFullYear(startOfGroup.getFullYear() + 1);
@@ -1503,10 +1487,10 @@ export class AutonomousAgentService implements OnModuleInit {
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
          FROM autonomous_agent_trades 
-         WHERE user_id = ?
-          AND created_at < ?
-            AND status IN('WON', 'LOST')
-           ${strategyFilter} `,
+         WHERE user_id = ? 
+           AND created_at < ?
+           AND status IN ('WON', 'LOST')
+           ${strategyFilter}`,
       prevParams
     );
     const prevProfit = parseFloat(prevTrades[0]?.total) || 0;
@@ -1519,14 +1503,14 @@ export class AutonomousAgentService implements OnModuleInit {
       if (groupBy === 'week') {
         const startStr = group.start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
         const endStr = group.end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        periodLabel = `${startStr} - ${endStr} `;
+        periodLabel = `${startStr} - ${endStr}`;
       } else if (groupBy === 'month') {
         periodLabel = group.start.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
       } else if (groupBy === 'semester') {
         const sem = group.start.getMonth() < 6 ? '1º Sem' : '2º Sem';
-        periodLabel = `${sem} ${group.start.getFullYear()} `;
+        periodLabel = `${sem} ${group.start.getFullYear()}`;
       } else if (groupBy === 'year') {
-        periodLabel = `${group.start.getFullYear()} `;
+        periodLabel = `${group.start.getFullYear()}`;
       }
 
       // Atualiza capital
@@ -1589,14 +1573,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // Select trades in the period
     const trades = await this.dataSource.query(
-      `SELECT
-        created_at,
-          profit_loss,
-          strategy
+      `SELECT 
+         created_at,
+         profit_loss,
+         strategy
        FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND created_at BETWEEN ? AND ?
-            AND status IN('WON', 'LOST')
+       WHERE user_id = ? 
+         AND created_at BETWEEN ? AND ?
+         AND status IN ('WON', 'LOST')
          ${strategyFilter}
        ORDER BY created_at ASC`,
       params
@@ -1618,10 +1602,10 @@ export class AutonomousAgentService implements OnModuleInit {
     const prevTrades = await this.dataSource.query(
       `SELECT SUM(profit_loss) as total
        FROM autonomous_agent_trades 
-       WHERE user_id = ?
-          AND created_at < ?
-            AND status IN('WON', 'LOST')
-         ${strategyFilter} `,
+       WHERE user_id = ? 
+         AND created_at < ?
+         AND status IN ('WON', 'LOST')
+         ${strategyFilter}`,
       prevParams
     );
 
@@ -1752,26 +1736,26 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // Definir início e fim do dia para compatibilidade com qualquer DB (SQLite, Postgres, etc)
       // Assumindo UTC strings
-      // const startOfDayStr = `${ targetDateStr } T00:00:00.000Z`; // Unused
-      // const endOfDayStr = `${ targetDateStr } T23: 59: 59.999Z`; // Unused
+      // const startOfDayStr = `${targetDateStr}T00:00:00.000Z`; // Unused
+      // const endOfDayStr = `${targetDateStr}T23:59:59.999Z`; // Unused
 
       let query = `
-        SELECT
-        created_at,
-          symbol,
-          contract_type,
-          stake_amount as stake,
-          profit_loss,
-          status,
-          entry_price,
-          exit_price,
-          strategy
+         SELECT 
+           created_at,
+           symbol,
+           contract_type,
+           stake_amount as stake,
+           profit_loss,
+           status,
+           entry_price,
+           exit_price,
+           strategy
          FROM autonomous_agent_trades 
-         WHERE user_id = ?
-          AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
-            AND status IN('WON', 'LOST')
+         WHERE user_id = ? 
+           AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
+           AND status IN ('WON', 'LOST')
            ${strategyFilter}
-        `;
+      `;
 
       // REMOVIDO: Filtro de sessão para HOJE
       // O usuário relatou sumiço de operações.
@@ -1779,7 +1763,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Se ele pausou e iniciou 3 sessões hoje, quer ver todas no relatório de hoje.
       /*
       if (isToday && sessionDate) {
-        // query += ` AND created_at >= ? `;
+        // query += ` AND created_at >= ?`;
         // params.push(sessionDate.toISOString());
       }
       */
@@ -1801,7 +1785,7 @@ export class AutonomousAgentService implements OnModuleInit {
         status: t.status
       }));
     } catch (error) {
-      Logger.error(`[GetDailyTrades] Error returning empty: `, error);
+      Logger.error(`[GetDailyTrades] Error returning empty:`, error);
       return [];
     }
   }
@@ -1819,7 +1803,7 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async getGeneralStats(startDate?: string, endDate?: string): Promise<any> {
     try {
-      this.logger.log(`[GetGeneralStats] Buscando estatísticas gerais(startDate: ${startDate}, endDate: ${endDate})`);
+      this.logger.log(`[GetGeneralStats] Buscando estatísticas gerais (startDate: ${startDate}, endDate: ${endDate})`);
 
       // Definir estratégias disponíveis (IAs usam 'strategy' field em ai_user_config)
       const strategies = ['orion', 'apollo', 'nexus', 'titan', 'atlas'];
@@ -1830,13 +1814,13 @@ export class AutonomousAgentService implements OnModuleInit {
       const params: any[] = [];
 
       if (startDate && endDate) {
-        dateFilter = ` AND DATE(t.created_at) BETWEEN ? AND ? `;
+        dateFilter = ` AND DATE(t.created_at) BETWEEN ? AND ?`;
         params.push(startDate, endDate);
       } else if (startDate) {
-        dateFilter = ` AND DATE(t.created_at) >= ? `;
+        dateFilter = ` AND DATE(t.created_at) >= ?`;
         params.push(startDate);
       } else if (endDate) {
-        dateFilter = ` AND DATE(t.created_at) <= ? `;
+        dateFilter = ` AND DATE(t.created_at) <= ?`;
         params.push(endDate);
       }
 
@@ -1844,8 +1828,8 @@ export class AutonomousAgentService implements OnModuleInit {
       // Cada trade está marcado com a estratégia que o gerou
 
       const statsQuery = `
-        SELECT
-        strategy,
+        SELECT 
+          strategy,
           COUNT(DISTINCT user_id) as totalUsers,
           COUNT(id) as totalTrades,
           SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
@@ -1854,15 +1838,15 @@ export class AutonomousAgentService implements OnModuleInit {
           SUM(CASE WHEN status = 'LOST' THEN profit_loss ELSE 0 END) as totalLoss,
           SUM(profit_loss) as netProfit
         FROM ai_trades
-        WHERE strategy IN(?, ?, ?, ?, ?)
-          AND status IN('WON', 'LOST')
+        WHERE strategy IN (?, ?, ?, ?, ?)
+          AND status IN ('WON', 'LOST')
           ${dateFilter.replace(/t\./g, '')}
         GROUP BY strategy
-          `;
+      `;
 
       this.logger.log(`[GetGeneralStats] 🔍 Executando query de stats...`);
       const stats = await this.dataSource.query(statsQuery, [...strategies, ...params]);
-      this.logger.log(`[GetGeneralStats] 📊 Stats: ${JSON.stringify(stats)} `);
+      this.logger.log(`[GetGeneralStats] 📊 Stats: ${JSON.stringify(stats)}`);
 
 
       // Processar resultados e preencher estratégias sem dados
@@ -1919,10 +1903,10 @@ export class AutonomousAgentService implements OnModuleInit {
         const modeStats = await this.dataSource.query(`
           SELECT strategy, mode, COUNT(*) as count 
           FROM ai_user_config 
-          WHERE strategy IN(?, ?, ?, ?, ?)
+          WHERE strategy IN (?, ?, ?, ?, ?)
             AND mode IS NOT NULL
           GROUP BY strategy, mode
-          `, strategies);
+        `, strategies);
 
         // Obter contagem de riscos por estratégia (tentando risk_profile ou modoMartingale)
         // Nota: O nome da coluna pode variar, ajustando conforme padrão encontrado
@@ -1930,15 +1914,15 @@ export class AutonomousAgentService implements OnModuleInit {
         const riskStats = await this.dataSource.query(`
           SELECT strategy, risk_profile as risk, COUNT(*) as count 
           FROM ai_user_config 
-          WHERE strategy IN(?, ?, ?, ?, ?)
+          WHERE strategy IN (?, ?, ?, ?, ?)
             AND risk_profile IS NOT NULL
           GROUP BY strategy, risk_profile
-          `, strategies).catch(async () => {
+        `, strategies).catch(async () => {
           // Fallback: tentar 'modo_martingale' se 'risk_profile' falhar
           return await this.dataSource.query(`
             SELECT strategy, modo_martingale as risk, COUNT(*) as count 
             FROM ai_user_config 
-            WHERE strategy IN(?, ?, ?, ?, ?)
+            WHERE strategy IN (?, ?, ?, ?, ?)
               AND modo_martingale IS NOT NULL
             GROUP BY strategy, modo_martingale
           `, strategies).catch(() => []); // Retornar vazio se falhar ambos
@@ -1964,7 +1948,7 @@ export class AutonomousAgentService implements OnModuleInit {
         });
 
       } catch (error) {
-        this.logger.warn(`[GetGeneralStats] ⚠️ Não foi possível calcular estatísticas de Modo / Risco: ${error.message} `);
+        this.logger.warn(`[GetGeneralStats] ⚠️ Não foi possível calcular estatísticas de Modo/Risco: ${error.message}`);
         // Não falhar a request inteira, apenas deixar como N/A
       }
 
@@ -1981,7 +1965,7 @@ export class AutonomousAgentService implements OnModuleInit {
         return current.profit > top.profit ? current : top;
       }, strategyStats[0]);
 
-      this.logger.log(`[GetGeneralStats] Resumo: ${totalActiveIAs} IAs, ${totalTrades} trades, lucro combinado: ${combinedProfit} `);
+      this.logger.log(`[GetGeneralStats] Resumo: ${totalActiveIAs} IAs, ${totalTrades} trades, lucro combinado: ${combinedProfit}`);
 
       return {
         strategies: strategyStats,
@@ -2014,6 +1998,21 @@ export class AutonomousAgentService implements OnModuleInit {
       falcon: 'IA Falcon', // Mantido para compatibilidade
     };
     return names[strategy] || strategy.toUpperCase();
+  }
+
+  /**
+   * Normaliza o perfil de risco para o padrão esperado pelas estratégias (Caps)
+   */
+  private normalizeRiskProfile(risk: string): string {
+    if (!risk) return 'MODERADO';
+
+    const r = risk.toLowerCase();
+    if (r === 'fixed' || r === 'fixo') return 'FIXO';
+    if (r === 'conservative' || r === 'conservador') return 'CONSERVADOR';
+    if (r === 'balanced' || r === 'moderado' || r === 'moderada') return 'MODERADO';
+    if (r === 'aggressive' || r === 'agressivo' || r === 'agressiva') return 'AGRESSIVO';
+
+    return risk.toUpperCase();
   }
 
 }
