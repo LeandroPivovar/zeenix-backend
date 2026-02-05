@@ -1747,6 +1747,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.wins = 0;
             state.losses = 0;
             state.isWaitingContract = false;
+            state.sessionEnded = false;
+            state.endReason = undefined;
             state.mode = 'NORMAL';
         }
     }
