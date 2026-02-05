@@ -751,7 +751,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Heartbeat log
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-        if (state.ticksSinceLastAnalysis >= 10) {
+        if (state.ticksSinceLastAnalysis >= 5) {
             state.ticksSinceLastAnalysis = 0;
             this.logAnalysisStarted(userId, state.mode, digits.length, state.lastRejectionReason);
         }
