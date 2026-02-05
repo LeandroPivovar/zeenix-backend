@@ -603,6 +603,42 @@ export class AiController {
     }
   }
 
+  @Get('sessions/history/:userId')
+  async getSessionHistory(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+  ) {
+    try {
+      const limitNumber = limit ? parseInt(limit, 10) : 20;
+      const sessions = await this.aiService.getUserSessions(userId, limitNumber);
+
+      // Calculate aggregated stats
+      const totalOperations = sessions.reduce((sum, s) => sum + (s.total_trades || 0), 0);
+      const totalProfit = sessions.reduce((sum, s) => sum + (parseFloat(s.total_profit) || 0), 0);
+
+      return {
+        success: true,
+        data: {
+          sessions,
+          summary: {
+            totalOperations,
+            totalProfit,
+          },
+        },
+      };
+    } catch (error) {
+      this.logger.error(`[SessionHistory] ❌ Erro: ${error.message}`);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar histórico de sessões',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Post('sessions/start')
   async startSession(@Body() body: { userId: string; aiName: string }) {
     try {
