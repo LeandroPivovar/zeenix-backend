@@ -1720,34 +1720,34 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return {
             userId: state.userId,
             isActive: state.isActive,
-            currentProfit: state.lucroAtual,
-            currentLoss: Math.abs(Math.min(0, state.lucroAtual)),
-            operationsCount: state.opsCount,
+            currentProfit: state.profit,
+            currentLoss: Math.abs(Math.min(0, state.profit)),
+            operationsCount: state.opsTotal,
             mode: state.mode,
-            consecutiveWins: state.consecutiveWins,
             consecutiveLosses: state.consecutiveLosses,
         };
     }
 
     async resetDailySession(userId: string): Promise<void> {
+        const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
-        if (state) {
-            state.lucroAtual = 0;
-            state.picoLucro = 0;
+        if (state && config) {
+            state.balance = config.initialCapital;
+            state.profit = 0;
+            state.peakProfit = 0;
+            state.cycleCurrent = 1;
+            state.cycleProfit = 0;
+            state.cyclePeakProfit = 0;
+            state.cycleTarget = config.profitTarget * ZEUS_CONSTANTS.cyclePercent;
+            state.blindadoActive = false;
+            state.blindadoFloorProfit = 0;
             state.consecutiveLosses = 0;
-            state.consecutiveWins = 0;
-            state.opsCount = 0;
-            state.mode = 'PRECISO';
-            state.stopBlindadoAtivo = false;
-            state.pisoBlindado = 0;
-            state.lastProfit = 0;
-            state.sorosActive = false;
-            state.sorosCount = 0;
-            state.totalLossAccumulated = 0;
-            state.consecutiveMainLosses = 0;
-            state.isPausedStrategy = false;
-            state.pauseUntil = 0;
-            state.mode = 'NORMAL'; // ✅ Reset to Initial Mode
+            state.perdasAcumuladas = 0;
+            state.opsTotal = 0;
+            state.wins = 0;
+            state.losses = 0;
+            state.isWaitingContract = false;
+            state.mode = 'NORMAL';
         }
     }
 
@@ -2193,36 +2193,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
         this.saveLog(userId, 'INFO', 'EXECUTION', message);
-    }
-
-    private logSorosActivation(userId: string, soros: {
-        previousProfit: number;
-        stakeBase: number;
-        level?: number;
-    }) {
-        const newStake = soros.stakeBase + soros.previousProfit;
-        const level = soros.level || 1;
-        const message = `🚀 APLICANDO SOROS NÍVEL ${level}\n` +
-            `• Lucro Anterior: $${soros.previousProfit.toFixed(2)}\n` +
-            `• Nova Stake: $${newStake.toFixed(2)}`;
-
-        this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
-        this.saveLog(userId, 'INFO', 'RISK', message);
-    }
-
-    private logWinStreak(userId: string, streak: {
-        consecutiveWins: number;
-        accumulatedProfit: number;
-        currentStake: number;
-    }) {
-        const message = `🔥 SEQUÊNCIA DE VITÓRIAS!\n` +
-            `• Vitórias Consecutivas: ${streak.consecutiveWins}\n` +
-            `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
-            `• Stake Atual: $${streak.currentStake.toFixed(2)}\n` +
-            `• Próxima Vitória: Reset para Stake Base`;
-
-        this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
-        this.saveLog(userId, 'INFO', 'RISK', message);
     }
 
     // --- CATEGORIA 4: RECUPERAÇÃO E RISCO ---
