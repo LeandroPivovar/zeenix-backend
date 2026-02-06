@@ -707,39 +707,27 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
 
         // ✅ SMART GOAL (V4): Ajustar entrada para bater a meta exata (evitar exposição desnecessária)
-        // Se falta pouco para a meta, não apostar mais do que o necessário.
-        const gapToTarget = config.profitTarget - state.profit;
+        // Se falta pouco para a meta (do dia ou do ciclo), não apostar mais do que o necessário.
+        const dailyGap = config.profitTarget - state.profit;
+        const cycleGap = state.cycleTarget - state.cycleProfit;
+
+        // O gap real é o que for menor (meta do dia ou meta do ciclo atual)
+        const gapToTarget = Math.max(0, Math.min(dailyGap, cycleGap));
 
         // Calcular quanto precisamos apostar para ganhar o gapToTarget
-        // Lucro = Stake * (Payout% / 100)
         // Stake = Lucro / (Payout% / 100)
-        const payoutRate = state.analysis === 'PRINCIPAL' ? config.payoutPrimary : config.payoutRecovery;
-        const payoutDecimal = payoutRate > 0 ? (payoutRate / 100) : 1.26; // Default 126% if 0? No, payout is usually e.g. 1.26 or 126. 
-        // config.payoutPrimary is 1.26 (based on line 170 comments). Let's verify usage. 
-        // Line 170: payoutPrimary: 1.26. Value is multiplier? No, it says 126% (Net Payout).
-        // Let's check RiskManager. It says DIGITOVER: 1.19.
-        // In this file ZEUS_CONSTANTS says payoutPrimary: 1.26.
-        // Wait, payoutPrimary: 1.26 -> 126%? Or 1.26x?
-        // Line 170: "1.26 // 126% (Net Payout)".
-        // If I bet $10, I get $12.60 profit? 
-        // Digit Over 5 usually pays ~140% or ~250%? Over 5 is 4,5,6,7,8,9 (40%)? No, 6,7,8,9 (40%). 
-        // 4/10 win chance. 1/0.4 = 2.5x. Profit 1.5x (150%).
-        // Over 5 means >5 (6,7,8,9). 4 digits. 40%.
-        // Deriv pays around 144% for Over 5.
-        // The constant 1.26 seems low for Over 5, maybe it includes safety?
-        // Let's assume the config value is the multiplier for PROFIT.
-        // So Gap = Stake * 1.26. Stake = Gap / 1.26.
+        // V4: O payout é dinâmico (Princial vs Recuperação), mas geralmente 126% (1.26x de lucro)
+        const payoutRate = state.analysis === 'PRINCIPAL' ? (config.payoutPrimary || 1.26) : (config.payoutRecovery || 1.26);
 
-        if (gapToTarget > 0 && gapToTarget < (finalStake * 1.26)) { // Approx check
-            const neededStake = gapToTarget / (config.payoutPrimary || 1.26);
-            // Add slight buffer? No, precise.
+        if (gapToTarget > 0 && gapToTarget < (finalStake * payoutRate)) {
+            const neededStake = gapToTarget / payoutRate;
             let smartStake = Math.ceil(neededStake * 100) / 100;
 
-            // Ensure minimum
+            // Ensure minimum Deriv stake
             smartStake = Math.max(0.35, smartStake);
 
             if (smartStake < finalStake) {
-                this.logger.log(`[Zeus][${config.userId}] 🎯 SMART GOAL: Ajustando stake de $${finalStake} para $${smartStake} para bater meta exata de $${gapToTarget.toFixed(2)}`);
+                this.logger.log(`[Zeus][${config.userId}] 🎯 SMART GOAL: Ajustando stake de $${finalStake} para $${smartStake} para bater meta de $${gapToTarget.toFixed(2)} (Cycle Target: ${state.cycleTarget.toFixed(2)})`);
                 finalStake = smartStake;
             }
         }
