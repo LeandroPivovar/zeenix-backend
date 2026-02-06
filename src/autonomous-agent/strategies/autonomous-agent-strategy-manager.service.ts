@@ -58,10 +58,10 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
     const promises: Promise<void>[] = [];
     const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
-    // ✅ ORION: Processa R_100
+    // ✅ ORION: Processa R_100 e 1HZ100V
     const orionStrategy = this.strategies.get('orion');
     if (orionStrategy && typeof (orionStrategy as any).processTick === 'function') {
-      if (tickSymbol === 'R_100') {
+      if (tickSymbol === 'R_100' || tickSymbol === '1HZ100V') {
         promises.push(
           (orionStrategy as any).processTick(tick).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Orion] Erro:', error);
@@ -70,10 +70,10 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ SENTINEL: Processa R_100
+    // ✅ SENTINEL: Processa R_100 e 1HZ100V
     const sentinelStrategy = this.strategies.get('sentinel');
     if (sentinelStrategy && typeof (sentinelStrategy as any).processTick === 'function') {
-      if (tickSymbol === 'R_100') {
+      if (tickSymbol === 'R_100' || tickSymbol === '1HZ100V') {
         promises.push(
           (sentinelStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Sentinel] Erro:', error);
@@ -85,7 +85,7 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
     // ✅ FALCON: Processa R_100, 1HZ10V e 1HZ100V
     const falconStrategy = this.strategies.get('falcon');
     if (falconStrategy && typeof (falconStrategy as any).processTick === 'function') {
-      if (['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ100V'].includes(tickSymbol)) {
+      if (['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ100V', '1HZ25V', '1HZ50V', '1HZ75V'].includes(tickSymbol)) {
         promises.push(
           (falconStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Falcon] Erro:', error);
@@ -94,11 +94,11 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       }
     }
 
-    // ✅ ZEUS: Processa R_100 e R_50
+    // ✅ ZEUS: Processa R_100, R_50 e 1HZ100V
     const zeusStrategy = this.strategies.get('zeus');
     if (zeusStrategy && typeof (zeusStrategy as any).processTick === 'function') {
       // Zeus agora suporta R_100 e R_50
-      if (tickSymbol === 'R_100' || tickSymbol === 'R_50') {
+      if (tickSymbol === 'R_100' || tickSymbol === 'R_50' || tickSymbol === '1HZ100V' || tickSymbol === '1HZ50V') {
         promises.push(
           (zeusStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Zeus] Erro:', error);
