@@ -698,7 +698,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 stake = (perdas * 1.30 * 100) / payoutLiq;
                 break;
             case 'FIXO':
-                return config.baseStake;
+                stake = config.baseStake;
+                break;
             default:
                 return config.baseStake;
         }
