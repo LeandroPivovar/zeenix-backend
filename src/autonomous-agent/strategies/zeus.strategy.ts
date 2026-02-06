@@ -44,8 +44,12 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
     dataCollectionTicks: number;
 
     // V4 Limits
-    limitOpsDay: number;    // 2000 (Normal) / 400 (Preciso)
-    limitOpsCycle: number;  // 500 (Normal) / 100 (Preciso)
+    limitOpsDay?: number;    // 2000 (Normal) / 400 (Preciso)
+    limitOpsCycle?: number;  // 500 (Normal) / 100 (Preciso)
+
+    // Operation Mode
+    mode?: 'NORMAL' | 'PRECISO';
+    operationMode?: 'NORMAL' | 'PRECISO';
 }
 
 interface ZeusUserState extends AutonomousAgentState {
@@ -370,7 +374,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             sessionEnded: false,
 
             // Automático
-            mode: "NORMAL",
+            // Automático: Se não vier no config, infere pelo perfil de Risco
+            mode: config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL'),
             analysis: "PRINCIPAL",
 
             // Perdas
@@ -444,13 +449,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             cooldownLossSeconds: ZEUS_CONSTANTS.cooldownLossSeconds,
             dataCollectionTicks: ZEUS_CONSTANTS.dataCollectionTicks,
 
-            // ✅ V4 Limits (Normal vs Preciso logic will be handled if needed, or default to Normal)
-            limitOpsDay: 2000,
-            limitOpsCycle: 500
+            // ✅ V4 Limits (Normal vs Preciso logic)
+            // Normal: 2000/500 | Preciso: 400/100
+            // Normal: 2000/500 | Preciso: 400/100
+            // ✅ V4 Limits (Normal vs Preciso logic)
+            // Normal: 2000/500 | Preciso: 400/100
+            // ✅ V4 Limits (Normal vs Preciso logic)
+            // Normal: 2000/500 | Preciso: 400/100 (Auto-infer from Risk if mode not set)
+            limitOpsDay: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 400 : 2000,
+            limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500
         };
-
-        // Adjust limits based on mode if possible, but mode is state-dependent.
-        // We'll set default limits here (Normal) and adjust in updateConfig if needed?
         // Actually, we should probably set them based on a default assumption or fetch mode?
         // For now, setting safe defaults.
 
@@ -698,21 +706,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (nowTs < state.inStrategicPauseUntilTs) return false;
 
         // ✅ V4 Limits Check
-        if (state.opsTotal >= config.limitOpsDay) {
+        const limitDay = config.limitOpsDay || 2000;
+        if (state.opsTotal >= limitDay) {
             state.sessionEnded = true;
             state.endReason = "TARGET"; // Technically "LIMIT_REACHED" but treating as target/done
-            this.logger.log(`[Zeus][${userId}] 🛑 Limite Diário de Operações atingido (${state.opsTotal}/${config.limitOpsDay})`);
+            this.logger.log(`[Zeus][${userId}] 🛑 Limite Diário de Operações atingido (${state.opsTotal}/${limitDay})`);
             this.handleStopCondition(userId, 'DAILY_LIMIT');
             return false;
         }
 
-        if (state.cycleOps >= config.limitOpsCycle) {
+        const limitCycle = config.limitOpsCycle || 500;
+        if (state.cycleOps >= limitCycle) {
             // End of cycle due to ops limit -> Force cycle transition/pause?
             // V4 says "Max ops per cycle". If reached, we should likely pause or end cycle.
             // For safety, we'll treat it as a cycle reset trigger or stop if strict.
             // Let's assume it pushes to next cycle or stops if cycle goal not met?
             // "Se atingir limite do ciclo, encerra o ciclo."
-            this.logger.log(`[Zeus][${userId}] 🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${config.limitOpsCycle})`);
+            this.logger.log(`[Zeus][${userId}] 🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${limitCycle})`);
             // Trigger cycle transition logic if profitable? Or just stop?
             // Verification: Does it stop session? No, just cycle.
             // But we need to call logic to advance cycle. 
@@ -863,28 +873,40 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
-        // Check Onda Alta
-        const oa = this.filtroOndaAlta(digits);
-        if (oa.passes) {
-            const sequence = oa.metrics?.sequence || [];
-            this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (NORMAL)\n• Padrão Onda Alta: [${sequence.join(', ')}]`);
-            state.lastRejectionReason = undefined;
-            return {
-                signal: 'DIGIT',
-                probability: 45.0,
-                payout: config.payoutPrimary,
-                confidence: 0.45,
-                details: {
-                    contractType: 'DIGITOVER',
-                    barrier: 5,
-                    info: 'Onda Alta',
-                    mode: 'NORMAL'
-                }
-            };
+        // Check Onda Alta (ONLY IF NORMAL MODE or Fallback allowed?)
+        // V4 Spec Strict Mode: "Modo Preciso... buscando menos operações com taxa de acerto superior."
+        // Implication: Ignore "Onda Alta" (Normal signals) if in PRECISO mode.
+        if (state.mode !== 'PRECISO') {
+            const oa = this.filtroOndaAlta(digits);
+            if (oa.passes) {
+                const sequence = oa.metrics?.sequence || [];
+                this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (NORMAL)\n• Padrão Onda Alta: [${sequence.join(', ')}]`);
+                state.lastRejectionReason = undefined;
+                return {
+                    signal: 'DIGIT',
+                    probability: 45.0,
+                    payout: config.payoutPrimary,
+                    confidence: 0.45,
+                    details: {
+                        contractType: 'DIGITOVER',
+                        barrier: 5,
+                        info: 'Onda Alta',
+                        mode: 'NORMAL'
+                    }
+                };
+            }
+            // Store rejection reason if Normal mode but failed
+            if (!qp.passes) {
+                state.lastRejectionReason = oa.reason || qp.reason;
+            }
+        } else {
+            // If Preciso mode and QP failed, we just return null (ignoring Onda Alta)
+            if (!qp.passes) {
+                state.lastRejectionReason = qp.reason;
+            }
         }
 
-        // Armazenar motivo da rejeição (priorizando o motivo do Quarteto se Onda falhou também)
-        state.lastRejectionReason = oa.reason || qp.reason;
+
 
         // Heartbeat log
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
@@ -1491,46 +1513,67 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.wins++;
             state.consecutiveLosses = 0;
             state.perdasAcumuladas = 0;
+
+            // ✅ Reset Recovery: Voltar para o modo original se estava em modo de segurança
+            const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
+            if (state.mode !== originalMode) {
+                state.mode = originalMode;
+                this.saveLog(userId, 'INFO', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
+            }
         } else {
             state.losses++;
             state.consecutiveLosses++;
             state.perdasAcumuladas += Math.abs(result.profit);
-        }
 
-        // Compatibilidade Infra
-        state.lucroAtual = state.profit;
-        state.opsCount++;
-
-        // ✅ Log Trade Result (Orion Format)
-        this.logTradeResultV2(userId, {
-            status: result.win ? 'WIN' : 'LOSS',
-            profit: result.profit,
-            stake: result.stake,
-            balance: state.balance
-        });
-
-        // ✅ Atualizar DB (Trade)
-        if (tradeId) {
-            try {
-                await this.updateTradeRecord(tradeId, {
-                    status: result.win ? 'WON' : 'LOST',
-                    exitPrice: result.exitPrice || 0,
-                    profitLoss: result.profit,
-                    closedAt: new Date(),
-                });
-            } catch (error) {
-                this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+            // ✅ V4 + User Request: Ativar MODO PRECISO após 2 perdas consecutivas
+            if (state.consecutiveLosses >= 2 && state.mode !== 'PRECISO') {
+                state.mode = 'PRECISO';
+                this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2 PERDAS CONSECUTIVAS: Ativando MODO PRECISO para maior segurança.`);
             }
+
+            // ✅ V4 Feature: Pausa por Sequência de Perdas (5 consecutive losses -> 5 min pause)
+            if (state.consecutiveLosses >= 5) {
+                const pauseDurationMs = 5 * 60 * 1000; // 5 minutes
+                state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
+                state.consecutiveLosses = 0;
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA ATIVADA (5 Perdas Consecutivas). Pausando por 5 minutos.`);
+            }
+
+            // Compatibilidade Infra
+            state.lucroAtual = state.profit;
+            state.opsCount++;
+
+            // ✅ Log Trade Result (Orion Format)
+            this.logTradeResultV2(userId, {
+                status: result.win ? 'WIN' : 'LOSS',
+                profit: result.profit,
+                stake: result.stake,
+                balance: state.balance
+            });
+
+            // ✅ Atualizar DB (Trade)
+            if (tradeId) {
+                try {
+                    await this.updateTradeRecord(tradeId, {
+                        status: result.win ? 'WON' : 'LOST',
+                        exitPrice: result.exitPrice || 0,
+                        profitLoss: result.profit,
+                        closedAt: new Date(),
+                    });
+                } catch (error) {
+                    this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+                }
+            }
+
+            // ✅ Lógica Core: Check Blindado, Cycles
+            await this.updateCycleState(userId, state, config);
+
+            // ✅ Persistir State
+            await this.updateUserStateInDb(userId, state);
+
+            // ✅ Verificar Fim de Sessão
+            this.canOperate(userId, config, state);
         }
-
-        // ✅ Lógica Core: Check Blindado, Cycles
-        await this.updateCycleState(userId, state, config);
-
-        // ✅ Persistir State
-        await this.updateUserStateInDb(userId, state);
-
-        // ✅ Verificar Fim de Sessão
-        this.canOperate(userId, config, state);
     }
 
     /**
