@@ -668,31 +668,34 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         switch (config.riskProfile) {
             case 'CONSERVADOR':
                 // Recupera 100% das perdas
-                // Form: stake = perdas * 1.00 * 100 / 126
                 stake = (perdas * 1.00 * 100) / payoutLiq;
                 break;
             case 'MODERADO':
                 // Recupera 100% + 15%
-                // Form: stake = perdas * 1.15 * 100 / 126
                 stake = (perdas * 1.15 * 100) / payoutLiq;
                 break;
             case 'AGRESSIVO':
                 // Recupera 100% + 30%
-                // Form: stake = perdas * 1.30 * 100 / 126
                 stake = (perdas * 1.30 * 100) / payoutLiq;
                 break;
             case 'FIXO':
                 return config.baseStake;
-            default: // FIXA (assume base if not matched, or default logic)
-                // Se o usuário selecionou algo que não mapeia para esses perfis, assume FIXA (neste caso, stakeBase)
-                // Mas se tem perdas e estamos aqui, tecnicamente "FIXA" não recupera.
-                // Code structure handles FIXA by not accumulating losses or just resets constantly.
-                // In implementation, if riskProfile is something else, we return baseStake.
+            default:
                 return config.baseStake;
         }
 
         // Safety e Arredondamento
-        return Math.max(0.35, Math.ceil(stake * 100) / 100);
+        const finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
+
+        // ✅ Log Martingale Calculation for User Awareness
+        // "Recuperando $20.00 (Total) com Stake de $18.26 (@126%)..."
+        if (state.perdasAcumuladas > 0) {
+            // this.saveLog is not available here easily without instance ref? 
+            // Actually it is a private method of ZeusStrategy class, so yes 'this' works if called from instance.
+            // But logger is safer.
+        }
+
+        return finalStake;
     }
 
     /**
@@ -830,6 +833,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 }
 
                 // Execute Trade
+                if (state.perdasAcumuladas > 0 && config.riskProfile !== 'FIXO') {
+                    this.saveLog(userId, 'INFO', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): Recuperando $${state.perdasAcumuladas.toFixed(2)} com Stake $${stake} (Payout 126%)`);
+                }
+
                 await this.executeTrade(userId, {
                     action: 'BUY',
                     stake,
@@ -1460,6 +1467,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.cyclePeakProfit = 0;
                 state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
+
+                // ✅ V4 Fix: Do NOT reset consecutiveLosses on cycle transition
+                // This ensures "Preciso" mode (safety) persists even if cycle resets
+                // state.consecutiveLosses = 0;  <-- REMOVED
 
                 state.inStrategicPauseUntilTs = Date.now() + 120000; // 2 min penalty
                 this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após stop no ciclo (Pausa 2 min)...`);
