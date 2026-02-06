@@ -1517,7 +1517,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (currentProfitRounded <= -config.stopLoss) {
             this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
             state.sessionEnded = true;
-            state.endReason = 'STOP_LOSS';
+            state.endReason = 'STOPLOSS'; // Typo fix: STOP_LOSS -> STOPLOSS regex match interface
             this.handleStopCondition(userId, 'STOP_LOSS');
             return;
         }
