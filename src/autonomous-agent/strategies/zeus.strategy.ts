@@ -1498,14 +1498,25 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ LOGIC HELPER: Atualizar Estado do Ciclo (V4)
      */
     private async updateCycleState(userId: string, state: ZeusUserState, config: ZeusUserConfig): Promise<void> {
-        // 0. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
+        // 0. META GLOBAL: Checar se o lucro total já atingiu a meta diária
+        // Fazemos isso antes de qualquer lógica de ciclo para encerrar imediatamente.
+        const currentProfitTotal = Math.round(state.profit * 100) / 100;
+        if (currentProfitTotal >= config.profitTarget) {
+            this.saveLog(userId, 'SUCCESS', 'SESSION', `🏆 META DE LUCRO ATINGIDA ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
+            state.sessionEnded = true;
+            state.endReason = 'TARGET';
+            this.handleStopCondition(userId, 'TAKE_PROFIT');
+            return;
+        }
+
+        // 1. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
         // Se bateu o Stop Loss Global, a sessão morre aqui, independente de ciclo.
         // Fix: Usar Math.round para evitar erro de float (ex: -19.999999 <= -20)
         const currentProfitRounded = Math.round(state.profit * 100) / 100;
         if (currentProfitRounded <= -config.stopLoss) {
             this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
             state.sessionEnded = true;
-            state.endReason = 'STOPLOSS'; // Typo fix: STOP_LOSS -> STOPLOSS regex match interface
+            state.endReason = 'STOPLOSS';
             this.handleStopCondition(userId, 'STOP_LOSS');
             return;
         }
