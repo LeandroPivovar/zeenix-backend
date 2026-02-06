@@ -517,7 +517,7 @@ export class AutonomousAgentService implements OnModuleInit {
             initialBalance: parseFloat(agent.initial_balance) || 0,
             // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
             stopLossType: agent.stop_loss_type,
-            riskProfile: agent.risk_profile,
+            riskProfile: agent.risk_level || agent.risk_profile,
             agentType: agent.agent_type
           });
         } catch (err) {
@@ -573,7 +573,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const config = await this.dataSource.query(
           `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
                   deriv_token, currency, symbol, trading_mode, initial_balance, agent_type,
-                  stop_loss_type, risk_profile
+                  stop_loss_type, risk_level
            FROM autonomous_agent_config 
            WHERE user_id = ? AND is_active = TRUE
            LIMIT 1`,
@@ -600,7 +600,7 @@ export class AutonomousAgentService implements OnModuleInit {
             tradingMode: agentConfig.trading_mode || 'normal',
             initialBalance: parseFloat(agentConfig.initial_balance) || 0,
             stopLossType: agentConfig.stop_loss_type,
-            riskProfile: agentConfig.risk_profile,
+            riskProfile: agentConfig.risk_level || agentConfig.risk_profile,
             agentType: agentConfig.agent_type
           });
         }

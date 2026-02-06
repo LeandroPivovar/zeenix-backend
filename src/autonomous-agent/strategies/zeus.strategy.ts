@@ -1638,8 +1638,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.perdasAcumuladas += Math.abs(result.profit);
 
             // ✅ V4 + User Request: Ativar MODO PRECISO após 2 perdas consecutivas
-            // 🚨 FIX: Não alterar modo se o perfil for FIXO (usuário quer constância)
-            if (state.consecutiveLosses >= 2 && state.mode !== 'PRECISO' && config.riskProfile !== 'FIXO') {
+            if (state.consecutiveLosses >= 2 && state.mode !== 'PRECISO') {
                 state.mode = 'PRECISO';
                 this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2 PERDAS CONSECUTIVAS: Ativando MODO PRECISO para maior segurança.`);
             }
