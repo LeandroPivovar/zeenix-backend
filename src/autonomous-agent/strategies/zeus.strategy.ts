@@ -230,7 +230,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             const activeUsers = await this.dataSource.query(
                 `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
-            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type,
+            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -285,10 +285,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // Log para debug da resolução
                 if (resolvedToken !== user.config_token) {
                     this.logger.log(`[Zeus][ResolucaoToken] User ${userId}: Token atualizado dinamicamente. Modo=${wantDemo ? 'DEMO' : 'REAL'}.`);
-                } else {
-                    // Se for igual, ainda assim pode ser que o config_token esteja certo, mas bom logar se estivermos inconsistentes
-                    // Mas para não floodar, deixamos quieto se não houve mudança.
                 }
+
+                // ✅ Map Risk Profile from DB/Frontend to Enum
+                const rawRisk = user.risk_level || 'balanced';
+                const riskProfile = this.mapRiskProfile(rawRisk);
 
                 const zeusConfig: ZeusUserConfig = {
                     // System
@@ -310,7 +311,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     stopLoss: parseFloat(user.daily_loss_limit),
                     baseStake: parseFloat(user.initial_stake),
 
-                    riskProfile: ((user as any).riskProfile as RiskProfile) || 'MODERADO', // Use user.riskProfile if available, otherwise default
+                    riskProfile: riskProfile,
 
                     enableStopLossBlindado: user.stop_loss_type === 'blindado', // ✅ Fix mapping
                     blindadoTriggerPctOfTarget: 0.4,
@@ -343,6 +344,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         } catch (error) {
             this.logger.error(`[Zeus] ❌ Erro ao sincronizar usuários: ${error.message}`);
         }
+    }
+
+    /**
+     * ✅ HELPER: Mapear Risk Profile (Frontend -> Backend)
+     */
+    private mapRiskProfile(rawRisk: string): RiskProfile {
+        const r = rawRisk.toLowerCase();
+        if (r === 'fixed' || r === 'fixo') return 'FIXO';
+        if (r === 'conservative' || r === 'conservador') return 'CONSERVADOR';
+        if (r === 'balanced' || r === 'moderado' || r === 'equilibrio') return 'MODERADO';
+        if (r === 'aggressive' || r === 'agressivo') return 'AGRESSIVO';
+        return 'MODERADO'; // Default
     }
 
     /**
@@ -416,7 +429,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
         // Mapear AutonomousAgentConfig (DB) para ZeusConfig (Spec)
         // Valores default do Spec `buildDefaultConfig`
-        const risk = (config as any).riskProfile as RiskProfile || 'MODERADO';
+        const rawRisk = (config as any).riskProfile || (config as any).riskLevel || 'balanced';
+        const risk = this.mapRiskProfile(rawRisk);
 
         // Coletar token resolvido anteriormente ou do config
         const derivToken = config.derivToken; // Já resolvido na syncActiveUsersFromDb
@@ -451,10 +465,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             // ✅ V4 Limits (Normal vs Preciso logic)
             // Normal: 2000/500 | Preciso: 400/100
-            // Normal: 2000/500 | Preciso: 400/100
-            // ✅ V4 Limits (Normal vs Preciso logic)
-            // Normal: 2000/500 | Preciso: 400/100
-            // ✅ V4 Limits (Normal vs Preciso logic)
             // Normal: 2000/500 | Preciso: 400/100 (Auto-infer from Risk if mode not set)
             limitOpsDay: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 400 : 2000,
             limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500
