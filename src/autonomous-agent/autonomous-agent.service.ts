@@ -184,6 +184,9 @@ export class AutonomousAgentService implements OnModuleInit {
         this.isConnected = false;
         this.stopKeepAlive();
         this.ws = null;
+        this.subscriptions.clear(); // ✅ FIX: Clear subscriptions to force resubscribe on reconnect
+        this.subscriptionId = null;
+
         // Tentar reconectar após 5 segundos
         setTimeout(() => {
           this.initialize().catch((err) => {

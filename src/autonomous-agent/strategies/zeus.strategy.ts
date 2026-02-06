@@ -582,18 +582,27 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
         // ✅ Log de debug para verificar se está recebendo ticks
-        // ✅ Log de debug para verificar se está recebendo ticks (Logar SEMPRE para debug)
-        // if (this.userConfigs.size > 0) {
-        this.logger.debug(`[Zeus] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
-        // }
+        // this.logger.debug(`[Zeus] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
+
+        if (this.userConfigs.size === 0) {
+            // this.logger.warn(`[Zeus] ⚠️ Tick recebido mas nenhum usuário configurado.`);
+            return;
+        }
 
         // ✅ Processar para todos os usuários ativos
         for (const [userId, config] of this.userConfigs.entries()) {
-            // ✅ Processar se o símbolo coincidir (com suporte a sinônimos de mercado)
+            // ✅ Log temporário para debug de match
+            // this.logger.debug(`[Zeus] Checking match: TickSymbol=${tickSymbol} vs UserSymbol=${config.symbol}`);
+
             if (this.isSymbolMatch(tickSymbol, config.symbol)) {
                 promises.push(this.processTickForUser(userId, tick).catch((error) => {
                     this.logger.error(`[Zeus][${userId}] Erro ao processar tick:`, error);
                 }));
+            } else {
+                // Log mismatch only once per 100 ticks to avoid spam but allow debugging
+                if (Math.random() < 0.01) {
+                    this.logger.warn(`[Zeus][DEBUG] Symbol Mismatch: Tick=${tickSymbol} User=${config.symbol}`);
+                }
             }
         }
 
@@ -695,7 +704,45 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // Safety e Arredondamento
-        const finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
+        let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
+
+        // ✅ SMART GOAL (V4): Ajustar entrada para bater a meta exata (evitar exposição desnecessária)
+        // Se falta pouco para a meta, não apostar mais do que o necessário.
+        const gapToTarget = config.profitTarget - state.profit;
+
+        // Calcular quanto precisamos apostar para ganhar o gapToTarget
+        // Lucro = Stake * (Payout% / 100)
+        // Stake = Lucro / (Payout% / 100)
+        const payoutRate = state.analysis === 'PRINCIPAL' ? config.payoutPrimary : config.payoutRecovery;
+        const payoutDecimal = payoutRate > 0 ? (payoutRate / 100) : 1.26; // Default 126% if 0? No, payout is usually e.g. 1.26 or 126. 
+        // config.payoutPrimary is 1.26 (based on line 170 comments). Let's verify usage. 
+        // Line 170: payoutPrimary: 1.26. Value is multiplier? No, it says 126% (Net Payout).
+        // Let's check RiskManager. It says DIGITOVER: 1.19.
+        // In this file ZEUS_CONSTANTS says payoutPrimary: 1.26.
+        // Wait, payoutPrimary: 1.26 -> 126%? Or 1.26x?
+        // Line 170: "1.26 // 126% (Net Payout)".
+        // If I bet $10, I get $12.60 profit? 
+        // Digit Over 5 usually pays ~140% or ~250%? Over 5 is 4,5,6,7,8,9 (40%)? No, 6,7,8,9 (40%). 
+        // 4/10 win chance. 1/0.4 = 2.5x. Profit 1.5x (150%).
+        // Over 5 means >5 (6,7,8,9). 4 digits. 40%.
+        // Deriv pays around 144% for Over 5.
+        // The constant 1.26 seems low for Over 5, maybe it includes safety?
+        // Let's assume the config value is the multiplier for PROFIT.
+        // So Gap = Stake * 1.26. Stake = Gap / 1.26.
+
+        if (gapToTarget > 0 && gapToTarget < (finalStake * 1.26)) { // Approx check
+            const neededStake = gapToTarget / (config.payoutPrimary || 1.26);
+            // Add slight buffer? No, precise.
+            let smartStake = Math.ceil(neededStake * 100) / 100;
+
+            // Ensure minimum
+            smartStake = Math.max(0.35, smartStake);
+
+            if (smartStake < finalStake) {
+                this.logger.log(`[Zeus][${config.userId}] 🎯 SMART GOAL: Ajustando stake de $${finalStake} para $${smartStake} para bater meta exata de $${gapToTarget.toFixed(2)}`);
+                finalStake = smartStake;
+            }
+        }
 
         // ✅ Log Martingale Calculation for User Awareness
         // "Recuperando $20.00 (Total) com Stake de $18.26 (@126%)..."
@@ -784,6 +831,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const state = this.userStates.get(userId);
 
         if (!config || !state || !state.isActive) {
+            if (Math.random() < 0.01) this.logger.warn(`[Zeus][${userId}] ⚠️ Tick ignorado: Config=${!!config} State=${!!state} Active=${state?.isActive}`);
             return;
         }
 
@@ -793,8 +841,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Infra: History & Digits
         const userTicks = this.ticks.get(userId) || [];
         userTicks.push(tick);
+        this.ticks.set(userId, userTicks); // Ensure updated array is set back
+
         if (userTicks.length > config.dataCollectionTicks + 50) userTicks.shift();
-        this.ticks.set(userId, userTicks);
+
+        // Debug Log: Valid Tick Processed
+        // if (userTicks.length <= 5) {
+        //    this.saveLog(userId, 'INFO', 'CORE', `DEBUG: Tick processado #${userTicks.length}`);
+        // }
 
         const lastDigit = this.lastDigitFromPrice(tick.value, config.symbol);
         state.lastDigits.push(lastDigit);
@@ -803,8 +857,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // 1. Coleta de dados e progresso inicial
         const requiredTicks = config.dataCollectionTicks;
         if (userTicks.length < requiredTicks) {
-            // Log de progresso a cada 3 ticks
-            if (userTicks.length % 3 === 0) {
+            // Log de progresso imediato no primeiro tick e depois a cada 3
+            if (userTicks.length === 1 || userTicks.length % 3 === 0) {
                 this.logDataCollection(userId, {
                     targetCount: requiredTicks,
                     currentCount: userTicks.length,
@@ -990,10 +1044,32 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             };
         }
 
-        // 2. Stop Loss Blindado (V2)
-        if (config.enableStopLossBlindado) {
-            if (state.blindadoActive && state.profit < state.blindadoFloorProfit) {
+        // 2. Stop Loss Blindado (V2 + Smart Stop)
+        if (config.enableStopLossBlindado && state.blindadoActive) {
+            if (state.cycleProfit < state.blindadoFloorProfit) {
                 return { action: 'STOP', reason: 'BLINDADO' };
+            }
+
+            // ✅ SMART STOP BLINDADO: Verificar se a stake atual faria romper o piso
+            // Distância até o piso:
+            const distToFloor = state.cycleProfit - state.blindadoFloorProfit;
+
+            // Se a perda da aposta (valor da stake) for maior que a distância até o piso
+            if (stake > distToFloor) {
+                // Ajustar stake para proteger o piso
+                const adjustedStake = Math.floor(distToFloor * 100) / 100;
+
+                if (adjustedStake < 0.35) {
+                    this.logger.log(`[Zeus][${userId}] 🛡️ STOP BLINDADO PRÓXIMO: Encerrando para proteger lucro.`);
+                    return { action: 'STOP', reason: 'BLINDADO_SMART' };
+                }
+
+                this.logger.log(`[Zeus][${userId}] 🛡️ SMART BLINDADO: Ajustando stake de $${stake} para $${adjustedStake} para não romper piso.`);
+                return {
+                    action: 'BUY',
+                    stake: adjustedStake,
+                    reason: 'BLINDADO_ADJUSTED'
+                };
             }
         }
 
