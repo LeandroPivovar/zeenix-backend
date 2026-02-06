@@ -711,8 +711,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const dailyGap = config.profitTarget - state.profit;
         const cycleGap = state.cycleTarget - state.cycleProfit;
 
-        // O gap real é o que for menor (meta do dia ou meta do ciclo atual)
-        const gapToTarget = Math.max(0, Math.min(dailyGap, cycleGap));
+        // 🚨 FIX: Em recuperação (Martingale), ignoramos o gap do ciclo e focamos na Meta Global.
+        // Se tentarmos respeitar o ciclo durante a recuperação, a stake será capada e não recuperaremos o prejuízo total.
+        const gapToTarget = (state.perdasAcumuladas > 0)
+            ? Math.max(0, dailyGap)
+            : Math.max(0, Math.min(dailyGap, cycleGap));
 
         // Calcular quanto precisamos apostar para ganhar o gapToTarget
         // Stake = Lucro / (Payout% / 100)
@@ -727,7 +730,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             smartStake = Math.max(0.35, smartStake);
 
             if (smartStake < finalStake) {
-                this.logger.log(`[Zeus][${config.userId}] 🎯 SMART GOAL: Ajustando stake de $${finalStake} para $${smartStake} para bater meta de $${gapToTarget.toFixed(2)} (Cycle Target: ${state.cycleTarget.toFixed(2)})`);
+                this.logger.log(`[Zeus][${config.userId}] 🎯 SMART GOAL: Ajustando stake de $${finalStake} para $${smartStake} para bater meta de $${gapToTarget.toFixed(2)}` +
+                    (state.perdasAcumuladas <= 0 ? ` (Cycle Target: ${state.cycleTarget.toFixed(2)})` : ` (Recuperação Global)`));
                 finalStake = smartStake;
             }
         }
