@@ -1510,6 +1510,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ LOGIC HELPER: Atualizar Estado do Ciclo (V4)
      */
     private async updateCycleState(userId: string, state: ZeusUserState, config: ZeusUserConfig): Promise<void> {
+        // 0. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
+        // Se bateu o Stop Loss Global, a sessão morre aqui, independente de ciclo.
+        if (state.profit <= -config.stopLoss) {
+            this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
+            state.sessionEnded = true;
+            state.endReason = 'STOP_LOSS';
+            this.handleStopCondition(userId, 'STOP_LOSS');
+            return;
+        }
+
         // Atualizar picos do ciclo
         if (state.cycleProfit > state.cyclePeakProfit) {
             state.cyclePeakProfit = state.cycleProfit;
