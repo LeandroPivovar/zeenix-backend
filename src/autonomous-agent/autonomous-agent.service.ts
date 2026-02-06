@@ -781,6 +781,7 @@ export class AutonomousAgentService implements OnModuleInit {
                trading_mode = ?,
                stop_loss_type = ?,
                initial_balance = ?,
+               risk_level = ?,
                session_status = 'active',
                session_date = NOW(),
                daily_profit = 0,
@@ -800,6 +801,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
             config.initialBalance || 0,
+            config.riskProfile || 'balanced',
             userId,
           ],
         );
@@ -813,9 +815,9 @@ export class AutonomousAgentService implements OnModuleInit {
         await this.dataSource.query(
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
-            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance,
+            deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance, risk_level,
             session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -830,6 +832,7 @@ export class AutonomousAgentService implements OnModuleInit {
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
             config.initialBalance || 0,
+            config.riskProfile || 'balanced',
           ],
         );
         this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
