@@ -167,6 +167,7 @@ export class AutonomousAgentController {
         symbol: config.symbol,
         agentType: config.agent_type,
         tradingMode: config.trading_mode,
+        riskLevel: config.risk_level || config.risk_profile, // ✅ Include risk level
         initialBalance: adjustedInitialBalance,
         sessionStatus: config.session_status,
         sessionDate: config.session_date,
