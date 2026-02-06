@@ -1519,7 +1519,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.cycleOps++; // Fix missing ops count increment for cycle
         if (state.cycleProfit > state.cyclePeakProfit) state.cyclePeakProfit = state.cycleProfit;
 
-        // Atualizar Métricas Recuperação
         if (result.win) {
             state.wins++;
             state.consecutiveLosses = 0;
@@ -1549,42 +1548,42 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.consecutiveLosses = 0;
                 this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA ATIVADA (5 Perdas Consecutivas). Pausando por 5 minutos.`);
             }
-
-            // Compatibilidade Infra
-            state.lucroAtual = state.profit;
-            state.opsCount++;
-
-            // ✅ Log Trade Result (Orion Format)
-            this.logTradeResultV2(userId, {
-                status: result.win ? 'WIN' : 'LOSS',
-                profit: result.profit,
-                stake: result.stake,
-                balance: state.balance
-            });
-
-            // ✅ Atualizar DB (Trade)
-            if (tradeId) {
-                try {
-                    await this.updateTradeRecord(tradeId, {
-                        status: result.win ? 'WON' : 'LOST',
-                        exitPrice: result.exitPrice || 0,
-                        profitLoss: result.profit,
-                        closedAt: new Date(),
-                    });
-                } catch (error) {
-                    this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
-                }
-            }
-
-            // ✅ Lógica Core: Check Blindado, Cycles
-            await this.updateCycleState(userId, state, config);
-
-            // ✅ Persistir State
-            await this.updateUserStateInDb(userId, state);
-
-            // ✅ Verificar Fim de Sessão
-            this.canOperate(userId, config, state);
         }
+
+        // Compatibilidade Infra
+        state.lucroAtual = state.profit;
+        state.opsCount++;
+
+        // ✅ Log Trade Result (Orion Format)
+        this.logTradeResultV2(userId, {
+            status: result.win ? 'WIN' : 'LOSS',
+            profit: result.profit,
+            stake: result.stake,
+            balance: state.balance
+        });
+
+        // ✅ Atualizar DB (Trade)
+        if (tradeId) {
+            try {
+                await this.updateTradeRecord(tradeId, {
+                    status: result.win ? 'WON' : 'LOST',
+                    exitPrice: result.exitPrice || 0,
+                    profitLoss: result.profit,
+                    closedAt: new Date(),
+                });
+            } catch (error) {
+                this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+            }
+        }
+
+        // ✅ Lógica Core: Check Blindado, Cycles
+        await this.updateCycleState(userId, state, config);
+
+        // ✅ Persistir State
+        await this.updateUserStateInDb(userId, state);
+
+        // ✅ Verificar Fim de Sessão
+        this.canOperate(userId, config, state);
     }
 
     /**
