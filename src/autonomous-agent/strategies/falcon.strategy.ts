@@ -74,12 +74,12 @@ export const FALCON_CONSTANTS = {
 
 export const FALCON_MODES = {
   NORMAL: {
-    principal: { window: 67, targets: [1, 2, 3, 4, 5], limit: 42, barrier: 2 },
-    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
+    principal: { window: 67, targets: [5, 6, 7, 8, 9], limit: 42, barrier: 2 },
+    recovery: { window: 73, targets: [6, 7, 8, 9], limit: 26, barrier: 4 }
   },
   PRECISO: {
-    principal: { window: 74, targets: [6, 7], limit: 23, barrier: 2 },
-    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
+    principal: { window: 74, targets: [6, 7, 8, 9], limit: 23, barrier: 2 },
+    recovery: { window: 73, targets: [6, 7, 8, 9], limit: 26, barrier: 4 }
   }
 };
 
