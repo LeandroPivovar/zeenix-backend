@@ -674,26 +674,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * Regra: Se a densidade de um lado (Par ou Ímpar) for >= 60% nos últimos 20 ticks
      */
     private filtroLadoParidade(digits: number[]): { passes: boolean; side?: string; density?: number; reason?: string } {
-        const window = 20;
+        const window = 2; // ✅ Sequência curta para evitar lógica de densidade estendida
         const lastDigits = digits.slice(-window);
         if (lastDigits.length < window) {
             return { passes: false, reason: `Dados insuficientes (${lastDigits.length}/${window})` };
         }
 
-        const evenCount = lastDigits.filter(d => d % 2 === 0).length;
-        const oddCount = lastDigits.filter(d => d % 2 !== 0).length;
+        const isEven = lastDigits.every(d => d % 2 === 0);
+        const isOdd = lastDigits.every(d => d % 2 !== 0);
 
-        const evenDensity = (evenCount / window) * 100;
-        const oddDensity = (oddCount / window) * 100;
-
-        if (evenDensity >= 60) {
-            return { passes: true, side: 'PAR', density: evenDensity };
+        if (isEven) {
+            return { passes: true, side: 'PAR', density: 100 };
         }
-        if (oddDensity >= 60) {
-            return { passes: true, side: 'ÍMPAR', density: oddDensity };
+        if (isOdd) {
+            return { passes: true, side: 'ÍMPAR', density: 100 };
         }
 
-        return { passes: false, reason: `Densidade de lado baixa (P:${evenDensity.toFixed(0)}% I:${oddDensity.toFixed(0)}%)` };
+        return { passes: false, reason: `Paridade inconsistente: [${lastDigits.join(', ')}]` };
     }
 
     /**
