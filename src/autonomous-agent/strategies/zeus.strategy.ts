@@ -699,6 +699,37 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return { passes: false, reason: `Paridade inconsistente: [${lastDigits.join(', ')}]` };
     }
 
+
+    /**
+     * ✅ LOGIC HELPER: Filtro de Tendência (Price Action) - V4 Spec
+     * Regra: Evitar entradas de Call/Over se o preço estiver caindo forte
+     */
+    private filtroTendencia(prices: number[]): { passes: boolean; status: 'UP' | 'DOWN' | 'NEUTRAL'; reason?: string } {
+        if (prices.length < 5) return { passes: true, status: 'NEUTRAL' }; // Sem dados, confia nos dígitos
+
+        const recentPrices = prices.slice(-5);
+        const first = recentPrices[0];
+        const last = recentPrices[recentPrices.length - 1];
+
+        // Simples variação total
+        const change = last - first;
+
+        if (change < 0) {
+            // Contar quantos ticks foram de queda
+            let drops = 0;
+            for (let i = 1; i < recentPrices.length; i++) {
+                if (recentPrices[i] < recentPrices[i - 1]) drops++;
+            }
+
+            // Se cair em 3 ou 4 dos últimos 4 intervalos, é queda forte
+            if (drops >= 3) {
+                return { passes: false, status: 'DOWN', reason: `Tendência de Baixa (${drops}/4 quedas)` };
+            }
+        }
+
+        return { passes: true, status: change > 0 ? 'UP' : 'NEUTRAL' };
+    }
+
     /**
      * ✅ LOGIC HELPER: Calcular Stake (Soros / Martingale)
      */
@@ -947,6 +978,25 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // V4 precisa de 4 dígitos para análise de padrão
         const MIN_TICKS = 4;
         if (digits.length < MIN_TICKS) return null;
+        // 0. Preparar Dados de Tendência
+        const ticks = this.ticks.get(userId) || []; // ✅ Fix: Retrieve ticks from state map
+
+        // Converter ticks em array de preços para análise de tendência
+        const prices = ticks.map(t => t.value);
+        const trend = this.filtroTendencia(prices);
+
+        // Se tendência for CLARAMENTE de baixa, abortar qualquer Call/Over
+        if (!trend.passes && state.mode === 'PRECISO') { // Tendência importa mais no modo Preciso
+            state.lastRejectionReason = trend.reason;
+
+            // Log throttle logic duplication for early exit?
+            // Better: Just store rejection and let heartbeat log it if needed
+            // But we need to ensure we don't spam "Blocked by Trend"
+            // Let's rely on the heartbeat at the end function
+        }
+        else {
+            // Continue analysis only if Trend passes OR Mode is Normal (Normal is more aggressive)
+        }
 
         // 1. Filtragem por Lado (Paridade) - Novo Requisito V4 Plus
         const fl = this.filtroLadoParidade(digits);
@@ -967,18 +1017,26 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             );
 
             state.lastRejectionReason = undefined;
-            return {
-                signal: 'DIGIT',
-                probability,
-                payout: config.payoutPrimary,
-                confidence: probability / 100,
-                details: {
-                    contractType: 'DIGITOVER',
-                    barrier: 5,
-                    info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
-                    mode: 'PRECISO'
-                }
-            };
+
+            // ✅ Check Trend as final gatekeeper for Preciso
+            if (!trend.passes) {
+                state.lastRejectionReason = trend.reason;
+                // Don't return success
+            } else {
+                return {
+                    signal: 'DIGIT',
+                    probability,
+                    payout: config.payoutPrimary,
+                    confidence: probability / 100,
+                    details: {
+                        contractType: 'DIGITOVER',
+                        barrier: 5,
+                        info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
+                        mode: 'PRECISO',
+                        trend: trend.status
+                    }
+                };
+            }
         }
 
         // 3. Check Onda Alta
@@ -998,18 +1056,26 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 );
 
                 state.lastRejectionReason = undefined;
-                return {
-                    signal: 'DIGIT',
-                    probability,
-                    payout: config.payoutPrimary,
-                    confidence: probability / 100,
-                    details: {
-                        contractType: 'DIGITOVER',
-                        barrier: 5,
-                        info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
-                        mode: 'NORMAL'
-                    }
-                };
+
+                // ✅ Check Trend as final gatekeeper
+                if (!trend.passes) {
+                    state.lastRejectionReason = trend.reason;
+                    // Don't return success
+                } else {
+                    return {
+                        signal: 'DIGIT',
+                        probability,
+                        payout: config.payoutPrimary,
+                        confidence: probability / 100,
+                        details: {
+                            contractType: 'DIGITOVER',
+                            barrier: 5,
+                            info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
+                            mode: 'NORMAL',
+                            trend: trend.status // Add trend info
+                        }
+                    };
+                }
             }
             // Store rejection reason if Normal mode but failed
             if (!qp.passes) {
