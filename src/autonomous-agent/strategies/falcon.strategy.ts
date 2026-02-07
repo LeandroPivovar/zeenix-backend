@@ -684,12 +684,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
+      // ✅ Avançar contador de análise
+      state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
+
       // ✅ Log de início de análise (Heartbeat a cada 15 análises = ~15s em média)
       // Primeiro log logo na primeira análise após o warm-up de dados
       if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 15 === 0) {
-        if (state.ticksSinceLastAnalysis % 15 === 0) {
-          state.ticksSinceLastAnalysis = 0;
-        }
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
 
@@ -742,10 +742,26 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   /**
    * ✅ LOGIC HELPER: Extrair último dígito (Protocolo v2.0 p[rec[-1]])
    */
-  private lastDigitFromPrice(price: number): number {
-    // Documentação v2.0 BUG CRÍTICO: Usar string para pegar o último dígito exato
-    const priceStr = price.toFixed(4); // R_50 usa 4 casas
-    return parseInt(priceStr.slice(-1), 10);
+  private lastDigitFromPrice(price: number, symbol: string): number {
+    // Obter precisão do símbolo
+    let decimals = 4;
+    const s = symbol.toUpperCase();
+    if (s.includes('100')) decimals = 2;
+    else if (s.includes('50')) decimals = 4;
+    else if (s.includes('10')) decimals = 3;
+    else if (s.includes('25')) decimals = 3;
+    else if (s.includes('75')) decimals = 4;
+    else if (s.includes('1HZ')) { // Caso use sinônimo direto
+      if (s.includes('100')) decimals = 2;
+      else if (s.includes('50')) decimals = 4;
+      else if (s.includes('10')) decimals = 3;
+      else if (s.includes('25')) decimals = 3;
+      else if (s.includes('75')) decimals = 4;
+    }
+
+    const priceStr = price.toFixed(decimals);
+    const lastDigit = parseInt(priceStr.slice(-1), 10);
+    return isNaN(lastDigit) ? 0 : lastDigit;
   }
 
   /**
@@ -769,8 +785,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 1. Verificações de Segurança (V4 Limits)
     const nowTs = Date.now();
     if (state.sessionEnded) return { action: 'WAIT', reason: 'SESSION_ENDED' };
-    if (nowTs < state.cooldownUntilTs) return { action: 'WAIT', reason: 'COOLDOWN' };
-    if (nowTs < state.inStrategicPauseUntilTs) return { action: 'WAIT', reason: 'STRATEGIC_PAUSE' };
+
+    if (nowTs < state.cooldownUntilTs) {
+      this.logBlockedEntry(userId, {
+        reason: 'COOLDOWN',
+        details: 'Aguardando tempo de espera entre operações'
+      });
+      return { action: 'WAIT', reason: 'COOLDOWN' };
+    }
+
+    if (nowTs < state.inStrategicPauseUntilTs) {
+      this.logBlockedEntry(userId, {
+        reason: 'PAUSA ESTRATÉGICA',
+        details: 'Agente em pausa após sequência de operações'
+      });
+      return { action: 'WAIT', reason: 'STRATEGIC_PAUSE' };
+    }
 
     // V4 Limits
     const limitDay = config.limitOpsDay || 2000;
@@ -781,6 +811,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     const limitCycle = config.limitOpsCycle || 500;
     if (state.cycleOps >= limitCycle) {
+      this.logBlockedEntry(userId, {
+        reason: 'LIMITE DE CICLO',
+        details: `Máximo de ${limitCycle} operações por ciclo atingido`
+      });
       return { action: 'WAIT', reason: 'CYCLE_LIMIT' };
     }
 
@@ -789,6 +823,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       const stake = this.computeNextStake(config, state);
 
       if (stake <= 0) {
+        this.logBlockedEntry(userId, {
+          reason: 'STAKE INVÁLIDA',
+          details: 'Calcule de stake retornou valor zero ou negativo'
+        });
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
 
@@ -798,6 +836,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return riskCheck;
       }
 
+      if (riskCheck.action === 'WAIT') {
+        this.logBlockedEntry(userId, {
+          reason: riskCheck.reason || 'RISCO_BLOQUEADO',
+          details: 'Entrada bloqueada por gestão de risco'
+        });
+        return riskCheck;
+      }
       const finalStake = riskCheck.stake ? riskCheck.stake : stake;
 
       return {
@@ -809,7 +854,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       };
     }
 
-    return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
+    return { action: 'WAIT', reason: 'NO_SIGNAL' };
   }
 
   /**
@@ -998,6 +1043,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const currentDrawdown = state.profit < 0 ? Math.abs(state.profit) : 0;
 
     if (currentDrawdown >= config.stopLoss) {
+      this.logBlockedEntry(userId, {
+        reason: 'STOP LOSS GLOBAL',
+        details: `Limite de $${config.stopLoss} atingido`
+      });
       return { action: 'STOP', reason: 'STOP_LOSS' };
     }
 
@@ -1021,6 +1070,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 2. Stop Loss Blindado (Ciclo)
     if (config.enableStopLossBlindado && state.blindadoActive) {
       if (state.cycleProfit < state.blindadoFloorProfit) {
+        this.logBlockedEntry(userId, {
+          reason: 'STOP BLINDADO',
+          details: `Lucro do ciclo caiu abaixo do piso de $${state.blindadoFloorProfit}`
+        });
         return { action: 'STOP', reason: 'BLINDADO' };
       }
 
@@ -1566,14 +1619,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     // 1. Extrair dígitos da janela solicitada
     const windowTicks = ticks.slice(-modeConfig.window);
-    const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value));
+    const symbol = config.symbol || 'R_50';
+    const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value, symbol));
     state.lastDigits = digits;
 
     // 2. Contar ocorrências dos dígitos alvo
     const count = digits.filter(d => modeConfig.targets.includes(d)).length;
 
-    // 3. Verificar Limite (Deve ser EXATAMENTE igual conforme doc)
-    if (count === modeConfig.limit) {
+    // ✅ LOG DE MONITORAMENTO (A cada 5 ticks para não inundar)
+    if (state.ticksSinceLastAnalysis % 5 === 0) {
+      const message = `📊 MONITORANDO DENSIDADE\n` +
+        `• SINAL: Digit Over ${modeConfig.barrier}\n` +
+        `• DENSIDADE: ${count}/${modeConfig.window}\n` +
+        `• ALVO: >= ${modeConfig.limit}\n` +
+        `• ÚLTIMOS: ${digits.slice(-10).join('|')}`;
+      this.saveLog(userId, 'INFO', 'ANALYZER', message);
+    }
+
+    // 3. Verificar Limite (Relaxado para >= conforme nova estratégia de precisão)
+    if (count >= modeConfig.limit) {
       const contractType = 'DIGITOVER';
       const barrier = modeConfig.barrier;
       const payout = isRecovery ? FALCON_CONSTANTS.payoutRecovery : FALCON_CONSTANTS.payoutPrincipal;
@@ -1594,6 +1658,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           currentPrice: ticks[ticks.length - 1].value
         }
       };
+    } else if (count >= (modeConfig.limit * 0.8)) {
+      // Log de "Força Insuficiente" se estiver próximo (80% do alvo)
+      this.logBlockedEntry(userId, {
+        reason: 'FORÇA INSUFICIENTE',
+        details: `Densidade: ${count}/${modeConfig.window} (Alvo: >= ${modeConfig.limit})`
+      });
     }
 
     return null;
