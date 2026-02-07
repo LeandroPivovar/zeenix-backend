@@ -15,19 +15,33 @@ export class AutonomousAgentScheduler {
 
   constructor(
     private readonly agentService: AutonomousAgentService,
-  ) {}
+  ) { }
 
   /**
-   * Verifica e reseta sessões diárias a cada hora
+   * Verifica e reseta sessões diárias a cada hora (Segurança)
    * Se um agente parou no dia anterior (stop loss/win/blindado), reseta para o novo dia
    */
   @Cron(CronExpression.EVERY_HOUR)
   async handleCheckAndResetDailySessions() {
     try {
-      this.logger.log('[Scheduler] Verificando e resetando sessões diárias...');
+      this.logger.log('[Scheduler] Verificando e resetando sessões diárias (Hourly Check)...');
       await this.agentService.checkAndResetDailySessions();
     } catch (error) {
       this.logger.error('[Scheduler] Erro ao verificar e resetar sessões:', error);
+    }
+  }
+
+  /**
+   * Reset Diário Oficial à Meia-Noite
+   * Garante que todos os agentes que bateram meta/stop ontem voltem a operar hoje
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleResetDailySessionsAtMidnight() {
+    try {
+      this.logger.log('[Scheduler] Executando RESET DIÁRIO DE MEIA-NOITE...');
+      await this.agentService.checkAndResetDailySessions();
+    } catch (error) {
+      this.logger.error('[Scheduler] Erro no reset de meia-noite:', error);
     }
   }
 

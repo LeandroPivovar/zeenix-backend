@@ -70,6 +70,10 @@ const FALCON_V20_RISK = {
     profitFactor: 1.30, // Recupera + 30%
     maxMartingale: 5
   },
+  FIXO: {
+    profitFactor: 1.0,
+    maxMartingale: -1 // Sem martingale
+  },
 };
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -872,6 +876,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // Se há perdas acumuladas, priorizar recuperação
     if (state.totalLossAccumulated > 0 || state.consecutiveLosses > 0) {
       const riskSettings = FALCON_V20_RISK[config.riskProfile as keyof typeof FALCON_V20_RISK] || FALCON_V20_RISK.MODERADO;
+
+      // ✅ MODO FIXO: Ignora qualquer lógica de recuperação e retorna stake base
+      if (config.riskProfile === 'FIXO') {
+        this.logger.debug(`[Falcon][${userId}] 🛡️ MODO FIXO ATIVO: Usando stake base $${config.initialStake}`);
+        return config.initialStake;
+      }
+
       const profitFactor = riskSettings.profitFactor;
 
       const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
@@ -2461,7 +2472,7 @@ interface FalconUserConfig {
   symbol: string; // ✅ V2: Allow dynamic symbol
   initialBalance: number;
   stopLossType?: 'normal' | 'blindado';
-  riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO';
+  riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO' | 'FIXO';
 }
 
 /**
