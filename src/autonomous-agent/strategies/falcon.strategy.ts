@@ -13,68 +13,185 @@ import { Tick, DigitParity } from '../../ai/ai.service';
 import { LogQueueService } from '../../utils/log-queue.service';
 
 /**
- * 🦅 FALCON Strategy para Agente Autônomo - Versão 2.0 (ZENIX OFICIAL)
+ * 🦅 FALCON Strategy para Agente Autônomo - Versão 3.0 (ALINHADO COM ZEUS V4)
  * 
- * CORE: IPI Pattern (Ímpar-Par-Ímpar)
- * - Símbolo: 1HZ10V (Volatility 10 (1s) Index)
- * - Contrato: DIGITODD (Ímpar)
- * - PADRÃO: Sequência {ÍMPAR, PAR, ÍMPAR} -> Aposta ÍMPAR
- * - WIN RATE ESPERADO: 57.34%
- * 
- * MODOS (Defesa Automática):
- * - NORMAL: Análise a cada 1 tick (Principal) ou 2 ticks (Recuperação)
- * - PRECISO: Análise a cada 2 ticks (Principal) ou 3 ticks (Recuperação)
- *   * Ativa PRECISO após 4 perdas consecutivas (Defesa Automática)
- * 
- * GESTÃO:
- * - Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = Reset
- * - Martingale Inteligente: Conservador, Moderado, Agressivo
- * - Recuperação ativada após 2 perdas consecutivas
- * 
- * PROTEÇÃO:
- * - Stop Loss Normal e Blindado (Catraca)
- * - Pausa Estratégica (5+ perdas recuperadas)
+ * CORE: Price Action (Trend + Volatility/Delta)
+ * - MODO NORMAL: Janela 7 ticks, 4/6 moves, delta >= 0.5. WR esperado ~76%.
+ * - MODO LENTO: Janela 8 ticks, 5/7 moves, delta >= 0.7. WR esperado ~90%.
+ * - Gestão: Soros Nível 1 no Normal, Smart Martingale no Lento.
+ * - Proteção: Stop Blindado (40% meta ativa, proteção fixa de 50%).
  */
 
-/**
- * Configurações dos Modos de Negociação FALCON v2.0
- */
-const FALCON_MODES = {
+export type NegotiationMode = "NORMAL" | "PRECISO";
+export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO" | "FIXO";
+export type AnalysisType = "PRINCIPAL" | "RECUPERACAO";
+
+export type LogColor = "green" | "red" | "blue" | "yellow" | "neutral";
+
+export type ZenixLogId =
+  | "LOG_01_SESSION_START"
+  | "LOG_02_DATA_COLLECTION"
+  | "LOG_03_ANALYSIS_START"
+  | "LOG_04_ENTRY_BLOCKED"
+  | "LOG_05_SIGNAL_FOUND"
+  | "LOG_06_WIN"
+  | "LOG_07_LOSS"
+  | "LOG_08_SOROS"
+  | "LOG_09_MARTINGALE"
+  | "LOG_10_MODE_SWITCH"
+  | "LOG_11_CONTRACT_SWITCH"
+  | "LOG_12_RECOVERY_START"
+  | "LOG_13_RECOVERY_SUCCESS"
+  | "LOG_14_STRATEGIC_PAUSE"
+  | "LOG_15_BLINDADO_STATUS"
+  | "LOG_16_BLINDADO_TRIGGER"
+  | "LOG_17_STOPLOSS_TRIGGER"
+  | "LOG_18_TARGET_REACHED"
+  | "LOG_19_SESSION_END"
+  | "LOG_20_API_ERROR";
+
+export interface FalconLogEvent {
+  ts: number;
+  id: ZenixLogId;
+  title: string;
+  lines: Array<{ text: string; color?: LogColor }>;
+}
+
+export const FALCON_SUBTITLE = "Agente Autônomo de Análise Tick a Tick em Volatility Indices";
+
+export const FALCON_CONSTANTS = {
+  symbol: "R_50", // Volatility 50 Index (R_50)
+  payoutPrincipal: 0.34, // Digit Over 2 (37% - 3% markup)
+  payoutRecovery: 0.84,  // Digit Over 4 (87% - 3% markup)
+  martingaleMaxLevel: 5, // Limite para perfil Conservador
+  strategicPauseSeconds: 60,
+  cooldownWinSeconds: 2,
+  cooldownLossSeconds: 2,
+  dataCollectionTicks: 74, // Max window (J74)
+  cycles: 4,
+  cyclePercent: 0.25,
+};
+
+export const FALCON_MODES = {
   NORMAL: {
-    name: 'NORMAL',
-    windowSize: 3, // Padrão requer 3 ticks
-    frequency: { principal: 1, recovery: 2 }, // Ticks para pular (1 = todo tick)
-    lossesToDowngrade: 4, // Após 4 perdas, muda para PRECISO
+    principal: { window: 67, targets: [1, 2, 3, 4, 5], limit: 42, barrier: 2 },
+    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
   },
   PRECISO: {
-    name: 'PRECISO',
-    windowSize: 3,
-    frequency: { principal: 2, recovery: 3 }, // Mais lento para maior precisão
-    lossesToDowngrade: null,
-  },
+    principal: { window: 74, targets: [6, 7], limit: 23, barrier: 2 },
+    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
+  }
 };
 
-/**
- * Perfis de Risco FALCON v2.0
- */
-const FALCON_V20_RISK = {
-  CONSERVADOR: {
-    profitFactor: 1.0, // Break-even
-    maxMartingale: 5
-  },
-  MODERADO: {
-    profitFactor: 1.15, // Recupera + 15%
-    maxMartingale: 5
-  },
-  AGRESSIVO: {
-    profitFactor: 1.30, // Recupera + 30%
-    maxMartingale: 5
-  },
-  FIXO: {
-    profitFactor: 1.0,
-    maxMartingale: -1 // Sem martingale
-  },
-};
+interface FalconUserConfig extends AutonomousAgentConfig {
+  strategyName: 'FALCON';
+  subtitle: string;
+  symbol: string;
+  is24x7: boolean;
+
+  initialCapital: number;
+  profitTarget: number;
+  stopLoss: number;
+  baseStake: number;
+
+  riskProfile: RiskProfile;
+
+  enableStopLossBlindado: boolean;
+  blindadoTriggerPctOfTarget: number;
+  blindadoProtectPctOfPeak: number;
+
+  payoutPrincipal: number;
+  payoutRecovery: number;
+
+  strategicPauseEnabled: boolean;
+  strategicPauseSeconds: number;
+  cooldownWinSeconds: number;
+  cooldownLossSeconds: number;
+  dataCollectionTicks: number;
+
+  limitOpsDay?: number;
+  limitOpsCycle?: number;
+
+  mode?: NegotiationMode;
+  operationMode?: NegotiationMode;
+
+  // Legacy/Infra compat
+  initialBalance: number;
+  stopLossType?: 'normal' | 'blindado';
+}
+
+interface FalconUserState extends AutonomousAgentState {
+  timestamp?: number;
+
+  // Session
+  balance: number;
+  profit: number;
+  peakProfit: number;
+
+  // Cycle Management (V4)
+  cycleCurrent: number;
+  cycleTarget: number;
+  cycleProfit: number;
+  cycleMaxDrawdown: number;
+  cyclePeakProfit: number;
+  cycleOps: number;
+
+  // Blindado State
+  blindadoActive: boolean;
+  blindadoFloorProfit: number;
+
+  // Flags
+  inStrategicPauseUntilTs: number;
+  sessionEnded: boolean;
+  endReason?: "TARGET" | "STOPLOSS" | "BLINDADO";
+
+  // Automático
+  mode: NegotiationMode;
+  analysis: AnalysisType;
+
+  // Recovery
+  consecutiveLosses: number;
+  perdasAcumuladas: number;
+
+  // Control
+  lastOpTs: number;
+  cooldownUntilTs: number;
+  lastRejectionReason?: string;
+
+  // Metrics
+  opsTotal: number;
+  wins: number;
+  losses: number;
+
+  // Compatibility (Legacy names)
+  saldoInicial: number;
+  lucroAtual: number;
+  picoLucro: number;
+  consecutiveWins: number;
+  opsCount: number;
+  stopBlindadoAtivo: boolean;
+  pisoBlindado: number;
+  lastProfit: number;
+  martingaleLevel: number;
+  sorosLevel: number;
+  totalLosses: number;
+  recoveryAttempts: number;
+  totalLossAccumulated: number;
+  lastDeniedLogData?: { probability: number; signal: string | null };
+  lastSignals: Array<{ direction: string; timestamp: number }>;
+  consecutiveLossesSinceModeChange: number;
+
+  // System
+  currentContractId: string | null;
+  currentTradeId: number | null;
+  isWaitingContract: boolean;
+  lastContractType?: string;
+  ticksSinceLastAnalysis: number;
+  lastDigits: number[];
+  lastOpProfit?: number;
+  lastDeniedLogTime?: number;
+  waitingContractStartTime: number | null;
+}
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   name = 'falcon';
@@ -128,7 +245,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       const activeUsers = await this.dataSource.query(
         `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
-            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type,
+            c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -143,7 +260,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const userId = user.user_id.toString();
 
         // ✅ [RESOLUÇÃO DE TOKEN CENTRALIZADA]
-        // Prioridade: 1. Preferência (user_settings) -> 2. Colunas Específicas (users) -> 3. Parsing Raw -> 4. Config Antiga
         let resolvedToken = user.config_token;
         const wantDemo = user.trade_currency === 'DEMO';
 
@@ -151,7 +267,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           if (user.token_demo) {
             resolvedToken = user.token_demo;
           } else if (user.deriv_raw) {
-            // Fallback: Tentar extrair token VRTC do JSON raw
             try {
               const raw = typeof user.deriv_raw === 'string' ? JSON.parse(user.deriv_raw) : user.deriv_raw;
               if (raw.tokensByLoginId) {
@@ -163,11 +278,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
           }
         } else {
-          // Real Account
           if (user.token_real) {
             resolvedToken = user.token_real;
           } else if (user.deriv_raw) {
-            // Fallback: Tentar extrair token Real (não-VRTC) do JSON raw
             try {
               const raw = typeof user.deriv_raw === 'string' ? JSON.parse(user.deriv_raw) : user.deriv_raw;
               if (raw.tokensByLoginId) {
@@ -180,59 +293,123 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           }
         }
 
-        // Log para debug da resolução
-        if (resolvedToken !== user.config_token) {
-          this.logger.log(`[Falcon][ResolucaoToken] User ${userId}: Token atualizado dinamicamente. Modo=${wantDemo ? 'DEMO' : 'REAL'}.`);
-        } else {
-          // Se for igual, ainda assim pode ser que o config_token esteja certo, mas bom logar se estivermos inconsistentes
-          // Mas para não floodar, deixamos quieto se não houve mudança.
-        }
+        const rawRisk = user.risk_level || 'balanced';
+        const riskProfile = this.mapRiskProfile(rawRisk);
 
         const config: FalconUserConfig = {
           userId: userId,
           initialStake: parseFloat(user.initial_stake),
           dailyProfitTarget: parseFloat(user.daily_profit_target),
           dailyLossLimit: parseFloat(user.daily_loss_limit),
-          derivToken: resolvedToken, // ✅ Usa o token resolvido
+          derivToken: resolvedToken,
           currency: user.currency,
-          symbol: '1HZ10V', // ✅ V2: Volatility 10 (1s) Index
+
+          strategyName: "FALCON",
+          subtitle: FALCON_SUBTITLE,
+          symbol: FALCON_CONSTANTS.symbol,
+          is24x7: true,
+
+          initialCapital: parseFloat(user.initial_balance) || 0,
+          profitTarget: parseFloat(user.daily_profit_target),
+          stopLoss: parseFloat(user.daily_loss_limit),
+          baseStake: parseFloat(user.initial_stake),
+
+          riskProfile: riskProfile,
+
+          enableStopLossBlindado: user.stop_loss_type === 'blindado',
+          blindadoTriggerPctOfTarget: 0.4,
+          blindadoProtectPctOfPeak: 0.5,
+
+          payoutPrincipal: FALCON_CONSTANTS.payoutPrincipal,
+          payoutRecovery: FALCON_CONSTANTS.payoutRecovery,
+
+          strategicPauseEnabled: true,
+          strategicPauseSeconds: FALCON_CONSTANTS.strategicPauseSeconds,
+          cooldownWinSeconds: FALCON_CONSTANTS.cooldownWinSeconds,
+          cooldownLossSeconds: FALCON_CONSTANTS.cooldownLossSeconds,
+          dataCollectionTicks: FALCON_CONSTANTS.dataCollectionTicks,
+
+          limitOpsDay: 2000,
+          limitOpsCycle: 500,
+
           initialBalance: parseFloat(user.initial_balance) || 0,
-          stopLossType: (user.stop_loss_type as 'normal' | 'blindado') || 'normal',
-          riskProfile: 'MODERADO',
+          stopLossType: user.stop_loss_type === 'blindado' ? 'blindado' : 'normal'
         };
 
         this.userConfigs.set(userId, config);
 
-        // ✅ CORREÇÃO: Não reinicializar estado se já existir!
-        // Isso evita que o bot "esqueça" que atingiu meta/stop se o sync rodar
         if (!this.userStates.has(userId)) {
           this.initializeUserState(userId, config);
-        } else {
-          // Se já existe, apenas atualizar config mas manter estado
-          this.logger.debug(`[Falcon][${userId}] Config atualizada via sync (Estado mantido)`);
         }
-      }
 
-      this.logger.log(`[Falcon] Sincronizados ${activeUsers.length} usuários ativos`);
+        this.logger.log(`[Falcon] ✅ Usuário sincronizado: ${userId} - Perfil: ${config.riskProfile}`);
+      }
     } catch (error) {
       this.logger.error('[Falcon] Erro ao sincronizar usuários:', error);
     }
   }
 
   /**
-   * Inicializa estado do usuário
+   * ✅ HELPER: Mapear Risk Profile (Frontend -> Backend)
+   */
+  private mapRiskProfile(rawRisk: string): RiskProfile {
+    const r = rawRisk.toLowerCase();
+    if (r === 'fixed' || r === 'fixo') return 'FIXO';
+    if (r === 'conservative' || r === 'conservador') return 'CONSERVADOR';
+    if (r === 'balanced' || r === 'moderado' || r === 'equilibrio') return 'MODERADO';
+    if (r === 'aggressive' || r === 'agressivo') return 'AGRESSIVO';
+    return 'MODERADO';
+  }
+
+  /**
+   * Inicializa estado do usuário para Zeus V4 logic
    */
   private initializeUserState(userId: string, config: FalconUserConfig): void {
     const state: FalconUserState = {
       userId,
       isActive: true,
-      saldoInicial: config.initialBalance,
+      balance: config.initialCapital,
+      profit: 0,
+      peakProfit: 0,
+
+      // AutonomousAgentState compatibility
+      currentProfit: 0,
+      currentLoss: 0,
+      operationsCount: 0,
+
+      // Cycle Management (V4)
+      cycleCurrent: 1,
+      cycleTarget: config.profitTarget * FALCON_CONSTANTS.cyclePercent,
+      cycleProfit: 0,
+      cycleMaxDrawdown: (config.profitTarget * FALCON_CONSTANTS.cyclePercent) * 0.60,
+      cyclePeakProfit: 0,
+      cycleOps: 0,
+
+      blindadoActive: false,
+      blindadoFloorProfit: 0,
+
+      inStrategicPauseUntilTs: 0,
+      sessionEnded: false,
+
+      mode: (config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL')) as NegotiationMode,
+      analysis: "PRINCIPAL",
+
+      consecutiveLosses: 0,
+      perdasAcumuladas: 0,
+
+      lastOpTs: 0,
+      cooldownUntilTs: 0,
+
+      opsTotal: 0,
+      wins: 0,
+      losses: 0,
+
+      // Compatibility (Legacy)
+      saldoInicial: config.initialCapital,
       lucroAtual: 0,
       picoLucro: 0,
-      consecutiveLosses: 0,
       consecutiveWins: 0,
       opsCount: 0,
-      mode: 'NORMAL', // v2.0: Inicia em NORMAL
       stopBlindadoAtivo: false,
       pisoBlindado: 0,
       lastProfit: 0,
@@ -241,13 +418,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       totalLosses: 0,
       recoveryAttempts: 0,
       totalLossAccumulated: 0,
+      lastSignals: [],
+      consecutiveLossesSinceModeChange: 0,
+
+      // System
       currentContractId: null,
       currentTradeId: null,
       isWaitingContract: false,
-      lastContractType: undefined,
       ticksSinceLastAnalysis: 0,
-      lastSignals: [],
-      consecutiveLossesSinceModeChange: 0,
+      lastDigits: [],
       waitingContractStartTime: null,
     };
 
@@ -256,59 +435,81 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
+    const rawRisk = (config as any).riskProfile || (config as any).riskLevel || 'balanced';
+    const risk = this.mapRiskProfile(rawRisk);
+
     const falconConfig: FalconUserConfig = {
-      userId: config.userId,
-      initialStake: config.initialStake,
-      dailyProfitTarget: config.dailyProfitTarget,
-      dailyLossLimit: config.dailyLossLimit,
-      derivToken: config.derivToken,
-      currency: config.currency,
-      symbol: config.symbol || '1HZ10V', // ✅ V2: Use config symbol (allow user choice)
+      ...config,
+
+      strategyName: "FALCON",
+      subtitle: FALCON_SUBTITLE,
+      symbol: FALCON_CONSTANTS.symbol,
+      is24x7: true,
+
+      initialCapital: config.initialBalance || 0,
+      profitTarget: config.dailyProfitTarget,
+      stopLoss: config.dailyLossLimit,
+      baseStake: parseFloat(config.initialStake.toString()),
+
+      riskProfile: risk,
+
+      enableStopLossBlindado: (config as any).stopLossType === 'blindado',
+      blindadoTriggerPctOfTarget: 0.4,
+      blindadoProtectPctOfPeak: 0.5,
+
+      payoutPrincipal: FALCON_CONSTANTS.payoutPrincipal,
+      payoutRecovery: FALCON_CONSTANTS.payoutRecovery,
+
+      strategicPauseEnabled: true,
+      strategicPauseSeconds: FALCON_CONSTANTS.strategicPauseSeconds,
+      cooldownWinSeconds: FALCON_CONSTANTS.cooldownWinSeconds,
+      cooldownLossSeconds: FALCON_CONSTANTS.cooldownLossSeconds,
+      dataCollectionTicks: FALCON_CONSTANTS.dataCollectionTicks,
+
+      limitOpsDay: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 400 : 2000,
+      limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500,
+
       initialBalance: config.initialBalance || 0,
-      stopLossType: (config as any).stopLossType || 'normal',
-      riskProfile: (config as any).riskProfile || 'MODERADO',
+      stopLossType: (config as any).stopLossType || 'normal'
     };
 
-    // ✅ Proteção contra reset de estado pelo Sync (5min)
     if (this.userConfigs.has(userId)) {
       const existingConfig = this.userConfigs.get(userId);
       const hasSignificantChange = existingConfig && (
         existingConfig.riskProfile !== falconConfig.riskProfile ||
         existingConfig.dailyProfitTarget !== falconConfig.dailyProfitTarget ||
         existingConfig.dailyLossLimit !== falconConfig.dailyLossLimit ||
-        existingConfig.initialStake !== falconConfig.initialStake
+        existingConfig.initialStake !== falconConfig.initialStake ||
+        existingConfig.symbol !== falconConfig.symbol
       );
 
       if (!hasSignificantChange) {
-        // Se não mudou nada importante, apenas mantém e retorna sem logar sessão de novo
         this.userConfigs.set(userId, falconConfig);
         return;
       }
 
-      this.logger.log(`[Falcon][${userId}] 🔄 Atualizando configuração (Usuário já ativo - Mudança detectada).`);
+      this.logger.log(`[Falcon][${userId}] 🔄 Atualizando configuração (Mudança detectada).`);
       this.userConfigs.set(userId, falconConfig);
 
-      // Apenas garantir que está ativo (se não estiver pausado por stop)
       const state = this.userStates.get(userId);
       if (state && !state.isActive) {
         state.isActive = true;
       }
 
-      // ✅ Log de reativação com configs atualizadas
-      const mode = state?.mode || 'NORMAL';
+      const mode = state?.mode || 'PRECISO';
       this.logInitialConfigV2(userId, {
-        agentName: 'FALCON',
-        operationMode: mode,
+        agentName: this.displayName,
+        operationMode: falconConfig.operationMode || 'NORMAL',
         riskProfile: falconConfig.riskProfile || 'MODERADO',
         profitTarget: falconConfig.dailyProfitTarget,
         stopLoss: falconConfig.dailyLossLimit,
         stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
-        symbol: falconConfig.symbol
+        symbol: falconConfig.symbol || 'R_50',
       });
 
       this.logSessionStart(userId, {
         date: new Date(),
-        initialBalance: falconConfig.initialBalance,
+        initialBalance: falconConfig.initialBalance || 0,
         profitTarget: falconConfig.dailyProfitTarget,
         stopLoss: falconConfig.dailyLossLimit,
         mode: mode,
@@ -321,20 +522,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.userConfigs.set(userId, falconConfig);
     this.initializeUserState(userId, falconConfig);
 
-    // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
     try {
       this.logger.log(`[Falcon][${userId}] 🔌 Pré-aquecendo conexão WebSocket...`);
       await this.warmUpConnection(falconConfig.derivToken);
-      this.logger.log(`[Falcon][${userId}] ✅ Conexão WebSocket pré-aquecida e pronta`);
     } catch (error: any) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ Erro ao pré-aquecer conexão (continuando mesmo assim):`, error.message);
+      this.logger.warn(`[Falcon][${userId}] ⚠️ Erro ao pré-aquecer conexão:`, error.message);
     }
 
-    // ✅ Obter modo do estado (inicializado como 'NORMAL')
     const state = this.userStates.get(userId);
     const mode = state?.mode || 'NORMAL';
 
-    // ✅ Log de ativação no padrão Orion
     this.logInitialConfigV2(userId, {
       agentName: 'FALCON',
       operationMode: mode,
@@ -342,19 +539,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       profitTarget: falconConfig.dailyProfitTarget,
       stopLoss: falconConfig.dailyLossLimit,
       stopBlindadoEnabled: falconConfig.stopLossType === 'blindado',
-      symbol: falconConfig.symbol
+      symbol: falconConfig.symbol || '1HZ100V',
     });
 
     this.logSessionStart(userId, {
       date: new Date(),
-      initialBalance: falconConfig.initialBalance,
+      initialBalance: falconConfig.initialBalance || 0,
       profitTarget: falconConfig.dailyProfitTarget,
       stopLoss: falconConfig.dailyLossLimit,
       mode: mode,
       agentName: 'FALCON'
     });
 
-    this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Symbol: ${falconConfig.symbol} | Total configs: ${this.userConfigs.size}`);
+    this.logger.log(`[Falcon] ✅ Usuário ${userId} ativado | Total configs: ${this.userConfigs.size}`);
   }
 
   async deactivateUser(userId: string): Promise<void> {
@@ -470,31 +667,18 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ TICK ADVANCE LÓGICA V2 (FREQUÊNCIA DE ANÁLISE)
-      // Incrementa contador de ticks
-      state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-
-      // Verificar estado (Principal ou Recuperação)
-      const isRecovery = state.mode !== 'NORMAL' || state.consecutiveLosses >= 2;
-      const settings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
-      const frequency = isRecovery ? settings.frequency.recovery : settings.frequency.principal;
-
-      // Se freq=1: analisa todo tick (mod 1 == 0)
-      // Se freq=2: analisa tick sim/tick não (mod 2 == 0)
-      if (state.ticksSinceLastAnalysis % frequency !== 0) {
-        return;
-      }
-
-      const requiredTicks = settings.windowSize;
+      // ✅ TICK ADVANCE LÓGICA V2 (DIGIT DENSITY WINDOWS)
+      const isRecovery = state.perdasAcumuladas > 0;
+      const modeSettings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
+      const currentConfig = isRecovery ? modeSettings.recovery : modeSettings.principal;
+      const requiredTicks = currentConfig.window;
 
       if (userTicks.length < requiredTicks) {
-        // ✅ Log de progresso a cada 3 ticks (igual Zeus)
-        // ✅ Log de progresso mais frequente no início (sempre no 1º, 2º e a cada 3)
-        if (userTicks.length < 5 || userTicks.length % 3 === 0) {
+        if (userTicks.length % 10 === 0) {
           this.logDataCollection(userId, {
             targetCount: requiredTicks,
             currentCount: userTicks.length,
-            mode: state.mode
+            mode: `${state.mode}${isRecovery ? ' (REC)' : ''}`
           });
         }
         return;
@@ -556,169 +740,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Análise de mercado FALCON v2.0 - Pattern Matching IPI
-   * 
-   * Implementa a lógica:
-   * Padrão: {ÍMPAR, PAR, ÍMPAR} nos últimos 3 ticks
-   * Sinal: DIGITODD (ÍMPAR)
+   * ✅ LOGIC HELPER: Extrair último dígito (Protocolo v2.0 p[rec[-1]])
    */
-  private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
-    const state = this.userStates.get(userId);
-    if (!state) return null;
-
-    const windowSize = 3;
-
-    if (ticks.length < windowSize) return null;
-
-    // Extrai os últimos 3 ticks
-    const recent = ticks.slice(-windowSize);
-    const digits = recent.map(t => parseInt(t.value.toString().slice(-1))); // Extrai último dígito
-
-    // FILTRO 1: Horário de Operação (24/7 sempre ativo)
-    // if (!this.isValidTradingHour()) {
-    //   return null;
-    // }
-
-    // LOGICA V2: Padrão IPI (Odd-Even-Odd)
-    // Dígito 1 (Mais antigo): ÍMPAR
-    // Dígito 2: PAR
-    // Dígito 3 (Recente): ÍMPAR
-
-    const d1 = digits[0];
-    const d2 = digits[1];
-    const d3 = digits[2];
-
-    const isOdd = (n: number) => n % 2 !== 0;
-    const isEven = (n: number) => n % 2 === 0;
-
-    // Pattern: IPI
-    if (isOdd(d1) && isEven(d2) && isOdd(d3)) {
-      const signal = 'ODD';
-      const probability = 57.34; // Probabilidade estatística calculada
-
-      return {
-        probability,
-        signal: signal as any,
-        payout: 0.85, // ✅ Payout Líquido esperado (aprox)
-        confidence: probability / 100,
-        details: {
-          trend: 'IPI_PATTERN',
-          trendStrength: probability / 100,
-          digits,
-          digitPattern: `[${d1}, ${d2}, ${d3}] (I-P-I)`
-        },
-      };
-    }
-
-    // Se não bateu padrão, retorna null (sem entrada)
-    // O sistema de logs "Entrada Bloqueada" pode ser chamado aqui se quisermos verbosidade, 
-    // mas em estratégia de padrão exato é melhor reduzir ruído.
-    return null;
+  private lastDigitFromPrice(price: number): number {
+    // Documentação v2.0 BUG CRÍTICO: Usar string para pegar o último dígito exato
+    const priceStr = price.toFixed(4); // R_50 usa 4 casas
+    return parseInt(priceStr.slice(-1), 10);
   }
 
   /**
-   * 📊 FILTRO 2: Calcula Hn (Entropia Normalizada)
-   * 
-   * Mede a aleatoriedade dos dígitos finais.
-   * - Hn próximo de 1.0: Alta aleatoriedade (ideal)
-   * - Hn muito baixo: Padrão muito previsível
-   * - Hn muito alto: Mercado caótico
-   * 
-   * Fórmula: H = -Σ(p_i * log₂(p_i)), onde p_i é a probabilidade de cada dígito
-   * Hn = H / log₂(N), onde N = 10 (número de dígitos possíveis)
-   */
-  private calculateHn(digits: number[]): number {
-    // Contar frequência de cada dígito (0-9)
-    const freq = new Array(10).fill(0);
-    digits.forEach(d => freq[d]++);
-
-    // Calcular probabilidades
-    const total = digits.length;
-    const probs = freq.map(f => f / total);
-
-    // Calcular entropia: H = -Σ(p_i * log₂(p_i))
-    let entropy = 0;
-    for (const p of probs) {
-      if (p > 0) {
-        entropy -= p * Math.log2(p);
-      }
-    }
-
-    // Normalizar pela entropia máxima (log₂(10))
-    const maxEntropy = Math.log2(10);
-    const Hn = entropy / maxEntropy;
-
-    return Hn;
-  }
-
-  /**
-   * 📊 FILTRO 3: Calcula p_over3 (Probabilidade de dígitos >= 4)
-   * 
-   * Mede a tendência dos dígitos finais serem maiores que 3.
-   * - p_over3 >= 0.60: Boa tendência para Digit Over 3
-   * - p_over3 < 0.60: Tendência insuficiente
-   * 
-   * Fórmula: p_over3 = count(d >= 4) / total
-   */
-  private calculateP_over3(digits: number[]): number {
-    const over3Count = digits.filter(d => d >= 4).length;
-    const p_over3 = over3Count / digits.length;
-    return p_over3;
-  }
-
-  /**
-   * 📊 FILTRO 4: Calcula strength (Força do padrão dígitos)
-   * 
-   * Mede a consistência do padrão estatístico.
-   * Baseado na variação dos dígitos e na consistência da tendência.
-   * 
-   * Fórmula: strength = (p_over3_local - 0.5) * variance_factor
-   */
-  private calculateDigitStrength(digits: number[]): number {
-    // 1. Verificar consistência da tendência (últimos 10 vs primeiros 10)
-    const half = Math.floor(digits.length / 2);
-    const firstHalf = digits.slice(0, half);
-    const secondHalf = digits.slice(half);
-
-    const p1 = firstHalf.filter(d => d >= 4).length / firstHalf.length;
-    const p2 = secondHalf.filter(d => d >= 4).length / secondHalf.length;
-
-    // 2. Força é a média das duas metades, ajustada pela consistência
-    const avgP = (p1 + p2) / 2;
-    const consistency = 1 - Math.abs(p1 - p2); // 1.0 = perfeito, 0 = muito diferente
-
-    // 3. Calcular força como produto da probabilidade média e consistência
-    const strength = avgP * consistency;
-
-    return strength;
-  }
-
-  /**
-   * 📊 FILTRO 5: Calcula volatilidade dos dígitos
-   * 
-   * Mede a variação dos dígitos (desvio padrão norm alizado).
-   * - volatility baixa: Dígitos estáveis
-   * - volatility alta: Dígitos muito voláteis (evitar)
-   * 
-   * Fórmula: volatility = stdDev(digits) / mean(digits)
-   */
-  private calculateDigitVolatility(digits: number[]): number {
-    const mean = digits.reduce((sum, d) => sum + d, 0) / digits.length;
-    const variance = digits.reduce((sum, d) => sum + Math.pow(d - mean, 2), 0) / digits.length;
-    const stdDev = Math.sqrt(variance);
-
-    // Normalizar pelo valor médio esperado (4.5 para dígitos 0-9)
-    const volatility = stdDev / 4.5;
-
-    return volatility;
-  }
-
-  /**
-   * ⏰ Verifica se horário é válido para operar
-   * 24/7 para R_100 (sem restrições)
+   * ⏰ Verifica se horário é válido para operar (24/7 Enabled)
    */
   private isValidTradingHour(): boolean {
-    return true; // 24/7 Operations enabled
+    return true;
   }
 
   /**
@@ -732,217 +766,223 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return { action: 'WAIT', reason: 'USER_NOT_ACTIVE' };
     }
 
-    // ✅ Verificar se já está aguardando resultado de contrato
-    if (state.isWaitingContract) {
-      return { action: 'WAIT', reason: 'WAITING_CONTRACT_RESULT' };
+    // 1. Verificações de Segurança (V4 Limits)
+    const nowTs = Date.now();
+    if (state.sessionEnded) return { action: 'WAIT', reason: 'SESSION_ENDED' };
+    if (nowTs < state.cooldownUntilTs) return { action: 'WAIT', reason: 'COOLDOWN' };
+    if (nowTs < state.inStrategicPauseUntilTs) return { action: 'WAIT', reason: 'STRATEGIC_PAUSE' };
+
+    // V4 Limits
+    const limitDay = config.limitOpsDay || 2000;
+    if (state.opsTotal >= limitDay) {
+      this.handleStopCondition(userId, 'DAILY_LIMIT');
+      return { action: 'STOP', reason: 'DAILY_LIMIT' };
     }
 
-    // A. Verificações de Segurança (Hard Stops)
-    if (state.lucroAtual >= config.dailyProfitTarget) {
-      return { action: 'STOP', reason: 'TAKE_PROFIT' };
+    const limitCycle = config.limitOpsCycle || 500;
+    if (state.cycleOps >= limitCycle) {
+      return { action: 'WAIT', reason: 'CYCLE_LIMIT' };
     }
 
-    // B. Filtro de Precisão baseado no Modo (v2.0)
-    // Na V2, o filtro é o Padrão IPI exato, então se o sinal existe, ele é válido.
-
+    // Global Stops check via checkStopLoss
     if (marketAnalysis.signal) {
-      // ✅ Calcular stake
-      const stake = this.calculateStake(userId, marketAnalysis.payout);
+      const stake = this.computeNextStake(config, state);
 
       if (stake <= 0) {
         return { action: 'WAIT', reason: 'NO_STAKE' };
       }
 
-      // ✅ Verificar Stop Loss (Normal e Blindado)
-      const stopLossCheck = await this.checkStopLoss(userId, stake);
-      if (stopLossCheck.action === 'STOP') {
-        return stopLossCheck;
+      const riskCheck = await this.checkStopLoss(userId, stake);
+      if (riskCheck.action === 'STOP') {
+        this.handleStopCondition(userId, riskCheck.reason as any);
+        return riskCheck;
       }
 
-      // Usar stake ajustado se houver
-      const finalStake = stopLossCheck.stake ? stopLossCheck.stake : stake;
-
-      const currentMode = state.mode as keyof typeof FALCON_MODES;
-      const settings = FALCON_MODES[currentMode];
-
-      // ✅ Log de sinal no padrão Zenix v2.0
-      const details = marketAnalysis.details || {};
-      this.logSignalGenerated(userId, {
-        mode: settings.name,
-        isRecovery: state.consecutiveLosses >= 2,
-        filters: [
-          `Padrão IPI: Detectado`,
-          `Sequência: ${marketAnalysis.details?.digitPattern}`
-        ],
-        trigger: 'Padrão IPI (Ímpar-Par-Ímpar)',
-        probability: 57.34,
-        contractType: 'DIGITODD',
-        direction: 'ODD' as any
-      });
+      const finalStake = riskCheck.stake ? riskCheck.stake : stake;
 
       return {
         action: 'BUY',
         stake: finalStake,
-        contractType: 'DIGITODD', // ✅ V2: Contract type
+        contractType: marketAnalysis.details?.contractType || 'DIGITOVER',
         mode: state.mode,
-        reason: 'HIGH_PROBABILITY',
+        reason: marketAnalysis.details?.info || 'SIGNAL_FOUND',
       };
     }
 
     return { action: 'WAIT', reason: 'LOW_PROBABILITY' };
   }
+
   /**
-   * Atualiza o modo do agente baseado em vitória/derrota
-   * v2.0: NORMAL → PRECISO (após 4 perdas)
+   * ✅ LOGIC HELPER: Calcular Stake (v2.0 Martingale Inteligente)
    */
-  private updateMode(userId: string, win: boolean): void {
-    const state = this.userStates.get(userId);
-    const config = this.userConfigs.get(userId);
-    if (!state || !config) return;
+  private computeNextStake(config: FalconUserConfig, state: FalconUserState): number {
+    // Principal (Over 2)
+    if (state.perdasAcumuladas <= 0) {
+      return config.baseStake;
+    }
 
-    if (win) {
-      state.consecutiveWins++;
+    // Recuperação (Over 4)
+    const perdas = state.perdasAcumuladas;
+    const payoutOver4 = FALCON_CONSTANTS.payoutRecovery; // 0.84
+
+    let multiplicador = 1.00;
+    switch (config.riskProfile) {
+      case 'MODERADO':
+        multiplicador = 1.25;
+        break;
+      case 'AGRESSIVO':
+        multiplicador = 1.50;
+        break;
+      case 'CONSERVADOR':
+      default:
+        multiplicador = 1.00;
+        break;
+    }
+
+    // Fórmula: stake_recup = (perdas_acumuladas × multiplicador) / payout_over4
+    let stake = (perdas * multiplicador) / payoutOver4;
+
+    // Reset Conservador (MAX 5 Gales)
+    if (config.riskProfile === 'CONSERVADOR' && state.consecutiveLosses > FALCON_CONSTANTS.martingaleMaxLevel) {
+      this.saveLog(config.userId, 'WARN', 'RISK', `⚠️ RESET CONSERVADOR: Limite de 5 gales atingido. Voltando p/ stake base.`);
+      state.perdasAcumuladas = 0;
       state.consecutiveLosses = 0;
-      state.consecutiveLossesSinceModeChange = 0;
+      return config.baseStake;
+    }
 
-      // Se estava em recuperação ou em PRECISO, volta para NORMAL
-      if (state.mode !== 'NORMAL' || state.totalLossAccumulated > 0) {
-        const recoveredLoss = state.totalLossAccumulated;
+    let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
 
-        if (state.mode !== 'NORMAL') {
-          this.logSuccessfulRecoveryV2(userId, {
-            recoveredLoss: recoveredLoss,
-            additionalProfit: state.lastProfit - recoveredLoss,
-            profitPercentage: 0,
-            stakeBase: config.initialStake
-          });
-          state.mode = 'NORMAL';
-        }
+    // Smart Goal (V4 Optimization)
+    const dailyGap = config.profitTarget - state.profit;
+    const cycleGap = state.cycleTarget - state.cycleProfit;
+    const gapToTarget = Math.max(0, Math.min(dailyGap, cycleGap));
+    const currentPayout = FALCON_CONSTANTS.payoutRecovery;
 
-        // ✅ RESETAR sequência após qualquer recuperação para evitar Soros imediato com lucro alto
-        state.consecutiveWins = 0;
-        state.totalLossAccumulated = 0;
-        state.martingaleLevel = 0;
-        this.logger.log(`[Falcon][${userId}] ✅ Recuperação completa. Resetando consecutiveWins.`);
+    if (gapToTarget > 0 && gapToTarget < (finalStake * currentPayout)) {
+      const smartStake = Math.max(0.35, Math.ceil((gapToTarget / currentPayout) * 100) / 100);
+      if (smartStake < finalStake) {
+        finalStake = smartStake;
       }
+    }
 
-      // Soros Nível 1: Resetar após 2º win consecutivo
-      if (state.consecutiveWins >= 2) {
-        state.consecutiveWins = 0;
+    return finalStake;
+  }
+
+  /**
+   * ✅ CYCLE MANAGEMENT (V4 Spec)
+   */
+  private updateCycleState(userId: string): void {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+    if (!config || !state) return;
+
+    // 1. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
+    const currentProfitRounded = Math.round(state.profit * 100) / 100;
+    if (currentProfitRounded <= -config.stopLoss) {
+      this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
+      state.sessionEnded = true;
+      state.endReason = 'STOPLOSS';
+      this.handleStopCondition(userId, 'STOP_LOSS');
+      return;
+    }
+
+    // Checar conclusão do ciclo (Meta do Ciclo atingida)
+    if (state.cycleProfit >= state.cycleTarget) {
+      this.saveLog(userId, 'INFO', 'CYCLE',
+        `🔄 CICLO ${state.cycleCurrent} CONCLUÍDO | Lucro Ciclo: ${state.cycleProfit.toFixed(2)}`);
+
+      if (state.cycleCurrent < FALCON_CONSTANTS.cycles) {
+        state.cycleCurrent++;
+        // RESETAR métricas do ciclo (V4 Spec)
+        state.cycleProfit = 0;
+        state.cycleOps = 0;
+        state.cyclePeakProfit = 0;
+        state.blindadoActive = false;
+        state.blindadoFloorProfit = 0;
+
+        // Pausa estratégica entre ciclos
+        state.inStrategicPauseUntilTs = Date.now() + 60000;
+        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (60s)...`);
+
+      } else {
+        // Ciclo 4 concluído = Meta Diária
+        this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
+        state.sessionEnded = true;
+        state.endReason = 'TARGET';
+        this.handleStopCondition(userId, 'TAKE_PROFIT');
+      }
+      return;
+    }
+  }
+
+  /**
+   * ✅ LOGIC HELPER: Atualizar estado do Stop Blindado (V4 Cycle Based)
+   */
+  private updateBlindado(userId: string, state: FalconUserState, config: FalconUserConfig): void {
+    if (!config.enableStopLossBlindado) return;
+
+    const currentCycleProfit = state.cycleProfit;
+    const triggerValue = state.cycleTarget * config.blindadoTriggerPctOfTarget;
+
+    if (!state.blindadoActive) {
+      if (currentCycleProfit >= triggerValue) {
+        state.blindadoActive = true;
+        state.blindadoFloorProfit = state.cyclePeakProfit * config.blindadoProtectPctOfPeak;
+        this.saveLog(userId, 'INFO', 'RISK',
+          `🛡️ BLINDADO ATIVADO (Ciclo ${state.cycleCurrent}) | Profit: ${currentCycleProfit.toFixed(2)} | Floor: ${state.blindadoFloorProfit.toFixed(2)}`);
       }
     } else {
-      state.consecutiveWins = 0;
-      state.consecutiveLosses++;
-      state.consecutiveLossesSinceModeChange++;
-
-      // Progressão de Modos v2.0
-      // NORMAL: após 4 perdas → PRECISO
-      if (state.mode === 'NORMAL') {
-        if (state.consecutiveLosses >= 4) {
-          state.mode = 'PRECISO';
-          this.logger.log(`[Falcon][${userId}] ⚠️ LOSS #${state.consecutiveLosses} (NORMAL) → Mudando para PRECISO (Defesa Automática)`);
-        }
-      }
-      // PRECISO: Permanece até recuperar
-
-      state.martingaleLevel = state.consecutiveLosses;
-
-      // Acumula perda para martingale
-      if (state.lastProfit < 0) {
-        state.totalLossAccumulated += Math.abs(state.lastProfit);
+      const newFloor = state.cyclePeakProfit * config.blindadoProtectPctOfPeak;
+      if (newFloor > state.blindadoFloorProfit) {
+        state.blindadoFloorProfit = newFloor;
       }
     }
   }
 
   /**
-   * Calcula o stake baseado no modo e situação
+   * Trata condições de parada
    */
-  /**
-   * Calcula o stake baseado no modo e situação
-   * V2.0: Híbrido (Soros N1 se Win Streak, Martingale Inteligente se Loss/Recovery)
-   */
-  private calculateStake(userId: string, marketPayoutPercent: number): number {
+  private async handleStopCondition(userId: string, reason: string): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
-    if (!config || !state) {
-      return 0;
+    if (!config || !state) return;
+
+    let status = 'active';
+    let message = '';
+
+    switch (reason) {
+      case 'TAKE_PROFIT':
+        status = 'stopped_profit';
+        message = `META DE LUCRO ATINGIDA! daily_profit=${state.profit.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
+        break;
+      case 'STOP_LOSS':
+        status = 'stopped_loss';
+        message = `STOP LOSS ATINGIDO! daily_loss=${Math.abs(Math.min(0, state.profit)).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
+        break;
+      case 'BLINDADO':
+        status = 'stopped_blindado';
+        message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialCapital + state.profit).toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações do dia.`;
+        break;
+      case 'DAILY_LIMIT':
+        status = 'stopped_profit';
+        message = `LIMITE DIÁRIO DE OPERAÇÕES! ops=${state.opsTotal}. Encerrando operações.`;
+        break;
     }
 
-    let stake = config.initialStake;
-    const realPayout = (marketPayoutPercent - marketPayoutPercent * this.comissaoPlataforma);
+    await this.saveLog(userId, 'WARN', 'RISK', message);
 
-    // Lógica 1: Recuperação (Martingale)
-    // Se há perdas acumuladas, priorizar recuperação
-    if (state.totalLossAccumulated > 0 || state.consecutiveLosses > 0) {
-      const riskSettings = FALCON_V20_RISK[config.riskProfile as keyof typeof FALCON_V20_RISK] || FALCON_V20_RISK.MODERADO;
+    state.isActive = false;
+    await this.dataSource.query(
+      `UPDATE autonomous_agent_config SET session_status = ?, is_active = TRUE WHERE user_id = ?`,
+      [status, userId],
+    );
 
-      // ✅ MODO FIXO: Ignora qualquer lógica de recuperação e retorna stake base
-      if (config.riskProfile === 'FIXO') {
-        this.logger.debug(`[Falcon][${userId}] 🛡️ MODO FIXO ATIVO: Usando stake base $${config.initialStake}`);
-        return config.initialStake;
-      }
-
-      const profitFactor = riskSettings.profitFactor;
-
-      const lossToRecover = state.totalLossAccumulated > 0 ? state.totalLossAccumulated : Math.abs(Math.min(0, state.lucroAtual));
-
-      this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(RECOVERY): AccumLoss = ${state.totalLossAccumulated}, LossToRecover = ${lossToRecover}, Factor = ${profitFactor}, Payout = ${realPayout} `);
-
-      if (lossToRecover > 0) {
-        const targetAmount = lossToRecover * profitFactor;
-        stake = targetAmount / realPayout;
-
-        const hasLimit = riskSettings.maxMartingale !== -1;
-        if (hasLimit && state.consecutiveLosses > riskSettings.maxMartingale) {
-          this.logger.log(`[Falcon] ⚠️ Limite M${riskSettings.maxMartingale} atingido.Resetando para modo NORMAL.`);
-          state.mode = 'NORMAL';
-          state.totalLossAccumulated = 0;
-          state.consecutiveLosses = 0;
-          state.consecutiveLossesSinceModeChange = 0;
-          return config.initialStake;
-        }
-
-        stake = Math.round(stake * 100) / 100;
-
-        this.logMartingaleLevelV2(userId, {
-          level: state.consecutiveLosses,
-          lossNumber: state.consecutiveLosses,
-          accumulatedLoss: lossToRecover,
-          calculatedStake: stake,
-          profitPercentage: Math.round((profitFactor - 1) * 100),
-          maxLevel: riskSettings.maxMartingale,
-          contractType: state.lastContractType || 'DIGITODD'
-        });
-      } else {
-        stake = config.initialStake;
-      }
-    }
-    // Lógica 2: Soros Nível 1 (Se Win Streak e sem perdas para recuperar)
-    else {
-      // Soros Nível 1: Win1 = Base, Win2 = Base + Lucro, Win3 = volta para Base
-      if (state.consecutiveWins === 1) {
-        // Win1: A próxima aposta é Base + Lucro Anterior
-        stake = config.initialStake + state.lastProfit;
-        stake = Math.round(stake * 100) / 100;
-        this.logSorosActivation(userId, {
-          previousProfit: state.lastProfit,
-          stakeBase: config.initialStake,
-          level: 1
-        });
-      } else {
-        // Win0 (início), Win2 (já fez soros, ganhou, vai resetar), etc.
-        stake = Math.round(config.initialStake * 100) / 100;
-        this.logger.debug(`[Falcon][${userId}] 🧮 CALC STAKE(NORMAL): Wins = ${state.consecutiveWins}, Stake = ${stake} `);
-      }
-    }
-
-    return Number(stake.toFixed(2));
+    this.logger.log(`[Falcon][${userId}] ${message}`);
   }
 
   /**
    * Verifica Stop Loss (Normal ou Blindado)
-   * Unifica a lógica de stop loss normal e o stop loss blindado (Catraca do Falcon)
    */
   private async checkStopLoss(userId: string, nextStake?: number): Promise<TradeDecision> {
     const config = this.userConfigs.get(userId);
@@ -954,30 +994,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     const stake = nextStake || 0;
 
-    // 1. Stop Loss Normal
-    const currentDrawdown = state.lucroAtual < 0 ? Math.abs(state.lucroAtual) : 0;
+    // 1. Stop Loss GLOBAL
+    const currentDrawdown = state.profit < 0 ? Math.abs(state.profit) : 0;
 
-    // Verificação de limite simples (já estourou?)
-    if (currentDrawdown >= config.dailyLossLimit) {
+    if (currentDrawdown >= config.stopLoss) {
       return { action: 'STOP', reason: 'STOP_LOSS' };
     }
 
-    // Verificação com a próxima stake
-    if (currentDrawdown + stake > config.dailyLossLimit) {
-      const remaining = config.dailyLossLimit - currentDrawdown;
-      // Arredondar para 2 casas e garantir mínimo da Deriv (0.35)
-      const adjustedStake = Math.round(remaining * 100) / 100;
+    // Proteger Stop Global antecipadamente se a stake for maior que o que resta
+    if (currentDrawdown + stake > config.stopLoss) {
+      const remaining = config.stopLoss - currentDrawdown;
+      const adjustedStake = Math.floor(remaining * 100) / 100;
 
       if (adjustedStake < 0.35) {
-        this.logger.log(`[Falcon][${userId}] 🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!`);
-        await this.saveLog(userId, 'WARN', 'RISK', `🛑 STOP LOSS ATINGIDO POR AJUSTE DE ENTRADA!\n• Motivo: Limite de perda diária alcançado.\n• Ação: Encerrando operações imediatamente.`);
-        return { action: 'STOP', reason: 'STOP_LOSS_LIMIT' };
+        return { action: 'STOP', reason: 'STOP_LOSS' };
       }
 
-      this.logger.log(`[Falcon][${userId}] ⛔ STAKE AJUSTADA PELO STOP: De ${stake.toFixed(2)} para ${adjustedStake.toFixed(2)} `);
-      await this.saveLog(userId, 'WARN', 'RISK',
-        `Risco de ultrapassar Stop Loss! perdas = ${currentDrawdown.toFixed(2)}, stake = ${stake.toFixed(2)}, limite = ${config.dailyLossLimit.toFixed(2)}.Ajustando para ${adjustedStake.toFixed(2)} `);
-
+      this.logger.log(`[Falcon][${userId}] 🛡️ RISK PROTECT: Ajustando stake de $${stake} para $${adjustedStake} para não romper SL Global.`);
       return {
         action: 'BUY',
         stake: adjustedStake,
@@ -985,75 +1018,31 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       };
     }
 
-    // 2. Stop Loss Blindado (Efeito Catraca - Lógica Falcon Preservada)
-    // ✅ Verifica se o tipo de Stop Loss é 'blindado' antes de aplicar a lógica
-    if (config.stopLossType === 'blindado') {
-      if (!state.stopBlindadoAtivo) {
-        // Ativação (40% da Meta)
-        if (state.lucroAtual >= config.dailyProfitTarget * 0.40) {
-          state.stopBlindadoAtivo = true;
-          state.picoLucro = state.lucroAtual;
-          state.pisoBlindado = state.picoLucro * 0.50; // Piso é 50% do pico
+    // 2. Stop Loss Blindado (Ciclo)
+    if (config.enableStopLossBlindado && state.blindadoActive) {
+      if (state.cycleProfit < state.blindadoFloorProfit) {
+        return { action: 'STOP', reason: 'BLINDADO' };
+      }
 
-          this.logger.log(`[Falcon][${userId}] 🔒 STOP BLINDADO ATIVADO! Piso: ${state.pisoBlindado.toFixed(2)} `);
-          await this.saveLog(userId, 'INFO', 'RISK',
-            `Lucro atual: $${state.lucroAtual.toFixed(2)}.Ativando Stop Loss Blindado em $${state.pisoBlindado.toFixed(2)}.`);
-        }
-      } else {
-        // Atualização Dinâmica (Trailing Stop)
-        if (state.lucroAtual > state.picoLucro) {
-          state.picoLucro = state.lucroAtual;
-          state.pisoBlindado = state.picoLucro * 0.50;
+      const distToFloor = state.cycleProfit - state.blindadoFloorProfit;
 
-          this.logger.log(`[Falcon][${userId}] 🔒 BLINDAGEM SUBIU! Novo Piso: ${state.pisoBlindado.toFixed(2)} `);
-        }
+      if (stake > distToFloor) {
+        const adjustedStake = Math.floor(distToFloor * 100) / 100;
 
-        // ✅ VERIFICAÇÃO COM CLAMPING (Igual Zeus)
-        // Se a próxima aposta nos faria cruzar o piso, reduzimos a stake
-        // Ex: Profit 100, Piso 50. Margem 50.
-        // Se stake 60 -> Reduz para 50.
-
-        const marginToFloor = state.lucroAtual - state.pisoBlindado;
-
-        // Se já estamos abaixo (por algum motivo), stop imediato
-        if (marginToFloor <= 0) {
-          // Stop imediato (já manipulado abaixo, mas garantindo)
-        } else if (stake > marginToFloor) {
-          const adjustedStake = Math.round(marginToFloor * 100) / 100;
-          if (adjustedStake < 0.35) {
-            this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO: Margem insuficiente para aposta mínima.`);
-            // Deixa cair no bloco de stop abaixo
-          } else {
-            this.logger.log(`[Falcon][${userId}] 🔒 CLAMP BLINDADO: Stake ajustada de $${stake} para $${adjustedStake} para proteger lucro.`);
-            return {
-              action: 'BUY',
-              stake: adjustedStake,
-              reason: 'BLINDADO_CLAMP'
-            };
-          }
-        }
-
-        // Gatilho de Saída
-        if (state.lucroAtual <= state.pisoBlindado) {
-          this.logger.log(`[Falcon][${userId}] 🛑 STOP BLINDADO ATINGIDO.Encerrando operações.`);
-
-          await this.saveLog(userId, 'WARN', 'RISK',
-            `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${state.lucroAtual.toFixed(2)}.Encerrando operações do dia.`);
-
-          // ✅ Pausar operações no banco de dados (Status Pausado/Blindado)
-          // Mantém is_active = TRUE para permitir reset automático no dia seguinte
-          state.isActive = false; // Pausa em memória
-          await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ? `,
-            [userId],
-          );
-
+        if (adjustedStake < 0.35) {
+          this.logger.log(`[Falcon][${userId}] 🛡️ STOP BLINDADO PRÓXIMO: Encerrando para proteger lucro.`);
           return { action: 'STOP', reason: 'BLINDADO' };
         }
+
+        this.logger.log(`[Falcon][${userId}] 🛡️ SMART BLINDADO: Ajustando stake de $${stake} para $${adjustedStake} para não romper piso.`);
+        return {
+          action: 'BUY',
+          stake: adjustedStake,
+          reason: 'BLINDADO_CLAMP'
+        };
       }
     }
 
-    // Se passou por todas as verificações, pode comprar
     return {
       action: 'BUY',
       stake: stake,
@@ -1127,6 +1116,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // ✅ LOG: Notificar pedido de compra
       await this.saveLog(userId, 'INFO', 'TRADER', `📡 SOLICITANDO COMPRA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`);
 
+      const barrier = marketAnalysis.details?.barrier || 2;
+
       const contractId = await this.buyContract(
         userId,
         config.derivToken,
@@ -1135,7 +1126,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         decision.stake || config.initialStake,
         1, // duration em ticks (ZENIX v1.0 standard)
         2, // maxRetries
-        tradeId // ✅ Passar tradeId para associar corretamente no callback
+        tradeId, // ✅ Passar tradeId para associar corretamente no callback
+        barrier // ✅ Passo a barreira (dígito alvo)
       ).catch(err => {
         lastErrorMsg = err.message || 'Falha ao comprar contrato';
         return null;
@@ -1237,7 +1229,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     stake: number,
     duration: number,
     maxRetries = 2,
-    tradeId: number = 0, // ✅ Adicionado tradeId
+    tradeId: number = 0,
+    barrier: number = 2,
   ): Promise<string | null> {
     const roundedStake = Number(stake.toFixed(2));
     let lastError: Error | null = null;
@@ -1270,6 +1263,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           duration: duration,
           duration_unit: 't',
           symbol: symbol,
+          barrier: barrier.toString()
         };
 
         // ✅ FALCON SPECIFIC: Adicionar prediction para DIGITODD (não precisa barrier, mas prediction talvez se fosse matches/differs)
@@ -1481,112 +1475,128 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   async onContractFinish(
     userId: string,
     result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
-    tradeIdFromCallback?: number, // ✅ Novo argumento
+    tradeIdFromCallback?: number,
   ): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
-    if (!config || !state) {
-      return;
-    }
+    if (!config || !state) return;
 
-    // [Nota]: O reset de isWaitingContract foi movido para o final da função 
-    // para evitar que um novo tick trigger outra entrada antes de processar o resultado atual.
-    // state.isWaitingContract = false;
-    // state.waitingContractStartTime = null;
-
-    // Priorizar tradeId que veio do closure do buyContract (mais seguro)
     const tradeId = tradeIdFromCallback || state.currentTradeId;
 
-    // Apenas limpar currentContractId e currentTradeId se forem os mesmos que acabaram de finalizar
-    if (state.currentContractId === result.contractId) {
-      state.currentContractId = null;
-    }
-    if (state.currentTradeId === tradeId) {
-      state.currentTradeId = null;
-    }
+    if (state.currentContractId === result.contractId) state.currentContractId = null;
+    if (state.currentTradeId === tradeId) state.currentTradeId = null;
 
     try {
-      // ✅ Prevenção de Processamento Duplicado
-      // Se não temos um ID de trade válido, não processamos lógica de saldo/martingale
       let finalTradeId = tradeId;
       if (!finalTradeId) {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado sem tradeId válido (Contrato: ${result.contractId}). Tentando recuperar do banco...`);
-        try {
-          // ✅ FIX: Table name was 'trades', changed to 'autonomous_agent_trades'
-          const trade = await this.dataSource.query('SELECT id FROM autonomous_agent_trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
-          if (trade && trade.length > 0) {
-            finalTradeId = trade[0].id;
-            this.logger.log(`[Falcon][${userId}] ✅ TradeId recuperado do banco: ${finalTradeId}`);
-          }
-        } catch (e) {
-          this.logger.error(`[Falcon][${userId}] Falha ao recuperar trade do banco:`, e);
-        }
+        const trade = await this.dataSource.query('SELECT id FROM autonomous_agent_trades WHERE contract_id = ? ORDER BY id DESC LIMIT 1', [result.contractId]);
+        if (trade && trade.length > 0) finalTradeId = trade[0].id;
       }
 
-      if (!finalTradeId) {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ ABORTANDO: Impossível identificar trade para contrato ${result.contractId}`);
-        return;
+      if (finalTradeId) {
+        await this.updateTradeRecord(finalTradeId, {
+          status: result.win ? 'WON' : 'LOST',
+          exitPrice: result.exitPrice || 0,
+          profitLoss: result.profit,
+          closedAt: new Date(),
+        });
       }
 
-      // Usar finalTradeId daqui para frente
-      const processingTradeId = finalTradeId;
+      // V4 Stats Update
+      state.opsTotal++;
+      state.cycleOps++;
+      state.profit += result.profit;
+      state.cycleProfit += result.profit;
+      state.lucroAtual = state.profit;
+      state.opsCount = state.opsTotal;
 
-      this.logger.log(`[Falcon][${userId}] 📋 Processando resultado do contrato ${result.contractId} | TradeId: ${processingTradeId} | Win: ${result.win} | Profit: ${result.profit}`);
+      if (state.profit > state.peakProfit) state.peakProfit = state.profit;
+      if (state.cycleProfit > state.cyclePeakProfit) state.cyclePeakProfit = state.cycleProfit;
 
-      // ✅ Atualizar trade no banco com resultado
-      if (processingTradeId) {
-        try {
-          await this.updateTradeRecord(processingTradeId, {
-            status: result.win ? 'WON' : 'LOST',
-            exitPrice: result.exitPrice || 0,
-            profitLoss: result.profit,
-            closedAt: new Date(),
-          });
-          this.logger.log(`[Falcon][${userId}] ✅ Trade ${processingTradeId} atualizado no banco de dados`);
-        } catch (error) {
-          this.logger.error(`[Falcon][${userId}] ❌ Erro ao atualizar trade ${processingTradeId} no banco:`, error);
-        }
+      if (result.win) {
+        state.wins++;
+        state.consecutiveLosses = 0;
+        state.perdasAcumuladas = 0;
+        state.analysis = "PRINCIPAL";
+        state.cooldownUntilTs = Date.now() + (config.cooldownWinSeconds * 1000);
       } else {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ onContractFinish chamado mas tradeId é null/undefined`);
+        state.losses++;
+        state.consecutiveLosses++;
+        state.perdasAcumuladas += Math.abs(result.profit);
+        state.analysis = "RECUPERACAO";
+        state.cooldownUntilTs = Date.now() + (config.cooldownLossSeconds * 1000);
       }
+      this.updateBlindado(userId, state, config);
 
-      // Atualizar estado
-      state.opsCount++;
-      state.lastProfit = result.profit;
-      state.lucroAtual += result.profit;
-
-      // Atualizar modo (PRECISO ou ALTA_PRECISAO)
-      this.updateMode(userId, result.win);
-
-      // ✅ Atualizar banco de dados PRIMEIRO (antes dos logs)
-      await this.updateUserStateInDb(userId, state);
-
-      // ✅ Logs detalhados do resultado (formato igual à Orion)
-      // ✅ Log de resultado no padrão Orion
+      // Log Result
       await this.logTradeResultV2(userId, {
         status: result.win ? 'WIN' : 'LOSS',
         profit: result.profit,
         stake: result.stake,
-        balance: config.initialBalance + state.lucroAtual
+        balance: config.initialCapital + state.profit
       });
 
-      // Verificar se atingiu meta ou stop
-      if (state.lucroAtual >= config.dailyProfitTarget) {
-        await this.handleStopCondition(userId, 'TAKE_PROFIT');
-      } else if (state.lucroAtual <= -config.dailyLossLimit) {
-        await this.handleStopCondition(userId, 'STOP_LOSS');
-      }
+      // Update DB and check cycles/stops
+      await this.updateUserStateInDb(userId, state);
+      this.updateCycleState(userId);
+
     } catch (criticalError) {
       this.logger.error(`[Falcon][${userId}] ❌ ERRO CRÍTICO no processamento de contrato:`, criticalError);
-      await this.saveLog(userId, 'ERROR', 'SYSTEM', `Erro crítico ao processar resultado do contrato ${result.contractId}. Detalhes salvos nos logs do sistema.`);
     } finally {
-      // ✅ [SAFETY] Resetar trava SEMPRE, independentemente de erro no processamento
-      // Isso é o que impede o loop "OPERAÇÃO EM ANDAMENTO" em caso de crash interno
       state.isWaitingContract = false;
       state.waitingContractStartTime = null;
-      this.logger.debug(`[Falcon][${userId}] 🔓 Trava resetada (finally block)`);
     }
+  }
+
+  /**
+   * ✅ CORE: Analyze Market (v2.0 Digit Density)
+   */
+  private async analyzeMarket(userId: string, ticks: Tick[]): Promise<MarketAnalysis | null> {
+    const config = this.userConfigs.get(userId);
+    const state = this.userStates.get(userId);
+    if (!config || !state) return null;
+
+    // Detectar Sub-Modo (Principal vs Recuperação)
+    const isRecovery = state.perdasAcumuladas > 0;
+    const modeName = state.mode;
+    const modeConfig = FALCON_MODES[modeName][isRecovery ? 'recovery' : 'principal'];
+
+    if (ticks.length < modeConfig.window) return null;
+
+    // 1. Extrair dígitos da janela solicitada
+    const windowTicks = ticks.slice(-modeConfig.window);
+    const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value));
+    state.lastDigits = digits;
+
+    // 2. Contar ocorrências dos dígitos alvo
+    const count = digits.filter(d => modeConfig.targets.includes(d)).length;
+
+    // 3. Verificar Limite (Deve ser EXATAMENTE igual conforme doc)
+    if (count === modeConfig.limit) {
+      const contractType = 'DIGITOVER';
+      const barrier = modeConfig.barrier;
+      const payout = isRecovery ? FALCON_CONSTANTS.payoutRecovery : FALCON_CONSTANTS.payoutPrincipal;
+      const probability = isRecovery ? 60.91 : (modeName === 'NORMAL' ? 78.02 : 77.22);
+
+      return {
+        signal: 'DIGIT',
+        probability,
+        payout,
+        confidence: probability / 100,
+        details: {
+          contractType,
+          barrier,
+          info: isRecovery ? 'Filtro Recuperação' : `Filtro Principal ${modeName}`,
+          mode: modeName,
+          density: `${count}/${modeConfig.window}`,
+          targets: modeConfig.targets.join(','),
+          currentPrice: ticks[ticks.length - 1].value
+        }
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -1621,48 +1631,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * Trata condições de parada
-   */
-  private async handleStopCondition(userId: string, reason: string): Promise<void> {
-    const config = this.userConfigs.get(userId);
-    const state = this.userStates.get(userId);
-
-    if (!config || !state) {
-      return;
-    }
-
-    let status = 'active';
-    let message = '';
-
-    switch (reason) {
-      case 'TAKE_PROFIT':
-        status = 'stopped_profit';
-        message = `META DE LUCRO ATINGIDA! daily_profit=${state.lucroAtual.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)}. Encerrando operações.`;
-        break;
-      case 'STOP_LOSS':
-        status = 'stopped_loss';
-        message = `STOP LOSS ATINGIDO! daily_loss=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)}. Encerrando operações.`;
-        break;
-      case 'BLINDADO':
-        status = 'stopped_blindado';
-        message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialBalance + state.lucroAtual).toFixed(2)}. Encerrando operações do dia.`;
-        break;
-    }
-
-    await this.saveLog(userId, 'WARN', 'RISK', message);
-
-    // Desativar agente (apenas em memória para parar hoje)
-    // ✅ MANTER NO BANCO COMO ATIVO (is_active = TRUE) para que o scheduler reinicie amanhã
-    state.isActive = false;
-    await this.dataSource.query(
-      `UPDATE autonomous_agent_config SET session_status = ?, is_active = TRUE WHERE user_id = ?`,
-      [status, userId],
-    );
-
-    this.logger.log(`[Falcon][${userId}] ${message}`);
-  }
-
-  /**
    * Cria registro de trade no banco
    */
   private async createTradeRecord(
@@ -1679,25 +1647,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
-    if (!config || !state) {
-      return 0;
-    }
+    if (!config || !state) return 0;
 
     const analysisData = {
       strategy: 'falcon',
       mode: state.mode,
+      cycle: state.cycleCurrent,
       probability: trade.marketAnalysis.probability,
       signal: trade.marketAnalysis.signal,
-      volatility: trade.marketAnalysis.details?.volatility,
-      trend: trade.marketAnalysis.details?.trend,
+      info: trade.marketAnalysis.details?.info,
       digitPattern: trade.marketAnalysis.details?.digitPattern,
       timestamp: new Date().toISOString(),
     };
 
-    const analysisReasoning = `Análise FALCON: Probabilidade ${trade.marketAnalysis.probability.toFixed(1)}%, ` +
-      `Direção ${trade.marketAnalysis.signal}, ` +
+    const analysisReasoning = `Análise FALCON V4: Probabilidade ${trade.marketAnalysis.probability.toFixed(1)}%, ` +
+      `Sinal ${trade.marketAnalysis.details?.info}, ` +
       `Modo ${state.mode}, ` +
-      `Volatilidade=${trade.marketAnalysis.details?.volatility?.toFixed(4) || 'N/A'}`;
+      `Ciclo ${state.cycleCurrent}`;
 
     try {
       const result = await this.dataSource.query(
@@ -1715,8 +1681,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           trade.duration,
           trade.entryPrice,
           trade.stakeAmount,
-          state.mode !== 'PRECISO' ? `M${state.martingaleLevel}` : 'M0',
-          trade.payout * 100, // Converter para percentual
+          state.perdasAcumuladas > 0 ? 'M1' : 'M0',
+          trade.payout * 100,
           config.symbol,
         ],
       );
@@ -1810,340 +1776,198 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
   }
 
+  // logInitialConfigV2 removed (implemented at the end of the class)
+
+  /**
+   * Atualiza estado do usuário no banco de dados
+   */
   /**
    * Atualiza estado do usuário no banco de dados
    */
   private async updateUserStateInDb(userId: string, state: FalconUserState): Promise<void> {
     try {
       await this.dataSource.query(
-        `UPDATE autonomous_agent_config 
-         SET daily_profit = ?, 
+        `UPDATE autonomous_agent_config
+         SET daily_profit = ?,
              daily_loss = ?,
              total_trades = ?,
              updated_at = NOW()
          WHERE user_id = ? AND agent_type = 'falcon'`,
-        [
-          Math.max(0, state.lucroAtual),
-          Math.abs(Math.min(0, state.lucroAtual)),
-          state.opsCount,
-          userId,
-        ],
+        [state.profit, state.losses, state.opsTotal, userId]
       );
     } catch (error) {
-      this.logger.error(`[Falcon] Erro ao atualizar estado no DB:`, error);
+      this.logger.error(`[Falcon][${userId}] Erro ao atualizar estado no banco:`, error);
     }
   }
 
-  /**
-   * Salva log no sistema (via LogQueueService que salva no banco)
-   * ✅ Evita duplicação: salva apenas uma vez via LogQueueService
-   */
-  private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
-    // ✅ Formatar mensagem sem duplicar prefixo do módulo
-    let formattedMessage = message;
-    // Remover prefixos duplicados se existirem (ex: [CORE] - mensagem)
-    formattedMessage = formattedMessage.replace(/^\[.*?\]\s*-\s*/g, '');
-
-    // ✅ Salvar APENAS via LogQueueService (evita duplicação)
-    // O LogQueueService já salva no banco de dados automaticamente
+  private saveLog(userId: string, level: 'INFO' | 'WARN' | 'ERROR', module: string, message: string): void {
     if (this.logQueueService) {
-      // Normalizar módulo para tipo válido
-      const validModules: ('CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')[] =
-        ['CORE', 'API', 'ANALYZER', 'DECISION', 'TRADER', 'RISK', 'HUMANIZER'];
-      const normalizedModule = validModules.includes(module.toUpperCase() as any)
-        ? (module.toUpperCase() as 'CORE' | 'API' | 'ANALYZER' | 'DECISION' | 'TRADER' | 'RISK' | 'HUMANIZER')
-        : 'CORE';
-
       this.logQueueService.saveLogAsync({
         userId,
-        level: level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
-        module: normalizedModule,
-        message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
-        icon: this.getLogIcon(level),
-        details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_100' },
+        level,
+        module: module as any,
+        message,
         tableName: 'autonomous_agent_logs',
       });
     }
-
-    this.logger.log(`[Falcon][${module}][${userId}] ${formattedMessage}`);
   }
 
-  private getLogIcon(level: string): string {
-    switch (level.toUpperCase()) {
-      case 'ERROR':
-        return '🚫';
-      case 'WARN':
-        return '⚠️';
-      case 'INFO':
-        return 'ℹ️';
-      case 'DEBUG':
-        return '🔍';
-      default:
-        return 'ℹ️';
-    }
+  private getLogIcon(type: string, module: string): string {
+    if (type === 'ERROR') return '❌';
+    if (type === 'WARN') return '⚠️';
+    if (module === 'CORE') return '⚙️';
+    if (module === 'ANALYZER') return '🧠';
+    if (module === 'DECISION') return '🔍';
+    if (module === 'EXECUTION') return '🎯';
+    if (module === 'RISK') return '🛡️';
+    return '📝';
   }
 
   async getUserState(userId: string): Promise<AutonomousAgentState | null> {
     const state = this.userStates.get(userId);
     if (!state) return null;
-
     return {
       userId: state.userId,
       isActive: state.isActive,
-      currentProfit: state.lucroAtual,
-      currentLoss: Math.abs(Math.min(0, state.lucroAtual)),
-      operationsCount: state.opsCount,
+      currentProfit: state.profit,
+      currentLoss: Math.abs(Math.min(0, state.profit)),
+      operationsCount: state.opsTotal,
       mode: state.mode,
-      consecutiveWins: state.consecutiveWins,
+      consecutiveWins: state.wins,
       consecutiveLosses: state.consecutiveLosses,
     };
   }
 
   async resetDailySession(userId: string): Promise<void> {
     const state = this.userStates.get(userId);
-    if (state) {
+    const config = this.userConfigs.get(userId);
+    if (state && config) {
+      state.profit = 0;
       state.lucroAtual = 0;
-      state.picoLucro = 0;
+      state.peakProfit = 0;
       state.consecutiveLosses = 0;
-      state.consecutiveWins = 0;
+      state.perdasAcumuladas = 0;
+      state.opsTotal = 0;
       state.opsCount = 0;
-      state.mode = 'NORMAL';
-      state.stopBlindadoAtivo = false;
-      state.pisoBlindado = 0;
-      state.lastProfit = 0;
-      state.lastSignals = [];
-      state.consecutiveLossesSinceModeChange = 0;
+      state.wins = 0;
+      state.losses = 0;
+      state.cycleCurrent = 1;
+      state.cycleProfit = 0;
+      state.cycleOps = 0;
+      state.cyclePeakProfit = 0;
+      state.blindadoActive = false;
+      state.blindadoFloorProfit = 0;
+      state.sessionEnded = false;
+      state.mode = config.mode || 'NORMAL';
+      await this.updateUserStateInDb(userId, state);
     }
   }
 
-  // ============================================
-  // MÉTODOS DE GERENCIAMENTO DE WEBSOCKET (Pool Interno)
-  // Copiados da Orion Strategy
-  // ============================================
-
-  /**
-   * ✅ Obtém ou cria conexão WebSocket reutilizável por token
-   */
   private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
     ws: WebSocket;
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
     subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
   }> {
-    // ✅ Verificar se já existe conexão para este token
-    const existing = this.wsConnections.get(token);
-    if (existing) {
-      const readyState = existing.ws.readyState;
-      const readyStateText = readyState === WebSocket.OPEN ? 'OPEN' :
-        readyState === WebSocket.CONNECTING ? 'CONNECTING' :
-          readyState === WebSocket.CLOSING ? 'CLOSING' :
-            readyState === WebSocket.CLOSED ? 'CLOSED' : 'UNKNOWN';
-
-      this.logger.debug(`[FALCON] 🔍 [${userId || 'SYSTEM'}] Conexão encontrada: readyState=${readyStateText}, authorized=${existing.authorized}`);
-
+    if (this.wsConnections.has(token)) {
+      const existing = this.wsConnections.get(token)!;
       if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
-        this.logger.debug(`[FALCON] ♻️ [${userId || 'SYSTEM'}] ✅ Reutilizando conexão WebSocket existente`);
-
         return {
           ws: existing.ws,
           sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
           subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-            this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+            this.subscribeViaConnection(token, payload, callback, String(subId), timeoutMs),
           removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
-      } else {
-        this.logger.warn(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
-        if (existing.keepAliveInterval) {
-          clearInterval(existing.keepAliveInterval);
-        }
-        existing.ws.close();
-        this.wsConnections.delete(token);
       }
-    } else {
-      this.logger.debug(`[FALCON] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
+      this.wsConnections.delete(token);
     }
 
-    // ✅ Criar nova conexão
-    this.logger.debug(`[FALCON] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
-    const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-
-    const ws = await new Promise<WebSocket>((resolve, reject) => {
-      const socket = new WebSocket(endpoint, {
-        headers: { Origin: 'https://app.deriv.com' },
-      });
-
+    return new Promise((resolve, reject) => {
       let authResolved = false;
+      const socket = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${this.appId}`);
       const connectionTimeout = setTimeout(() => {
         if (!authResolved) {
-          this.logger.error(`[FALCON] ❌ [${userId || 'SYSTEM'}] Timeout na autorização após 20s. Estado: readyState=${socket.readyState}`);
-          socket.close();
+          authResolved = true;
           this.wsConnections.delete(token);
-          reject(new Error('Timeout ao conectar e autorizar WebSocket (20s)'));
+          socket.terminate();
+          reject(new Error('Timeout ao conectar/autorizar WebSocket (15s)'));
         }
-      }, 20000);
+      }, 15000);
 
-      // ✅ Listener de mensagens para capturar autorização e outras respostas
-      socket.on('message', (data: WebSocket.RawData) => {
+      socket.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
-
-          // ✅ Ignorar ping/pong
-          if (msg.msg_type === 'ping' || msg.msg_type === 'pong' || msg.ping || msg.pong) {
-            return;
-          }
-
           const conn = this.wsConnections.get(token);
-          if (!conn) {
-            this.logger.warn(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Mensagem recebida mas conexão não encontrada no pool para token ${token.substring(0, 8)}`);
-            return;
-          }
+          if (!conn) return;
 
-          // ✅ Processar autorização (apenas durante inicialização)
           if (msg.msg_type === 'authorize' && !authResolved) {
-            this.logger.debug(`[FALCON] 🔐 [${userId || 'SYSTEM'}] Processando resposta de autorização...`);
             authResolved = true;
             clearTimeout(connectionTimeout);
-
-            if (msg.error || (msg.authorize && msg.authorize.error)) {
-              const errorMsg = msg.error?.message || msg.authorize?.error?.message || 'Erro desconhecido na autorização';
-              this.logger.error(`[FALCON] ❌ [${userId || 'SYSTEM'}] Erro na autorização: ${errorMsg}`);
+            if (msg.error) {
               socket.close();
               this.wsConnections.delete(token);
-              reject(new Error(`Erro na autorização: ${errorMsg}`));
+              reject(new Error(msg.error.message || 'Erro na autorização'));
               return;
             }
-
             conn.authorized = true;
-            this.logger.log(`[FALCON] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
-
-            // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
-              if (socket.readyState === WebSocket.OPEN) {
-                try {
-                  socket.send(JSON.stringify({ ping: 1 }));
-                  this.logger.debug(`[FALCON][KeepAlive][${token.substring(0, 8)}] Ping enviado`);
-                } catch (error) {
-                  // Ignorar erros
-                }
-              }
-            }, 90000);
-
-            resolve(socket);
+              if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
+            }, 30000);
+            resolve({
+              ws: socket,
+              sendRequest: (p, t = 60000) => this.sendRequestViaConnection(token, p, t),
+              subscribe: (p, c, s, t = 90000) => this.subscribeViaConnection(token, p, c, s, t),
+              removeSubscription: (s) => this.removeSubscriptionFromConnection(token, s),
+            });
             return;
           }
 
-          // ✅ Processar mensagens de subscription (proposal_open_contract) - PRIORIDADE 1
           if (msg.proposal_open_contract) {
-            const subContractId = String(msg.proposal_open_contract.contract_id); // ✅ CAST TO STRING
-            if (subContractId && conn.subscriptions.has(subContractId)) {
-              const callback = conn.subscriptions.get(subContractId)!;
-              callback(msg);
-              return;
-            } else {
-              this.logger.debug(`[FALCON] ⚠️ [${userId || 'SYSTEM'}] Subscription não encontrada para contract_id: ${subContractId} (Types: sub=${typeof subContractId}, keys=${Array.from(conn.subscriptions.keys()).map(k => typeof k).join(',')})`);
-            }
+            const subId = String(msg.proposal_open_contract.contract_id);
+            if (conn.subscriptions.has(subId)) conn.subscriptions.get(subId)!(msg);
+            return;
           }
 
-          // ✅ Processar respostas de requisições (ROTEAMENDO POR REQ_ID / PASSTHROUGH) - PRIORIDADE 2
-          const reqId = msg.req_id || (msg.echo_req?.passthrough?.req_id);
-
+          const reqId = msg.req_id || msg.echo_req?.passthrough?.req_id;
           if (reqId && conn.pendingRequests.has(reqId)) {
-            const pending = conn.pendingRequests.get(reqId);
-            if (pending) {
-              clearTimeout(pending.timeout);
-              conn.pendingRequests.delete(reqId);
-              if (msg.error) {
-                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-              } else {
-                pending.resolve(msg);
-              }
-              return; // Resolvido
-            }
+            const pending = conn.pendingRequests.get(reqId)!;
+            clearTimeout(pending.timeout);
+            conn.pendingRequests.delete(reqId);
+            if (msg.error) pending.reject(new Error(msg.error.message));
+            else pending.resolve(msg);
           }
-
-          // ✅ FALLBACK: Processar por tipo se não tiver reqId (Apenas para garantir compatibilidade)
-          if (msg.proposal || msg.buy || (msg.error && !msg.proposal_open_contract)) {
-            const firstKey = conn.pendingRequests.keys().next().value;
-            if (firstKey) {
-              const pending = conn.pendingRequests.get(firstKey);
-              if (pending) {
-                clearTimeout(pending.timeout);
-                conn.pendingRequests.delete(firstKey);
-                if (msg.error) {
-                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-                } else {
-                  pending.resolve(msg);
-                }
-              }
-            }
-          }
-        } catch (error) {
-          // Continuar processando
-        }
+        } catch (e) { }
       });
 
       socket.on('open', () => {
-        this.logger.log(`[FALCON] ✅ [${userId || 'SYSTEM'}] WebSocket conectado, enviando autorização...`);
-
-        // ✅ Criar entrada no pool
-        const conn = {
+        this.wsConnections.set(token, {
           ws: socket,
           authorized: false,
           keepAliveInterval: null,
           requestIdCounter: 0,
           pendingRequests: new Map(),
           subscriptions: new Map(),
-        };
-        this.wsConnections.set(token, conn);
-
-        // ✅ Enviar autorização
-        const authPayload = { authorize: token };
-        this.logger.debug(`[FALCON] 📤 [${userId || 'SYSTEM'}] Enviando autorização: ${JSON.stringify({ authorize: token.substring(0, 8) + '...' })}`);
-        socket.send(JSON.stringify(authPayload));
+        });
+        socket.send(JSON.stringify({ authorize: token }));
       });
 
-      socket.on('error', (error) => {
+      socket.on('error', (e) => {
         if (!authResolved) {
-          clearTimeout(connectionTimeout);
           authResolved = true;
-          this.wsConnections.delete(token);
-          reject(error);
+          clearTimeout(connectionTimeout);
+          reject(e);
         }
       });
 
       socket.on('close', () => {
-        this.logger.debug(`[FALCON] 🔌 [${userId || 'SYSTEM'}] WebSocket fechado`);
         const conn = this.wsConnections.get(token);
-        if (conn) {
-          if (conn.keepAliveInterval) {
-            clearInterval(conn.keepAliveInterval);
-          }
-          // Rejeitar todas as requisições pendentes
-          conn.pendingRequests.forEach(pending => {
-            clearTimeout(pending.timeout);
-            pending.reject(new Error('WebSocket fechado'));
-          });
-          conn.subscriptions.clear();
-        }
+        if (conn?.keepAliveInterval) clearInterval(conn.keepAliveInterval);
         this.wsConnections.delete(token);
-
-        if (!authResolved) {
-          clearTimeout(connectionTimeout);
-          authResolved = true;
-          reject(new Error('WebSocket fechado antes da autorização'));
-        }
       });
     });
-
-    const conn = this.wsConnections.get(token)!;
-    return {
-      ws: conn.ws,
-      sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
-      subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
-        this.subscribeViaConnection(token, payload, callback, String(subId), timeoutMs),
-      removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
-    };
   }
+
 
   /**
    * ✅ Envia requisição via conexão existente
@@ -2163,13 +1987,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       conn.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-      // ✅ Garantir que o req_id vá na requisição para roteamento seguro (via passthrough)
       const enrichedPayload = {
         ...payload,
         passthrough: {
           ...payload.passthrough,
-          req_id: requestId
-        }
+          req_id: requestId,
+        },
       };
 
       conn.ws.send(JSON.stringify(enrichedPayload));
@@ -2177,7 +2000,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * ✅ Inscreve-se para atualizações via conexão existente
+   * ✅ Subscreve para atualizações via conexão existente
    */
   private async subscribeViaConnection(
     token: string,
@@ -2191,16 +2014,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       throw new Error('Conexão WebSocket não está disponível ou autorizada');
     }
 
-    // ✅ Aguardar primeira resposta para confirmar subscription
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         conn.subscriptions.delete(subId);
         reject(new Error(`Timeout ao inscrever ${subId}`));
       }, timeoutMs);
 
-      // ✅ Callback wrapper que confirma subscription na primeira mensagem
       const wrappedCallback = (msg: any) => {
-        // ✅ Primeira mensagem confirma subscription
         if (msg.proposal_open_contract || msg.error) {
           clearTimeout(timeout);
           if (msg.error) {
@@ -2208,14 +2028,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             reject(new Error(msg.error.message || JSON.stringify(msg.error)));
             return;
           }
-          // ✅ Subscription confirmada, substituir por callback original
           conn.subscriptions.set(subId, callback);
           resolve();
-          // ✅ Chamar callback original com primeira mensagem
           callback(msg);
           return;
         }
-        // ✅ Se não for primeira mensagem, já deve estar usando callback original
         callback(msg);
       };
 
@@ -2235,15 +2052,14 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   /**
-   * ✅ Pré-aquece a conexão WebSocket
+   * ✅ Warm-up de conexão (Ping)
    */
   private async warmUpConnection(token: string): Promise<void> {
     try {
       const { sendRequest } = await this.getOrCreateWebSocketConnection(token);
       await sendRequest({ ping: 1 }, 5000);
     } catch (error) {
-      this.logger.debug(`[Falcon] WarmUp failed for token ending in ...${token.slice(-4)}`);
-      // Não lançar erro, apenas logar
+      this.logger.debug(`[Falcon] ⚠️ WarmUp failed for token ending in ...${token.slice(-4)}`);
     }
   }
 
@@ -2251,7 +2067,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   // LOGS PADRONIZADOS ZENIX v2.0 (Portado de Orion)
   // ============================================
 
-  // --- CATEGORIA 1: CONFIGURAÇÃO E MONITORAMENTO ---
+  // --- CATEGORIA 1: CONFIGURAÇÃO E SESSÃO ---
 
   private logInitialConfigV2(userId: string, config: {
     agentName: string;
@@ -2269,7 +2085,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       `• Perfil: ${config.riskProfile}\n` +
       `• Meta Lucro: $${config.profitTarget.toFixed(2)}\n` +
       `• Stop Loss: $${config.stopLoss.toFixed(2)}\n` +
-      `• Stop Blindado: ${config.stopBlindadoEnabled ? 'ATIVO 🛡️' : 'INATIVO ❌'}`;
+      `• Stop Blindado: ${config.stopBlindadoEnabled ? '✅ ATIVO' : '❌ DESATIVADO'}`;
 
     this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveLog(userId, 'INFO', 'CORE', message);
@@ -2323,7 +2139,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     reason: string;
     details?: string;
   }) {
-    // ⏸️ ENTRADA BLOQUEADA (Yellow/WARN)
     const message = `⏸️ ENTRADA BLOQUEADA\n` +
       `• Motivo: ${blocked.reason}\n` +
       (blocked.details ? `• Detalhes: ${blocked.details}` : '');
@@ -2357,7 +2172,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.saveLog(userId, 'INFO', 'DECISION', message);
   }
 
-  // --- CATEGORIA 3: EXECUÇÃO E RESULTADO ---
+  // --- CATEGORIA 3: EXECUÇÃO E RESULTADOS ---
 
   private async logTradeResultV2(userId: string, result: {
     status: 'WIN' | 'LOSS';
@@ -2365,62 +2180,59 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     stake: number;
     balance: number;
   }) {
-    const profitStr = result.status === 'WIN' ? `+$${result.profit.toFixed(2)}` : `-$${result.stake.toFixed(2)}`;
-    const message = `🎯 RESULTADO DA ENTRADA\n` +
-      `• Status: ${result.status}\n` +
-      `• Lucro/Prejuízo: ${profitStr}\n` +
-      `• Saldo Atual: $${result.balance.toFixed(2)}`;
+    const icon = result.status === 'WIN' ? '✅' : '❌';
+    const message = `${icon} TRADE FINALIZADO: ${result.status}\n` +
+      `• Resultado: ${result.status === 'WIN' ? '+' : '-'}$${result.profit.toFixed(2)}\n` +
+      `• Stake: $${result.stake.toFixed(2)}\n` +
+      `• Banca Atual: $${result.balance.toFixed(2)}`;
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    await this.saveLog(userId, result.status === 'WIN' ? 'INFO' : 'WARN', 'EXECUTION', message);
+  }
+
+  private async logSuccessfulRecoveryV2(userId: string, data: {
+    recoveredLoss: number;
+    additionalProfit: number;
+  }) {
+    const message = `🛡️ RECUPERAÇÃO CONCLUÍDA\n` +
+      `• Perda Recuperada: $${data.recoveredLoss.toFixed(2)}\n` +
+      `• Lucro Adicional: $${data.additionalProfit.toFixed(2)}\n` +
+      `• Ação: Retornando ao Modo Normal`;
 
     this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
     await this.saveLog(userId, 'INFO', 'EXECUTION', message);
   }
 
-  private logSuccessfulRecoveryV2(userId: string, data: {
-    recoveredLoss: number;
-    additionalProfit: number;
-    profitPercentage: number;
-    stakeBase: number;
-  }) {
-    const message = `✅ RECUPERAÇÃO CONCLUÍDA\n` +
-      `• Prejuízo Recuperado: $${data.recoveredLoss.toFixed(2)}\n` +
-      `• Lucro Extra: $${data.additionalProfit.toFixed(2)}\n` +
-      `• Modo: Retornando para NORMAL`;
+  // --- CATEGORIA 4: RISCO E ALERTAS ---
 
-    this.saveLog(userId, 'INFO', 'CORE', message);
+  private logRiskAlert(userId: string, alert: {
+    type: 'STOP_LOSS' | 'PROFIT_TARGET' | 'DRAWDOWN' | 'LIMIT_OPS';
+    message: string;
+    value?: number;
+  }) {
+    const icon = alert.type === 'PROFIT_TARGET' ? '🎯' : '⚠️';
+    const message = `${icon} ALERTA DE RISCO: ${alert.type}\n` +
+      `• Mensagem: ${alert.message}` +
+      (alert.value !== undefined ? `\n• Valor: $${alert.value.toFixed(2)}` : '');
+
+    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
+    this.saveLog(userId, alert.type === 'PROFIT_TARGET' ? 'INFO' : 'ERROR', 'RISK', message);
   }
 
-  private logMartingaleLevelV2(userId: string, data: {
-    level: number;
-    lossNumber: number;
-    accumulatedLoss: number;
-    calculatedStake: number;
-    profitPercentage: number;
-    maxLevel: number;
-    contractType: string;
+  private logStatusUpdate(userId: string, status: {
+    currentProfit: number;
+    targetRemaining: number;
+    stopRemaining: number;
+    isBlindado: boolean;
   }) {
-    const message = `🛡️ GESTÃO DE RISCO (MARTINGALE)\n` +
-      `• Nível: ${data.level}/${data.maxLevel}\n` +
-      `• Perda Acumulada: $${data.accumulatedLoss.toFixed(2)}\n` +
-      `• Próxima Stake: $${data.calculatedStake.toFixed(2)}\n` +
-      `• Fator Recuperação: ${data.profitPercentage}%`;
-
-    this.saveLog(userId, 'WARN', 'RISK', message);
-  }
-
-  private logSorosActivation(userId: string, data: {
-    previousProfit: number;
-    stakeBase: number;
-    level: number;
-  }) {
-    const message = `📈 ALAVANCAGEM SOROS\n` +
-      `• Lucro Reinvestido: $${data.previousProfit.toFixed(2)}\n` +
-      `• Nova Stake: $${(data.stakeBase + data.previousProfit).toFixed(2)}`;
+    const message = `📊 STATUS DA SESSÃO\n` +
+      `• Lucro Atual: $${status.currentProfit.toFixed(2)}\n` +
+      `• Falta para Meta: $${status.targetRemaining.toFixed(2)}\n` +
+      `• Distância do Stop: $${status.stopRemaining.toFixed(2)}\n` +
+      `• Proteção Blindada: ${status.isBlindado ? 'ATIVA 🛡️' : 'INATIVA ❌'}`;
 
     this.saveLog(userId, 'INFO', 'RISK', message);
   }
-
-
-
 
   private logWinStreak(userId: string, streak: {
     consecutiveWins: number;
@@ -2430,18 +2242,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const message = `🔥 SEQUÊNCIA DE VITÓRIAS!\n` +
       `• Vitórias Consecutivas: ${streak.consecutiveWins}\n` +
       `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
-      `• Stake Atual: $${streak.currentStake.toFixed(2)}\n` +
-      `• Próxima Vitória: Reset para Stake Base`;
+      `• Próxima Stake: $${streak.currentStake.toFixed(2)}`;
 
-    this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveLog(userId, 'INFO', 'RISK', message);
   }
 
-  // --- CATEGORIA 4: RECUPERAÇÃO E RISCO ---
+  private logMartingaleAdjustment(userId: string, adjustment: {
+    level: number;
+    reason: string;
+    nextStake: number;
+  }) {
+    const message = `🔄 AJUSTE DE MARTINGALE\n` +
+      `• Nível: ${adjustment.level}\n` +
+      `• Motivo: ${adjustment.reason}\n` +
+      `• Próxima Stake: $${adjustment.nextStake.toFixed(2)}`;
 
-
-
-
+    this.saveLog(userId, 'WARN', 'RISK', message);
+  }
 
   private logStopLossAdjustmentV2(userId: string, adjustment: {
     calculatedStake: number;
@@ -2456,58 +2273,4 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     this.logger.log(`[Falcon][${userId}] ${message.replace(/\n/g, ' | ')}`);
     this.saveLog(userId, 'WARN', 'RISK', message);
   }
-
-}
-
-/**
- * Configuração do usuário para FALCON
- */
-interface FalconUserConfig {
-  userId: string;
-  initialStake: number;
-  dailyProfitTarget: number;
-  dailyLossLimit: number;
-  derivToken: string;
-  currency: string;
-  symbol: string; // ✅ V2: Allow dynamic symbol
-  initialBalance: number;
-  stopLossType?: 'normal' | 'blindado';
-  riskProfile?: 'CONSERVADOR' | 'MODERADO' | 'AGRESSIVO' | 'FIXO';
-}
-
-/**
- * Estado interno do FALCON por usuário
- */
-interface FalconUserState {
-  userId: string;
-  isActive: boolean;
-  saldoInicial: number;
-  lucroAtual: number;
-  picoLucro: number;
-  consecutiveLosses: number;
-  consecutiveWins: number;
-  opsCount: number;
-  mode: 'NORMAL' | 'PRECISO'; // v2.0 Modos
-  stopBlindadoAtivo: boolean;
-  pisoBlindado: number;
-  lastProfit: number;
-  currentContractId: string | null;
-  currentTradeId: number | null;
-  isWaitingContract: boolean;
-  lastContractType?: string; // ✅ Tipo do último contrato executado (para logs)
-  // ✅ Campos adicionados para compatibilidade com Sentinel/Estrutura Padrão
-  martingaleLevel: number;
-  sorosLevel: number;
-  totalLosses: number;
-  recoveryAttempts: number;
-  totalLossAccumulated: number; // ✅ Novo: Acumulado para recuperação
-  ticksSinceLastAnalysis: number; // ✅ Novo: Avanço de Ticks
-  // ✅ Campos para throttling de logs de compra negada
-  lastDeniedLogTime?: number;
-  lastDeniedLogData?: { probability: number; signal: string | null };
-  // ✅ Novos campos para Análise FALCON 2.2
-  lastSignals: Array<{ direction: string; timestamp: number }>; // Para confirmação dupla
-  consecutiveLossesSinceModeChange: number; // Para ajuste de rigor por histórico
-  waitingContractStartTime: number | null; // ✅ Novo: Timestamp de quando começou a aguardar contrato
-
 }
