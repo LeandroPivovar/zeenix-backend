@@ -74,12 +74,12 @@ export const FALCON_CONSTANTS = {
 
 export const FALCON_MODES = {
   NORMAL: {
-    principal: { window: 67, targets: [5, 6, 7, 8, 9], limit: 42, barrier: 2 },
-    recovery: { window: 73, targets: [6, 7, 8, 9], limit: 26, barrier: 4 }
+    principal: { window: 67, targets: [1, 2, 3, 4, 5], limit: 42, barrier: 2 },
+    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
   },
   PRECISO: {
-    principal: { window: 74, targets: [6, 7, 8, 9], limit: 23, barrier: 2 },
-    recovery: { window: 73, targets: [6, 7, 8, 9], limit: 26, barrier: 4 }
+    principal: { window: 74, targets: [6, 7], limit: 23, barrier: 2 },
+    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
   }
 };
 
@@ -742,21 +742,24 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   /**
    * ✅ LOGIC HELPER: Extrair último dígito (Protocolo v2.0 p[rec[-1]])
    */
-  private lastDigitFromPrice(price: number, symbol: string): number {
+  private lastDigitFromPrice(price: number, symbol: string, forcedDecimals?: number): number {
     // Obter precisão do símbolo
-    let decimals = 4;
-    const s = symbol.toUpperCase();
-    if (s.includes('100')) decimals = 2;
-    else if (s.includes('50')) decimals = 4;
-    else if (s.includes('10')) decimals = 3;
-    else if (s.includes('25')) decimals = 3;
-    else if (s.includes('75')) decimals = 4;
-    else if (s.includes('1HZ')) { // Caso use sinônimo direto
+    let decimals = forcedDecimals !== undefined ? forcedDecimals : 4;
+
+    if (forcedDecimals === undefined) {
+      const s = symbol.toUpperCase();
       if (s.includes('100')) decimals = 2;
-      else if (s.includes('50')) decimals = 4;
+      else if (s.includes('50')) decimals = 2; // Alinhado com a nova necessidade de densidade
       else if (s.includes('10')) decimals = 3;
       else if (s.includes('25')) decimals = 3;
       else if (s.includes('75')) decimals = 4;
+      else if (s.includes('1HZ')) { // Caso use sinônimo direto
+        if (s.includes('100')) decimals = 2;
+        else if (s.includes('50')) decimals = 2;
+        else if (s.includes('10')) decimals = 3;
+        else if (s.includes('25')) decimals = 3;
+        else if (s.includes('75')) decimals = 4;
+      }
     }
 
     const priceStr = price.toFixed(decimals);
@@ -1616,7 +1619,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 1. Extrair dígitos da janela solicitada
     const windowTicks = ticks.slice(-modeConfig.window);
     const symbol = config.symbol || 'R_50';
-    const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value, symbol));
+    // ✅ AJUSTE DE PRECISÃO: R_50 no Deriv costuma ter 2 dígitos ativos que mudam rápido. 
+    // Usar 4 dígitos estava pegando 'zeros' estáticos que quebravam a densidade.
+    let decimals = 4;
+    if (symbol.includes('100')) decimals = 2;
+    else if (symbol.includes('50')) decimals = 2;
+    else if (symbol.includes('10')) decimals = 3;
+    else if (symbol.includes('25')) decimals = 3;
+    else if (symbol.includes('75')) decimals = 4;
+
+    const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value, symbol, decimals));
     state.lastDigits = digits;
 
     // 2. Contar ocorrências dos dígitos alvo
