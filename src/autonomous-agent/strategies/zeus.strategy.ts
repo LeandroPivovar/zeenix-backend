@@ -876,7 +876,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const requiredTicks = config.dataCollectionTicks;
         if (userTicks.length < requiredTicks) {
             // Log de progresso imediato no primeiro tick e depois a cada 3
-            if (userTicks.length === 1 || userTicks.length % 3 === 0) {
+            if (userTicks.length === 1 || userTicks.length % 2 === 0) {
                 this.logDataCollection(userId, {
                     targetCount: requiredTicks,
                     currentCount: userTicks.length,
@@ -1018,7 +1018,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Heartbeat log
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-        if (state.ticksSinceLastAnalysis >= 5) {
+        if (state.ticksSinceLastAnalysis >= 1) { // ✅ V4: One log per tick for maximum transparency
             state.ticksSinceLastAnalysis = 0;
             this.logAnalysisStarted(userId, state.mode, digits.length, state.lastRejectionReason);
         }
@@ -1415,7 +1415,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                                 // Processar resultado - PASSANDO tradeId DO CLOSURE
                                 this.onContractFinish(
                                     userId,
-                                    { win, profit, contractId, exitPrice, stake },
+                                    {
+                                        win,
+                                        profit,
+                                        contractId,
+                                        exitPrice,
+                                        stake,
+                                        entryPrice: Number(contract.entry_spot || 0),
+                                        entryTick: contract.entry_tick_value,
+                                        exitTick: contract.exit_tick_value
+                                    },
                                     tradeId
                                 ).catch((error) => {
                                     this.logger.error(`[Zeus][${userId}] Erro ao processar resultado:`, error);
@@ -1581,7 +1590,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      */
     async onContractFinish(
         userId: string,
-        result: { win: boolean; profit: number; contractId: string; exitPrice?: number; stake: number },
+        result: {
+            win: boolean;
+            profit: number;
+            contractId: string;
+            exitPrice?: number;
+            stake: number;
+            entryPrice?: number;
+            entryTick?: number;
+            exitTick?: number;
+        },
         tradeIdFromCallback?: number,
     ): Promise<void> {
         const config = this.userConfigs.get(userId);
@@ -1646,12 +1664,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.lucroAtual = state.profit;
         state.opsCount++;
 
-        // ✅ Log Trade Result (Orion Format)
+        // ✅ Log Trade Result (Orion Format with Digits)
         this.logTradeResultV2(userId, {
             status: result.win ? 'WIN' : 'LOSS',
             profit: result.profit,
             stake: result.stake,
-            balance: state.balance
+            balance: state.balance,
+            entryDigit: result.entryTick !== undefined ? this.lastDigitFromPrice(result.entryTick, config.symbol) : undefined,
+            exitDigit: result.exitTick !== undefined ? this.lastDigitFromPrice(result.exitTick, config.symbol) : undefined
         });
 
         // ✅ Atualizar DB (Trade)
@@ -2454,11 +2474,17 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         profit: number;
         stake: number;
         balance: number;
+        entryDigit?: number;
+        exitDigit?: number;
     }) {
         const profitStr = result.status === 'WIN' ? `+$${result.profit.toFixed(2)}` : `-$${result.stake.toFixed(2)}`;
+        const digitsStr = result.entryDigit !== undefined && result.exitDigit !== undefined
+            ? `\n• Dígitos: [Entrada: ${result.entryDigit} | Saída: ${result.exitDigit}]`
+            : '';
+
         const message = `🎯 RESULTADO DA ENTRADA\n` +
             `• Status: ${result.status}\n` +
-            `• Lucro/Prejuízo: ${profitStr}\n` +
+            `• Lucro/Prejuízo: ${profitStr}${digitsStr}\n` +
             `• Saldo Atual: $${result.balance.toFixed(2)}`;
 
         this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
