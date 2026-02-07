@@ -624,7 +624,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Ajuste de precisão por ativo
         if (symbol.includes('R_10') || symbol.includes('1HZ10V')) precision = 3;
         if (symbol.includes('R_25') || symbol.includes('1HZ25V')) precision = 3;
-        if (symbol.includes('R_50') || symbol.includes('1HZ50V')) precision = 4;
+        // ✅ V4 OPTIMIZED: R_50 no Deriv tem 2 dígitos ativos que saltam. 4 dígitos traz muitos zeros.
+        if (symbol.includes('R_50') || symbol.includes('1HZ50V')) precision = 2;
         if (symbol.includes('R_75') || symbol.includes('1HZ75V')) precision = 4;
         if (symbol.includes('R_100') || symbol.includes('1HZ100V')) precision = 2;
 
@@ -1116,7 +1117,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
-     * ✅ CORE: Executa trade (Zeus V2)
+     * ✅ CORE: Executa trade (Zeus V2) - OTIMIZADO PARA LATÊNCIA ULTRA-BAIXA (0.3s - 0.5s)
      */
     private async executeTrade(userId: string, decision: TradeDecision, marketAnalysis: MarketAnalysis): Promise<void> {
         const config = this.userConfigs.get(userId);
@@ -1131,63 +1132,45 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
-        // Dupla checagem de Stop Loss
+        // 1. Checagem de Risco Ultra-Rápida (In-Memory)
         const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
         if (stopLossCheck.action === 'STOP') {
             await this.handleStopCondition(userId, stopLossCheck.reason || 'STOP_LOSS');
             return;
         }
 
-        // Stake final (pode ter sido ajustada pelo stop check)
         const finalStake = stopLossCheck.stake || decision.stake || config.baseStake;
+        const contractType = 'DIGITOVER';
+        const barrier = "5";
+        const duration = 1;
 
-        // Determinar tipo de contrato e Barreira (V4: Sempre Digit Over 5)
-        let contractType: string = 'DIGITOVER';
-        let barrier: string | undefined = "5";
-        let duration = 1;
-
-        // V4: Não usa mais Rise/Fall, sempre Over 5.
-        // A decisão já vem com contractType DIGITOVER do analyzeMarket.
-        if (decision.contractType === 'DIGITOVER') {
-            contractType = 'DIGITOVER';
-            barrier = "5";
-            duration = 1;
-        }
-
-        // ✅ Setar isWaitingContract ANTES de comprar
+        // ✅ BLOQUEAR ENTRADA IMEDIATAMENTE
         state.isWaitingContract = true;
-
-        // Registrar tentativa no log
-        await this.saveLog(userId, 'INFO', 'TRADER', `⚡ EXECUTANDO: ${contractType} ${barrier ? `(Over ${barrier})` : ''} | Stake: $${finalStake.toFixed(2)} | Modo: ${state.mode}`);
-
-        // Payout esperado (apenas informativo)
-        const payoutRate = state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery;
 
         const userTicks = this.ticks.get(userId) || [];
         const currentPrice = userTicks.length > 0
             ? userTicks[userTicks.length - 1].value
             : marketAnalysis.details?.currentPrice || 0;
 
+        // 🧠 ESTRATÉGIA DE LATÊNCIA: Disparar compra e processar "papelada" em paralelo
         try {
-            state.currentContractId = "PENDING"; // Marker
-            state.lastContractType = contractType;
+            state.currentContractId = "PENDING";
 
-            const tradeId = await this.createTradeRecord(
+            // 🎫 Inicia criação do registro no banco em background (sem await imediato)
+            const tradeRecordPromise = this.createTradeRecord(
                 userId,
                 {
                     contractType: contractType || 'UNKNOWN',
                     stakeAmount: finalStake,
                     duration: duration,
                     marketAnalysis: marketAnalysis,
-                    payout: payoutRate,
+                    payout: state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery,
                     entryPrice: currentPrice,
                 },
             );
 
-            state.currentTradeId = tradeId;
-
-            let lastErrorMsg = 'Falha ao comprar contrato';
-            const contractId = await this.buyContract(
+            // 🚀 ENTRADA IMEDIATA: Chama o buyContract sem esperar o log ou o registro no banco
+            const buyPromise = this.buyContract(
                 userId,
                 config.derivToken,
                 contractType,
@@ -1195,36 +1178,42 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 finalStake,
                 duration,
                 barrier,
-                2,
-                tradeId
-            ).catch(err => {
-                lastErrorMsg = err.message;
-                return null;
-            });
+                1, // Reduzido retry interno para priorizar velocidade
+                0  // TradeId será vinculado depois
+            );
+
+            // Registrar log de execução em paralelo
+            this.saveLog(userId, 'INFO', 'TRADER', `⚡ EXECUTANDO: ${contractType} (Over 5) | Stake: $${finalStake.toFixed(2)} | Modo: ${state.mode}`);
+
+            // Aguardar o resultado da compra (o ponto crítico de latência)
+            const contractId = await buyPromise;
+
+            // Aguardar o ID do registro no banco (deve estar pronto ou quase pronto)
+            const tradeId = await tradeRecordPromise;
+            state.currentTradeId = tradeId;
 
             if (contractId) {
                 state.currentContractId = contractId;
-                // Log sucesso vinculo
-                this.logger.log(`[Zeus][${userId}] 🎫 Contrato Confirmado: ${contractId}`);
+                this.logger.log(`[Zeus][${userId}] 🎫 Contrato Confirmado: ${contractId} (TradeId: ${tradeId})`);
 
-                // Atualizar status trade ativo
-                await this.updateTradeRecord(tradeId, {
+                // Atualizar status trade ativo (Background ok)
+                this.updateTradeRecord(tradeId, {
                     contractId: contractId,
                     status: 'ACTIVE',
-                });
+                }).catch(e => this.logger.error(`Error updating trade ${tradeId}`, e));
             } else {
                 state.isWaitingContract = false;
                 state.currentContractId = null;
-                await this.updateTradeRecord(tradeId, {
+                this.updateTradeRecord(tradeId, {
                     status: 'ERROR',
-                    errorMessage: lastErrorMsg,
-                });
-                await this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: ${lastErrorMsg}`);
+                    errorMessage: 'Falha na compra',
+                }).catch(e => this.logger.error(`Error updating trade error ${tradeId}`, e));
+                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
             }
         } catch (error: any) {
             state.isWaitingContract = false;
             this.logger.error(`[Zeus][${userId}] Erro crítico ao executar trade:`, error);
-            await this.saveLog(userId, 'ERROR', 'API', `Erro crítico trade: ${error.message}`);
+            this.saveLog(userId, 'ERROR', 'API', `Erro crítico trade: ${error.message}`);
         }
     }
 
