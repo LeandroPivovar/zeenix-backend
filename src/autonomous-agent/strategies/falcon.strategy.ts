@@ -687,9 +687,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       // ✅ Avançar contador de análise
       state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
-      // ✅ Log de início de análise (Heartbeat a cada 15 análises = ~15s em média)
+      // ✅ Log de início de análise (Heartbeat a cada 3 análises = ~3s em média)
       // Primeiro log logo na primeira análise após o warm-up de dados
-      if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 15 === 0) {
+      if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 3 === 0) {
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
 
@@ -1626,8 +1626,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 2. Contar ocorrências dos dígitos alvo
     const count = digits.filter(d => modeConfig.targets.includes(d)).length;
 
-    // ✅ LOG DE MONITORAMENTO (A cada 5 ticks para não inundar)
-    if (state.ticksSinceLastAnalysis % 5 === 0) {
+    // ✅ LOG DE MONITORAMENTO (A cada 3 ticks para não inundar)
+    if (state.ticksSinceLastAnalysis % 3 === 0) {
       const message = `📊 MONITORANDO DENSIDADE\n` +
         `• SINAL: Digit Over ${modeConfig.barrier}\n` +
         `• DENSIDADE: ${count}/${modeConfig.window}\n` +
