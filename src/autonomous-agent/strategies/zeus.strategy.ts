@@ -669,6 +669,33 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
+     * ✅ LOGIC HELPER: Filtro de Lado (Paridade / LALDO)
+     * Regra: Se a densidade de um lado (Par ou Ímpar) for >= 60% nos últimos 20 ticks
+     */
+    private filtroLadoParidade(digits: number[]): { passes: boolean; side?: string; density?: number; reason?: string } {
+        const window = 20;
+        const lastDigits = digits.slice(-window);
+        if (lastDigits.length < window) {
+            return { passes: false, reason: `Dados insuficientes (${lastDigits.length}/${window})` };
+        }
+
+        const evenCount = lastDigits.filter(d => d % 2 === 0).length;
+        const oddCount = lastDigits.filter(d => d % 2 !== 0).length;
+
+        const evenDensity = (evenCount / window) * 100;
+        const oddDensity = (oddCount / window) * 100;
+
+        if (evenDensity >= 60) {
+            return { passes: true, side: 'PAR', density: evenDensity };
+        }
+        if (oddDensity >= 60) {
+            return { passes: true, side: 'ÍMPAR', density: oddDensity };
+        }
+
+        return { passes: false, reason: `Densidade de lado baixa (P:${evenDensity.toFixed(0)}% I:${oddDensity.toFixed(0)}%)` };
+    }
+
+    /**
      * ✅ LOGIC HELPER: Calcular Stake (Soros / Martingale)
      */
     /**
@@ -913,64 +940,83 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ CORE: Análise de Mercado (V4 Spec: Verifica padrões Onda Alta e Quarteto Perfeito)
      */
     private analyzeMarket(userId: string, config: ZeusUserConfig, state: ZeusState, pricesObj: Tick[], digits: number[]): MarketAnalysis | null {
-        // V4 precisa de 4 dígitos para análise
+        // V4 precisa de 4 dígitos para análise de padrão
         const MIN_TICKS = 4;
         if (digits.length < MIN_TICKS) return null;
 
-        // Check Quarteto Perfeito First (Higher Priority/Precision)
+        // 1. Filtragem por Lado (Paridade) - Novo Requisito V4 Plus
+        const fl = this.filtroLadoParidade(digits);
+
+        // 2. Check Quarteto Perfeito (Higher Priority/Precision)
         const qp = this.filtroQuartetoPerfeito(digits);
         if (qp.passes) {
             const sequence = qp.metrics?.sequence || [];
-            this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (PRECISO)\n• Padrão Quarteto: [${sequence.join(', ')}]`);
+
+            // Se passar no Lado também, a confiança é máxima
+            const hasLado = fl.passes;
+            const probability = hasLado ? 75.0 : 68.0; // Bump probability per user feedback
+
+            this.saveLog(userId, 'INFO', 'CORE',
+                `⚡ SINAL ENCONTRADO (PRECISO)\n` +
+                `• Padrão Quarteto: [${sequence.join(', ')}]\n` +
+                `• Filtro Lado: ${hasLado ? `✅ ATIVO (${fl.side} ${fl.density?.toFixed(0)}%)` : `⏸️ INATIVO`}`
+            );
+
             state.lastRejectionReason = undefined;
             return {
                 signal: 'DIGIT',
-                probability: 47.0, // V4 Est.
-                payout: config.payoutPrimary, // Both use same payout now
-                confidence: 0.47,
+                probability,
+                payout: config.payoutPrimary,
+                confidence: probability / 100,
                 details: {
                     contractType: 'DIGITOVER',
                     barrier: 5,
-                    info: 'Quarteto Perfeito',
+                    info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
                     mode: 'PRECISO'
                 }
             };
         }
 
-        // Check Onda Alta (ONLY IF NORMAL MODE or Fallback allowed?)
-        // V4 Spec Strict Mode: "Modo Preciso... buscando menos operações com taxa de acerto superior."
-        // Implication: Ignore "Onda Alta" (Normal signals) if in PRECISO mode.
+        // 3. Check Onda Alta
         if (state.mode !== 'PRECISO') {
             const oa = this.filtroOndaAlta(digits);
             if (oa.passes) {
                 const sequence = oa.metrics?.sequence || [];
-                this.saveLog(userId, 'INFO', 'CORE', `⚡ SINAL ENCONTRADO (NORMAL)\n• Padrão Onda Alta: [${sequence.join(', ')}]`);
+
+                // Aplicar Filtro de Lado como confirmação para modo Normal
+                const hasLado = fl.passes;
+                const probability = hasLado ? 65.0 : 58.0;
+
+                this.saveLog(userId, 'INFO', 'CORE',
+                    `⚡ SINAL ENCONTRADO (NORMAL)\n` +
+                    `• Padrão Onda Alta: [${sequence.join(', ')}]\n` +
+                    `• Filtro Lado: ${hasLado ? `✅ ATIVO (${fl.side} ${fl.density?.toFixed(0)}%)` : `⏸️ INATIVO`}`
+                );
+
                 state.lastRejectionReason = undefined;
                 return {
                     signal: 'DIGIT',
-                    probability: 45.0,
+                    probability,
                     payout: config.payoutPrimary,
-                    confidence: 0.45,
+                    confidence: probability / 100,
                     details: {
                         contractType: 'DIGITOVER',
                         barrier: 5,
-                        info: 'Onda Alta',
+                        info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
                         mode: 'NORMAL'
                     }
                 };
             }
             // Store rejection reason if Normal mode but failed
             if (!qp.passes) {
-                state.lastRejectionReason = oa.reason || qp.reason;
+                state.lastRejectionReason = oa.reason || qp.reason || fl.reason;
             }
         } else {
-            // If Preciso mode and QP failed, we just return null (ignoring Onda Alta)
+            // If Preciso mode and QP failed, check if Lado was the blocker or pattern
             if (!qp.passes) {
-                state.lastRejectionReason = qp.reason;
+                state.lastRejectionReason = qp.reason || fl.reason;
             }
         }
-
-
 
         // Heartbeat log
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
@@ -1267,64 +1313,22 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // ✅ Obter conexão do pool interno
                 const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-                // ✅ Primeiro, obter proposta (usando timeout de 60s como Orion)
-                const proposalResponse = await connection.sendRequest(
-                    {
-                        proposal: 1,
-                        amount: roundedStake,
-                        basis: 'stake',
-                        contract_type: contractType,
-                        currency: 'USD',
-                        duration: duration,
-                        duration_unit: 't',
-                        symbol: symbol,
-                        barrier: barrier,
-                    },
-                    60000, // timeout 60s (igual Orion)
-                );
-
-                // ✅ Verificar erros na resposta (pode estar em error ou proposal.error) - igual Orion
-                const errorObj = proposalResponse.error || proposalResponse.proposal?.error;
-                if (errorObj) {
-                    const errorCode = errorObj?.code || '';
-                    const errorMessage = errorObj?.message || JSON.stringify(errorObj);
-
-                    // ✅ Alguns erros não devem ser retentados (ex: saldo insuficiente, parâmetros inválidos)
-                    const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol'];
-                    if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
-                        this.logger.error(`[Zeus][${userId}] ❌ Erro não retentável na proposta: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
-                        throw new Error(errorMessage);
-                    }
-
-                    // ✅ Erros retentáveis: tentar novamente
-                    lastError = new Error(errorMessage);
-                    if (attempt < maxRetries) {
-                        this.logger.warn(`[Zeus][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
-                        continue;
-                    }
-
-                    this.logger.error(`[Zeus][${userId}] ❌ Erro na proposta após ${maxRetries + 1} tentativas: ${JSON.stringify(errorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
-                    throw lastError;
-                }
-
-                const proposalId = proposalResponse.proposal?.id;
-                const proposalPrice = Number(proposalResponse.proposal?.ask_price || 0);
-
-                if (!proposalId || !proposalPrice || isNaN(proposalPrice)) {
-                    lastError = new Error('Resposta de proposta inválida');
-                    if (attempt < maxRetries) {
-                        this.logger.warn(`[Zeus][${userId}] ⚠️ Proposta inválida (tentativa ${attempt + 1}/${maxRetries + 1}): ${JSON.stringify(proposalResponse)}`);
-                        continue;
-                    }
-                    this.logger.error(`[Zeus][${userId}] ❌ Proposta inválida recebida após ${maxRetries + 1} tentativas: ${JSON.stringify(proposalResponse)}`);
-                    throw lastError;
-                }
-
-                // ✅ Enviar compra (usando timeout de 60s como Orion)
+                // ✅ ENTRADA RÁPIDA (V4 Optimized): Compra direta via Parâmetros (1-tick latency)
+                // Remove a necessidade de requisitar 'proposal' antes de 'buy'
                 const buyResponse = await connection.sendRequest(
                     {
-                        buy: proposalId,
-                        price: proposalPrice,
+                        buy: 1,
+                        price: roundedStake,
+                        parameters: {
+                            amount: roundedStake,
+                            basis: 'stake',
+                            contract_type: contractType,
+                            currency: 'USD',
+                            duration: duration,
+                            duration_unit: 't',
+                            symbol: symbol,
+                            barrier: barrier,
+                        }
                     },
                     60000, // timeout 60s (igual Orion)
                 );
@@ -1336,20 +1340,20 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     const errorMessage = buyErrorObj?.message || JSON.stringify(buyErrorObj);
 
                     // ✅ Alguns erros não devem ser retentados
-                    const nonRetryableErrors = ['InvalidProposal', 'ProposalExpired', 'InsufficientBalance'];
+                    const nonRetryableErrors = ['InvalidProposal', 'ProposalExpired', 'InsufficientBalance', 'InvalidAmount', 'InvalidContract', 'InvalidSymbol'];
                     if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
-                        this.logger.error(`[Zeus][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+                        this.logger.error(`[Zeus][${userId}] ❌ Erro não retentável ao comprar: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
                         throw new Error(errorMessage);
                     }
 
-                    // ✅ Erros retentáveis: tentar novamente (mas precisa obter nova proposta)
+                    // ✅ Erros retentáveis: tentar novamente
                     lastError = new Error(errorMessage);
                     if (attempt < maxRetries) {
                         this.logger.warn(`[Zeus][${userId}] ⚠️ Erro retentável ao comprar (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
                         continue;
                     }
 
-                    this.logger.error(`[Zeus][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake} | ProposalId: ${proposalId}`);
+                    this.logger.error(`[Zeus][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${JSON.stringify(buyErrorObj)} | Tipo: ${contractType} | Valor: $${stake}`);
                     throw lastError;
                 }
 
