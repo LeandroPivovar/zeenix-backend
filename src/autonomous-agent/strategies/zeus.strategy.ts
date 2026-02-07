@@ -805,6 +805,30 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // But logger is safer.
         }
 
+        // ✅ CYCLE DRAWDOWN PROTECTION: Cap stake to prevent exceeding 60% cycle loss
+        // If we're already in negative territory for this cycle, ensure the next loss won't exceed the limit
+        if (state.cycleProfit < 0) {
+            const currentCycleLoss = Math.abs(state.cycleProfit);
+            const remainingDrawdownAllowance = state.cycleMaxDrawdown - currentCycleLoss;
+
+            if (remainingDrawdownAllowance > 0) {
+                // Maximum we can afford to lose on this trade
+                const maxAffordableLoss = remainingDrawdownAllowance;
+
+                // Assuming worst case (100% loss of stake), cap the stake
+                if (finalStake > maxAffordableLoss) {
+                    const cappedStake = Math.max(0.35, Math.floor(maxAffordableLoss * 100) / 100);
+                    this.logger.log(`[Zeus][${config.userId}] 🛡️ DRAWDOWN PROTECTION: Capping stake from $${finalStake.toFixed(2)} to $${cappedStake.toFixed(2)} ` +
+                        `(Cycle Loss: $${currentCycleLoss.toFixed(2)}, Max Drawdown: $${state.cycleMaxDrawdown.toFixed(2)})`);
+                    finalStake = cappedStake;
+                }
+            } else {
+                // Already at or past the drawdown limit - should not happen if updateCycleState is working
+                this.logger.error(`[Zeus][${config.userId}] ⚠️ Cycle already exceeded drawdown limit! This should trigger cycle end.`);
+                return 0.35; // Minimum stake as safety
+            }
+        }
+
         return finalStake;
     }
 
@@ -1611,9 +1635,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoFloorProfit = 0;
 
                 // Pausa estratégica entre ciclos (V4 Checklist: 30 minutos)
-                // ✅ Test Mode: Shortened to 30 seconds
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (30s)...`);
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 60 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (30 minutos)...`);
 
             } else {
                 // Ciclo 4 concluído = Meta Diária
@@ -1642,9 +1665,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
 
-                // Pausa longa de exaustão (V4 Checklist: 1 hora) -> ✅ Test Mode: 1 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 1 min)...`);
+                // Pausa longa de exaustão (V4 Checklist: 1 hora)
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 1 hora)...`);
             } else {
                 state.sessionEnded = true;
                 this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (4 ciclos atingidos/exauridos).`);
@@ -1672,9 +1695,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
 
-                // Pausa de drawdown (V4 Checklist: 1 hora) -> ✅ Test Mode: 1 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após stop no ciclo (Pausa 1 min)...`);
+                // Pausa de drawdown (V4 Checklist: 1 hora)
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de recuperação de risco (1 hora)...`);
             } else {
                 state.sessionEnded = true;
                 this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (Todos ciclos concluídos/stopados).`);
@@ -1755,20 +1778,19 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             // ✅ V4 Checklist: Pausa por Sequência de Perdas (Graduated)
             // 3 Losses -> 5 min | 4 Losses -> 10 min | 5 Losses -> 20 min
-            // ✅ Test Mode: 2 min | 3 min | 5 min
             if (state.consecutiveLosses === 3) {
-                const pauseDurationMs = 2 * 60 * 1000; // 2 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 2 minutos.`);
-            } else if (state.consecutiveLosses === 4) {
-                const pauseDurationMs = 3 * 60 * 1000; // 3 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 3 minutos.`);
-            } else if (state.consecutiveLosses >= 5) {
                 const pauseDurationMs = 5 * 60 * 1000; // 5 minutes
                 state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 5 minutos.`);
+            } else if (state.consecutiveLosses === 4) {
+                const pauseDurationMs = 10 * 60 * 1000; // 10 minutes
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 10 minutos.`);
+            } else if (state.consecutiveLosses >= 5) {
+                const pauseDurationMs = 20 * 60 * 1000; // 20 minutes
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
                 state.consecutiveLosses = 0; // Reset only after full 5-loss cycle
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 5 minutos.`);
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 20 minutos.`);
             }
         }
 
