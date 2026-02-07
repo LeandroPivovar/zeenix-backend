@@ -13,7 +13,7 @@ export interface ConsoleLogEntry {
 export class AutonomousAgentLogsStreamService {
   private readonly logger = new Logger(AutonomousAgentLogsStreamService.name);
   private readonly logBuffer: Map<string, ConsoleLogEntry[]> = new Map();
-  private readonly maxBufferSize = 5000; // Máximo de logs por usuário
+  private readonly maxBufferSize = 3000; // Máximo de logs por usuário (Reduzido para otimização)
   private readonly subscribers: Map<string, Set<(log: ConsoleLogEntry) => void>> = new Map();
 
   // Interceptar logs do Logger do NestJS

@@ -645,7 +645,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const isHigh = sequence.every(d => d >= 6);
 
         if (isHigh) {
-            return { passes: true, metrics: { sequence } };
+            // ✅ V4 OPTIMIZATION (Phase 1): Stricter "Onda Alta"
+            // Requer pelo menos 2 dígitos >= 7 para garantir força na tendência
+            const strongDigits = sequence.filter(d => d >= 7).length;
+            if (strongDigits >= 2) {
+                return { passes: true, metrics: { sequence } };
+            }
+            return { passes: false, reason: `Onda Fraca (Muitos 6s): [${sequence.join(', ')}]` };
         }
         return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]` };
     }
@@ -1016,9 +1022,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
         }
 
-        // Heartbeat log
+        // Heartbeat log (Throttled to prevent UI freeze - 1 log per ~15s)
         state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-        if (state.ticksSinceLastAnalysis >= 1) { // ✅ V4: One log per tick for maximum transparency
+        if (state.ticksSinceLastAnalysis >= 15) {
             state.ticksSinceLastAnalysis = 0;
             this.logAnalysisStarted(userId, state.mode, digits.length, state.lastRejectionReason);
         }
@@ -1651,12 +1657,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2 PERDAS CONSECUTIVAS: Ativando MODO PRECISO para maior segurança.`);
             }
 
-            // ✅ V4 Feature: Pausa por Sequência de Perdas (5 consecutive losses -> 5 min pause)
-            if (state.consecutiveLosses >= 5) {
+            // ✅ V4 Feature: Pausa por Sequência de Perdas (Graduated)
+            // 3 Losses -> 1 min | 4 Losses -> 2 min | 5 Losses -> 5 min
+            if (state.consecutiveLosses === 3) {
+                const pauseDurationMs = 60 * 1000; // 1 min
+                state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 1 minuto.`);
+            } else if (state.consecutiveLosses === 4) {
+                const pauseDurationMs = 2 * 60 * 1000; // 2 min
+                state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 2 minutos.`);
+            } else if (state.consecutiveLosses >= 5) {
                 const pauseDurationMs = 5 * 60 * 1000; // 5 minutes
                 state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
-                state.consecutiveLosses = 0;
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA ATIVADA (5 Perdas Consecutivas). Pausando por 5 minutos.`);
+                state.consecutiveLosses = 0; // Reset only after full 5-loss cycle
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 5 minutos.`);
             }
         }
 
