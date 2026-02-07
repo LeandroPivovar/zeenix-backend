@@ -1288,10 +1288,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const roundedStake = Number(stake.toFixed(2));
     let lastError: Error | null = null;
 
-    // ✅ ESTABILIDADE ZEUS: Delay inicial de 3000ms antes da primeira tentativa
-    // Isso dá tempo para a conexão WebSocket se estabilizar e AUTORIZAR no pool
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
     // ✅ Retry com backoff exponencial
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
