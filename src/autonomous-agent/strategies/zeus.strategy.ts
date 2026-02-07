@@ -1611,9 +1611,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoFloorProfit = 0;
 
                 // Pausa estratégica entre ciclos (V4 Checklist: 30 minutos)
-                // ✅ Test Mode: Shortened to 5 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 5 * 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (5 min)...`);
+                // ✅ Test Mode: Shortened to 30 seconds
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (30s)...`);
 
             } else {
                 // Ciclo 4 concluído = Meta Diária
@@ -1642,9 +1642,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
 
-                // Pausa longa de exaustão (V4 Checklist: 1 hora) -> ✅ Test Mode: 10 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 10 * 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 10 min)...`);
+                // Pausa longa de exaustão (V4 Checklist: 1 hora) -> ✅ Test Mode: 1 min
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 1 min)...`);
             } else {
                 state.sessionEnded = true;
                 this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (4 ciclos atingidos/exauridos).`);
@@ -1672,9 +1672,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
 
-                // Pausa de drawdown (V4 Checklist: 1 hora) -> ✅ Test Mode: 10 min
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 10 * 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após stop no ciclo (Pausa 10 min)...`);
+                // Pausa de drawdown (V4 Checklist: 1 hora) -> ✅ Test Mode: 1 min
+                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 1000);
+                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após stop no ciclo (Pausa 1 min)...`);
             } else {
                 state.sessionEnded = true;
                 this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (Todos ciclos concluídos/stopados).`);
