@@ -1356,16 +1356,29 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.currentContractId = null;
                 this.updateTradeRecord(tradeId, {
                     status: 'ERROR',
-                    errorMessage: 'Falha na compra',
+                    errorMessage: 'Falha na compra (Resposta nula)',
                 }).catch(e => this.logger.error(`Error updating trade error ${tradeId}`, e));
-                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
-                // ✅ Adicionar cooldown de 15s após erro para evitar spam
+                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: Resposta de compra vazia.`);
                 state.cooldownUntilTs = Date.now() + 15000;
             }
         } catch (error: any) {
             state.isWaitingContract = false;
-            this.logger.error(`[Zeus][${userId}] Erro crítico ao executar trade:`, error);
-            this.saveLog(userId, 'ERROR', 'API', `Erro crítico trade: ${error.message}`);
+            state.currentContractId = null;
+            this.logger.error(`[Zeus][${userId}] Erro ao executar trade:`, error);
+
+            // Exibir erro real do broker se disponível
+            const errorMsg = error.message || 'Erro desconhecido';
+            this.saveLog(userId, 'ERROR', 'API', `ERRO NA CORRETORA: ${errorMsg}`);
+
+            if (state.currentTradeId) {
+                this.updateTradeRecord(state.currentTradeId, {
+                    status: 'ERROR',
+                    errorMessage: errorMsg,
+                }).catch(e => { });
+            }
+
+            // ✅ Cooldown após erro para evitar loop infinito de erros
+            state.cooldownUntilTs = Date.now() + 15000;
         }
     }
 
@@ -1454,24 +1467,57 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // ✅ Obter conexão do pool interno
                 const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-                // ✅ ENTRADA RÁPIDA (V4 Optimized): Compra direta via Parâmetros (1-tick latency)
-                // Remove a necessidade de requisitar 'proposal' antes de 'buy'
+                // ✅ OBTER PROPOSTA (Estabilização V4)
+                // Solicitar proposta antes de comprar garante que a Deriv valide saldo e parâmetros
+                const proposalResponse = await connection.sendRequest(
+                    {
+                        proposal: 1,
+                        amount: roundedStake,
+                        basis: 'stake',
+                        contract_type: contractType,
+                        currency: connection.currency || 'USD',
+                        duration: duration,
+                        duration_unit: 't',
+                        symbol: symbol,
+                        barrier: barrier,
+                    },
+                    60000
+                );
+
+                const propError = proposalResponse.error || proposalResponse.proposal?.error;
+                if (propError) {
+                    const errorCode = propError?.code || '';
+                    const errorMessage = propError?.message || JSON.stringify(propError);
+
+                    // Erros de proposta geralmente não progridem
+                    const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol', 'CustomLimitsViolated'];
+                    if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
+                        this.logger.error(`[Zeus][${userId}] ❌ Erro na proposta: ${errorMessage}`);
+                        throw new Error(errorMessage);
+                    }
+
+                    lastError = new Error(errorMessage);
+                    if (attempt < maxRetries) {
+                        this.logger.warn(`[Zeus][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+                        continue;
+                    }
+                    throw lastError;
+                }
+
+                const proposalId = proposalResponse.proposal?.id;
+                const askPrice = proposalResponse.proposal?.ask_price;
+
+                if (!proposalId || askPrice === undefined) {
+                    throw new Error('Proposta inválida recebida (sem id ou ask_price)');
+                }
+
+                // ✅ COMPRAR VIA PROPOSTA (Fluxo estável)
                 const buyResponse = await connection.sendRequest(
                     {
-                        buy: 1,
-                        price: roundedStake,
-                        parameters: {
-                            amount: roundedStake,
-                            basis: 'stake',
-                            contract_type: contractType,
-                            currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
-                            duration: duration,
-                            duration_unit: 't',
-                            symbol: symbol,
-                            barrier: barrier,
-                        }
+                        buy: proposalId,
+                        price: askPrice,
                     },
-                    60000, // timeout 60s (igual Orion)
+                    60000,
                 );
 
                 // ✅ Verificar erros na resposta - igual Orion
@@ -1612,19 +1658,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     continue;
                 }
 
-                // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
+                // ✅ Se não é retentável ou esgotou tentativas, lançar erro para ser capturado no executeTrade
                 if (attempt >= maxRetries) {
                     this.logger.error(`[Zeus][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
+                    throw new Error(errorMessage);
                 } else {
                     this.logger.error(`[Zeus][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`, error?.stack);
+                    throw new Error(errorMessage);
                 }
-                return null;
             }
         }
 
         // ✅ Se chegou aqui, todas as tentativas falharam
-        this.logger.error(`[Zeus][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
-        return null;
+        const finalError = lastError?.message || 'Falha desconhecida no sistema de compra';
+        this.logger.error(`[Zeus][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${finalError}`);
+        throw new Error(finalError);
     }
 
     /**
@@ -1821,6 +1869,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.wins++;
             state.consecutiveLosses = 0;
             state.perdasAcumuladas = 0;
+            state.analysis = "PRINCIPAL"; // ✅ Resetar para principal após vitória
 
             // ✅ Reset Recovery: Voltar para o modo original se estava em modo de segurança
             const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
@@ -1833,6 +1882,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.losses++;
             state.consecutiveLosses++;
             state.perdasAcumuladas += Math.abs(result.profit);
+            state.analysis = "RECUPERACAO"; // ✅ Marcar como recuperação após perda
 
             // ✅ V4 Checklist: Ativar MODO PRECISO após 1 PERDA (Modo Recuperação)
             if (state.consecutiveLosses >= 1 && state.mode !== 'PRECISO') {
@@ -2631,7 +2681,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     private logAnalysisStarted(userId: string, mode: string, tickCount?: number, reason?: string) {
         const countStr = tickCount ? ` (Ticks: ${tickCount})` : '';
-        const actionStr = reason ? `⏸️ ENTRADA BLOQUEADA: ${reason}` : 'Aguardando padrões...';
+        // ✅ Melhoria Visual: "⏳ AGUARDANDO PADRÃO" em vez de "BLOQUEADA" para não confundir o usuário
+        const actionStr = reason ? `⏳ AGUARDANDO PADRÃO: ${reason}` : 'Aguardando padrões...';
         const message = `🧠 ANÁLISE DO MERCADO\n` +
             `• MODO: ${mode}\n` +
             `• STATUS: Monitorando padrões${countStr}\n` +
