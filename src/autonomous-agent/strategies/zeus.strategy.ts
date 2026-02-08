@@ -212,11 +212,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         @Inject(forwardRef(() => LogQueueService))
         private readonly logQueueService?: LogQueueService,
     ) {
-        this.appId = process.env.DERIV_APP_ID || '111346';
+        this.appId = process.env.DERIV_APP_ID || '1089';
     }
 
     async onModuleInit() {
-        this.logger.log('⚡ ZEUS Strategy inicializado');
+        this.logger.log(`⚡ ZEUS Strategy inicializado (App ID: ${this.appId})`);
         await this.initialize();
     }
 
