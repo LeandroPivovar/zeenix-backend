@@ -642,9 +642,9 @@ export class AiController {
   }
 
   @Post('sessions/start')
-  async startSession(@Body() body: { userId: string; aiName: string }) {
+  async startSession(@Body() body: { userId: string; aiName: string; accountType?: string }) {
     try {
-      const result = await this.aiService.createSession(body.userId, body.aiName);
+      const result = await this.aiService.createSession(body.userId, body.aiName, body.accountType);
       if (result.success) {
         return {
           success: true,

@@ -1632,6 +1632,7 @@ export class AiService implements OnModuleInit {
     currency: string;
     stakeAmount: number;
     contractType: 'DIGITEVEN' | 'DIGITODD';
+    userId: string; // ✅ Adicionado userId
   }): Promise<DigitTradeResult> {
     return new Promise((resolve, reject) => {
       const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
@@ -1731,6 +1732,9 @@ export class AiService implements OnModuleInit {
                  WHERE id = ?`,
                 [exitPrice, profit, status, params.tradeId],
               );
+
+              // ✅ LOG NA TABELA AI_TRADE_LOGS
+              await this.logTradeResult(params.userId, params.stakeAmount, profit + params.stakeAmount, status);
 
               finalize(undefined, {
                 profitLoss: profit,
@@ -3365,6 +3369,7 @@ export class AiService implements OnModuleInit {
         currency: state.currency || 'USD', // ZENIX v3.5
         stakeAmount,
         contractType,
+        userId: state.userId, // ✅ Passando userId
       });
 
       return tradeId;
@@ -3893,6 +3898,20 @@ export class AiService implements OnModuleInit {
 
       this.logger.log('✅ Migração concluída: ai_trades.user_id agora é VARCHAR(36)');
     }
+
+    // ✅ Criar tabela ai_trade_logs se não existir
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS ai_trade_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ai_sessions_id INT NOT NULL,
+        invested_value DECIMAL(10, 2) NOT NULL,
+        returned_value DECIMAL(10, 2) NOT NULL,
+        result VARCHAR(50) NOT NULL, -- 'WON', 'LOST'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ai_sessions_id) REFERENCES ai_sessions(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    this.logger.log('✅ Tabela ai_trade_logs verificada/criada');
 
     this.logger.log('✅ Tabelas da IA inicializadas com sucesso');
   }
@@ -5190,7 +5209,14 @@ export class AiService implements OnModuleInit {
                 [tradeId],
               );
 
+              if (tradeData.length > 0) {
+                const trade = tradeData[0];
+                // ✅ LOG NA TABELA AI_TRADE_LOGS
+                const stake = Number(trade.stake_amount || 0);
+                const returnedValue = stake + profit;
 
+                await this.logTradeResult(trade.user_id, stake, returnedValue, status);
+              }
 
               // Unsubscribe
               if (contractSubscriptionId) {
@@ -7512,14 +7538,14 @@ export class AiService implements OnModuleInit {
   /**
    * ✅ Cria uma nova sessão de IA na tabela ai_sessions
    */
-  async createSession(userId: string, aiName: string, config?: any): Promise<any> {
+  async createSession(userId: string, aiName: string, accountType: string = 'demo', config?: any): Promise<any> {
     try {
-      this.logger.debug(`[Sessions] 🆕 Criando sessão para user=${userId}, AI=${aiName}`);
+      this.logger.debug(`[Sessions] 🆕 Criando sessão para user=${userId}, AI=${aiName}, Type=${accountType}`);
 
       const result = await this.dataSource.query(
-        `INSERT INTO ai_sessions (user_id, ai_name, status, start_time, total_wins, total_losses, total_profit, total_trades, created_at) 
-         VALUES (?, ?, 'active', NOW(), 0, 0, 0, 0, NOW())`,
-        [userId, aiName]
+        `INSERT INTO ai_sessions (user_id, ai_name, account_type, status, start_time, total_wins, total_losses, total_profit, total_trades, created_at) 
+         VALUES (?, ?, ?, 'active', NOW(), 0, 0, 0, 0, NOW())`,
+        [userId, aiName, accountType]
       );
 
       this.logger.log(`[Sessions] ✅ Sessão criada com sucesso: ID=${result.insertId}`);
@@ -7558,6 +7584,41 @@ export class AiService implements OnModuleInit {
       // Silent update
     } catch (error) {
       this.logger.error(`[Sessions] ❌ Erro ao atualizar sessão ${sessionId}:`, error);
+    }
+  }
+
+  /**
+   * ✅ Helper para logar resultado do trade na tabela ai_trade_logs
+   */
+  private async logTradeResult(userId: string, invested: number, returned: number, result: string): Promise<void> {
+    try {
+      // Buscar sessão ativa - pegar a mais recente
+      const sessions = await this.dataSource.query(
+        `SELECT id FROM ai_sessions WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+      );
+
+      if (sessions.length > 0) {
+        const sessionId = sessions[0].id;
+
+        // Evitar duplicidade: verificar se já existe log para este trade?
+        // O ideal seria ter foreign key do trade, mas o pedido não especificou.
+        // Como o pedido é simples "grave toda operação", vamos gravar.
+
+        await this.dataSource.query(
+          `INSERT INTO ai_trade_logs (ai_sessions_id, invested_value, returned_value, result, created_at)
+           VALUES (?, ?, ?, ?, NOW())`,
+          [sessionId, invested, returned, result]
+        );
+        this.logger.debug(`[TradeLog] ✅ Log registrado para sessão ${sessionId}: ${result} | Investido: ${invested} | Retorno: ${returned}`);
+      } else {
+        // Se não tiver sessão ativa, talvez deva criar ou ignorar?
+        // O pedido diz: "sempre quando um usuário iniciar, grave toda operação... nesta tabela"
+        // Se não tiver sessão, não tem ai_sessions_id.
+        this.logger.warn(`[TradeLog] ⚠️ Nenhuma sessão ativa encontrada para user ${userId} ao registrar log de trade.`);
+      }
+    } catch (error) {
+      this.logger.error(`[TradeLog] ❌ Erro ao registrar log:`, error);
     }
   }
 }
