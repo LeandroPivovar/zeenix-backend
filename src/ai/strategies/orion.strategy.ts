@@ -846,7 +846,7 @@ Status: Proteção Ativada`;
     private copyTradingService: CopyTradingService,
 
   ) {
-    this.appId = process.env.DERIV_APP_ID || '111346';
+    this.appId = process.env.DERIV_APP_ID || '1089';
   }
 
   async initialize(): Promise<void> {
