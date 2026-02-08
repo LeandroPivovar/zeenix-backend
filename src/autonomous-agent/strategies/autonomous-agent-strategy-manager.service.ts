@@ -122,6 +122,9 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
       throw new Error(`Estratégia '${strategy}' não encontrada`);
     }
 
+    // ✅ Deactivate user from ALL other strategies first to prevent ghost sessions
+    await this.deactivateUser(userId);
+
     await strategyInstance.activateUser(userId, config);
     this.logger.log(`[AutonomousAgentStrategyManager] Usuário ${userId} ativado na estratégia ${strategy}`);
   }

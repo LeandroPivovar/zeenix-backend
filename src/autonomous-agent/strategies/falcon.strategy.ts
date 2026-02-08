@@ -602,6 +602,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
+    // ✅ STRICT CHECK: Se o usuário não estiver na lista de configs ou states, abortar imediatamente
+    if (!this.userConfigs.has(userId) || !state || !state.isActive) {
+      return;
+    }
+
     if (!config || !state || !state.isActive) {
       return;
     }
