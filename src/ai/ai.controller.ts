@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AiService, DigitParity, Tick } from './ai.service';
+import { CreateAiTradeLogDto } from './dto/create-ai-trade-log.dto';
 import { PerformanceService } from './performance.service';
 import { TradeEventsService } from './trade-events.service';
 import { Observable } from 'rxjs';
@@ -208,95 +209,116 @@ export class AiController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
-  }
 
-  @Get('session-stats/:userId')
-  @UseGuards(AuthGuard('jwt'))
-  async getSessionStats(@Param('userId') userId: string, @Req() req: any) {
-    try {
-      // Se userId for "current", usar o userId do token JWT
-      const finalUserId = userId === 'current' ? req.user.userId : userId;
-      const stats = await this.aiService.getSessionStats(finalUserId);
-      return {
-        success: true,
-        data: stats,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar estatísticas da sessão',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('trade-history/:userId')
-  async getTradeHistory(@Param('userId') userId: string) {
-    try {
-      this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
-      const history = await this.aiService.getTradeHistory(userId);
-      this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
-
-      // ✅ DEBUG: Logar primeiros 3 trades com preços
-      if (history.length > 0) {
-        history.slice(0, 3).forEach((trade: any, index: number) => {
-          this.logger.debug(`[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`);
-        });
+    @Post('trade-log')
+    async createTradeLog(@Body() body: CreateAiTradeLogDto) {
+      try {
+        const log = await this.aiService.createTradeLog(body);
+        return {
+          success: true,
+          data: log,
+          message: 'Log de trade criado com sucesso',
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao criar log de trade',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
-
-      return {
-        success: true,
-        data: history,
-      };
-    } catch (error) {
-      this.logger.error(`[TradeHistory] ❌ Erro ao buscar histórico: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar histórico de trades',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
-  }
 
-  @Sse('trade-events/:userId')
-  tradeEvents(
-    @Param('userId') userId: string,
-    @Query('strategy') strategy?: string,
-  ): Observable<MessageEvent> {
-    return this.tradeEventsService.subscribe(userId, strategy);
-  }
 
-  // ========== ENDPOINTS PARA IA EM BACKGROUND ==========
-
-  @Post('init-tables')
-  async initTables() {
-    try {
-      await this.aiService.initializeTables();
-      return {
-        success: true,
-        message: 'Tabelas da IA inicializadas com sucesso',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao inicializar tabelas',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('session-stats/:userId')
+    @UseGuards(AuthGuard('jwt'))
+    async getSessionStats(@Param('userId') userId: string, @Req() req: any) {
+      try {
+        // Se userId for "current", usar o userId do token JWT
+        const finalUserId = userId === 'current' ? req.user.userId : userId;
+        const stats = await this.aiService.getSessionStats(finalUserId);
+        return {
+          success: true,
+          data: stats,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar estatísticas da sessão',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Post('activate')
-  async activateAI(
-    @Body() body: {
+    @Get('trade-history/:userId')
+    async getTradeHistory(@Param('userId') userId: string) {
+      try {
+        this.logger.log(`[TradeHistory] 📊 Buscando histórico para userId: ${userId}`);
+        const history = await this.aiService.getTradeHistory(userId);
+        this.logger.log(`[TradeHistory] ✅ Encontradas ${history.length} operações`);
+
+        // ✅ DEBUG: Logar primeiros 3 trades com preços
+        if (history.length > 0) {
+          history.slice(0, 3).forEach((trade: any, index: number) => {
+            this.logger.debug(`[TradeHistory] Trade ${index + 1}: id=${trade.id}, entryPrice=${trade.entryPrice}, exitPrice=${trade.exitPrice}, status=${trade.status}`);
+          });
+        }
+
+        return {
+          success: true,
+          data: history,
+        };
+      } catch (error) {
+        this.logger.error(`[TradeHistory] ❌ Erro ao buscar histórico: ${error.message}`);
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar histórico de trades',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Sse('trade-events/:userId')
+    tradeEvents(
+      @Param('userId') userId: string,
+      @Query('strategy') strategy ?: string,
+    ): Observable < MessageEvent > {
+      return this.tradeEventsService.subscribe(userId, strategy);
+    }
+
+    // ========== ENDPOINTS PARA IA EM BACKGROUND ==========
+
+    @Post('init-tables')
+    async initTables() {
+      try {
+        await this.aiService.initializeTables();
+        return {
+          success: true,
+          message: 'Tabelas da IA inicializadas com sucesso',
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao inicializar tabelas',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Post('activate')
+    async activateAI(
+      @Body() body: {
       userId: string;
       stakeAmount: number; // Capital total da conta
       entryValue?: number; // ✅ Valor de entrada por operação (opcional)
@@ -311,400 +333,400 @@ export class AiController {
       symbol?: string; // ✅ ZENIX v2.0: Símbolo/Ativo (opcional)
       selectedMarket?: string; // ✅ ZENIX v2.0: Mercado (opcional)
     },
-  ) {
-    try {
-      this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}, symbol=${body.symbol || body.selectedMarket}`);
+    ) {
+      try {
+        this.logger.log(`[ActivateAI] Recebido: mode=${body.mode}, modoMartingale=${body.modoMartingale}, strategy=${body.strategy}, stopLossBlindado=${body.stopLossBlindado}, symbol=${body.symbol || body.selectedMarket}`);
 
-      await this.aiService.activateUserAI(
-        body.userId,
-        body.stakeAmount, // Capital total da conta
-        body.derivToken,
-        body.currency,
-        body.mode || 'veloz',
-        body.profitTarget,
-        body.lossLimit,
-        body.modoMartingale || 'conservador',
-        body.strategy || 'orion',
-        body.entryValue, // ✅ Valor de entrada por operação (opcional)
-        body.stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
-        body.symbol || body.selectedMarket, // ✅ ZENIX v2.0: Símbolo
-      );
-      return {
-        success: true,
-        message: `IA ativada com sucesso | Modo: ${body.mode || 'veloz'} | Martingale: ${body.modoMartingale || 'conservador'} | Estratégia: ${body.strategy || 'orion'}`,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao ativar IA',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+        await this.aiService.activateUserAI(
+          body.userId,
+          body.stakeAmount, // Capital total da conta
+          body.derivToken,
+          body.currency,
+          body.mode || 'veloz',
+          body.profitTarget,
+          body.lossLimit,
+          body.modoMartingale || 'conservador',
+          body.strategy || 'orion',
+          body.entryValue, // ✅ Valor de entrada por operação (opcional)
+          body.stopLossBlindado, // ✅ ZENIX v2.0: Stop-Loss Blindado
+          body.symbol || body.selectedMarket, // ✅ ZENIX v2.0: Símbolo
+        );
+        return {
+          success: true,
+          message: `IA ativada com sucesso | Modo: ${body.mode || 'veloz'} | Martingale: ${body.modoMartingale || 'conservador'} | Estratégia: ${body.strategy || 'orion'}`,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao ativar IA',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Post('deactivate')
-  async deactivateAI(@Body() body: { userId: string }) {
-    try {
-      await this.aiService.deactivateUserAI(body.userId);
-      return {
-        success: true,
-        message: 'IA desativada com sucesso',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao desativar IA',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Post('deactivate')
+    async deactivateAI(@Body() body: { userId: string }) {
+      try {
+        await this.aiService.deactivateUserAI(body.userId);
+        return {
+          success: true,
+          message: 'IA desativada com sucesso',
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao desativar IA',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Get('logs/:userId')
-  async getUserLogs(
-    @Param('userId') userId: string,
-    @Query('limit') limit?: string,
-  ) {
-    try {
-      // Converter limit para número
-      // Se não especificado ou vazio, usar padrão 100
-      // Se for 'todos', passar undefined (sem limite)
-      // Caso contrário, converter para número
-      let limitNum: number | undefined = 100; // Padrão: 100
-      if (limit) {
-        if (limit.toLowerCase() === 'todos') {
-          limitNum = undefined; // Sem limite
-        } else {
-          const parsed = parseInt(limit, 10);
-          if (!isNaN(parsed) && parsed > 0) {
-            limitNum = parsed;
+    @Get('logs/:userId')
+    async getUserLogs(
+      @Param('userId') userId: string,
+      @Query('limit') limit ?: string,
+    ) {
+      try {
+        // Converter limit para número
+        // Se não especificado ou vazio, usar padrão 100
+        // Se for 'todos', passar undefined (sem limite)
+        // Caso contrário, converter para número
+        let limitNum: number | undefined = 100; // Padrão: 100
+        if (limit) {
+          if (limit.toLowerCase() === 'todos') {
+            limitNum = undefined; // Sem limite
+          } else {
+            const parsed = parseInt(limit, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+              limitNum = parsed;
+            }
           }
         }
+
+        const logs = await this.aiService.getUserLogs(userId, limitNum);
+        return {
+          success: true,
+          data: logs,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar logs',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
-
-      const logs = await this.aiService.getUserLogs(userId, limitNum);
-      return {
-        success: true,
-        data: logs,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar logs',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
-  }
 
-  @Delete('logs/:userId')
-  async deleteUserLogs(@Param('userId') userId: string) {
-    try {
-      await this.aiService.deleteUserLogs(userId);
-      return {
-        success: true,
-        message: 'Logs deletados com sucesso',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao deletar logs',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Delete('logs/:userId')
+    async deleteUserLogs(@Param('userId') userId: string) {
+      try {
+        await this.aiService.deleteUserLogs(userId);
+        return {
+          success: true,
+          message: 'Logs deletados com sucesso',
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao deletar logs',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Get('config/:userId')
-  async getAIConfig(@Param('userId') userId: string) {
-    try {
-      const config = await this.aiService.getUserAIConfig(userId);
-      return {
-        success: true,
-        data: config,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar configuração da IA',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('config/:userId')
+    async getAIConfig(@Param('userId') userId: string) {
+      try {
+        const config = await this.aiService.getUserAIConfig(userId);
+        return {
+          success: true,
+          data: config,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar configuração da IA',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Get('active-users')
-  async getActiveUsers() {
-    try {
-      const activeUsers = await this.aiService.getActiveUsersCount();
-      return {
-        success: true,
-        data: {
-          count: activeUsers,
-        },
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar usuários ativos',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('active-users')
+    async getActiveUsers() {
+      try {
+        const activeUsers = await this.aiService.getActiveUsersCount();
+        return {
+          success: true,
+          data: {
+            count: activeUsers,
+          },
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar usuários ativos',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  // ========== ENDPOINTS PARA STATSIAS ==========
+    // ========== ENDPOINTS PARA STATSIAS ==========
 
-  @Get('stats-ias')
-  async getStatsIAs() {
-    try {
-      const result = await this.aiService.getStatsIAsData();
-      return {
-        success: true,
-        data: result,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar estatísticas do StatsIAs',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('stats-ias')
+    async getStatsIAs() {
+      try {
+        const result = await this.aiService.getStatsIAsData();
+        return {
+          success: true,
+          data: result,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar estatísticas do StatsIAs',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Get('trading-params')
-  async getTradingParams() {
-    try {
-      const params = await this.aiService.getAdjustedTradingParams();
-      return {
-        success: true,
-        data: params,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar parâmetros de trading ajustados',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('trading-params')
+    async getTradingParams() {
+      try {
+        const params = await this.aiService.getAdjustedTradingParams();
+        return {
+          success: true,
+          data: params,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar parâmetros de trading ajustados',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Post('update-config')
-  async updateAIConfig(
-    @Body() body: {
+    @Post('update-config')
+    async updateAIConfig(
+      @Body() body: {
       userId: string;
       stakeAmount?: number;
     },
-  ) {
-    try {
-      await this.aiService.updateUserAIConfig(
-        body.userId,
-        body.stakeAmount,
-      );
-      return {
-        success: true,
-        message: 'Configuração da IA atualizada com sucesso',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao atualizar configuração da IA',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Post('deriv-balance')
-  async getDerivBalance(@Body() body: { derivToken: string }) {
-    try {
-      const balance = await this.aiService.getDerivBalance(body.derivToken);
-      return {
-        success: true,
-        data: balance,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar saldo da Deriv',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('user-dashboard/:userId')
-  async getUserDashboard(@Param('userId') userId: string) {
-    try {
-      const stats = await this.aiService.getUserDashboardStats(userId);
-      return {
-        success: true,
-        data: stats,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar estatísticas do usuário',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('sessions/:userId')
-  async getUserSessions(
-    @Param('userId') userId: string,
-    @Query('limit') limit?: string,
-  ) {
-    try {
-      const limitNumber = limit ? parseInt(limit, 10) : 10;
-      this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}, limit: ${limitNumber}`);
-      const sessions = await this.aiService.getUserSessions(userId, limitNumber);
-      this.logger.log(`[SessionsHistory] ✅ ${sessions.length} sessões encontradas`);
-      return {
-        success: true,
-        data: sessions,
-      };
-    } catch (error) {
-      this.logger.error(`[SessionsHistory] ❌ Erro ao buscar histórico: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar histórico de sessões',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Get('sessions/history/:userId')
-  async getSessionHistory(
-    @Param('userId') userId: string,
-    @Query('limit') limit?: string,
-  ) {
-    try {
-      const limitNumber = limit ? parseInt(limit, 10) : 20;
-      const sessions = await this.aiService.getUserSessions(userId, limitNumber);
-
-      // Calculate aggregated stats (accessing stats object)
-      const totalOperations = sessions.reduce((sum, s) => sum + (s.stats?.totalTrades || 0), 0);
-      const totalProfit = sessions.reduce((sum, s) => sum + (s.stats?.profitLoss || 0), 0);
-
-      this.logger.log(`[SessionHistory] ✅ Agregação: ${totalOperations} operações, $${totalProfit.toFixed(2)} lucro`);
-
-      return {
-        success: true,
-        data: {
-          sessions,
-          summary: {
-            totalOperations,
-            totalProfit,
-          },
-        },
-      };
-    } catch (error) {
-      this.logger.error(`[SessionHistory] ❌ Erro: ${error.message}`);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar histórico de sessões',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Post('sessions/start')
-  async startSession(@Body() body: { userId: string; aiName: string; accountType?: string }) {
-    try {
-      const result = await this.aiService.createSession(body.userId, body.aiName, body.accountType);
-      if (result.success) {
+    ) {
+      try {
+        await this.aiService.updateUserAIConfig(
+          body.userId,
+          body.stakeAmount,
+        );
         return {
           success: true,
-          data: { sessionId: result.sessionId },
+          message: 'Configuração da IA atualizada com sucesso',
         };
-      } else {
-        throw new Error(result.error);
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao atualizar configuração da IA',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
       }
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao iniciar sessão',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
-  }
 
-  @Post('sessions/update')
-  async updateSession(@Body() body: { sessionId: number; stats: any }) {
-    try {
-      await this.aiService.updateSession(body.sessionId, body.stats);
-      return {
-        success: true,
-        message: 'Sessão atualizada',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao atualizar sessão',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Post('deriv-balance')
+    async getDerivBalance(@Body() body: { derivToken: string }) {
+      try {
+        const balance = await this.aiService.getDerivBalance(body.derivToken);
+        return {
+          success: true,
+          data: balance,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar saldo da Deriv',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
-  }
 
-  @Get('performance/weekly/:userId')
-  @UseGuards(AuthGuard('jwt'))
-  async getWeeklyPerformance(@Param('userId') userId: string, @Req() req: any) {
-    try {
-      const finalUserId = userId === 'current' ? req.user.userId : userId;
-      const stats = await this.performanceService.getWeeklyStats(finalUserId);
-      return {
-        success: true,
-        data: stats,
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Erro ao buscar desempenho semanal',
-          error: error.message,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    @Get('user-dashboard/:userId')
+    async getUserDashboard(@Param('userId') userId: string) {
+      try {
+        const stats = await this.aiService.getUserDashboardStats(userId);
+        return {
+          success: true,
+          data: stats,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar estatísticas do usuário',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Get('sessions/:userId')
+    async getUserSessions(
+      @Param('userId') userId: string,
+      @Query('limit') limit ?: string,
+    ) {
+      try {
+        const limitNumber = limit ? parseInt(limit, 10) : 10;
+        this.logger.log(`[SessionsHistory] 📊 Buscando histórico de sessões para userId: ${userId}, limit: ${limitNumber}`);
+        const sessions = await this.aiService.getUserSessions(userId, limitNumber);
+        this.logger.log(`[SessionsHistory] ✅ ${sessions.length} sessões encontradas`);
+        return {
+          success: true,
+          data: sessions,
+        };
+      } catch (error) {
+        this.logger.error(`[SessionsHistory] ❌ Erro ao buscar histórico: ${error.message}`);
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar histórico de sessões',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Get('sessions/history/:userId')
+    async getSessionHistory(
+      @Param('userId') userId: string,
+      @Query('limit') limit ?: string,
+    ) {
+      try {
+        const limitNumber = limit ? parseInt(limit, 10) : 20;
+        const sessions = await this.aiService.getUserSessions(userId, limitNumber);
+
+        // Calculate aggregated stats (accessing stats object)
+        const totalOperations = sessions.reduce((sum, s) => sum + (s.stats?.totalTrades || 0), 0);
+        const totalProfit = sessions.reduce((sum, s) => sum + (s.stats?.profitLoss || 0), 0);
+
+        this.logger.log(`[SessionHistory] ✅ Agregação: ${totalOperations} operações, $${totalProfit.toFixed(2)} lucro`);
+
+        return {
+          success: true,
+          data: {
+            sessions,
+            summary: {
+              totalOperations,
+              totalProfit,
+            },
+          },
+        };
+      } catch (error) {
+        this.logger.error(`[SessionHistory] ❌ Erro: ${error.message}`);
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar histórico de sessões',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Post('sessions/start')
+    async startSession(@Body() body: { userId: string; aiName: string; accountType?: string }) {
+      try {
+        const result = await this.aiService.createSession(body.userId, body.aiName, body.accountType);
+        if (result.success) {
+          return {
+            success: true,
+            data: { sessionId: result.sessionId },
+          };
+        } else {
+          throw new Error(result.error);
+        }
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao iniciar sessão',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Post('sessions/update')
+    async updateSession(@Body() body: { sessionId: number; stats: any }) {
+      try {
+        await this.aiService.updateSession(body.sessionId, body.stats);
+        return {
+          success: true,
+          message: 'Sessão atualizada',
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao atualizar sessão',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    }
+
+    @Get('performance/weekly/:userId')
+    @UseGuards(AuthGuard('jwt'))
+    async getWeeklyPerformance(@Param('userId') userId: string, @Req() req: any) {
+      try {
+        const finalUserId = userId === 'current' ? req.user.userId : userId;
+        const stats = await this.performanceService.getWeeklyStats(finalUserId);
+        return {
+          success: true,
+          data: stats,
+        };
+      } catch (error) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Erro ao buscar desempenho semanal',
+            error: error.message,
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
   }
-}
 

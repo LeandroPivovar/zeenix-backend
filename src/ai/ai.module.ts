@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AiTradeLogEntity } from '../infrastructure/database/entities/ai-trade-log.entity';
 import { AiController } from './ai.controller';
 import { AiService } from './ai.service';
 import { AiScheduler } from './ai.scheduler';
@@ -18,7 +19,7 @@ import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([]),
+    TypeOrmModule.forFeature([AiTradeLogEntity]),
     forwardRef(() => AutonomousAgentModule), // ✅ Importar para compartilhar ticks
     BrokerModule,
     CopyTradingModule, // ✅ Importar para usar CopyTradingService

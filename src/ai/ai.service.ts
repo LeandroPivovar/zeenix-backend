@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import WebSocket from 'ws';
-import { DataSource } from 'typeorm';
-import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { AiTradeLogEntity } from '../infrastructure/database/entities/ai-trade-log.entity';
+import { CreateAiTradeLogDto } from './dto/create-ai-trade-log.dto';
 import { StatsIAsService } from './stats-ias.service';
 
 import { StrategyManagerService } from './strategies/strategy-manager.service';
@@ -533,6 +535,8 @@ export class AiService implements OnModuleInit {
     @Inject(forwardRef(() => AutonomousAgentService))
     private readonly autonomousAgentService?: AutonomousAgentService, // ✅ Injetar AutonomousAgentService para compartilhar ticks
     private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
+    @InjectRepository(AiTradeLogEntity)
+    private readonly aiTradeLogRepository?: Repository<AiTradeLogEntity>,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -7621,6 +7625,23 @@ export class AiService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.error(`[TradeLog] ❌ Erro ao registrar log:`, error);
+    }
+  }
+
+
+  /**
+   * ✅ Cria um registro de log de trade
+   */
+  async createTradeLog(dto: CreateAiTradeLogDto): Promise<AiTradeLogEntity> {
+    // Create and save the trade log
+    // Check if repository is available (it's optional now)
+    if (this.aiTradeLogRepository) {
+      const tradeLog = this.aiTradeLogRepository.create(dto);
+      return await this.aiTradeLogRepository.save(tradeLog);
+    } else {
+      this.logger.warn('AiTradeLogRepository not available');
+      // Fallback or throw error? For now, just log warning and return null or throw.
+      throw new Error('AiTradeLogRepository not available');
     }
   }
 }
