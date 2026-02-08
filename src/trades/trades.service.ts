@@ -356,6 +356,7 @@ export class TradesService {
         AND AL.result = 'WON'
         AND AL.created_at >= ? 
         AND AL.created_at <= ?
+        AND AL.created_at > '2026-02-08 17:42:03'
       GROUP BY U.id, U.name, U.email, U.phone, U.id_real_account, U.real_amount, U.role, U.trader_mestre
       ORDER BY totalPayout DESC
     `;
