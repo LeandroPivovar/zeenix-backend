@@ -62,6 +62,7 @@ export class CreateAiTradeLogsTable1770518400000 implements MigrationInterface {
 
     public async down(queryRunner: QueryRunner): Promise<void> {
         const table = await queryRunner.getTable('ai_trade_logs');
+        if (!table) return;
         const foreignKey = table.foreignKeys.find(
             (fk) => fk.columnNames.indexOf('ai_sessions_id') !== -1,
         );
