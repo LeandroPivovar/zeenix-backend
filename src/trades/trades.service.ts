@@ -349,14 +349,13 @@ export class TradesService {
         COUNT(AL.id) as transactionCount,
         SUM(AL.returned_value) as totalPayout
       FROM users U
-      INNER JOIN ai_sessions AI ON AI.user_id = U.id
-      INNER JOIN ai_trade_logs AL ON AL.ai_sessions_id = AI.id
-      WHERE 
-        AI.account_type = 'real' 
+      LEFT JOIN ai_sessions AI ON AI.user_id = U.id AND AI.account_type = 'real'
+      LEFT JOIN ai_trade_logs AL ON AL.ai_sessions_id = AI.id 
         AND AL.result = 'WON'
         AND AL.created_at >= ? 
         AND AL.created_at <= ?
         AND AL.created_at > '2026-02-08 17:42:03'
+      WHERE U.is_active = 1 AND U.real_amount > 0
       GROUP BY U.id, U.name, U.email, U.phone, U.id_real_account, U.real_amount, U.role, U.trader_mestre
       ORDER BY totalPayout DESC
     `;
