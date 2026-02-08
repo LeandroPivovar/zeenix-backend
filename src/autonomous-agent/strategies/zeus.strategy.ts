@@ -649,11 +649,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * Regra: Sequência de 4 dígitos altos consecutivos (6, 7, 8, 9)
      */
     private filtroOndaAlta(digits: number[]): { passes: boolean; reason?: string; metrics?: any } {
-        const sequence = digits.slice(-4);
+        // ✅ V4 OPTIMIZATION: Janela reduzida para 3 dígitos para pegar início da tendência
+        const sequence = digits.slice(-3);
         const isHigh = sequence.every(d => d >= 6);
 
         if (isHigh) {
-            // ✅ V4 OPTIMIZATION (Phase 1): Stricter "Onda Alta"
             // Requer pelo menos 2 dígitos >= 7 para garantir força na tendência
             const strongDigits = sequence.filter(d => d >= 7).length;
             if (strongDigits >= 2) {
@@ -1300,7 +1300,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         const finalStake = stopLossCheck.stake || decision.stake || config.baseStake;
         const contractType = 'DIGITOVER';
-        const barrier = "5";
+        const barrier = "4"; // ✅ OTIMIZAÇÃO V4: Barrier 4 aumenta Win Rate para ~50-60%
         const duration = 1;
 
         // ✅ BLOQUEAR ENTRADA IMEDIATAMENTE
@@ -1311,11 +1311,27 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             ? userTicks[userTicks.length - 1].value
             : marketAnalysis.details?.currentPrice || 0;
 
-        // 🧠 ESTRATÉGIA DE LATÊNCIA: Disparar compra e processar "papelada" em paralelo
+        // 🧠 ESTRATÉGIA DE LATÊNCIA ULTRA-BAIXA V4
         try {
             state.currentContractId = "PENDING";
 
-            // 🎫 Inicia criação do registro no banco em background (sem await imediato)
+            // 🚀 1. DISPARAR COMPRA IMEDIATAMENTE (Prioridade Máxima)
+            // Não esperamos DB nem Log. O WebSocket tem que sair AGORA.
+            const buyPromise = this.buyContract(
+                userId,
+                config.derivToken,
+                contractType,
+                config.symbol,
+                finalStake,
+                duration,
+                barrier,
+                0, // 0 Retries para ser instantâneo. Se falhar, falhou.
+                0  // TradeId será vinculado depois
+            );
+
+            // 📝 2. Enquanto a requisição voa, fazemos a "papelada" (Logs e DB)
+            this.saveLog(userId, 'INFO', 'TRADER', `🚀 ORDEM ENVIADA! ${contractType} > ${barrier} | Stake: $${finalStake.toFixed(2)}`);
+
             const tradeRecordPromise = this.createTradeRecord(
                 userId,
                 {
@@ -1328,26 +1344,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 },
             );
 
-            // 🚀 ENTRADA IMEDIATA: Chama o buyContract sem esperar o log ou o registro no banco
-            const buyPromise = this.buyContract(
-                userId,
-                config.derivToken,
-                contractType,
-                config.symbol,
-                finalStake,
-                duration,
-                barrier,
-                1, // Reduzido retry interno para priorizar velocidade
-                0  // TradeId será vinculado depois
-            );
-
-            // Registrar log de execução em paralelo
-            this.saveLog(userId, 'INFO', 'TRADER', `⚡ EXECUTANDO: ${contractType} (Over 5) | Stake: $${finalStake.toFixed(2)} | Modo: ${state.mode}`);
-
-            // Aguardar o resultado da compra (o ponto crítico de latência)
+            // ⏳ 3. Agora aguardamos o resultado da compra (Gargalo de I/O)
             const contractId = await buyPromise;
 
-            // Aguardar o ID do registro no banco (deve estar pronto ou quase pronto)
+            // ⏳ 4. Aguardamos o ID do banco
             const tradeId = await tradeRecordPromise;
             state.currentTradeId = tradeId;
 
