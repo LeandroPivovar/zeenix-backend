@@ -640,6 +640,14 @@ export class AutonomousAgentService implements OnModuleInit {
 
         resolvedCurrency = preferredCurrency;
 
+        // Log Detalhado de Resolução (Debug)
+        this.logger.log(`[ActivateAgent][${userId}] 🔍 Rastreio de Token:
+            - Modo Preferido: ${preferredCurrency}
+            - Token Demo (DB): ${token_demo ? token_demo.substring(0, 8) + '...' : 'N/A'}
+            - Token Real (DB): ${token_real ? token_real.substring(0, 8) + '...' : 'N/A'}
+            - Token Config Inicial: ${config.derivToken ? config.derivToken.substring(0, 8) + '...' : 'N/A'}
+        `);
+
         if (preferredCurrency === 'DEMO') {
           if (token_demo) {
             resolvedToken = token_demo;

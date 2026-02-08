@@ -284,7 +284,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     }
                 }
 
-                // Log para debug da resolução
+                // Log para debug da resolução - DETALHADO POR SOLICITAÇÃO DO USUÁRIO
+                this.logger.log(`[Zeus][${userId}] 🔍 Rastreio de Token:
+                    - Config Token: ${user.config_token ? user.config_token.substring(0, 8) + '...' : 'N/A'}
+                    - Trade Currency (Settings): ${user.trade_currency}
+                    - Want Demo: ${wantDemo}
+                    - Token Demo (User): ${user.token_demo ? user.token_demo.substring(0, 8) + '...' : 'N/A'}
+                    - Token Real (User): ${user.token_real ? user.token_real.substring(0, 8) + '...' : 'N/A'}
+                    - Resolved Token: ${resolvedToken ? resolvedToken.substring(0, 8) + '...' : 'N/A'}
+                `);
+
                 if (resolvedToken !== user.config_token) {
                     this.logger.log(`[Zeus][ResolucaoToken] User ${userId}: Token atualizado dinamicamente. Modo=${wantDemo ? 'DEMO' : 'REAL'}.`);
                 }
@@ -2351,12 +2360,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Criar nova conexão
         this.logger.debug(`[Zeus] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        // ✅ [FIX] Usar ws.binaryws.com para maior compatibilidade com App ID 1089 (igual Falcon)
+        const endpoint = `wss://ws.binaryws.com/websockets/v3?app_id=${this.appId}`;
 
         const ws = await new Promise<WebSocket>((resolve, reject) => {
-            const socket = new WebSocket(endpoint, {
-                headers: { Origin: 'https://app.deriv.com' },
-            });
+            // ✅ [FIX] Remover Origin header para evitar bloqueios de CORS/Policy em App IDs legados
+            const socket = new WebSocket(endpoint);
 
             let authResolved = false;
             const connectionTimeout = setTimeout(() => {

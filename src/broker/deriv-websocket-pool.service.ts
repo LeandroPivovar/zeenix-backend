@@ -53,7 +53,7 @@ export class DerivWebSocketPoolService {
    */
   async sendRequest(token: string, payload: any, timeoutMs = 30000): Promise<any> {
     const conn = await this.getConnection(token);
-    
+
     // ✅ Verificar saúde da conexão antes de enviar
     if (!conn.ready) {
       throw new Error('Conexão WebSocket não está pronta');
@@ -61,20 +61,20 @@ export class DerivWebSocketPoolService {
     if (conn.ws.readyState !== WebSocket.OPEN) {
       throw new Error(`WebSocket não está aberto (readyState: ${conn.ws.readyState})`);
     }
-    
+
     return new Promise((resolve, reject) => {
       // ✅ Gerar ID único para rastreamento (não adicionar ao payload, a Deriv retorna echo_req automaticamente)
       const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const req: PendingRequest = { 
+      const req: PendingRequest = {
         payload, // ✅ Não modificar payload - a Deriv retorna echo_req automaticamente
-        resolve, 
-        reject, 
-        timeout: null as any, 
+        resolve,
+        reject,
+        timeout: null as any,
         sent: false,
         requestId,
         sentAt: undefined,
       };
-      
+
       req.timeout = setTimeout(() => {
         // ✅ Remover da fila se ainda estiver pendente
         const index = conn.queue.indexOf(req);
@@ -118,7 +118,7 @@ export class DerivWebSocketPoolService {
     // Enfileirar subscribe e aguardar primeira resposta
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Timeout após ${timeoutMs}ms`)), timeoutMs);
-      
+
       // ✅ Interceptar primeira mensagem para capturar subscription.id
       const originalCallback = subscription.callback;
       subscription.callback = (msg: any) => {
@@ -126,20 +126,20 @@ export class DerivWebSocketPoolService {
         if (msg.subscription?.id && !subscription.subscriptionId) {
           subscription.subscriptionId = msg.subscription.id;
           this.logger.debug(`[POOL] 📋 Subscription ID capturado: ${msg.subscription.id} -> ${subId}`);
-          
+
           // ✅ Também mapear pelo subscription.id para facilitar lookup
           if (msg.subscription.id !== subId) {
             conn.subs.set(msg.subscription.id, subscription);
           }
         }
-        
+
         // ✅ Verificar erros na mensagem
         if (msg.error) {
           this.logger.error(`[POOL] ❌ Erro na subscription ${subId}: ${JSON.stringify(msg.error)}`);
           reject(new Error(msg.error.message || JSON.stringify(msg.error)));
           return;
         }
-        
+
         // Chamar callback original
         originalCallback(msg);
       };
@@ -236,7 +236,7 @@ export class DerivWebSocketPoolService {
         if (msg.authorize && !msg.authorize.error) {
           conn.ready = true;
           this.logger.debug(`[POOL] ✅ Autorizado com sucesso | LoginID: ${msg.authorize.loginid || 'N/A'}`);
-          
+
           // ✅ Pequeno delay para garantir estabilidade da conexão
           setTimeout(() => {
             this.flushQueue(conn);
@@ -277,28 +277,28 @@ export class DerivWebSocketPoolService {
           // ✅ MELHORIA: Tentar fazer match usando echo_req (a Deriv retorna echo_req com o payload original)
           // ✅ Comparar echo_req com o payload da requisição para matching preciso
           let matchedRequest: PendingRequest | null = null;
-          
+
           if (msg.echo_req) {
             // ✅ Buscar requisição pendente cujo payload corresponde ao echo_req
             const matchedIndex = conn.queue.findIndex(req => {
               if (!req.sent || (req as any).resolved) return false;
-              
+
               // ✅ Comparar campos principais do payload com echo_req
               const payloadKeys = Object.keys(req.payload);
               return payloadKeys.every(key => {
                 // ✅ Comparar valores (ignorar diferenças de tipo se forem equivalentes)
                 const payloadVal = req.payload[key];
                 const echoVal = msg.echo_req[key];
-                
+
                 // ✅ Comparação especial para proposal (pode ser 1 ou true)
                 if (key === 'proposal' && (payloadVal === 1 || payloadVal === true) && (echoVal === 1 || echoVal === true)) {
                   return true;
                 }
-                
+
                 return JSON.stringify(payloadVal) === JSON.stringify(echoVal);
               });
             });
-            
+
             if (matchedIndex !== -1) {
               matchedRequest = conn.queue[matchedIndex];
               (matchedRequest as any).resolved = true;
@@ -306,11 +306,11 @@ export class DerivWebSocketPoolService {
               this.logger.debug(`[POOL] ✅ Match por echo_req (posição ${matchedIndex})`);
             }
           }
-          
+
           // ✅ FALLBACK: Se não encontrou por echo_req, usar FIFO (primeira requisição enviada e não resolvida)
           const findPendingRequest = () => {
             if (matchedRequest) return matchedRequest;
-            
+
             const index = conn.queue.findIndex(req => req.sent && !(req as any).resolved);
             if (index !== -1) {
               const req = conn.queue[index];
@@ -377,7 +377,7 @@ export class DerivWebSocketPoolService {
             this.logger.warn(`[POOL] ⚠️ Resposta de requisição sem pending: msg_type=${msg.msg_type || 'N/A'}, queueLength=${conn.queue.length}, sentCount=${conn.queue.filter(r => r.sent).length}, hasProposal=${hasProposal}, hasBuy=${hasBuy}`);
             // ✅ Log detalhado para debug
             if (hasProposal) {
-              this.logger.debug(`[POOL] 📊 Detalhes da proposta não processada: ${JSON.stringify({ 
+              this.logger.debug(`[POOL] 📊 Detalhes da proposta não processada: ${JSON.stringify({
                 proposal: msg.proposal ? Object.keys(msg.proposal) : 'null',
                 echo_req: msg.echo_req ? Object.keys(msg.echo_req) : 'null',
                 msg_type: msg.msg_type,
@@ -445,7 +445,7 @@ export class DerivWebSocketPoolService {
     for (const req of conn.queue) {
       // ✅ Verificar se já foi enviada para não reenviar
       if (req.sent) continue;
-      
+
       try {
         const payloadStr = JSON.stringify(req.payload);
         const reqType = req.payload.proposal ? 'proposal' : req.payload.buy ? 'buy' : req.payload.proposal_open_contract ? 'subscribe' : 'other';
