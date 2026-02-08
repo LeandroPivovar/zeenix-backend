@@ -6054,6 +6054,7 @@ export class AiService implements OnModuleInit {
         currency: state.currency || 'USD',
         stakeAmount,
         contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        userId: state.userId,
       });
 
       await this.handleModeradoTradeOutcome(
@@ -7005,6 +7006,7 @@ export class AiService implements OnModuleInit {
         currency: state.currency || 'USD',
         stakeAmount,
         contractType: proposal === 'PAR' ? 'DIGITEVEN' : 'DIGITODD',
+        userId: state.userId,
       });
 
       await this.handlePrecisoTradeOutcome(
