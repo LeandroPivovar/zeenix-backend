@@ -213,6 +213,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     {
       ws: WebSocket;
       authorized: boolean;
+      currency?: string; // ✅ Adicionado para suportar múltiplas moedas (BRL, USD, etc)
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
       pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
@@ -642,10 +643,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           if (state.currentTradeId) {
             await this.updateTradeRecord(state.currentTradeId, {
               status: 'ERROR',
-              errorMessage: 'Timeout aguardando resposta (40s)',
-            }).catch(e => this.logger.error(`[Falcon][${userId}] Erro ao marcar timeout no banco:`, e));
+              errorMessage: 'Falha na compra',
+            }).catch(e => this.logger.error(`[Falcon][${userId}] Erro ao marcar falha no banco:`, e));
+            this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
+            // ✅ Adicionar cooldown de 15s após erro para evitar spam
+            state.cooldownUntilTs = Date.now() + 15000;
           }
-
           state.isWaitingContract = false;
           state.waitingContractStartTime = null;
           state.currentContractId = null;
@@ -798,6 +801,11 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     if (nowTs < state.inStrategicPauseUntilTs) {
+      // Log a cada 60 segundos para não floodar
+      if (nowTs % 60000 < 1000) {
+        const minutesLeft = Math.ceil((state.inStrategicPauseUntilTs - nowTs) / 60000);
+        this.logger.log(`[Falcon][${userId}] ⏸️ Pausa Estratégica Ativa! Restam ${minutesLeft} minutos.`);
+      }
       this.logBlockedEntry(userId, {
         reason: 'PAUSA ESTRATÉGICA',
         details: 'Agente em pausa após sequência de operações'
@@ -1243,7 +1251,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           amount: 1,
           basis: 'stake',
           contract_type: contractType,
-          currency: 'USD',
+          currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
           duration: duration,
           duration_unit: 't',
           symbol: symbol,
@@ -1311,7 +1319,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           amount: roundedStake,
           basis: 'stake',
           contract_type: contractType,
-          currency: 'USD',
+          currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
           duration: duration,
           duration_unit: 't',
           symbol: symbol,
@@ -1538,6 +1546,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     if (state.currentContractId === result.contractId) state.currentContractId = null;
     if (state.currentTradeId === tradeId) state.currentTradeId = null;
+    // state.isWaitingContract = false; // Removido daqui para evitar race condition
 
     try {
       let finalTradeId = tradeId;
@@ -1596,6 +1605,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     } catch (criticalError) {
       this.logger.error(`[Falcon][${userId}] ❌ ERRO CRÍTICO no processamento de contrato:`, criticalError);
     } finally {
+      // ✅ COOLDOWN PÓS-TRADE (Executado após cálculos e pausas serem definidos)
       state.isWaitingContract = false;
       state.waitingContractStartTime = null;
     }
@@ -1943,6 +1953,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
   private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
     ws: WebSocket;
+    currency?: string; // ✅ Adicionado
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
     subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
@@ -1952,6 +1963,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       if (existing.ws.readyState === WebSocket.OPEN && existing.authorized) {
         return {
           ws: existing.ws,
+          currency: existing.currency, // ✅ Retornar moeda existente
           sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
           subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
             this.subscribeViaConnection(token, payload, callback, String(subId), timeoutMs),
@@ -1989,11 +2001,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               return;
             }
             conn.authorized = true;
+            conn.currency = msg.authorize?.currency || 'USD'; // ✅ Capturar moeda real
             conn.keepAliveInterval = setInterval(() => {
               if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
             }, 30000);
             resolve({
               ws: socket,
+              currency: conn.currency, // ✅ Retornar moeda
               sendRequest: (p, t = 60000) => this.sendRequestViaConnection(token, p, t),
               subscribe: (p, c, s, t = 90000) => this.subscribeViaConnection(token, p, c, s, t),
               removeSubscription: (s) => this.removeSubscriptionFromConnection(token, s),

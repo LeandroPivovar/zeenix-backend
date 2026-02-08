@@ -199,6 +199,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         {
             ws: WebSocket;
             authorized: boolean;
+            currency?: string; // ✅ Adicionado para suportar múltiplas moedas (BRL, USD, etc)
             keepAliveInterval: NodeJS.Timeout | null;
             requestIdCounter: number;
             pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
@@ -840,7 +841,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (state.sessionEnded) return false;
         if (nowTs < state.cooldownUntilTs) return false;
-        if (nowTs < state.inStrategicPauseUntilTs) return false;
+        if (nowTs < state.inStrategicPauseUntilTs) {
+            // Log a cada 60 segundos para não floodar
+            if (nowTs % 60000 < 1000) {
+                const minutesLeft = Math.ceil((state.inStrategicPauseUntilTs - nowTs) / 60000);
+                this.logger.log(`[Zeus][${userId}] ⏸️ Pausa Estratégica Ativa! Restam ${minutesLeft} minutos.`);
+            }
+            return false;
+        }
 
         // ✅ V4 Limits Check
         const limitDay = config.limitOpsDay || 2000;
@@ -1293,6 +1301,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     errorMessage: 'Falha na compra',
                 }).catch(e => this.logger.error(`Error updating trade error ${tradeId}`, e));
                 this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
+                // ✅ Adicionar cooldown de 15s após erro para evitar spam
+                state.cooldownUntilTs = Date.now() + 15000;
             }
         } catch (error: any) {
             state.isWaitingContract = false;
@@ -1315,7 +1325,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     amount: 1,
                     basis: 'stake',
                     contract_type: contractType,
-                    currency: 'USD',
+                    currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
                     duration: duration,
                     duration_unit: 't',
                     symbol: symbol,
@@ -1396,7 +1406,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                             amount: roundedStake,
                             basis: 'stake',
                             contract_type: contractType,
-                            currency: 'USD',
+                            currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
                             duration: duration,
                             duration_unit: 't',
                             symbol: symbol,
@@ -1730,11 +1740,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (!config || !state) return;
 
-        // ✅ COOLDOWN PÓS-TRADE
-        state.isWaitingContract = false;
-        state.lastOpTs = Date.now();
-        state.cooldownUntilTs = Date.now() + (result.win ? config.cooldownWinSeconds : config.cooldownLossSeconds) * 1000;
-
         // Priorizar tradeId que veio do closure do buyContract
         const tradeId = tradeIdFromCallback || state.currentTradeId;
         state.currentContractId = null;
@@ -1831,6 +1836,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Persistir State
         await this.updateUserStateInDb(userId, state);
+
+        // ✅ COOLDOWN PÓS-TRADE (Executado após todas as cálculos e pausas serem definidos)
+        state.isWaitingContract = false;
+        state.lastOpTs = Date.now();
+        state.cooldownUntilTs = Date.now() + (result.win ? config.cooldownWinSeconds : config.cooldownLossSeconds) * 1000;
 
         // ✅ Verificar Fim de Sessão
         this.canOperate(userId, config, state);
@@ -2191,6 +2201,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      */
     private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
         ws: WebSocket;
+        currency?: string; // ✅ Adicionado
         sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
         subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
         removeSubscription: (subId: string) => void;
@@ -2279,7 +2290,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                         }
 
                         conn.authorized = true;
-                        this.logger.log(`[Zeus] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+                        conn.currency = msg.authorize?.currency || 'USD'; // ✅ Capturar moeda real da conta
+                        this.logger.log(`[Zeus] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'} | Moeda: ${conn.currency}`);
 
                         // ✅ Iniciar keep-alive
                         conn.keepAliveInterval = setInterval(() => {
@@ -2401,6 +2413,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const conn = this.wsConnections.get(token)!;
         return {
             ws: conn.ws,
+            currency: conn.currency, // ✅ Retornar a moeda capturada
             sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
             subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
                 this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
