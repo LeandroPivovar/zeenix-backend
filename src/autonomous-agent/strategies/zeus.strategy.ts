@@ -675,6 +675,37 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
+     * ✅ LOGIC HELPER: Filtro de Densidade de Dígitos (Novo)
+     * Regra: Frequência de dígitos altos (6,7,8,9) >= 40% nos últimos 25 ticks
+     */
+    private filtroDensidade(digits: number[]): { passes: boolean; density: number; reason?: string } {
+        const window = 25;
+        const recent = digits.slice(-window);
+        if (recent.length < 10) return { passes: true, density: 0.5 }; // Inicializando
+
+        const highCount = recent.filter(d => d >= 6).length;
+        const density = highCount / recent.length;
+
+        if (density >= 0.40) {
+            return { passes: true, density };
+        }
+        return { passes: false, density, reason: `Densidade de dígitos baixos (${(density * 100).toFixed(0)}%)` };
+    }
+
+    /**
+     * ✅ LOGIC HELPER: Filtro de Dígito Fatal (Novo)
+     * Regra: Bloquear entrada se o último dígito for 5
+     */
+    private filtroDigitoFatal(digits: number[]): { passes: boolean; reason?: string } {
+        if (digits.length === 0) return { passes: true };
+        const last = digits[digits.length - 1];
+        if (last === 5) {
+            return { passes: false, reason: `Dígito Fatal (5) detectado` };
+        }
+        return { passes: true };
+    }
+
+    /**
      * ✅ LOGIC HELPER: Filtro de Lado (Paridade / LALDO)
      * Regra: Se a densidade de um lado (Par ou Ímpar) for >= 60% nos últimos 20 ticks
      */
@@ -709,6 +740,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const recentPrices = prices.slice(-5);
         const first = recentPrices[0];
         const last = recentPrices[recentPrices.length - 1];
+
+        // ✅ V4 OPTIMIZATION: Evitar micro-quedas repentinas (3 ticks atrás)
+        const prev3 = recentPrices[recentPrices.length - 4];
+        if (last < prev3) {
+            return { passes: false, status: 'DOWN', reason: `Micro-queda detectada (${last} < ${prev3})` };
+        }
 
         // Simples variação total
         const change = last - first;
@@ -872,7 +909,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // STOPLOSS sessão (Global)
         const drawdown = Math.max(0, -state.profit); // Using global profit
-        if (drawdown >= config.stopLoss) {
+        const roundedDrawdown = Math.round(drawdown * 100) / 100;
+        if (roundedDrawdown >= config.stopLoss) {
             state.sessionEnded = true;
             state.endReason = "STOPLOSS";
             this.handleStopCondition(userId, 'STOP_LOSS_LIMIT');
@@ -881,7 +919,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Blindado (Ciclo)
         if (config.enableStopLossBlindado && state.blindadoActive) {
-            const currentCycleProfit = state.cycleProfit;
+            const currentCycleProfit = Math.round(state.cycleProfit * 100) / 100;
             if (currentCycleProfit < state.blindadoFloorProfit) {
                 state.sessionEnded = true;
                 state.endReason = "BLINDADO";
@@ -891,7 +929,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // Meta Global
-        if (state.profit >= config.profitTarget) {
+        const currentProfit = Math.round(state.profit * 100) / 100;
+        if (currentProfit >= config.profitTarget) {
             state.sessionEnded = true;
             state.endReason = "TARGET";
             this.handleStopCondition(userId, 'TAKE_PROFIT');
@@ -1024,7 +1063,20 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // 1. Filtragem por Lado (Paridade) - Novo Requisito V4 Plus
         const fl = this.filtroLadoParidade(digits);
 
-        // 2. Check Quarteto Perfeito (Higher Priority/Precision)
+        // 2. Novos Filtros Estatísticos (Densidade e Fatal)
+        const fd = this.filtroDensidade(digits);
+        if (!fd.passes) {
+            state.lastRejectionReason = fd.reason;
+            return null;
+        }
+
+        const ff = this.filtroDigitoFatal(digits);
+        if (!ff.passes) {
+            state.lastRejectionReason = ff.reason;
+            return null;
+        }
+
+        // 3. Check Quarteto Perfeito (Higher Priority/Precision)
         const qp = this.filtroQuartetoPerfeito(digits);
         if (qp.passes) {
             const sequence = qp.metrics?.sequence || [];
@@ -1032,6 +1084,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // Se passar no Lado também, a confiança é máxima
             const hasLado = fl.passes;
             const probability = hasLado ? 75.0 : 68.0; // Bump probability per user feedback
+
+            // ✅ MODO PRECISO REQUIRES LADO (Paridade)
+            if (state.mode === 'PRECISO' && !hasLado) {
+                state.lastRejectionReason = `Preciso requer confirmação de Lado (Paridade)`;
+                return null;
+            }
+
+            // ✅ Check Trend as final gatekeeper for Preciso
+            if (!trend.passes) {
+                state.lastRejectionReason = trend.reason;
+                return null;
+            }
 
             this.saveLog(userId, 'INFO', 'CORE',
                 `⚡ SINAL ENCONTRADO (PRECISO)\n` +
@@ -1041,28 +1105,22 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
             state.lastRejectionReason = undefined;
 
-            // ✅ Check Trend as final gatekeeper for Preciso
-            if (!trend.passes) {
-                state.lastRejectionReason = trend.reason;
-                // Don't return success
-            } else {
-                return {
-                    signal: 'DIGIT',
-                    probability,
-                    payout: config.payoutPrimary,
-                    confidence: probability / 100,
-                    details: {
-                        contractType: 'DIGITOVER',
-                        barrier: 5,
-                        info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
-                        mode: 'PRECISO',
-                        trend: trend.status
-                    }
-                };
-            }
+            return {
+                signal: 'DIGIT',
+                probability,
+                payout: config.payoutPrimary,
+                confidence: probability / 100,
+                details: {
+                    contractType: 'DIGITOVER',
+                    barrier: 5,
+                    info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
+                    mode: 'PRECISO',
+                    trend: trend.status
+                }
+            };
         }
 
-        // 3. Check Onda Alta
+        // 4. Check Onda Alta
         if (state.mode !== 'PRECISO') {
             const oa = this.filtroOndaAlta(digits);
             if (oa.passes) {
@@ -1072,6 +1130,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 const hasLado = fl.passes;
                 const probability = hasLado ? 65.0 : 58.0;
 
+                // ✅ Check Trend as final gatekeeper
+                if (!trend.passes) {
+                    state.lastRejectionReason = trend.reason;
+                    return null;
+                }
+
                 this.saveLog(userId, 'INFO', 'CORE',
                     `⚡ SINAL ENCONTRADO (NORMAL)\n` +
                     `• Padrão Onda Alta: [${sequence.join(', ')}]\n` +
@@ -1080,25 +1144,19 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 state.lastRejectionReason = undefined;
 
-                // ✅ Check Trend as final gatekeeper
-                if (!trend.passes) {
-                    state.lastRejectionReason = trend.reason;
-                    // Don't return success
-                } else {
-                    return {
-                        signal: 'DIGIT',
-                        probability,
-                        payout: config.payoutPrimary,
-                        confidence: probability / 100,
-                        details: {
-                            contractType: 'DIGITOVER',
-                            barrier: 5,
-                            info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
-                            mode: 'NORMAL',
-                            trend: trend.status // Add trend info
-                        }
-                    };
-                }
+                return {
+                    signal: 'DIGIT',
+                    probability,
+                    payout: config.payoutPrimary,
+                    confidence: probability / 100,
+                    details: {
+                        contractType: 'DIGITOVER',
+                        barrier: 5,
+                        info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
+                        mode: 'NORMAL',
+                        trend: trend.status // Add trend info
+                    }
+                };
             }
             // Store rejection reason if Normal mode but failed
             if (!qp.passes) {
@@ -1298,16 +1356,29 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.currentContractId = null;
                 this.updateTradeRecord(tradeId, {
                     status: 'ERROR',
-                    errorMessage: 'Falha na compra',
+                    errorMessage: 'Falha na compra (Resposta nula)',
                 }).catch(e => this.logger.error(`Error updating trade error ${tradeId}`, e));
-                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
-                // ✅ Adicionar cooldown de 15s após erro para evitar spam
+                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: Resposta de compra vazia.`);
                 state.cooldownUntilTs = Date.now() + 15000;
             }
         } catch (error: any) {
             state.isWaitingContract = false;
-            this.logger.error(`[Zeus][${userId}] Erro crítico ao executar trade:`, error);
-            this.saveLog(userId, 'ERROR', 'API', `Erro crítico trade: ${error.message}`);
+            state.currentContractId = null;
+            this.logger.error(`[Zeus][${userId}] Erro ao executar trade:`, error);
+
+            // Exibir erro real do broker se disponível
+            const errorMsg = error.message || 'Erro desconhecido';
+            this.saveLog(userId, 'ERROR', 'API', `ERRO NA CORRETORA: ${errorMsg}`);
+
+            if (state.currentTradeId) {
+                this.updateTradeRecord(state.currentTradeId, {
+                    status: 'ERROR',
+                    errorMessage: errorMsg,
+                }).catch(e => { });
+            }
+
+            // ✅ Cooldown após erro para evitar loop infinito de erros
+            state.cooldownUntilTs = Date.now() + 15000;
         }
     }
 
@@ -1396,24 +1467,57 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // ✅ Obter conexão do pool interno
                 const connection = await this.getOrCreateWebSocketConnection(token, userId);
 
-                // ✅ ENTRADA RÁPIDA (V4 Optimized): Compra direta via Parâmetros (1-tick latency)
-                // Remove a necessidade de requisitar 'proposal' antes de 'buy'
+                // ✅ OBTER PROPOSTA (Estabilização V4)
+                // Solicitar proposta antes de comprar garante que a Deriv valide saldo e parâmetros
+                const proposalResponse = await connection.sendRequest(
+                    {
+                        proposal: 1,
+                        amount: roundedStake,
+                        basis: 'stake',
+                        contract_type: contractType,
+                        currency: connection.currency || 'USD',
+                        duration: duration,
+                        duration_unit: 't',
+                        symbol: symbol,
+                        barrier: barrier,
+                    },
+                    60000
+                );
+
+                const propError = proposalResponse.error || proposalResponse.proposal?.error;
+                if (propError) {
+                    const errorCode = propError?.code || '';
+                    const errorMessage = propError?.message || JSON.stringify(propError);
+
+                    // Erros de proposta geralmente não progridem
+                    const nonRetryableErrors = ['InvalidAmount', 'InsufficientBalance', 'InvalidContract', 'InvalidSymbol', 'CustomLimitsViolated'];
+                    if (nonRetryableErrors.some(code => errorCode.includes(code) || errorMessage.includes(code))) {
+                        this.logger.error(`[Zeus][${userId}] ❌ Erro na proposta: ${errorMessage}`);
+                        throw new Error(errorMessage);
+                    }
+
+                    lastError = new Error(errorMessage);
+                    if (attempt < maxRetries) {
+                        this.logger.warn(`[Zeus][${userId}] ⚠️ Erro retentável na proposta (tentativa ${attempt + 1}/${maxRetries + 1}): ${errorMessage}`);
+                        continue;
+                    }
+                    throw lastError;
+                }
+
+                const proposalId = proposalResponse.proposal?.id;
+                const askPrice = proposalResponse.proposal?.ask_price;
+
+                if (!proposalId || askPrice === undefined) {
+                    throw new Error('Proposta inválida recebida (sem id ou ask_price)');
+                }
+
+                // ✅ COMPRAR VIA PROPOSTA (Fluxo estável)
                 const buyResponse = await connection.sendRequest(
                     {
-                        buy: 1,
-                        price: roundedStake,
-                        parameters: {
-                            amount: roundedStake,
-                            basis: 'stake',
-                            contract_type: contractType,
-                            currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
-                            duration: duration,
-                            duration_unit: 't',
-                            symbol: symbol,
-                            barrier: barrier,
-                        }
+                        buy: proposalId,
+                        price: askPrice,
                     },
-                    60000, // timeout 60s (igual Orion)
+                    60000,
                 );
 
                 // ✅ Verificar erros na resposta - igual Orion
@@ -1554,19 +1658,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     continue;
                 }
 
-                // ✅ Se não é retentável ou esgotou tentativas, logar e retornar null
+                // ✅ Se não é retentável ou esgotou tentativas, lançar erro para ser capturado no executeTrade
                 if (attempt >= maxRetries) {
                     this.logger.error(`[Zeus][${userId}] ❌ Erro ao comprar contrato após ${maxRetries + 1} tentativas: ${errorMessage}`, error?.stack);
+                    throw new Error(errorMessage);
                 } else {
                     this.logger.error(`[Zeus][${userId}] ❌ Erro não retentável ao comprar contrato: ${errorMessage}`, error?.stack);
+                    throw new Error(errorMessage);
                 }
-                return null;
             }
         }
 
         // ✅ Se chegou aqui, todas as tentativas falharam
-        this.logger.error(`[Zeus][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${lastError?.message || 'Erro desconhecido'}`);
-        return null;
+        const finalError = lastError?.message || 'Falha desconhecida no sistema de compra';
+        this.logger.error(`[Zeus][${userId}] ❌ Falha ao comprar contrato após ${maxRetries + 1} tentativas: ${finalError}`);
+        throw new Error(finalError);
     }
 
     /**
@@ -1577,7 +1683,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // V4: Baseado no lucro do CICLO
         const currentCycleProfit = state.cycleProfit;
-        const triggerValue = state.cycleTarget * 0.7; // ✅ Fix V4 spec: 70%
+        const triggerValue = state.cycleTarget * 0.4; // ✅ V4 spec: Ativa com 40% da meta do ciclo
 
         if (!state.blindadoActive) {
             if (currentCycleProfit >= triggerValue) {
@@ -1631,7 +1737,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // Checar conclusão do ciclo (Meta do Ciclo atingida)
-        if (state.cycleProfit >= state.cycleTarget) { // 25% da meta diária
+        const currentCycleProfitRounded = Math.round(state.cycleProfit * 100) / 100;
+        if (currentCycleProfitRounded >= state.cycleTarget) { // 25% da meta diária
             this.saveLog(userId, 'SUCCESS', 'CYCLE',
                 `🔄 CICLO ${state.cycleCurrent} CONCLUÍDO | Lucro Ciclo: ${state.cycleProfit.toFixed(2)}`);
 
@@ -1686,7 +1793,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         }
 
         // 3. GATILHO: Risco (Drawdown Máximo do Ciclo)
-        if (state.cycleProfit <= -state.cycleMaxDrawdown) {
+        const currentCycleLossRounded = Math.round(state.cycleProfit * 100) / 100;
+        if (currentCycleLossRounded <= -state.cycleMaxDrawdown) {
             this.saveLog(userId, 'ERROR', 'RISK', `🛑 DRAWDOWN MÁXIMO DO CICLO ${state.cycleCurrent} ATINGIDO ($${state.cycleProfit.toFixed(2)}). Encerrando ciclo.`);
 
             // ✅ V4 Checklist: Memória de Risco - Se o ciclo foi ruim, o próximo começa em PRECISO
@@ -1761,6 +1869,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.wins++;
             state.consecutiveLosses = 0;
             state.perdasAcumuladas = 0;
+            state.analysis = "PRINCIPAL"; // ✅ Resetar para principal após vitória
 
             // ✅ Reset Recovery: Voltar para o modo original se estava em modo de segurança
             const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
@@ -1773,6 +1882,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.losses++;
             state.consecutiveLosses++;
             state.perdasAcumuladas += Math.abs(result.profit);
+            state.analysis = "RECUPERACAO"; // ✅ Marcar como recuperação após perda
 
             // ✅ V4 Checklist: Ativar MODO PRECISO após 1 PERDA (Modo Recuperação)
             if (state.consecutiveLosses >= 1 && state.mode !== 'PRECISO') {
@@ -2571,7 +2681,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     private logAnalysisStarted(userId: string, mode: string, tickCount?: number, reason?: string) {
         const countStr = tickCount ? ` (Ticks: ${tickCount})` : '';
-        const actionStr = reason ? `⏸️ ENTRADA BLOQUEADA: ${reason}` : 'Aguardando padrões...';
+        // ✅ Melhoria Visual: "⏳ AGUARDANDO PADRÃO" em vez de "BLOQUEADA" para não confundir o usuário
+        const actionStr = reason ? `⏳ AGUARDANDO PADRÃO: ${reason}` : 'Aguardando padrões...';
         const message = `🧠 ANÁLISE DO MERCADO\n` +
             `• MODO: ${mode}\n` +
             `• STATUS: Monitorando padrões${countStr}\n` +
