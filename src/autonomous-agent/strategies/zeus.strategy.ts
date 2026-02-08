@@ -2317,10 +2317,38 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     /**
      * ✅ Obtém ou cria conexão WebSocket reutilizável por token
+     * AGORA COM FALLBACK DINÂMICO DE APP ID (111346 -> 1089)
      */
-    private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
+    private async getOrCreateWebSocketConnection(token: string, userId?: string, forceAppId?: string): Promise<{
         ws: WebSocket;
-        currency?: string; // ✅ Adicionado
+        currency?: string;
+        sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
+        subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
+        removeSubscription: (subId: string) => void;
+    }> {
+        // Tenta conectar (lógica padrão)
+        try {
+            return await this._internalConnect(token, userId, forceAppId);
+        } catch (error: any) {
+            // Se falhar e for erro de Token Inválido E não estivermos já usando o ID 1089
+            if (error.message && error.message.includes('InvalidToken') && forceAppId !== '1089') {
+                this.logger.warn(`[Zeus][${userId}] ⚠️ Token inválido no App ID padrão. Tentando fallback para App ID 1089...`);
+                // Tenta de novo forçando o ID 1089
+                return await this._internalConnect(token, userId, '1089');
+            }
+            throw error;
+        }
+    }
+    /**
+     * ✅ Método interno de conexão (com suporte a override de App ID)
+     */
+    private async _internalConnect(
+        token: string,
+        userId?: string,
+        forceAppId?: string
+    ): Promise<{
+        ws: WebSocket;
+        currency?: string;
         sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
         subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
         removeSubscription: (subId: string) => void;
@@ -2358,10 +2386,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.logger.debug(`[Zeus] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
         }
 
-        // ✅ Criar nova conexão
-        this.logger.debug(`[Zeus] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
-        // ✅ [FIX] Usar ws.derivws.com para maior compatibilidade com App ID 111346
-        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        // ✅ Criar nova conexão com App ID dinâmico
+        const currentAppId = forceAppId || this.appId;
+        this.logger.debug(`[Zeus] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket (App ID: ${currentAppId})`);
+
+        // ✅ [FIX] Usar ws.derivws.com para maior compatibilidade
+        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${currentAppId}`;
 
         const ws = await new Promise<WebSocket>((resolve, reject) => {
             // ✅ [FIX] Usar Origin header para evitar bloqueios de CORS
