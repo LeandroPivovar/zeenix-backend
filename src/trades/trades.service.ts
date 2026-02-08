@@ -330,157 +330,100 @@ export class TradesService {
       dateTo = lastDay.toISOString().split('T')[0];
     }
 
-    const allUsers = await this.userRepository.findAll();
-    const activeUsers = allUsers.filter(u => u.isActive && Number(u.realAmount) > 0);
+    // Ajustar datas para incluir o dia inteiro no filtro SQL
+    const dateFromTime = `${dateFrom} 00:00:00`;
+    const dateToTime = `${dateTo} 23:59:59`;
 
-    console.log(`[TradesService] Buscando markup para ${activeUsers.length} usuários ativos de ${dateFrom} até ${dateTo}`);
+    console.log(`[TradesService] Buscando markup (SQL Otimizado) de ${dateFromTime} até ${dateToTime}`);
 
-    const results: any[] = [];
-    let totalCommission = 0;
-    let totalPayout = 0;
-    let totalTransactions = 0;
-    let usersWithMarkup = 0;
+    const query = `
+      SELECT 
+        U.id as userId,
+        U.name,
+        U.email,
+        U.phone,
+        U.id_real_account as loginid,
+        U.real_amount as realAmount,
+        U.role,
+        U.trader_mestre as traderMestre,
+        COUNT(AL.id) as transactionCount,
+        SUM(AL.returned_value) as totalPayout
+      FROM users U
+      INNER JOIN ai_sessions AI ON AI.user_id = U.id
+      INNER JOIN ai_trade_logs AL ON AL.ai_sessions_id = AI.id
+      WHERE 
+        AI.account_type = 'real' 
+        AND AL.result = 'WON'
+        AND AL.created_at >= ? 
+        AND AL.created_at <= ?
+      GROUP BY U.id, U.name, U.email, U.phone, U.id_real_account, U.real_amount, U.role, U.trader_mestre
+      ORDER BY totalPayout DESC
+    `;
 
-    // Função auxiliar para buscar dados de um usuário
-    const fetchUserMarkup = async (user: any) => {
-      let userTotalPayout = 0;
-      let userTransactions = 0;
-      const breakdown = {
-        manual: { payout: 0, count: 0 },
-        ia: { payout: 0, count: 0 },
-        agent: { payout: 0, count: 0 },
-        copy: { payout: 0, count: 0 }
-      };
+    try {
+      const rawResults = await this.dataSource.query(query, [dateFromTime, dateToTime]);
 
-      try {
-        // 1. Trades Manuais (trades table) - status = 'won'
-        const manualWins = await this.dataSource.query(
-          `SELECT SUM(profit) as total, COUNT(*) as count 
-           FROM trades 
-           WHERE user_id = ? AND status = 'won' 
-           AND DATE(created_at) BETWEEN ? AND ?
-           AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
-          [user.id, dateFrom, dateTo]
-        );
-        const manualProfit = parseFloat(manualWins[0]?.total || 0);
-        const manualCount = parseInt(manualWins[0]?.count || 0);
-        breakdown.manual.payout = manualProfit;
-        breakdown.manual.count = manualCount;
-        userTotalPayout += manualProfit;
-        userTransactions += manualCount;
+      let totalCommission = 0;
+      let totalPayout = 0;
+      let totalTransactions = 0;
+      let usersWithMarkup = 0;
 
-        // 2. AI Trades (ai_trades table) - status = 'WON'
-        const aiWins = await this.dataSource.query(
-          `SELECT SUM(profit_loss) as total, COUNT(*) as count 
-           FROM ai_trades 
-           WHERE user_id = ? AND status = 'WON' 
-           AND DATE(created_at) BETWEEN ? AND ?
-           AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
-          [user.id, dateFrom, dateTo]
-        );
-        const aiProfit = parseFloat(aiWins[0]?.total || 0);
-        const aiCount = parseInt(aiWins[0]?.count || 0);
-        breakdown.ia.payout = aiProfit;
-        breakdown.ia.count = aiCount;
-        userTotalPayout += aiProfit;
-        userTransactions += aiCount;
+      const formattedResults = rawResults.map((row: any) => {
+        const totalPayoutVal = parseFloat(row.totalPayout || 0);
+        // Comissão de 3% sobre o payout (valor retornado pela corretora)
+        const commission = totalPayoutVal * 0.03;
 
-        // 3. Agente Autônomo (autonomous_agent_trades table) - status = 'WON'
-        try {
-          const agentWins = await this.dataSource.query(
-            `SELECT SUM(profit_loss) as total, COUNT(*) as count 
-             FROM autonomous_agent_trades 
-             WHERE user_id = ? AND status = 'WON' 
-             AND DATE(created_at) BETWEEN ? AND ?
-             AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
-            [user.id, dateFrom, dateTo]
-          );
-          const agentProfit = parseFloat(agentWins[0]?.total || 0);
-          const agentCount = parseInt(agentWins[0]?.count || 0);
-          breakdown.agent.payout = agentProfit;
-          breakdown.agent.count = agentCount;
-          userTotalPayout += agentProfit;
-          userTransactions += agentCount;
-        } catch (e) {
-          // Tabela pode não existir
-        }
+        if (commission > 0) usersWithMarkup++;
+        totalCommission += commission;
+        totalPayout += totalPayoutVal;
+        totalTransactions += parseInt(row.transactionCount || 0);
 
-        // 4. Copy Trading (copy_trading_operations table) - result = 'win'
-        try {
-          const copyWins = await this.dataSource.query(
-            `SELECT SUM(profit) as total, COUNT(*) as count 
-             FROM copy_trading_operations 
-             WHERE user_id = ? AND result = 'win' 
-             AND DATE(executed_at) BETWEEN ? AND ?
-             AND (deriv_currency = 'USD' OR deriv_currency IS NULL)`,
-            [user.id, dateFrom, dateTo]
-          );
-          const copyProfit = parseFloat(copyWins[0]?.total || 0);
-          const copyCount = parseInt(copyWins[0]?.count || 0);
-          breakdown.copy.payout = copyProfit;
-          breakdown.copy.count = copyCount;
-          userTotalPayout += copyProfit;
-          userTransactions += copyCount;
-        } catch (e) {
-          // Tabela pode não existir
-        }
+        return {
+          userId: row.userId,
+          name: row.name,
+          email: row.email,
+          whatsapp: row.phone,
+          country: 'Brasil', // Default, já que não temos coluna country na tabela users ainda
+          loginid: row.loginid || 'N/A',
+          transactionCount: parseInt(row.transactionCount || 0),
+          commission: parseFloat(commission.toFixed(2)),
+          realAmount: parseFloat(row.realAmount || 0),
+          totalPayout: parseFloat(totalPayoutVal.toFixed(2)),
+          // Structure expected by frontend
+          breakdown: {
+            manual: { payout: 0, count: 0 },
+            ia: { payout: totalPayoutVal, count: parseInt(row.transactionCount || 0) }, // All attributed to IA for now
+            agent: { payout: 0, count: 0 },
+            copy: { payout: 0, count: 0 }
+          },
+          realData: true,
+          role: row.role,
+          traderMestre: row.traderMestre === 1 || row.traderMestre === true,
+        };
+      });
 
-      } catch (error) {
-        console.error(`Erro ao calcular markup para ${user.email}:`, error);
-      }
-
-      // Cálculo do Markup (Comissão de 3%)
-      const grossProfit = userTotalPayout / 0.97;
-      const userCommission = grossProfit * 0.03;
-
-      if (userCommission > 0) usersWithMarkup++;
-      totalCommission += userCommission;
-      totalPayout += userTotalPayout;
-      totalTransactions += userTransactions;
+      console.log(`[TradesService] Markup calculado para ${formattedResults.length} usuários.`);
 
       return {
-        userId: user.id,
-        name: user.name,
-        email: user.email,
-        whatsapp: user.phone || null,
-        country: 'Brasil',
-        loginid: user.idRealAccount || 'N/A',
-        transactionCount: userTransactions,
-        commission: parseFloat(userCommission.toFixed(2)),
-        totalPayout: parseFloat(userTotalPayout.toFixed(2)),
-        realAmount: Number(user.realAmount || 0),
-        breakdown: breakdown,
-        realData: userTransactions > 0,
-        role: user.role,
-        traderMestre: user.traderMestre,
+        users: formattedResults,
+        summary: {
+          totalCommission: parseFloat(totalCommission.toFixed(2)),
+          totalPayout: parseFloat(totalPayout.toFixed(2)),
+          totalTransactions: totalTransactions,
+          totalUsers: formattedResults.length,
+          usersWithMarkup: usersWithMarkup,
+          usersWithoutMarkup: formattedResults.length - usersWithMarkup,
+        },
+        period: {
+          from: dateFrom,
+          to: dateTo
+        }
       };
-    };
 
-    // Executar em paralelo com limite de concorrência
-    const chunkSize = 5;
-    for (let i = 0; i < activeUsers.length; i += chunkSize) {
-      const chunk = activeUsers.slice(i, i + chunkSize);
-      const chunkResults = await Promise.all(chunk.map(user => fetchUserMarkup(user)));
-      results.push(...chunkResults);
+    } catch (error) {
+      console.error('[TradesService] Erro ao executar query de markup:', error);
+      throw new Error('Erro ao calcular dados de markup');
     }
-
-    results.sort((a, b) => b.commission - a.commission);
-
-    return {
-      users: results,
-      summary: {
-        totalCommission: parseFloat(totalCommission.toFixed(2)),
-        totalPayout: parseFloat(totalPayout.toFixed(2)),
-        totalTransactions: totalTransactions,
-        totalUsers: results.length,
-        usersWithMarkup: usersWithMarkup,
-        usersWithoutMarkup: results.length - usersWithMarkup,
-      },
-      period: {
-        from: dateFrom,
-        to: dateTo
-      }
-    };
   }
 
 
