@@ -226,14 +226,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
   ) {
-    this.appId = process.env.DERIV_APP_ID || '1089';
+    this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
   async onModuleInit() {
     this.logger.log('🦅 FALCON Strategy inicializado');
     await this.initialize();
   }
-
   async initialize(): Promise<void> {
     await this.syncActiveUsersFromDb();
   }
@@ -1975,7 +1974,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     return new Promise((resolve, reject) => {
       let authResolved = false;
-      const socket = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${this.appId}`);
+      const socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`, {
+        headers: { Origin: 'https://app.deriv.com' },
+      });
       const connectionTimeout = setTimeout(() => {
         if (!authResolved) {
           authResolved = true;

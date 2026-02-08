@@ -2360,12 +2360,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ Criar nova conexão
         this.logger.debug(`[Zeus] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket para token`);
-        // ✅ [FIX] Usar ws.binaryws.com para maior compatibilidade com App ID 1089 (igual Falcon)
-        const endpoint = `wss://ws.binaryws.com/websockets/v3?app_id=${this.appId}`;
+        // ✅ [FIX] Usar ws.derivws.com para maior compatibilidade com App ID 111346
+        const endpoint = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
 
         const ws = await new Promise<WebSocket>((resolve, reject) => {
-            // ✅ [FIX] Remover Origin header para evitar bloqueios de CORS/Policy em App IDs legados
-            const socket = new WebSocket(endpoint);
+            // ✅ [FIX] Usar Origin header para evitar bloqueios de CORS
+            const socket = new WebSocket(endpoint, {
+                headers: { Origin: 'https://app.deriv.com' },
+            });
 
             let authResolved = false;
             const connectionTimeout = setTimeout(() => {
