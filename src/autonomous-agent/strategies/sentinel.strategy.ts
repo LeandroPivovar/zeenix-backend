@@ -44,6 +44,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     {
       ws: WebSocket;
       authorized: boolean;
+      currency?: string; // ✅ Adicionado para suportar múltiplas moedas (BRL, USD, etc)
       keepAliveInterval: NodeJS.Timeout | null;
       requestIdCounter: number;
       pendingRequests: Map<string, { resolve: (value: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }>;
@@ -952,7 +953,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           amount: 1,
           basis: 'stake',
           contract_type: contractType,
-          currency: 'USD',
+          currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
           duration: duration,
           duration_unit: 't',
           symbol: symbol,
@@ -1039,7 +1040,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             amount: roundedStake,
             basis: 'stake',
             contract_type: contractType,
-            currency: 'USD',
+            currency: connection.currency || 'USD', // ✅ Usar moeda real da conta
             duration: duration,
             duration_unit: 't',
             symbol: symbol,
@@ -1167,6 +1168,10 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
                 }
 
                 if (state) {
+                  // ✅ Adicionar cooldown de 15s após erro para evitar spam
+                  state.cooldownUntilTs = Date.now() + 15000;
+                  this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
+
                   state.isWaitingContract = false;
                   state.currentContractId = null;
                   state.currentTradeId = null;
@@ -1256,8 +1261,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       return;
     }
 
-    state.isWaitingContract = false;
     const tradeId = state.currentTradeId;
+    // state.isWaitingContract = false; // Removido daqui para evitar race condition
     state.currentContractId = null;
     state.currentTradeId = null;
 
@@ -1647,6 +1652,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
    */
   private async getOrCreateWebSocketConnection(token: string, userId?: string): Promise<{
     ws: WebSocket;
+    currency?: string; // ✅ Adicionado
     sendRequest: (payload: any, timeoutMs?: number) => Promise<any>;
     subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
@@ -1667,18 +1673,12 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
 
         return {
           ws: existing.ws,
+          currency: existing.currency, // ✅ Retornar moeda existente
           sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
           subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
             this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
           removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
-      } else {
-        this.logger.warn(`[SENTINEL] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
-        if (existing.keepAliveInterval) {
-          clearInterval(existing.keepAliveInterval);
-        }
-        existing.ws.close();
-        this.wsConnections.delete(token);
       }
     } else {
       this.logger.debug(`[SENTINEL] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
@@ -1735,7 +1735,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
             }
 
             conn.authorized = true;
-            this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'}`);
+            conn.currency = msg.authorize?.currency || 'USD'; // ✅ Capturar moeda real
+            this.logger.log(`[SENTINEL] ✅ [${userId || 'SYSTEM'}] Autorizado com sucesso | LoginID: ${msg.authorize?.loginid || 'N/A'} | Moeda: ${conn.currency}`);
 
             // ✅ Iniciar keep-alive
             conn.keepAliveInterval = setInterval(() => {
@@ -1749,7 +1750,14 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
               }
             }, 90000);
 
-            resolve(socket);
+            resolve({
+              ws: socket,
+              currency: conn.currency, // ✅ Retornar moeda
+              sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
+              subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
+                this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
+              removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
+            } as any);
             return;
           }
 
@@ -1857,6 +1865,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     const conn = this.wsConnections.get(token)!;
     return {
       ws: conn.ws,
+      currency: conn.currency, // ✅ Retornar a moeda capturada
       sendRequest: (payload: any, timeoutMs = 60000) => this.sendRequestViaConnection(token, payload, timeoutMs),
       subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs = 90000) =>
         this.subscribeViaConnection(token, payload, callback, subId, timeoutMs),
