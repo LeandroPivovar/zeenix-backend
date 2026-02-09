@@ -933,11 +933,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         const limitCycle = config.limitOpsCycle || 500;
         if (state.cycleOps >= limitCycle) {
-            // ✅ V4 Checklist: 1 hora de pausa após Limite de Operações do Ciclo
-            // ✅ Test Mode: Shortened to 10 min
-            state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 10 * 60 * 1000);
-            this.logger.log(`[Zeus][${userId}] 🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${limitCycle}). Pausando 10 min.`);
-            this.saveLog(userId, 'WARN', 'CYCLE', `🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${limitCycle}). Pausando 10 min.`);
+            // ✅ V4 Checklist: 30 min de pausa após Limite de Operações do Ciclo
+            state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 60 * 1000);
+            this.logger.log(`[Zeus][${userId}] 🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${limitCycle}). Pausando 30 min.`);
+            this.saveLog(userId, 'WARN', 'CYCLE', `🛑 Limite de Operações do Ciclo atingido (${state.cycleOps}/${limitCycle}). Pausando 30 min.`);
             return false;
         }
 
@@ -1123,7 +1122,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // Logging Throttling para não floodar se não houver mudança
         const logAnalysis = (msg: string) => {
             if (!state.lastDeniedLogTime || Date.now() - state.lastDeniedLogTime > 5000) {
-                this.saveLog(userId, 'DEBUG', 'ANALYSIS', msg);
+                this.logAnalysisStarted(userId, state.mode, digits.length, msg);
                 state.lastDeniedLogTime = Date.now();
             }
         };
@@ -1136,7 +1135,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     signalFound = true;
                     info = 'Quarteto Perfeito + Tendência';
                 } else {
-                    logAnalysis(`⚠️ Quarteto OK, mas aguardando Confirmação (Lado/Trend) em modo PRECISO.`);
+                    logAnalysis(`Quarteto Perfeito (4/4) detectado, aguardando confirmação de tendência`);
                 }
             } else {
                 signalFound = true;
@@ -1149,12 +1148,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 signalFound = true;
                 info = 'Onda Alta';
             } else {
-                logAnalysis(`⚠️ Onda Alta detectada, mas filtrada por micro-tendência de baixa.`);
+                logAnalysis(`Onda Alta (3/3) detectada, filtrada por micro-tendência de baixa`);
             }
         } else {
-            // Log de "nada encontrado" ocasional ou se chegar perto
-            if (qp.count >= 3 || oa.count >= 3) {
-                logAnalysis(`🔍 Analisando: QP=${qp.count}/4, OA=${oa.count}/4. Aguardando densidade.`);
+            // Log de análise com motivo específico
+            const qpReason = qp.reason || `Quarteto Perfeito: ${qp.count}/4 dígitos altos`;
+            const oaReason = oa.reason || `Onda Alta: ${oa.count}/3 dígitos altos`;
+
+            if (qp.count >= 2 || oa.count >= 2) {
+                logAnalysis(`${qpReason} | ${oaReason}`);
             }
         }
 
@@ -2838,6 +2840,50 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
         this.saveLog(userId, 'WARN', 'RISK', message);
+    }
+
+    // --- CATEGORIA 5: ALERTAS E STATUS (Alinhado com Falcon) ---
+
+    private logRiskAlert(userId: string, alert: {
+        type: 'STOP_LOSS' | 'PROFIT_TARGET' | 'DRAWDOWN' | 'LIMIT_OPS';
+        message: string;
+        value?: number;
+    }) {
+        const icon = alert.type === 'PROFIT_TARGET' ? '🎯' : '⚠️';
+        const message = `${icon} ALERTA DE RISCO: ${alert.type}\n` +
+            `• Mensagem: ${alert.message}` +
+            (alert.value !== undefined ? `\n• Valor: $${alert.value.toFixed(2)}` : '');
+
+        this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
+        this.saveLog(userId, alert.type === 'PROFIT_TARGET' ? 'INFO' : 'ERROR', 'RISK', message);
+    }
+
+    private logStatusUpdate(userId: string, status: {
+        currentProfit: number;
+        targetRemaining: number;
+        stopRemaining: number;
+        isBlindado: boolean;
+    }) {
+        const message = `📊 STATUS DA SESSÃO\n` +
+            `• Lucro Atual: $${status.currentProfit.toFixed(2)}\n` +
+            `• Falta para Meta: $${status.targetRemaining.toFixed(2)}\n` +
+            `• Distância do Stop: $${status.stopRemaining.toFixed(2)}\n` +
+            `• Proteção Blindada: ${status.isBlindado ? 'ATIVA 🛡️' : 'INATIVA ❌'}`;
+
+        this.saveLog(userId, 'INFO', 'RISK', message);
+    }
+
+    private logWinStreak(userId: string, streak: {
+        consecutiveWins: number;
+        accumulatedProfit: number;
+        currentStake: number;
+    }) {
+        const message = `🔥 SEQUÊNCIA DE VITÓRIAS!\n` +
+            `• Vitórias Consecutivas: ${streak.consecutiveWins}\n` +
+            `• Lucro Acumulado: $${streak.accumulatedProfit.toFixed(2)}\n` +
+            `• Próxima Stake: $${streak.currentStake.toFixed(2)}`;
+
+        this.saveLog(userId, 'INFO', 'RISK', message);
     }
 
 }
