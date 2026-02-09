@@ -109,6 +109,7 @@ interface ZeusUserState extends AutonomousAgentState {
     ticksSinceLastAnalysis: number;
     lastDigits: number[];
     lastOpProfit?: number;
+    lastDeniedLogTime?: number; // ✅ Added for log throttling
 }
 import { LogQueueService } from '../../utils/log-queue.service';
 
@@ -172,7 +173,7 @@ export const ZEUS_CONSTANTS = {
     payoutPrimary: 1.26, // 126% (Net Payout -> Gross ~130% - Markup)
     payoutRecovery: 1.26, // Same payout for recovery (Contract stays Digit Over 5)
     martingaleMaxLevel: 50, // "Sem limite" for Moderate/Aggressive, but kept high safe limit
-    strategicPauseSeconds: 300, // 5 minutes (V4 Spec)
+    strategicPauseSeconds: 1800, // 30 minutes (V4 Spec)
     cooldownWinSeconds: 2, // Fast re-entry
     cooldownLossSeconds: 2,
     dataCollectionTicks: 5, // Just need 4 for pattern + 1 safety
@@ -668,39 +669,43 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ LOGIC HELPER: Filtro Onda Alta (V4 Spec)
      * Regra: Sequência de 4 dígitos altos consecutivos (6, 7, 8, 9)
      */
-    private filtroOndaAlta(digits: number[]): { passes: boolean; reason?: string; metrics?: any } {
+    private filtroOndaAlta(digits: number[]): { passes: boolean; reason?: string; metrics?: any; count: number } {
         // ✅ V4 OPTIMIZATION: Janela reduzida para 3 dígitos para pegar início da tendência
         const sequence = digits.slice(-3);
-        const isHigh = sequence.every(d => d >= 6);
+        const highDigits = sequence.filter(d => d >= 6);
+        const count = highDigits.length;
+        const isHigh = count === 3;
 
         if (isHigh) {
             // Requer pelo menos 2 dígitos >= 7 para garantir força na tendência
             const strongDigits = sequence.filter(d => d >= 7).length;
             if (strongDigits >= 2) {
-                return { passes: true, metrics: { sequence } };
+                return { passes: true, metrics: { sequence }, count };
             }
-            return { passes: false, reason: `Onda Fraca (Muitos 6s): [${sequence.join(', ')}]` };
+            return { passes: false, reason: `Onda Fraca (Muitos 6s): [${sequence.join(', ')}]`, count };
         }
-        return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]` };
+        return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]`, count };
     }
 
     /**
      * ✅ LOGIC HELPER: Filtro Quarteto Perfeito (V4 Spec)
      * Regra: Sequência de 4 dígitos altos consecutivos e TODOS DIFERENTES
      */
-    private filtroQuartetoPerfeito(digits: number[]): { passes: boolean; reason?: string; metrics?: any } {
+    private filtroQuartetoPerfeito(digits: number[]): { passes: boolean; reason?: string; metrics?: any; count: number } {
         const sequence = digits.slice(-4);
-        const isHigh = sequence.every(d => d >= 6);
+        const highDigits = sequence.filter(d => d >= 6);
+        const count = highDigits.length;
+        const isHigh = count === 4;
 
         if (!isHigh) {
-            return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]` };
+            return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]`, count };
         }
 
         const unique = new Set(sequence);
         if (unique.size === 4) {
-            return { passes: true, metrics: { sequence } };
+            return { passes: true, metrics: { sequence }, count };
         }
-        return { passes: false, reason: `Dígitos repetidos: [${sequence.join(', ')}]` };
+        return { passes: false, reason: `Dígitos repetidos: [${sequence.join(', ')}]`, count };
     }
 
     /**
@@ -813,8 +818,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         switch (config.riskProfile) {
             case 'CONSERVADOR':
-                // Recupera 100% das perdas
-                stake = (perdas * 1.00 * 100) / payoutLiq;
+                // Recupera 100% das perdas + 2%
+                stake = (perdas * 1.02 * 100) / payoutLiq;
                 break;
             case 'MODERADO':
                 // Recupera 100% + 15%
@@ -1115,6 +1120,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let signalFound = false;
         let info = '';
 
+        // Logging Throttling para não floodar se não houver mudança
+        const logAnalysis = (msg: string) => {
+            if (!state.lastDeniedLogTime || Date.now() - state.lastDeniedLogTime > 5000) {
+                this.saveLog(userId, 'DEBUG', 'ANALYSIS', msg);
+                state.lastDeniedLogTime = Date.now();
+            }
+        };
+
         // Prioridade: Quarteto Perfeito (Mais forte)
         if (qp.passes) {
             // No modo preciso, exigimos confirmação de lado OU tendência de alta clara
@@ -1122,6 +1135,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 if (fl.passes || !isDowntick) {
                     signalFound = true;
                     info = 'Quarteto Perfeito + Tendência';
+                } else {
+                    logAnalysis(`⚠️ Quarteto OK, mas aguardando Confirmação (Lado/Trend) em modo PRECISO.`);
                 }
             } else {
                 signalFound = true;
@@ -1129,9 +1144,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
         }
         // Secundário: Onda Alta (Só aceita se não for downtick, mesmo no Normal)
-        else if (oa.passes && !isDowntick) {
-            signalFound = true;
-            info = 'Onda Alta';
+        else if (oa.passes) {
+            if (!isDowntick) {
+                signalFound = true;
+                info = 'Onda Alta';
+            } else {
+                logAnalysis(`⚠️ Onda Alta detectada, mas filtrada por micro-tendência de baixa.`);
+            }
+        } else {
+            // Log de "nada encontrado" ocasional ou se chegar perto
+            if (qp.count >= 3 || oa.count >= 3) {
+                logAnalysis(`🔍 Analisando: QP=${qp.count}/4, OA=${oa.count}/4. Aguardando densidade.`);
+            }
         }
 
         if (signalFound) {
@@ -2917,6 +2941,7 @@ export interface ZeusState {
     ticksSinceLastAnalysis: number;
     lastDigits: number[];
     lastRejectionReason?: string;
+    lastDeniedLogTime?: number; // ✅ Added for log throttling
 }
 
 // Alias para manter compatibilidade com nome antigo se necessário, mas preferimos usar ZeusState

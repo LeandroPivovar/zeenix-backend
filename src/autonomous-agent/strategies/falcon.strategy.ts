@@ -64,18 +64,18 @@ export const FALCON_CONSTANTS = {
   payoutPrincipal: 0.34, // Digit Over 2 (37% - 3% markup)
   payoutRecovery: 0.84,  // Digit Over 4 (87% - 3% markup)
   martingaleMaxLevel: 5, // Limite para perfil Conservador
-  strategicPauseSeconds: 300, // 300s (5m) - Pausa após 5 perdas consecutivas (ZEUS V4 spec)
+  strategicPauseSeconds: 1800, // 1800s (30m) - Pausa pós 5 perdas ou ciclo (V4 Spec)
   cooldownWinSeconds: 2,
   cooldownLossSeconds: 2,
-  dataCollectionTicks: 24, // Max window (NORMAL)
+  dataCollectionTicks: 74, // Max window (PRECISO)
   cycles: 4,
   cyclePercent: 0.25,
 };
 
 export const FALCON_MODES = {
-  NORMAL: { window: 24, hits: 16, barrier: 2 },
-  PRECISO: { window: 15, hits: 11, barrier: 2 },
-  RECOVERY: { window: 20, hits: 12, barrier: 4 }
+  NORMAL: { window: 67, hits: 42, targets: [1, 2, 3, 4, 5], barrier: 2 },
+  PRECISO: { window: 74, hits: 23, targets: [6, 7], barrier: 2 },
+  RECOVERY: { window: 73, hits: 26, targets: [1, 2, 3, 4, 5], barrier: 4 }
 };
 
 interface FalconUserConfig extends AutonomousAgentConfig {
@@ -1693,7 +1693,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     if (ticks.length < settings.window) return null;
 
-    // 1. Extração de Dígitos (V3.1)
+    // 1. Extração de Dígitos (V2.0 J{Janela})
     const windowTicks = ticks.slice(-settings.window);
     const symbol = config.symbol || 'R_50';
     const decimals = symbol.includes('50') || symbol.includes('100') ? 2 : (symbol.includes('10') || symbol.includes('25') ? 3 : 4);
@@ -1701,12 +1701,12 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value, symbol, decimals));
     state.lastDigits = digits;
 
-    // 2. Cálculo de Densidade
-    const targets = settings.barrier === 2 ? [3, 4, 5, 6, 7, 8, 9] : [5, 6, 7, 8, 9];
+    // 2. Cálculo de Densidade (v2.0 - Hits Exatos)
+    const targets = (settings as any).targets || (settings.barrier === 2 ? [3, 4, 5, 6, 7, 8, 9] : [5, 6, 7, 8, 9]);
     const hits = digits.filter(d => targets.includes(d)).length;
 
-    // 3. Decisão
-    if (hits >= settings.hits) {
+    // 3. Decisão (Filtro v2.0 J{Janela}_D{Dígitos}={Limite}) - Requer hit EXATO
+    if (hits === settings.hits) {
       return {
         signal: 'DIGIT',
         probability: isRecovery ? 65 : 82,
