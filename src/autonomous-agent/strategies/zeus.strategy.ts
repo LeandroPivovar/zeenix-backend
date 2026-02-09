@@ -993,6 +993,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.lastDigits.push(lastDigit);
             if (state.lastDigits.length > 50) state.lastDigits.shift();
 
+            // ✅ [PAUSE CHECK] Respeitar pausa estratégica (30min Ciclo ou 5min Perdas)
+            if (state.inStrategicPauseUntilTs && Date.now() < state.inStrategicPauseUntilTs) {
+                const remainingSeconds = Math.ceil((state.inStrategicPauseUntilTs - Date.now()) / 1000);
+
+                // Log throttle (a cada ~60s ou 60 ticks)
+                // Usando resto de divisão por 60 ticks como aproximação de tempo se ticks ~ 1s
+                const tickCounter = state.ticksSinceLastAnalysis || 0;
+                if (tickCounter % 60 === 0) {
+                    this.logger.log(`[Zeus][${userId}] ⏳ Em pausa estratégica. Retornando em ${remainingSeconds}s`);
+                }
+                return;
+            }
+
+
+
             // 2. Verificação de Contrato em curso (Fire-and-Forget Logic)
             const now = Date.now();
             if (state.isWaitingContract) {
@@ -1817,21 +1832,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'WARN', 'RISK', `⚠️ PERDA DETECTADA: Ativando MODO PRECISO para maior segurança.`);
             }
 
-            // ✅ V4 Checklist: Pausa por Sequência de Perdas (Graduated)
-            // 3 Losses -> 5 min | 4 Losses -> 10 min | 5 Losses -> 20 min
-            if (state.consecutiveLosses === 3) {
-                const pauseDurationMs = 5 * 60 * 1000; // 5 minutes
+            // ✅ V4 Checklist: Pausa Estratégica
+            // 5 Losses -> 5 min (300s)
+            if (state.consecutiveLosses >= 5) {
+                const pauseDurationMs = ZEUS_CONSTANTS.strategicPauseSeconds * 1000;
                 state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 5 minutos.`);
-            } else if (state.consecutiveLosses === 4) {
-                const pauseDurationMs = 10 * 60 * 1000; // 10 minutes
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 10 minutos.`);
-            } else if (state.consecutiveLosses >= 5) {
-                const pauseDurationMs = 20 * 60 * 1000; // 20 minutes
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                state.consecutiveLosses = 0; // Reset only after full 5-loss cycle
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 20 minutos.`);
+                state.consecutiveLosses = 0; // Reset after pause trigger
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por ${ZEUS_CONSTANTS.strategicPauseSeconds / 60} minutos.`);
             }
         }
 

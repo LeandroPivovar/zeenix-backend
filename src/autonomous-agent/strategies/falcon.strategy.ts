@@ -620,7 +620,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       }
       this.ticks.set(userId, userTicks);
 
-      // 2. Se está aguardando resultado de contrato, realizar análise apenas para detectar entrada bloqueada
+      // ✅ [PAUSE CHECK] Respeitar pausa estratégica (30min Ciclo ou 5min Perdas)
+      if (state.inStrategicPauseUntilTs && Date.now() < state.inStrategicPauseUntilTs) {
+        const remainingSeconds = Math.ceil((state.inStrategicPauseUntilTs - Date.now()) / 1000);
+
+        // Log throttle (a cada ~60s ou 60 ticks)
+        if (!state.ticksSinceLastAnalysis || state.ticksSinceLastAnalysis % 60 === 0) {
+          this.logger.debug(`[Falcon][${userId}] ⏳ Em pausa estratégica. Retornando em ${remainingSeconds}s`);
+        }
+        return;
+      }
       if (state.isWaitingContract) {
         // ✅ [SAFETY] Timeout de 40s para contrato preso
         const now = Date.now();
@@ -1640,17 +1649,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           this.saveLog(userId, 'WARN', 'RISK', `⚠️ PERDA DETECTADA: Ativando MODO PRECISO para maior segurança.`);
         }
 
-        // ✅ V4 Checklist: Pausa por Sequência de Perdas (Graduated)
-        if (state.consecutiveLosses === 3) {
-          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 5 * 60 * 1000);
-          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 5 minutos.`);
-        } else if (state.consecutiveLosses === 4) {
-          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 10 * 60 * 1000);
-          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 10 minutos.`);
-        } else if (state.consecutiveLosses >= 5) {
-          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 20 * 60 * 1000);
-          state.consecutiveLosses = 0;
-          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 20 minutos.`);
+        // ✅ V4 Checklist: Pausa Estratégica (Falcon)
+        // 5 Losses -> 5 min (300s)
+        if (state.consecutiveLosses >= 5) {
+          const pauseDurationMs = FALCON_CONSTANTS.strategicPauseSeconds * 1000;
+          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
+          state.consecutiveLosses = 0; // Reset after pause trigger
+          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por ${FALCON_CONSTANTS.strategicPauseSeconds / 60} minutos.`);
         }
       }
       this.updateBlindado(userId, state, config);
