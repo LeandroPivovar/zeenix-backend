@@ -1999,6 +1999,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   * ✅ Obtém ou cria conexão WebSocket reutilizável por token
   * AGORA COM FALLBACK DINÂMICO DE APP ID (111346 -> 1089)
   */
+  /**
+  * ✅ AGORA COM FALLBACK DINÂMICO DE APP ID (121987 -> 111346 -> 1089)
+  */
   private async getOrCreateWebSocketConnection(token: string, userId?: string, forceAppId?: string): Promise<{
     ws: WebSocket;
     currency?: string;
@@ -2006,18 +2009,36 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
     removeSubscription: (subId: string) => void;
   }> {
-    // Tenta conectar (lógica padrão)
-    try {
-      return await this._internalConnect(token, userId, forceAppId);
-    } catch (error: any) {
-      // Se falhar e for erro de Token Inválido E não estivermos já usando o ID 1089
-      if (error.message && error.message.includes('InvalidToken') && forceAppId !== '1089') {
-        this.logger.warn(`[Falcon][${userId}] ⚠️ Token inválido no App ID padrão. Tentando fallback para App ID 1089...`);
-        // Tenta de novo forçando o ID 1089
-        return await this._internalConnect(token, userId, '1089');
+    const fallbackAppIds = ['121987', '111346', '1089', '36300'];
+    const uniqueAppIds = new Set<string>();
+
+    if (forceAppId) uniqueAppIds.add(forceAppId);
+    uniqueAppIds.add(this.appId);
+    fallbackAppIds.forEach(id => uniqueAppIds.add(id));
+
+    const appIdsToTry = Array.from(uniqueAppIds);
+    let lastError: any = null;
+
+    for (const appIdToTry of appIdsToTry) {
+      try {
+        return await this._internalConnect(token, userId, appIdToTry);
+      } catch (error: any) {
+        lastError = error;
+        const isInvalidAppId = error.message && (
+          error.message.includes('InvalidToken') ||
+          error.message.includes('Token is not valid for current app ID') ||
+          error.message.includes('InvalidAppID')
+        );
+
+        if (isInvalidAppId) {
+          this.logger.warn(`[Falcon][${userId}] ⚠️ Falha com App ID ${appIdToTry}. Tentando próximo... (${error.message})`);
+          continue; // Tenta o próximo da lista
+        } else {
+          throw error;
+        }
       }
-      throw error;
     }
+    throw lastError || new Error('Falha ao conectar com todos os App IDs disponíveis');
   }
 
   /**
@@ -2046,11 +2067,15 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
         };
       }
+      // Se não estiver pronta, fecha e remove para garantir nova conexão limpa com o novo App ID
+      try { existing.ws.close(); } catch (e) { }
       this.wsConnections.delete(token);
     }
 
     // ✅ Criar nova conexão com App ID dinâmico
     const currentAppId = forceAppId || this.appId;
+    this.logger.debug(`[Falcon] 🔌 [${userId || 'SYSTEM'}] Criando nova conexão WebSocket (App ID: ${currentAppId})`);
+
     return new Promise((resolve, reject) => {
       let authResolved = false;
       const socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${currentAppId}`, {
@@ -2077,6 +2102,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             if (msg.error) {
               socket.close();
               this.wsConnections.delete(token);
+              // REJEITAR com a mensagem de erro original para que o loop de retry possa detectar InvalidToken/AppID
               reject(new Error(msg.error.message || 'Erro na autorização'));
               return;
             }

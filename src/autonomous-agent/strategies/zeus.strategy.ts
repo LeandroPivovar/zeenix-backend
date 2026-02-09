@@ -2247,7 +2247,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     /**
      * ✅ Obtém ou cria conexão WebSocket reutilizável por token
-     * AGORA COM FALLBACK DINÂMICO DE APP ID (111346 -> 1089)
+    /**
+     * ✅ AGORA COM FALLBACK DINÂMICO DE APP ID (121987 -> 111346 -> 1089)
      */
     private async getOrCreateWebSocketConnection(token: string, userId?: string, forceAppId?: string): Promise<{
         ws: WebSocket;
@@ -2256,19 +2257,51 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         subscribe: (payload: any, callback: (msg: any) => void, subId: string, timeoutMs?: number) => Promise<void>;
         removeSubscription: (subId: string) => void;
     }> {
-        // Tenta conectar (lógica padrão)
-        try {
-            return await this._internalConnect(token, userId, forceAppId);
-        } catch (error: any) {
-            // Se falhar e for erro de Token Inválido E não estivermos já usando o ID 1089
-            if (error.message && error.message.includes('InvalidToken') && forceAppId !== '1089') {
-                this.logger.warn(`[Zeus][${userId}] ⚠️ Token inválido no App ID padrão. Tentando fallback para App ID 1089...`);
-                // Tenta de novo forçando o ID 1089
-                return await this._internalConnect(token, userId, '1089');
+        // Lista de App IDs para tentar em ordem
+        // 1. O que foi passado forçado (se houver)
+        // 2. O configurado no .env (this.appId)
+        // 3. Produção (121987)
+        // 4. Homologação (111346)
+        // 5. Genérico (1089)
+        // 6. Outros (36300)
+
+        const fallbackAppIds = ['121987', '111346', '1089', '36300'];
+        const uniqueAppIds = new Set<string>();
+
+        if (forceAppId) uniqueAppIds.add(forceAppId);
+        uniqueAppIds.add(this.appId);
+        fallbackAppIds.forEach(id => uniqueAppIds.add(id));
+
+        const appIdsToTry = Array.from(uniqueAppIds);
+        let lastError: any = null;
+
+        for (const appIdToTry of appIdsToTry) {
+            try {
+                // Se já tentamos conectar e falhou, precisamos garantir que next attempts não reutilizem conexão quebrada do pool se ela existir e estiver ruim
+                // Mas _internalConnect já verifica state. 
+
+                return await this._internalConnect(token, userId, appIdToTry);
+            } catch (error: any) {
+                lastError = error;
+                const isInvalidAppId = error.message && (
+                    error.message.includes('InvalidToken') ||
+                    error.message.includes('Token is not valid for current app ID') ||
+                    error.message.includes('InvalidAppID')
+                );
+
+                if (isInvalidAppId) {
+                    this.logger.warn(`[Zeus][${userId}] ⚠️ Falha com App ID ${appIdToTry}. Tentando próximo... (${error.message})`);
+                    continue; // Tenta o próximo da lista
+                } else {
+                    throw error; // Se não for erro de App ID (ex: timeout, rede), estoura o erro real
+                }
             }
-            throw error;
         }
+
+        // Se esgotou todas as tentativas
+        throw lastError || new Error('Falha ao conectar com todos os App IDs disponíveis');
     }
+
     /**
      * ✅ Método interno de conexão (com suporte a override de App ID)
      */
@@ -2284,6 +2317,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         removeSubscription: (subId: string) => void;
     }> {
         // ✅ Verificar se já existe conexão para este token
+        // NOTA: Precisamos garantir que a conexão existente foi feita com o MESMO App ID que estamos tentando agora?
+        // O Deriv WS não expõe fácil o App ID da conexão aberta, mas se ela está OPEN e AUTHORIZED, o token funcionou nela.
+        // Então podemos reutilizar.
+
         const existing = this.wsConnections.get(token);
         if (existing) {
             const readyState = existing.ws.readyState;
@@ -2305,15 +2342,14 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     removeSubscription: (subId: string) => this.removeSubscriptionFromConnection(token, subId),
                 };
             } else {
-                this.logger.warn(`[Zeus] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta (readyState=${readyStateText}, authorized=${existing.authorized}). Fechando e recriando.`);
+                // Se não está pronta, removemos para forçar nova tentativa com o App ID atual do loop
+                this.logger.warn(`[Zeus] ⚠️ [${userId || 'SYSTEM'}] Conexão existente não está pronta. Fechando e recriando.`);
                 if (existing.keepAliveInterval) {
                     clearInterval(existing.keepAliveInterval);
                 }
-                existing.ws.close();
+                try { existing.ws.close(); } catch (e) { }
                 this.wsConnections.delete(token);
             }
-        } else {
-            this.logger.debug(`[Zeus] 🔍 [${userId || 'SYSTEM'}] Nenhuma conexão existente encontrada para token ${token.substring(0, 8)}`);
         }
 
         // ✅ Criar nova conexão com App ID dinâmico
