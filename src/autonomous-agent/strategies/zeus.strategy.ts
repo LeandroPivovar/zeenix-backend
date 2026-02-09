@@ -670,21 +670,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * Regra: Sequência de 4 dígitos altos consecutivos (6, 7, 8, 9)
      */
     private filtroOndaAlta(digits: number[]): { passes: boolean; reason?: string; metrics?: any; count: number } {
-        // ✅ V4 OPTIMIZATION: Janela reduzida para 3 dígitos para pegar início da tendência
-        const sequence = digits.slice(-3);
+        // ✅ V4 SPEC: Janela de 4 dígitos altos consecutivos (6, 7, 8, 9)
+        const sequence = digits.slice(-4);
         const highDigits = sequence.filter(d => d >= 6);
         const count = highDigits.length;
-        const isHigh = count === 3;
+        const isHigh = count === 4;
 
         if (isHigh) {
-            // Requer pelo menos 2 dígitos >= 7 para garantir força na tendência
-            const strongDigits = sequence.filter(d => d >= 7).length;
-            if (strongDigits >= 2) {
-                return { passes: true, metrics: { sequence }, count };
-            }
-            return { passes: false, reason: `Onda Fraca (Muitos 6s): [${sequence.join(', ')}]`, count };
+            return { passes: true, metrics: { sequence }, count };
         }
-        return { passes: false, reason: `Dígitos não são todos altos: [${sequence.join(', ')}]`, count };
+        return { passes: false, reason: `Onda Alta: ${count}/4 dígitos altos [${sequence.join(', ')}]`, count };
     }
 
     /**
@@ -838,6 +833,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Safety e Arredondamento
         let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
+
+        // ✅ V4 SPEC: Reset CONSERVADOR após 5 gales (aceitar prejuízo e voltar para stake base)
+        if (config.riskProfile === 'CONSERVADOR' && state.consecutiveLosses >= 5) {
+            this.saveLog(config.userId, 'WARN', 'RISK', `⚠️ RESET CONSERVADOR: Limite de 5 gales atingido. Voltando p/ stake base.`);
+            state.perdasAcumuladas = 0;
+            state.consecutiveLosses = 0;
+            return config.baseStake;
+        }
+
 
         // ✅ SMART GOAL (V4): Ajustar entrada para bater a meta exata (evitar exposição desnecessária)
         // Se falta pouco para a meta (do dia ou do ciclo), não apostar mais do que o necessário.
