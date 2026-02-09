@@ -38,7 +38,7 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
 
     // Timers
     strategicPauseEnabled: boolean;
-    strategicPauseSeconds: number; // 3600s (1h) - Pausa após 5 perdas consecutivas
+    strategicPauseSeconds: number; // 300s (5m) - Pausa após 5 perdas consecutivas (ZEUS V4 spec)
     cooldownWinSeconds: number;    // 2s
     cooldownLossSeconds: number;   // 2s
     dataCollectionTicks: number;
