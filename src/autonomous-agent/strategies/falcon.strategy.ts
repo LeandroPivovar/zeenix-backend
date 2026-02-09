@@ -1797,8 +1797,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `INSERT INTO autonomous_agent_trades (
           user_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
-          martingale_level, payout, symbol, status, strategy, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'falcon', NOW())`,
+          martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'falcon', ?, ?, NOW())`,
         [
           userId,
           JSON.stringify(analysisData),
@@ -1811,6 +1811,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           state.perdasAcumuladas > 0 ? 'M1' : 'M0',
           trade.payout * 100,
           config.symbol,
+          config.derivToken || null, // ✅ Token usado para o trade
+          config.accountType || null, // ✅ Tipo de conta (demo/real)
         ],
       );
 

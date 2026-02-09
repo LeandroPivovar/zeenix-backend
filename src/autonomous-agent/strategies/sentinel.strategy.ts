@@ -1490,8 +1490,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         `INSERT INTO autonomous_agent_trades (
           user_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
-          martingale_level, payout, symbol, status, strategy, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'sentinel', NOW())`,
+          martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'sentinel', ?, ?, NOW())`,
         [
           userId,
           JSON.stringify(analysisData),
@@ -1504,6 +1504,8 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           state.martingaleLevel > 0 ? 'M1' : 'M0',
           trade.payout * 100, // Converter para percentual
           config.symbol,
+          config.derivToken || null, // ✅ Token usado para o trade
+          config.accountType || null, // ✅ Tipo de conta (demo/real)
         ],
       );
 

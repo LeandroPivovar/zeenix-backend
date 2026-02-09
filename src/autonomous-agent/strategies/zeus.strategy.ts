@@ -2006,8 +2006,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 `INSERT INTO autonomous_agent_trades (
           user_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
-          martingale_level, payout, symbol, status, strategy, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', NOW())`,
+          martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', ?, ?, NOW())`,
                 [
                     userId,
                     JSON.stringify(analysisData),
@@ -2020,6 +2020,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // ✅ Fixed lint and mapping
                     trade.payout * 100, // Converter para percentual
                     config.symbol || 'R_100',
+                    config.derivToken || null, // ✅ Token usado para o trade
+                    config.accountType || null, // ✅ Tipo de conta (demo/real)
                 ],
 
             );
