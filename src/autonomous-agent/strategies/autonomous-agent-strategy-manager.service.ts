@@ -117,12 +117,35 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
    * Ativa um usuário em uma estratégia específica
    */
   async activateUser(strategy: string, userId: string, config: any): Promise<void> {
-    const strategyInstance = this.strategies.get(strategy.toLowerCase());
+    const strategyName = strategy.toLowerCase();
+    const strategyInstance = this.strategies.get(strategyName);
     if (!strategyInstance) {
       throw new Error(`Estratégia '${strategy}' não encontrada`);
     }
 
-    // ✅ Deactivate user from ALL other strategies first to prevent ghost sessions
+    // ✅ [ZENIX v2.1] PREVENIR RESET DE ESTADO NO SYNC (5min)
+    // Se o usuário já estiver ativo NESTA MESMA estratégia, apenas atualizar a configuração
+    // sem chamar deactivateUser, para não perder o lucro acumulado e streaks em memória.
+
+    // Verificar se o usuário já está ativo em alguma estratégia
+    let currentStrategyName: string | null = null;
+    for (const [name, instance] of this.strategies.entries()) {
+      // Assumindo que as estratégias implementam um método ou possuem uma propriedade para verificar usuários ativos
+      // No caso do Zeus, Falcon, etc., eles possuem userConfigs internos.
+      if ((instance as any).userConfigs?.has(userId)) {
+        currentStrategyName = name;
+        break;
+      }
+    }
+
+    if (currentStrategyName === strategyName) {
+      // Apenas atualizar a configuração se for a mesma estratégia
+      this.logger.debug(`[AutonomousAgentStrategyManager] Usuário ${userId} já ativo em ${strategyName}, apenas atualizando config.`);
+      await strategyInstance.activateUser(userId, config);
+      return;
+    }
+
+    // ✅ Se mudar de estratégia ou for nova ativação, desativa de todas as outras primeiro
     await this.deactivateUser(userId);
 
     await strategyInstance.activateUser(userId, config);

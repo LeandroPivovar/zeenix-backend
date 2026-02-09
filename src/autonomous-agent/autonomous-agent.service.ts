@@ -542,6 +542,7 @@ export class AutonomousAgentService implements OnModuleInit {
   /**
    * Verifica e reseta sessões diárias se necessário
    * Se um agente parou no dia anterior (stop loss/win/blindado), reseta para o novo dia
+   * Se um agente continua ativo mas a sessão é de ontem, reseta o lucro diário
    */
   async checkAndResetDailySessions(): Promise<void> {
     try {
@@ -549,7 +550,7 @@ export class AutonomousAgentService implements OnModuleInit {
       today.setHours(0, 0, 0, 0);
       const todayStr = today.toISOString().split('T')[0];
 
-      // Buscar agentes que pararam no dia anterior
+      // 1. Resetar agentes que bateram stop ontem ( stopped_profit, stopped_loss, stopped_blindado )
       // ✅ CORREÇÃO: Remover filtro de agent_type = 'orion' para suportar todos (Falcon, Sentinel, etc)
       const agentsToReset = await this.dataSource.query(
         `SELECT user_id, session_status, session_date
@@ -560,12 +561,24 @@ export class AutonomousAgentService implements OnModuleInit {
         [todayStr],
       );
 
-      for (const agent of agentsToReset) {
+      // 2. Resetar lucro diário de agentes que ficaram ATIVOS mas mudou o dia
+      const activeAgentsToReset = await this.dataSource.query(
+        `SELECT user_id, session_status, session_date
+         FROM autonomous_agent_config 
+         WHERE is_active = TRUE 
+           AND session_status = 'active'
+           AND (session_date IS NULL OR DATE(session_date) < ?)`,
+        [todayStr],
+      );
+
+      const allAgentsToReset = [...agentsToReset, ...activeAgentsToReset];
+
+      for (const agent of allAgentsToReset) {
         this.logger.log(
           `[ResetDailySession] Resetando sessão diária para usuário ${agent.user_id} (status anterior: ${agent.session_status})`,
         );
 
-        // Resetar sessão diária
+        // Resetar sessão diária no banco
         await this.dataSource.query(
           `UPDATE autonomous_agent_config 
            SET session_status = 'active',
@@ -576,11 +589,11 @@ export class AutonomousAgentService implements OnModuleInit {
           [agent.user_id],
         );
 
-        // Reativar agente na estratégia correta
+        // Reativar agente na estratégia correta para atualizar o estado em memória (resetar profit interno)
         const config = await this.dataSource.query(
           `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
                   deriv_token, currency, symbol, trading_mode, initial_balance, agent_type,
-                  stop_loss_type, risk_level
+                  stop_loss_type, risk_level, token_deriv
            FROM autonomous_agent_config 
            WHERE user_id = ? AND is_active = TRUE
            LIMIT 1`,
@@ -590,10 +603,20 @@ export class AutonomousAgentService implements OnModuleInit {
         if (config && config.length > 0) {
           const agentConfig = config[0];
           const userId = agent.user_id.toString();
-          // ✅ Usar agent_type do banco ou default 'orion'
           const strategyName = agentConfig.agent_type || 'orion';
 
-          // ✅ Forçar Desativação ANTES de ativar para garantir RESET DE ESTADO (já que é novo dia)
+          // ✅ Forçar "reativação" para garantir RESET DE ESTADO (já que é novo dia)
+          // Como já corrigimos o StrategyManager para não dar deactivate se for o mesmo,
+          // aqui precisamos decidir se queremos FORÇAR o reset. 
+          // Dada a mudança no dia, queremos que o lucro interno volte a zero.
+
+          // Se for active, poderíamos apenas chamar activateUser? 
+          // O activateUser já lida com a lógica de não resetar se for o mesmo.
+          // Para forçar o reset em memória (lucro diário 0), talvez as estratégias precisem de um sinal de reset.
+          // Mas no Zeus/Falcon, activateUser SEMPRE limpa o lucro se houver mudança significativa
+          // ou se for a primeira vez. 
+
+          // Para garantir que o lucro zere à meia noite:
           await this.strategyManager.deactivateUser(userId);
 
           await this.strategyManager.activateUser(strategyName, userId, {
@@ -601,7 +624,7 @@ export class AutonomousAgentService implements OnModuleInit {
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
             dailyLossLimit: parseFloat(agentConfig.daily_loss_limit),
-            derivToken: agentConfig.token_deriv || agentConfig.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback
+            derivToken: agentConfig.token_deriv || agentConfig.deriv_token,
             currency: agentConfig.currency,
             symbol: agentConfig.symbol || 'R_100',
             tradingMode: agentConfig.trading_mode || 'normal',
@@ -613,8 +636,8 @@ export class AutonomousAgentService implements OnModuleInit {
         }
       }
 
-      if (agentsToReset.length > 0) {
-        this.logger.log(`[ResetDailySession] ✅ ${agentsToReset.length} sessões resetadas para o novo dia`);
+      if (allAgentsToReset.length > 0) {
+        this.logger.log(`[ResetDailySession] ✅ ${allAgentsToReset.length} sessões resetadas para o novo dia`);
       }
     } catch (error) {
       this.logger.error('[ResetDailySession] Erro ao verificar e resetar sessões:', error);
