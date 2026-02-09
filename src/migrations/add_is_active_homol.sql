@@ -1,2 +1,0 @@
-ALTER TABLE autonomous_agent_config ADD COLUMN is_active_homol BOOLEAN DEFAULT FALSE;
-CREATE INDEX idx_autonomous_agent_config_is_active_homol ON autonomous_agent_config(is_active_homol);
