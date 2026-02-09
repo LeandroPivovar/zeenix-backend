@@ -490,12 +490,19 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async syncActiveAgentsFromDb(): Promise<void> {
     try {
-      // ✅ BUSCAR TODOS OS AGENTES ATIVOS QUE NÃO ESTÃO PARADOS
+      // ✅ [FIX] BUSCAR APENAS A ESTRATÉGIA MAIS RECENTE POR USUÁRIO
+      // Evita reativar múltiplas estratégias se houver mais de uma marcada como ativa
       const activeAgents = await this.dataSource.query(
         `SELECT c.*
          FROM autonomous_agent_config c
-         WHERE c.is_active = TRUE 
-           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
+         INNER JOIN (
+           SELECT user_id, MAX(updated_at) as max_updated
+           FROM autonomous_agent_config
+           WHERE is_active = TRUE 
+             AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
+           GROUP BY user_id
+         ) latest ON c.user_id = latest.user_id AND c.updated_at = latest.max_updated
+         WHERE c.is_active = TRUE`,
       );
 
       this.logger.log(`[SyncActiveAgents] Sincronizando ${activeAgents.length} agentes ativos`);
@@ -749,6 +756,21 @@ export class AutonomousAgentService implements OnModuleInit {
       } catch (error) {
         this.logger.error(`[ActivateAgent] ⚠️ Erro ao deletar logs do usuário ${userId}:`, error);
         // Não bloquear a ativação se houver erro ao deletar logs
+      }
+
+      // ✅ [FIX] Desativar TODAS as outras estratégias ativas do usuário no banco
+      // Isso garante que apenas UMA estratégia esteja ativa por vez
+      try {
+        await this.dataSource.query(
+          `UPDATE autonomous_agent_config 
+           SET is_active = FALSE, updated_at = NOW() 
+           WHERE user_id = ? AND is_active = TRUE`,
+          [userId]
+        );
+        this.logger.log(`[ActivateAgent] ✅ Estratégias anteriores desativadas no banco para usuário ${userId}`);
+      } catch (dbError) {
+        this.logger.error(`[ActivateAgent] Erro ao desativar estratégias anteriores:`, dbError);
+        // Não bloquear - continuar com a ativação
       }
 
       // ✅ Limpar histórico de ticks para este usuário (começar do zero)
