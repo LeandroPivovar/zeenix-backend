@@ -64,7 +64,7 @@ export const FALCON_CONSTANTS = {
   payoutPrincipal: 0.34, // Digit Over 2 (37% - 3% markup)
   payoutRecovery: 0.84,  // Digit Over 4 (87% - 3% markup)
   martingaleMaxLevel: 5, // Limite para perfil Conservador
-  strategicPauseSeconds: 1800, // 30 minutes (V4 Spec)
+  strategicPauseSeconds: 300, // 5 minutes = 300s (per ZEUS V4 spec: 5 perdas consecutivas → pausa de 5 minutos)
   cooldownWinSeconds: 2,
   cooldownLossSeconds: 2,
   dataCollectionTicks: 24, // Max window (NORMAL)
