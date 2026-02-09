@@ -104,6 +104,7 @@ interface ZeusUserState extends AutonomousAgentState {
     currentContractId: string | null;
     currentTradeId: number | null;
     isWaitingContract: boolean;
+    waitingContractStartTime?: number; // ✅ Added for safe timeout tracking
     lastContractType?: string;
     ticksSinceLastAnalysis: number;
     lastDigits: number[];
@@ -956,73 +957,84 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
 
-        if (!config || !state || !state.isActive) {
-            if (Math.random() < 0.01) this.logger.warn(`[Zeus][${userId}] ⚠️ Tick ignorado: Config=${!!config} State=${!!state} Active=${state?.isActive}`);
-            return;
-        }
+        if (!config || !state || !state.isActive) return;
 
         // Infra: Check Lock
         if (this.processingLocks.get(userId)) return;
-
-        // Infra: History & Digits
-        const userTicks = this.ticks.get(userId) || [];
-        userTicks.push(tick);
-        this.ticks.set(userId, userTicks); // Ensure updated array is set back
-
-        if (userTicks.length > config.dataCollectionTicks + 50) userTicks.shift();
-
-        // Debug Log: Valid Tick Processed
-        // if (userTicks.length <= 5) {
-        //    this.saveLog(userId, 'INFO', 'CORE', `DEBUG: Tick processado #${userTicks.length}`);
-        // }
-
-        const lastDigit = this.lastDigitFromPrice(tick.value, config.symbol);
-        state.lastDigits.push(lastDigit);
-        if (state.lastDigits.length > 50) state.lastDigits.shift();
-
-        // 1. Coleta de dados e progresso inicial
-        const requiredTicks = config.dataCollectionTicks;
-        if (userTicks.length < requiredTicks) {
-            // Log de progresso imediato no primeiro tick e depois a cada 3
-            if (userTicks.length === 1 || userTicks.length % 2 === 0) {
-                this.logDataCollection(userId, {
-                    targetCount: requiredTicks,
-                    currentCount: userTicks.length,
-                    mode: state.mode
-                });
-            }
-            return;
-        }
-
-        // 2. Can we operate?
-        if (!this.canOperate(userId, config, state)) return;
-
-        // 2. Are we waiting for contract?
-        if (state.isWaitingContract) {
-            const marketAnalysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
-            if (marketAnalysis?.signal) {
-                this.logBlockedEntry(userId, {
-                    reason: 'OPERAÇÃO EM ANDAMENTO',
-                    details: `Sinal ${marketAnalysis.signal} detectado em ${config.symbol}`
-                });
-            }
-            return;
-        }
-
-        // 3. Analyze Market
         this.processingLocks.set(userId, true);
+
         try {
-            const analysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
+            // 1. Coleta de Tick
+            const userTicks = this.ticks.get(userId) || [];
+            userTicks.push(tick);
+            this.ticks.set(userId, userTicks);
+            if (userTicks.length > (config.dataCollectionTicks + 50)) userTicks.shift();
 
-            if (analysis && analysis.signal) {
-                const stake = this.computeNextStake(config, state);
+            const lastDigit = this.lastDigitFromPrice(tick.value, config.symbol);
+            state.lastDigits.push(lastDigit);
+            if (state.lastDigits.length > 50) state.lastDigits.shift();
 
-                if (stake < 0.35) {
-                    // Stake inválida (provavelmente stop loss próximo)
+            // 2. Verificação de Contrato em curso (Fire-and-Forget Logic)
+            const now = Date.now();
+            if (state.isWaitingContract) {
+                const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
+
+                if (waitTime > 40000) {
+                    const contractRef = state.currentContractId || 'ativo';
+                    this.logger.warn(`[Zeus][${userId}] ⚠️ [SAFETY] Contrato ${contractRef} parado há ${Math.round(waitTime / 1000)}s. Destravando...`);
+
+                    await this.saveLog(userId, 'WARN', 'SYSTEM',
+                        `⚠️ TIMEOUT NA RESPOSTA (40s)...\n• Motivo: Operação ${contractRef} sem resposta da API.\n• Ação: Marcando trade como erro e destravando agente.`
+                    );
+
+                    if (state.currentTradeId) {
+                        await this.updateTradeRecord(state.currentTradeId, {
+                            status: 'ERROR',
+                            errorMessage: 'Timeout na compra (40s)',
+                        }).catch(e => this.logger.error(`[Zeus][${userId}] Erro ao marcar falha no banco:`, e));
+                    }
+                    state.isWaitingContract = false;
+                    state.waitingContractStartTime = undefined;
+                    state.currentContractId = null;
+                    state.currentTradeId = null;
                     return;
                 }
 
-                // Execute Trade
+                const analysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
+                if (analysis) {
+                    if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 30000) {
+                        state.lastDeniedLogTime = now;
+                        this.logBlockedEntry(userId, {
+                            reason: 'OPERAÇÃO EM ANDAMENTO',
+                            details: `Sinal detectado | Operação ${state.currentContractId || 'em curso'}`
+                        });
+                    }
+                }
+                return;
+            }
+
+            // 3. Verificação de limites de operação
+            if (!this.canOperate(userId, config, state)) return;
+
+            // 4. Aguardar ticks suficientes para análise
+            if (userTicks.length < config.dataCollectionTicks) {
+                if (userTicks.length % 5 === 0) {
+                    this.logDataCollection(userId, {
+                        targetCount: config.dataCollectionTicks,
+                        currentCount: userTicks.length,
+                        mode: state.mode
+                    });
+                }
+                return;
+            }
+
+            // 5. Análise de Mercado
+            const analysis = this.analyzeMarket(userId, config, state, userTicks, state.lastDigits);
+            if (analysis && analysis.signal) {
+                const stake = this.computeNextStake(config, state);
+
+                if (stake < 0.35) return;
+
                 if (state.perdasAcumuladas > 0 && config.riskProfile !== 'FIXO') {
                     this.saveLog(userId, 'INFO', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): Recuperando $${state.perdasAcumuladas.toFixed(2)} com Stake $${stake} (Payout 126%)`);
                 }
@@ -1034,155 +1046,78 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     reason: 'ZEUS_V2_SIGNAL',
                 }, analysis);
             }
+        } catch (error) {
+            this.logger.error(`[Zeus][${userId}] Erro ao processar tick:`, error);
         } finally {
             this.processingLocks.set(userId, false);
         }
     }
 
     /**
-     * ✅ CORE: Análise de Mercado (Substitui analyzeMarket antigo)
+     * ✅ CORE: Análise de Mercado (Zeus V4.1 - Com Filtro de Tendência)
      */
-    /**
-     * ✅ CORE: Análise de Mercado (V4 Spec: Verifica padrões Onda Alta e Quarteto Perfeito)
-     */
-    private analyzeMarket(userId: string, config: ZeusUserConfig, state: ZeusState, pricesObj: Tick[], digits: number[]): MarketAnalysis | null {
-        // V4 precisa de 4 dígitos para análise de padrão
-        const MIN_TICKS = 4;
-        if (digits.length < MIN_TICKS) return null;
-        // 0. Preparar Dados de Tendência
-        const ticks = this.ticks.get(userId) || []; // ✅ Fix: Retrieve ticks from state map
+    private analyzeMarket(userId: string, config: ZeusUserConfig, state: ZeusState, ticks: Tick[], digits: number[]): MarketAnalysis | null {
+        // Precisa de pelo menos 5 ticks para tendência e padrão
+        if (digits.length < 5 || ticks.length < 5) return null;
 
-        // Converter ticks em array de preços para análise de tendência
-        const prices = ticks.map(t => t.value);
-        const trend = this.filtroTendencia(prices);
+        // 1. ANÁLISE DE TENDÊNCIA (PRICE ACTION)
+        // Se o preço atual for MENOR que o anterior, é perigoso entrar em CALL/OVER
+        const currentPrice = ticks[ticks.length - 1].value;
+        const prevPrice = ticks[ticks.length - 2].value;
+        const isDowntick = currentPrice < prevPrice;
 
-        // Se tendência for CLARAMENTE de baixa, abortar qualquer Call/Over
-        if (!trend.passes && state.mode === 'PRECISO') { // Tendência importa mais no modo Preciso
-            state.lastRejectionReason = trend.reason;
-
-            // Log throttle logic duplication for early exit?
-            // Better: Just store rejection and let heartbeat log it if needed
-            // But we need to ensure we don't spam "Blocked by Trend"
-            // Let's rely on the heartbeat at the end function
-        }
-        else {
-            // Continue analysis only if Trend passes OR Mode is Normal (Normal is more aggressive)
-        }
-
-        // 1. Filtragem por Lado (Paridade) - Novo Requisito V4 Plus
-        const fl = this.filtroLadoParidade(digits);
-
-        // 2. Novos Filtros Estatísticos (Densidade e Fatal)
-        const fd = this.filtroDensidade(digits);
-        if (!fd.passes) {
-            state.lastRejectionReason = fd.reason;
+        // No modo PRECISO, rejeitamos qualquer entrada em candle de baixa
+        if (state.mode === 'PRECISO' && isDowntick) {
+            state.lastRejectionReason = 'Micro-tendência de Baixa (Price Drop)';
             return null;
         }
 
-        const ff = this.filtroDigitoFatal(digits);
-        if (!ff.passes) {
-            state.lastRejectionReason = ff.reason;
-            return null;
-        }
+        // 2. FILTRO DE PADRÃO (DÍGITOS)
+        const fl = this.filtroLadoParidade(digits); // Par/Impar
+        const qp = this.filtroQuartetoPerfeito(digits); // 4 dígitos altos diferentes
+        const oa = this.filtroOndaAlta(digits); // 4 dígitos altos
 
-        // 3. Check Quarteto Perfeito (Higher Priority/Precision)
-        const qp = this.filtroQuartetoPerfeito(digits);
+        // LÓGICA DE DECISÃO
+        let signalFound = false;
+        let info = '';
+
+        // Prioridade: Quarteto Perfeito (Mais forte)
         if (qp.passes) {
-            const sequence = qp.metrics?.sequence || [];
-
-            // Se passar no Lado também, a confiança é máxima
-            const hasLado = fl.passes;
-            const probability = hasLado ? 75.0 : 68.0; // Bump probability per user feedback
-
-            // ✅ MODO PRECISO REQUIRES LADO (Paridade)
-            if (state.mode === 'PRECISO' && !hasLado) {
-                state.lastRejectionReason = `Preciso requer confirmação de Lado (Paridade)`;
-                return null;
+            // No modo preciso, exigimos confirmação de lado OU tendência de alta clara
+            if (state.mode === 'PRECISO') {
+                if (fl.passes || !isDowntick) {
+                    signalFound = true;
+                    info = 'Quarteto Perfeito + Tendência';
+                }
+            } else {
+                signalFound = true;
+                info = 'Quarteto Perfeito';
             }
+        }
+        // Secundário: Onda Alta (Só aceita se não for downtick, mesmo no Normal)
+        else if (oa.passes && !isDowntick) {
+            signalFound = true;
+            info = 'Onda Alta';
+        }
 
-            // ✅ Check Trend as final gatekeeper for Preciso
-            if (!trend.passes) {
-                state.lastRejectionReason = trend.reason;
-                return null;
-            }
-
-            this.saveLog(userId, 'INFO', 'CORE',
-                `⚡ SINAL ENCONTRADO (PRECISO)\n` +
-                `• Padrão Quarteto: [${sequence.join(', ')}]\n` +
-                `• Filtro Lado: ${hasLado ? `✅ ATIVO (${fl.side} ${fl.density?.toFixed(0)}%)` : `⏸️ INATIVO`}`
-            );
-
+        if (signalFound) {
+            // Resetar motivo de rejeição
             state.lastRejectionReason = undefined;
 
             return {
                 signal: 'DIGIT',
-                probability,
+                probability: state.mode === 'PRECISO' ? 82.0 : 72.0,
                 payout: config.payoutPrimary,
-                confidence: probability / 100,
+                confidence: 0.8,
                 details: {
                     contractType: 'DIGITOVER',
-                    barrier: 5,
-                    info: hasLado ? 'Quarteto Perfeito + Lado' : 'Quarteto Perfeito',
-                    mode: 'PRECISO',
-                    trend: trend.status
+                    barrier: 5, // Mantendo Payout Original (~126%)
+                    info: info,
+                    mode: state.mode,
+                    trend: isDowntick ? 'DOWN' : 'UP',
+                    currentPrice: currentPrice
                 }
             };
-        }
-
-        // 4. Check Onda Alta
-        if (state.mode !== 'PRECISO') {
-            const oa = this.filtroOndaAlta(digits);
-            if (oa.passes) {
-                const sequence = oa.metrics?.sequence || [];
-
-                // Aplicar Filtro de Lado como confirmação para modo Normal
-                const hasLado = fl.passes;
-                const probability = hasLado ? 65.0 : 58.0;
-
-                // ✅ Check Trend as final gatekeeper
-                if (!trend.passes) {
-                    state.lastRejectionReason = trend.reason;
-                    return null;
-                }
-
-                this.saveLog(userId, 'INFO', 'CORE',
-                    `⚡ SINAL ENCONTRADO (NORMAL)\n` +
-                    `• Padrão Onda Alta: [${sequence.join(', ')}]\n` +
-                    `• Filtro Lado: ${hasLado ? `✅ ATIVO (${fl.side} ${fl.density?.toFixed(0)}%)` : `⏸️ INATIVO`}`
-                );
-
-                state.lastRejectionReason = undefined;
-
-                return {
-                    signal: 'DIGIT',
-                    probability,
-                    payout: config.payoutPrimary,
-                    confidence: probability / 100,
-                    details: {
-                        contractType: 'DIGITOVER',
-                        barrier: 5,
-                        info: hasLado ? 'Onda Alta + Lado' : 'Onda Alta',
-                        mode: 'NORMAL',
-                        trend: trend.status // Add trend info
-                    }
-                };
-            }
-            // Store rejection reason if Normal mode but failed
-            if (!qp.passes) {
-                state.lastRejectionReason = oa.reason || qp.reason || fl.reason;
-            }
-        } else {
-            // If Preciso mode and QP failed, check if Lado was the blocker or pattern
-            if (!qp.passes) {
-                state.lastRejectionReason = qp.reason || fl.reason;
-            }
-        }
-
-        // Heartbeat log (Throttled to prevent UI freeze - 1 log per ~15s)
-        state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
-        if (state.ticksSinceLastAnalysis >= 15) {
-            state.ticksSinceLastAnalysis = 0;
-            this.logAnalysisStarted(userId, state.mode, digits.length, state.lastRejectionReason);
         }
 
         return null;
@@ -1276,118 +1211,81 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     /**
-     * ✅ CORE: Executa trade (Zeus V2) - OTIMIZADO PARA LATÊNCIA ULTRA-BAIXA (0.3s - 0.5s)
+     * ✅ CORE: Executa trade (Zeus V4 - Latência Zero)
      */
     private async executeTrade(userId: string, decision: TradeDecision, marketAnalysis: MarketAnalysis): Promise<void> {
         const config = this.userConfigs.get(userId);
         const state = this.userStates.get(userId);
 
-        if (!config || !state || decision.action !== 'BUY') {
-            return;
-        }
+        if (!config || !state || decision.action !== 'BUY') return;
+        if (state.isWaitingContract) return;
 
-        if (state.isWaitingContract) {
-            this.logger.warn(`[Zeus][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`);
-            return;
-        }
-
-        // 1. Checagem de Risco Ultra-Rápida (In-Memory)
+        // Verificação de risco em memória (rápida)
         const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
         if (stopLossCheck.action === 'STOP') {
             await this.handleStopCondition(userId, stopLossCheck.reason || 'STOP_LOSS');
             return;
         }
 
+        // PREPARAÇÃO (Síncrona)
         const finalStake = stopLossCheck.stake || decision.stake || config.baseStake;
         const contractType = 'DIGITOVER';
-        const barrier = "4"; // ✅ OTIMIZAÇÃO V4: Barrier 4 aumenta Win Rate para ~50-60%
+        const barrier = "5"; // MANTIDO PAYOUT ORIGINAL
         const duration = 1;
 
-        // ✅ BLOQUEAR ENTRADA IMEDIATAMENTE
+        // TRAVA DE ESTADO
         state.isWaitingContract = true;
+        state.waitingContractStartTime = Date.now(); // Novo campo para timeout safe
 
-        const userTicks = this.ticks.get(userId) || [];
-        const currentPrice = userTicks.length > 0
-            ? userTicks[userTicks.length - 1].value
-            : marketAnalysis.details?.currentPrice || 0;
+        // 🚀 DISPARO IMEDIATO (FIRE AND FORGET)
+        // Não esperamos o log, nem o banco, nem nada. Enviamos a ordem.
+        const buyPromise = this.buyContract(
+            userId,
+            config.derivToken,
+            contractType,
+            config.symbol,
+            finalStake,
+            duration,
+            barrier,
+            0, // Sem retry para velocidade máxima
+            0
+        );
 
-        // 🧠 ESTRATÉGIA DE LATÊNCIA ULTRA-BAIXA V4
+        // TAREFAS DE FUNDO (Enquanto a ordem viaja)
         try {
-            state.currentContractId = "PENDING";
+            this.saveLog(userId, 'INFO', 'TRADER', `🚀 ORDEM ENVIADA! ${contractType} > ${barrier} | $${finalStake.toFixed(2)}`);
 
-            // 🚀 1. DISPARAR COMPRA IMEDIATAMENTE (Prioridade Máxima)
-            // Não esperamos DB nem Log. O WebSocket tem que sair AGORA.
-            const buyPromise = this.buyContract(
-                userId,
-                config.derivToken,
-                contractType,
-                config.symbol,
-                finalStake,
-                duration,
-                barrier,
-                0, // 0 Retries para ser instantâneo. Se falhar, falhou.
-                0  // TradeId será vinculado depois
-            );
+            const tradeRecordPromise = this.createTradeRecord(userId, {
+                contractType, stakeAmount: finalStake, duration,
+                marketAnalysis, payout: config.payoutPrimary,
+                entryPrice: marketAnalysis.details?.currentPrice || 0
+            });
 
-            // 📝 2. Enquanto a requisição voa, fazemos a "papelada" (Logs e DB)
-            this.saveLog(userId, 'INFO', 'TRADER', `🚀 ORDEM ENVIADA! ${contractType} > ${barrier} | Stake: $${finalStake.toFixed(2)}`);
-
-            const tradeRecordPromise = this.createTradeRecord(
-                userId,
-                {
-                    contractType: contractType || 'UNKNOWN',
-                    stakeAmount: finalStake,
-                    duration: duration,
-                    marketAnalysis: marketAnalysis,
-                    payout: state.analysis === "PRINCIPAL" ? config.payoutPrimary : config.payoutRecovery,
-                    entryPrice: currentPrice,
-                },
-            );
-
-            // ⏳ 3. Agora aguardamos o resultado da compra (Gargalo de I/O)
+            // Sincronização Final
             const contractId = await buyPromise;
-
-            // ⏳ 4. Aguardamos o ID do banco
             const tradeId = await tradeRecordPromise;
-            state.currentTradeId = tradeId;
 
             if (contractId) {
                 state.currentContractId = contractId;
-                this.logger.log(`[Zeus][${userId}] 🎫 Contrato Confirmado: ${contractId} (TradeId: ${tradeId})`);
+                state.currentTradeId = tradeId;
 
-                // Atualizar status trade ativo (Background ok)
-                this.updateTradeRecord(tradeId, {
-                    contractId: contractId,
-                    status: 'ACTIVE',
-                }).catch(e => this.logger.error(`Error updating trade ${tradeId}`, e));
+                if (tradeId) {
+                    this.updateTradeRecord(tradeId, { contractId, status: 'ACTIVE' });
+                }
             } else {
-                state.isWaitingContract = false;
-                state.currentContractId = null;
-                this.updateTradeRecord(tradeId, {
-                    status: 'ERROR',
-                    errorMessage: 'Falha na compra (Resposta nula)',
-                }).catch(e => this.logger.error(`Error updating trade error ${tradeId}`, e));
-                this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: Resposta de compra vazia.`);
-                state.cooldownUntilTs = Date.now() + 15000;
+                throw new Error("Sem Contract ID");
             }
-        } catch (error: any) {
-            state.isWaitingContract = false;
-            state.currentContractId = null;
-            this.logger.error(`[Zeus][${userId}] Erro ao executar trade:`, error);
 
-            // Exibir erro real do broker se disponível
-            const errorMsg = error.message || 'Erro desconhecido';
-            this.saveLog(userId, 'ERROR', 'API', `ERRO NA CORRETORA: ${errorMsg}`);
+        } catch (error) {
+            // Fallback em caso de erro
+            state.isWaitingContract = false;
+            state.waitingContractStartTime = undefined;
+            state.currentContractId = null;
+            this.logger.error(`[Zeus][${userId}] Erro no fluxo de execução: ${error}`);
 
             if (state.currentTradeId) {
-                this.updateTradeRecord(state.currentTradeId, {
-                    status: 'ERROR',
-                    errorMessage: errorMsg,
-                }).catch(e => { });
+                this.updateTradeRecord(state.currentTradeId, { status: 'ERROR', errorMessage: 'Falha na execução' });
             }
-
-            // ✅ Cooldown após erro para evitar loop infinito de erros
-            state.cooldownUntilTs = Date.now() + 15000;
         }
     }
 
@@ -1958,6 +1856,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // ✅ COOLDOWN PÓS-TRADE (Executado após todas as cálculos e pausas serem definidos)
         state.isWaitingContract = false;
+        state.waitingContractStartTime = undefined;
         state.lastOpTs = Date.now();
         state.cooldownUntilTs = Date.now() + (result.win ? config.cooldownWinSeconds : config.cooldownLossSeconds) * 1000;
 

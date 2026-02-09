@@ -64,23 +64,18 @@ export const FALCON_CONSTANTS = {
   payoutPrincipal: 0.34, // Digit Over 2 (37% - 3% markup)
   payoutRecovery: 0.84,  // Digit Over 4 (87% - 3% markup)
   martingaleMaxLevel: 5, // Limite para perfil Conservador
-  strategicPauseSeconds: 60,
+  strategicPauseSeconds: 1800, // 30 minutes (V4 Spec)
   cooldownWinSeconds: 2,
   cooldownLossSeconds: 2,
-  dataCollectionTicks: 74, // Max window (J74)
+  dataCollectionTicks: 24, // Max window (NORMAL)
   cycles: 4,
   cyclePercent: 0.25,
 };
 
 export const FALCON_MODES = {
-  NORMAL: {
-    principal: { window: 67, targets: [1, 2, 3, 4, 5], limit: 42, barrier: 2 },
-    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
-  },
-  PRECISO: {
-    principal: { window: 74, targets: [6, 7], limit: 23, barrier: 2 },
-    recovery: { window: 73, targets: [1, 2, 3, 4, 5], limit: 26, barrier: 4 }
-  }
+  NORMAL: { window: 24, hits: 16, barrier: 2 },
+  PRECISO: { window: 15, hits: 11, barrier: 2 },
+  RECOVERY: { window: 20, hits: 12, barrier: 4 }
 };
 
 interface FalconUserConfig extends AutonomousAgentConfig {
@@ -90,6 +85,7 @@ interface FalconUserConfig extends AutonomousAgentConfig {
   is24x7: boolean;
 
   initialCapital: number;
+  initialBalance: number; // For session start ref
   profitTarget: number;
   stopLoss: number;
   baseStake: number;
@@ -114,9 +110,6 @@ interface FalconUserConfig extends AutonomousAgentConfig {
 
   mode?: NegotiationMode;
   operationMode?: NegotiationMode;
-
-  // Legacy/Infra compat
-  initialBalance: number;
   stopLossType?: 'normal' | 'blindado';
 }
 
@@ -139,11 +132,12 @@ interface FalconUserState extends AutonomousAgentState {
   // Blindado State
   blindadoActive: boolean;
   blindadoFloorProfit: number;
+  recoveryLock: boolean; // ✅ V4 REQUIRED
 
   // Flags
   inStrategicPauseUntilTs: number;
   sessionEnded: boolean;
-  endReason?: "TARGET" | "STOPLOSS" | "BLINDADO";
+  endReason?: 'TARGET' | 'STOPLOSS' | 'BLINDADO';
 
   // Automático
   mode: NegotiationMode;
@@ -157,40 +151,29 @@ interface FalconUserState extends AutonomousAgentState {
   lastOpTs: number;
   cooldownUntilTs: number;
   lastRejectionReason?: string;
+  lastDeniedLogTime?: number; // ✅ Log throttling
 
   // Metrics
   opsTotal: number;
   wins: number;
   losses: number;
 
-  // Compatibility (Legacy names)
-  saldoInicial: number;
+  // Compatibility (Infra)
   lucroAtual: number;
-  picoLucro: number;
-  consecutiveWins: number;
   opsCount: number;
-  stopBlindadoAtivo: boolean;
-  pisoBlindado: number;
-  lastProfit: number;
-  martingaleLevel: number;
-  sorosLevel: number;
-  totalLosses: number;
-  recoveryAttempts: number;
-  totalLossAccumulated: number;
-  lastDeniedLogData?: { probability: number; signal: string | null };
-  lastSignals: Array<{ direction: string; timestamp: number }>;
-  consecutiveLossesSinceModeChange: number;
+  currentProfit: number;
+  currentLoss: number;
+  operationsCount: number;
 
   // System
   currentContractId: string | null;
   currentTradeId: number | null;
   isWaitingContract: boolean;
+  waitingContractStartTime?: number;
   lastContractType?: string;
   ticksSinceLastAnalysis: number;
   lastDigits: number[];
   lastOpProfit?: number;
-  lastDeniedLogTime?: number;
-  waitingContractStartTime: number | null;
 }
 @Injectable()
 export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -372,11 +355,6 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       profit: 0,
       peakProfit: 0,
 
-      // AutonomousAgentState compatibility
-      currentProfit: 0,
-      currentLoss: 0,
-      operationsCount: 0,
-
       // Cycle Management (V4)
       cycleCurrent: 1,
       cycleTarget: config.profitTarget * FALCON_CONSTANTS.cyclePercent,
@@ -385,41 +363,38 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       cyclePeakProfit: 0,
       cycleOps: 0,
 
+      // Blindado State
       blindadoActive: false,
       blindadoFloorProfit: 0,
+      recoveryLock: false, // ✅ V4 REQUIRED
 
+      // Flags
       inStrategicPauseUntilTs: 0,
       sessionEnded: false,
 
+      // Automático
       mode: (config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL')) as NegotiationMode,
       analysis: "PRINCIPAL",
 
+      // Recovery
       consecutiveLosses: 0,
       perdasAcumuladas: 0,
 
+      // Control
       lastOpTs: 0,
       cooldownUntilTs: 0,
 
+      // Metrics
       opsTotal: 0,
       wins: 0,
       losses: 0,
 
-      // Compatibility (Legacy)
-      saldoInicial: config.initialCapital,
+      // Compatibility (Infra)
       lucroAtual: 0,
-      picoLucro: 0,
-      consecutiveWins: 0,
       opsCount: 0,
-      stopBlindadoAtivo: false,
-      pisoBlindado: 0,
-      lastProfit: 0,
-      martingaleLevel: 0,
-      sorosLevel: 0,
-      totalLosses: 0,
-      recoveryAttempts: 0,
-      totalLossAccumulated: 0,
-      lastSignals: [],
-      consecutiveLossesSinceModeChange: 0,
+      currentProfit: 0,
+      currentLoss: 0,
+      operationsCount: 0,
 
       // System
       currentContractId: null,
@@ -427,7 +402,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       isWaitingContract: false,
       ticksSinceLastAnalysis: 0,
       lastDigits: [],
-      waitingContractStartTime: null,
+      waitingContractStartTime: undefined,
     };
 
     this.userStates.set(userId, state);
@@ -619,11 +594,9 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     try {
       // ✅ CORREÇÃO CRÍTICA: Coletar tick SEMPRE, mesmo aguardando contrato
-      // Isso garante que a janela de análise não tenha "buracos" (gaps) de dados
       const userTicks = this.ticks.get(userId) || [];
       userTicks.push(tick);
 
-      // Manter apenas os últimos maxTicks
       if (userTicks.length > this.maxTicks) {
         userTicks.shift();
       }
@@ -631,7 +604,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // 2. Se está aguardando resultado de contrato, realizar análise apenas para detectar entrada bloqueada
       if (state.isWaitingContract) {
-        // ✅ [SAFETY] Timeout de 60s para contrato preso (possível queda de WS/Subscription)
+        // ✅ [SAFETY] Timeout de 40s para contrato preso
         const now = Date.now();
         const waitTime = state.waitingContractStartTime ? (now - state.waitingContractStartTime) : 0;
 
@@ -643,18 +616,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             `⚠️ TIMEOUT NA RESPOSTA (40s)...\n• Motivo: Operação ${contractRef} sem resposta da API.\n• Ação: Marcando trade como erro e destravando agente.`
           );
 
-          // ✅ Marcar trade no banco como erro
           if (state.currentTradeId) {
             await this.updateTradeRecord(state.currentTradeId, {
               status: 'ERROR',
               errorMessage: 'Falha na compra',
             }).catch(e => this.logger.error(`[Falcon][${userId}] Erro ao marcar falha no banco:`, e));
             this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
-            // ✅ Adicionar cooldown de 15s após erro para evitar spam
             state.cooldownUntilTs = Date.now() + 15000;
           }
           state.isWaitingContract = false;
-          state.waitingContractStartTime = null;
+          state.waitingContractStartTime = undefined;
           state.currentContractId = null;
           state.currentTradeId = null;
           return;
@@ -662,26 +633,25 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         const marketAnalysis = await this.analyzeMarket(userId, userTicks);
         if (marketAnalysis?.signal) {
-          // Throttling de log para não inundar (aumentado para 30s para reduzir ruído)
           if (!state.lastDeniedLogTime || (now - state.lastDeniedLogTime) > 30000) {
             state.lastDeniedLogTime = now;
             this.logBlockedEntry(userId, {
               reason: 'OPERAÇÃO EM ANDAMENTO',
-              details: `Sinal ${marketAnalysis.signal} detectado | Operação ${state.currentContractId || 'em curso'} (Há ${Math.round(waitTime / 1000)}s)`
+              details: `Sinal ${marketAnalysis.signal} detectado | Operação ${state.currentContractId || 'em curso'}`
             });
           }
         }
         return;
       }
 
-      // ✅ TICK ADVANCE LÓGICA V2 (DIGIT DENSITY WINDOWS)
+      // ✅ TICK WINDOWS REDUZIDAS (Falcon V3.1)
       const isRecovery = state.perdasAcumuladas > 0;
-      const modeSettings = FALCON_MODES[state.mode as keyof typeof FALCON_MODES];
-      const currentConfig = isRecovery ? modeSettings.recovery : modeSettings.principal;
-      const requiredTicks = currentConfig.window;
+      const settings = isRecovery ? FALCON_MODES.RECOVERY : FALCON_MODES[state.mode as 'NORMAL' | 'PRECISO'];
+      const requiredTicks = settings.window;
 
       if (userTicks.length < requiredTicks) {
-        if (userTicks.length % 10 === 0) {
+        // Reduzido para logar a cada 20 ticks (mais silencioso)
+        if (userTicks.length % 20 === 0) {
           this.logDataCollection(userId, {
             targetCount: requiredTicks,
             currentCount: userTicks.length,
@@ -691,57 +661,29 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         return;
       }
 
-      // ✅ Avançar contador de análise
       state.ticksSinceLastAnalysis = (state.ticksSinceLastAnalysis || 0) + 1;
 
-      // ✅ Log de início de análise (Heartbeat a cada 3 análises = ~3s em média)
-      // Primeiro log logo na primeira análise após o warm-up de dados
-      if (state.ticksSinceLastAnalysis === 1 || state.ticksSinceLastAnalysis % 3 === 0) {
+      // Heartbeat Log Throttled - Reduzido para a cada 20 ticks
+      if (state.ticksSinceLastAnalysis % 20 === 0) {
         this.logAnalysisStarted(userId, state.mode, userTicks.length);
       }
 
       // Realizar análise de mercado
       const marketAnalysis = await this.analyzeMarket(userId, userTicks);
 
-      if (marketAnalysis) {
-        const { signal, probability, details } = marketAnalysis;
+      if (marketAnalysis && marketAnalysis.signal) {
+        state.ticksSinceLastAnalysis = 0;
 
-        // Se usuário pediu logs detalhados, salvar no banco - Usando INFO para garantir visibilidade
-        const cutoff = (state.mode as any) === 'VELOZ' ? 55 : (state.mode === 'NORMAL' ? 55 : 55);
-        const message = `📊 ANÁLISE COMPLETA\n` +
-          `• Sequência: ${details?.digitPattern || 'Processando...'}\n` +
-          `• Status: ${signal ? 'SINAL ENCONTRADO 🟢' : 'SEM PADRÃO CLARO ❌'}\n` +
-          `• Probabilidade: ${probability}% (Cutoff: ${cutoff}%)`;
-
-        // Throttled: Apenas logar análise completa se houver sinal ou a cada 10 ticks
-        if (marketAnalysis.signal || state.ticksSinceLastAnalysis === 0) {
-          this.saveLog(userId, signal ? 'INFO' : 'INFO', 'ANALYZER', message);
-        }
-
-        if (signal) {
-          // Se chegamos aqui, temos um sinal! Reseta o contador
-          state.ticksSinceLastAnalysis = 0;
-
-          // ✅ Verificar novamente antes de processar (pode ter mudado)
-          if (state.isWaitingContract) return;
-
-          // Processar decisão de trade
-          const decision = await this.processAgent(userId, marketAnalysis);
-
-          // ✅ Verificar novamente antes de executar
-          if (state.isWaitingContract) return;
-
-          if (decision.action === 'BUY') {
-            await this.executeTrade(userId, decision, marketAnalysis);
-          } else if (decision.action === 'STOP') {
-            await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
-          }
+        const decision = await this.processAgent(userId, marketAnalysis);
+        if (decision.action === 'BUY') {
+          await this.executeTrade(userId, decision, marketAnalysis);
+        } else if (decision.action === 'STOP') {
+          await this.handleStopCondition(userId, decision.reason || 'UNKNOWN');
         }
       }
     } catch (error) {
       this.logger.error(`[Falcon][${userId}] Erro ao processar tick:`, error);
     } finally {
-      // ✅ Sempre liberar lock, mesmo em caso de erro ou retorno antecipado
       this.processingLocks.set(userId, false);
     }
   }
@@ -876,31 +818,41 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
    * ✅ LOGIC HELPER: Calcular Stake (v2.0 Martingale Inteligente)
    */
   private computeNextStake(config: FalconUserConfig, state: FalconUserState): number {
-    // Principal (Over 2)
+    // Se não houver perdas acumuladas, usa stake base
     if (state.perdasAcumuladas <= 0) {
       return config.baseStake;
     }
 
-    // Recuperação (Over 4)
+    let stake = config.baseStake;
     const perdas = state.perdasAcumuladas;
-    const payoutOver4 = FALCON_CONSTANTS.payoutRecovery; // 0.84
+    const isRecovery = state.perdasAcumuladas > 0;
 
-    let multiplicador = 1.00;
+    // Payout fixo para cálculo de martingale conforme especificado (ou dinâmico por perfil)
+    const currentPayout = isRecovery ? FALCON_CONSTANTS.payoutRecovery : FALCON_CONSTANTS.payoutPrincipal;
+
     switch (config.riskProfile) {
+      case 'CONSERVADOR':
+        // Recupera 100% das perdas
+        stake = perdas / currentPayout;
+        break;
       case 'MODERADO':
-        multiplicador = 1.25;
+        // Recupera 100% + 15%
+        stake = (perdas * 1.15) / currentPayout;
         break;
       case 'AGRESSIVO':
-        multiplicador = 1.50;
+        // Recupera 100% + 30%
+        stake = (perdas * 1.30) / currentPayout;
         break;
-      case 'CONSERVADOR':
+      case 'FIXO':
+        stake = config.baseStake;
+        break;
       default:
-        multiplicador = 1.00;
+        stake = config.baseStake;
         break;
     }
 
-    // Fórmula: stake_recup = (perdas_acumuladas × multiplicador) / payout_over4
-    let stake = (perdas * multiplicador) / payoutOver4;
+    // Safety e Arredondamento
+    let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
 
     // Reset Conservador (MAX 5 Gales)
     if (config.riskProfile === 'CONSERVADOR' && state.consecutiveLosses > FALCON_CONSTANTS.martingaleMaxLevel) {
@@ -910,18 +862,35 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return config.baseStake;
     }
 
-    let finalStake = Math.max(0.35, Math.ceil(stake * 100) / 100);
-
-    // Smart Goal (V4 Optimization)
+    // ✅ SMART GOAL: Ajustar entrada para bater a meta exata
     const dailyGap = config.profitTarget - state.profit;
     const cycleGap = state.cycleTarget - state.cycleProfit;
-    const gapToTarget = Math.max(0, Math.min(dailyGap, cycleGap));
-    const currentPayout = FALCON_CONSTANTS.payoutRecovery;
+
+    const gapToTarget = (state.perdasAcumuladas > 0)
+      ? Math.max(0, dailyGap)
+      : Math.max(0, Math.min(dailyGap, cycleGap));
 
     if (gapToTarget > 0 && gapToTarget < (finalStake * currentPayout)) {
       const smartStake = Math.max(0.35, Math.ceil((gapToTarget / currentPayout) * 100) / 100);
       if (smartStake < finalStake) {
+        this.logger.log(`[Falcon][${config.userId}] 🎯 SMART GOAL: Ajustando de $${finalStake} para $${smartStake} p/ bater meta.`);
         finalStake = smartStake;
+      }
+    }
+
+    // ✅ CYCLE DRAWDOWN PROTECTION: Cap stake to prevent exceeding 60% cycle loss
+    if (state.cycleProfit < 0) {
+      const currentCycleLoss = Math.abs(state.cycleProfit);
+      const remainingDrawdownAllowance = state.cycleMaxDrawdown - currentCycleLoss;
+
+      if (remainingDrawdownAllowance > 0) {
+        if (finalStake > remainingDrawdownAllowance) {
+          const cappedStake = Math.max(0.35, Math.floor(remainingDrawdownAllowance * 100) / 100);
+          this.logger.log(`[Falcon][${config.userId}] 🛡️ DRAWDOWN PROTECTION: Capping stake de $${finalStake.toFixed(2)} p/ $${cappedStake.toFixed(2)}`);
+          finalStake = cappedStake;
+        }
+      } else {
+        return 0.35;
       }
     }
 
@@ -931,12 +900,22 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   /**
    * ✅ CYCLE MANAGEMENT (V4 Spec)
    */
-  private updateCycleState(userId: string): void {
+  private async updateCycleState(userId: string): Promise<void> {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
     if (!config || !state) return;
 
-    // 1. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
+    // 0. META GLOBAL
+    const currentProfitTotal = Math.round(state.profit * 100) / 100;
+    if (currentProfitTotal >= config.profitTarget) {
+      this.saveLog(userId, 'INFO', 'SESSION', `🏆 META DE LUCRO ATINGIDA ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
+      state.sessionEnded = true;
+      state.endReason = 'TARGET';
+      this.handleStopCondition(userId, 'TAKE_PROFIT');
+      return;
+    }
+
+    // 1. SAFEGUARD GLOBAL
     const currentProfitRounded = Math.round(state.profit * 100) / 100;
     if (currentProfitRounded <= -config.stopLoss) {
       this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
@@ -946,32 +925,110 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       return;
     }
 
+    // Atualizar picos do ciclo
+    if (state.cycleProfit > state.cyclePeakProfit) {
+      state.cyclePeakProfit = state.cycleProfit;
+    }
+
     // Checar conclusão do ciclo (Meta do Ciclo atingida)
-    if (state.cycleProfit >= state.cycleTarget) {
+    const currentCycleProfitRounded = Math.round(state.cycleProfit * 100) / 100;
+    if (currentCycleProfitRounded >= state.cycleTarget) {
       this.saveLog(userId, 'INFO', 'CYCLE',
         `🔄 CICLO ${state.cycleCurrent} CONCLUÍDO | Lucro Ciclo: ${state.cycleProfit.toFixed(2)}`);
 
       if (state.cycleCurrent < FALCON_CONSTANTS.cycles) {
         state.cycleCurrent++;
-        // RESETAR métricas do ciclo (V4 Spec)
         state.cycleProfit = 0;
         state.cycleOps = 0;
         state.cyclePeakProfit = 0;
         state.blindadoActive = false;
         state.blindadoFloorProfit = 0;
 
-        // Pausa estratégica entre ciclos
-        state.inStrategicPauseUntilTs = Date.now() + 60000;
-        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (60s)...`);
-
+        // Pausa estratégica entre ciclos (V4 Checklist: 30 minutos)
+        state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 60 * 1000);
+        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (30 minutos)...`);
       } else {
-        // Ciclo 4 concluído = Meta Diária
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
         state.sessionEnded = true;
         state.endReason = 'TARGET';
         this.handleStopCondition(userId, 'TAKE_PROFIT');
       }
       return;
+    }
+
+    // 2. GATILHO: Exaustão (Limite de Operações do Ciclo)
+    const limitCycle = config.limitOpsCycle || 500;
+    if (state.cycleOps >= limitCycle) {
+      this.saveLog(userId, 'WARN', 'CYCLE',
+        `⌛ EXAUSTÃO DO CICLO ${state.cycleCurrent} | Entradas: ${state.cycleOps}/${limitCycle}`);
+
+      if (state.cycleCurrent < FALCON_CONSTANTS.cycles) {
+        state.cycleCurrent++;
+        state.cycleProfit = 0;
+        state.cycleOps = 0;
+        state.cyclePeakProfit = 0;
+        state.blindadoActive = false;
+        state.blindadoFloorProfit = 0;
+
+        // Pausa longa de exaustão (V4 Checklist: 1 hora)
+        state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
+        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 1 hora)...`);
+      } else {
+        state.sessionEnded = true;
+        this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (4 ciclos atingidos/exauridos).`);
+      }
+      return;
+    }
+
+    // 3. GATILHO: Risco (Drawdown Máximo do Ciclo)
+    const currentCycleLossRounded = Math.round(state.cycleProfit * 100) / 100;
+    if (currentCycleLossRounded <= -state.cycleMaxDrawdown) {
+      this.saveLog(userId, 'ERROR', 'RISK', `🛑 DRAWDOWN MÁXIMO DO CICLO ${state.cycleCurrent} ATINGIDO ($${state.cycleProfit.toFixed(2)}). Encerrando ciclo.`);
+
+      if (state.mode !== 'PRECISO') {
+        state.mode = 'PRECISO';
+        state.recoveryLock = true;
+        this.saveLog(userId, 'WARN', 'RISK', `⚠️ CICLO NEGATIVO: Ativando MODO PRECISO para o próximo mini-expediente.`);
+      }
+
+      if (state.cycleCurrent < FALCON_CONSTANTS.cycles) {
+        state.cycleCurrent++;
+        state.cycleProfit = 0;
+        state.cycleOps = 0;
+        state.cyclePeakProfit = 0;
+        state.blindadoActive = false;
+        state.blindadoFloorProfit = 0;
+
+        // Pausa técnica pós-drawdown (V4 Checklist: 1 hora)
+        state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
+        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após drawdown (Pausa 1 hora)...`);
+      } else {
+        state.sessionEnded = true;
+        this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada por drawdown no último ciclo.`);
+      }
+      return;
+    }
+
+    // 4. GATILHO: Stop Blindado Trailing
+    if (state.blindadoActive && state.cycleProfit <= state.blindadoFloorProfit) {
+      this.saveLog(userId, 'WARN', 'RISK', `🛡️ STOP BLINDADO ATINGIDO | Profit: ${state.cycleProfit.toFixed(2)} | Piso: ${state.blindadoFloorProfit.toFixed(2)}`);
+
+      if (state.cycleCurrent < FALCON_CONSTANTS.cycles) {
+        state.cycleCurrent++;
+        state.cycleProfit = 0;
+        state.cycleOps = 0;
+        state.cyclePeakProfit = 0;
+        state.blindadoActive = false;
+        state.blindadoFloorProfit = 0;
+
+        state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 30 * 60 * 1000);
+        this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após Blindado (Pausa 30 min)...`);
+      } else {
+        state.sessionEnded = true;
+        state.endReason = 'BLINDADO';
+        this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA POR BLINDADO NO ÚLTIMO CICLO.`);
+        this.handleStopCondition(userId, 'TAKE_PROFIT');
+      }
     }
   }
 
@@ -982,19 +1039,19 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     if (!config.enableStopLossBlindado) return;
 
     const currentCycleProfit = state.cycleProfit;
-    const triggerValue = state.cycleTarget * config.blindadoTriggerPctOfTarget;
+    const triggerValue = state.cycleTarget * 0.4; // V4 Spec: 40%
 
     if (!state.blindadoActive) {
       if (currentCycleProfit >= triggerValue) {
         state.blindadoActive = true;
-        state.blindadoFloorProfit = state.cyclePeakProfit * config.blindadoProtectPctOfPeak;
+        state.blindadoFloorProfit = state.cycleTarget * 0.5; // Locked 50%
         this.saveLog(userId, 'INFO', 'RISK',
-          `🛡️ BLINDADO ATIVADO (Ciclo ${state.cycleCurrent}) | Profit: ${currentCycleProfit.toFixed(2)} | Floor: ${state.blindadoFloorProfit.toFixed(2)}`);
+          `🛡️ BLINDADO ATIVADO (Ciclo ${state.cycleCurrent}) | Profit: ${currentCycleProfit.toFixed(2)} | Piso: ${state.blindadoFloorProfit.toFixed(2)}`);
       }
     } else {
-      const newFloor = state.cyclePeakProfit * config.blindadoProtectPctOfPeak;
-      if (newFloor > state.blindadoFloorProfit) {
-        state.blindadoFloorProfit = newFloor;
+      const potentialNewFloor = state.cyclePeakProfit * 0.5;
+      if (potentialNewFloor > state.blindadoFloorProfit) {
+        state.blindadoFloorProfit = potentialNewFloor;
       }
     }
   }
@@ -1125,119 +1182,77 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const config = this.userConfigs.get(userId);
     const state = this.userStates.get(userId);
 
-    if (!config || !state || decision.action !== 'BUY') {
-      return;
-    }
-
-    // ✅ Verificar se já está aguardando resultado de contrato (dupla verificação de segurança)
-    if (state.isWaitingContract) {
-      this.logger.warn(`[Falcon][${userId}] ⚠️ Tentativa de compra bloqueada: já aguardando resultado de contrato anterior`);
-      return;
-    }
-
-    // Verificar Stop Loss antes de executar (dupla verificações)
-    const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
-    if (stopLossCheck.action === 'STOP') {
-      return;
-    }
-
-    const contractType = decision.contractType || (marketAnalysis.signal === 'CALL' ? 'CALL' : 'PUT');
-
-    // ✅ IMPORTANTE: Setar isWaitingContract ANTES de comprar para bloquear qualquer nova análise/compra
-    state.isWaitingContract = true;
-    state.waitingContractStartTime = Date.now();
-
-    // Payout fixo: 92.15%
-    const zenixPayout = 0.9215;
-
-    //  ✅ FIX: Obter preço atual do último tick disponível para usar como entry price inicial
-    // Isso evita que trades sejam criados com entryPrice = 0 ou null
-    const userTicks = this.ticks.get(userId) || [];
-    const currentPrice = userTicks.length > 0
-      ? userTicks[userTicks.length - 1].value
-      : marketAnalysis.details?.currentPrice || 0;
-
-    this.logger.debug(`[Falcon][${userId}] 💰 Usando preço atual como entry price inicial: ${currentPrice} `);
+    if (!config || !state || decision.action !== 'BUY') return;
+    if (state.isWaitingContract) return;
 
     try {
-      // ✅ Salvar tipo de contrato para usar no log de resultado
-      state.lastContractType = contractType;
+      // Verificação de risco em memória (rápida)
+      const stopLossCheck = await this.checkStopLoss(userId, decision.stake);
+      if (stopLossCheck.action === 'STOP') {
+        await this.handleStopCondition(userId, stopLossCheck.reason || 'STOP_LOSS');
+        return;
+      }
 
-      // ✅ Criar registro de trade ANTES de executar - com preço atual como inicial
-      const tradeId = await this.createTradeRecord(
-        userId,
-        {
-          contractType: contractType,
-          stakeAmount: decision.stake || config.initialStake,
-          duration: 1,
-          marketAnalysis: marketAnalysis,
-          payout: zenixPayout,
-          entryPrice: currentPrice, // ✅ Usar preço atual instead of 0
-        },
-      );
+      // PREPARAÇÃO (Síncrona)
+      const finalStake = stopLossCheck.stake || decision.stake || config.baseStake;
+      const contractType = decision.contractType || (marketAnalysis.details?.contractType as any) || 'DIGITOVER';
+      const barrier = String(marketAnalysis.details?.barrier || (state.perdasAcumuladas > 0 ? 4 : 2));
+      const duration = 1;
 
-      // ✅ CORREÇÃO DE RACE CONDITION:
-      // Definir currentTradeId IMEDIATAMENTE, antes de chamar buyContract via API.
-      state.currentTradeId = tradeId;
+      // TRAVA DE ESTADO
+      state.isWaitingContract = true;
+      state.waitingContractStartTime = Date.now();
 
-      let lastErrorMsg = 'Falha ao comprar contrato';
-      // ✅ LOG: Notificar pedido de compra
-      await this.saveLog(userId, 'INFO', 'TRADER', `📡 SOLICITANDO COMPRA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`);
-
-      const barrier = marketAnalysis.details?.barrier || 2;
-
-      const contractId = await this.buyContract(
+      // 🚀 DISPARO IMEDIATO (FIRE AND FORGET)
+      const buyPromise = this.buyContract(
         userId,
         config.derivToken,
         contractType,
         config.symbol,
-        decision.stake || config.initialStake,
-        1, // duration em ticks (ZENIX v1.0 standard)
-        2, // maxRetries
-        tradeId, // ✅ Passar tradeId para associar corretamente no callback
-        barrier // ✅ Passo a barreira (dígito alvo)
-      ).catch(err => {
-        lastErrorMsg = err.message || 'Falha ao comprar contrato';
-        return null;
+        finalStake,
+        duration,
+        2, // retries
+        0, // tradeId (temp)
+        Number(barrier)
+      );
+
+      // TAREFAS DE FUNDO
+      this.saveLog(userId, 'INFO', 'TRADER', `🚀 ORDEM ENVIADA! ${contractType} > ${barrier} | $${finalStake.toFixed(2)}`);
+
+      this.createTradeRecord(userId, {
+        contractType,
+        stakeAmount: finalStake,
+        duration,
+        marketAnalysis,
+        payout: marketAnalysis.payout,
+        entryPrice: marketAnalysis.details?.currentPrice || 0
+      }).then(async (tradeId) => {
+        if (tradeId) {
+          state.currentTradeId = tradeId;
+          const contractId = await buyPromise; // Espera o contrato no background
+          if (contractId) {
+            state.currentContractId = contractId;
+            this.logger.log(`[Falcon][${userId}] ✅ Contrato vinculado ao Trade: ${contractId}`);
+            await this.updateTradeRecord(tradeId, { contractId, status: 'ACTIVE' });
+          } else {
+            await this.updateTradeRecord(tradeId, { status: 'ERROR', errorMessage: 'Falha na compra' });
+            state.isWaitingContract = false;
+            state.currentContractId = null;
+          }
+        }
+      }).catch(err => {
+        this.logger.error(`[Falcon][${userId}] Erro no processamento de fundo do trade:`, err);
+        state.isWaitingContract = false;
+        state.currentContractId = null;
       });
 
-      if (contractId) {
-        state.currentContractId = contractId;
-        // state.currentTradeId = tradeId; // ✅ Já definido acima para evitar race condition
-
-        // ✅ Log de operação no padrão Orion/Zeus
-        await this.saveLog(
-          userId,
-          'INFO',
-          'TRADER',
-          `⚡ ENTRADA CONFIRMADA: ${contractType} | VALOR: $${(decision.stake || config.initialStake).toFixed(2)}`,
-        );
-
-        // ✅ Atualizar trade com contract_id
-        await this.updateTradeRecord(tradeId, {
-          contractId: contractId,
-          status: 'ACTIVE',
-        });
-      } else {
-        // Se falhou, resetar isWaitingContract e atualizar trade com erro
-        state.isWaitingContract = false;
-        state.waitingContractStartTime = null;
-        state.currentTradeId = null; // ✅ Resetar ID pois falhou
-        state.currentContractId = null;
-
-        await this.updateTradeRecord(tradeId, {
-          status: 'ERROR',
-          errorMessage: lastErrorMsg,
-        });
-        await this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora: ${lastErrorMsg}`);
-      }
+      // O Agente continua sem esperar o retorno do banco ou da API
+      this.logger.debug(`[Falcon][${userId}] ⚡ Fire-and-Forget: Controle retornado.`);
     } catch (error) {
-      // ✅ Fallback de segurança máximo: resetar estado se qualquer erro crítico ocorrer antes/durante execução
       state.isWaitingContract = false;
-      state.waitingContractStartTime = null;
-      state.currentTradeId = null;
-      this.logger.error(`[Falcon][${userId}] Erro ao executar trade: `, error);
-      await this.saveLog(userId, 'ERROR', 'API', `Erro ao executar trade: ${error.message} `);
+      state.waitingContractStartTime = undefined;
+      state.currentContractId = null;
+      this.logger.error(`[Falcon][${userId}] Erro no fluxo de execução: ${error}`);
     }
   }
 
@@ -1461,7 +1476,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                 if (state) {
                   state.isWaitingContract = false;
-                  state.waitingContractStartTime = null;
+                  state.waitingContractStartTime = undefined;
                 }
 
                 // Remover subscription usando pool interno
@@ -1585,12 +1600,40 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.perdasAcumuladas = 0;
         state.analysis = "PRINCIPAL";
         state.cooldownUntilTs = Date.now() + (config.cooldownWinSeconds * 1000);
+
+        // ✅ Reset Recovery: Voltar para o modo original
+        const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
+        if (state.mode !== originalMode) {
+          state.mode = originalMode;
+          state.recoveryLock = false;
+          this.saveLog(userId, 'INFO', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
+        }
       } else {
         state.losses++;
         state.consecutiveLosses++;
         state.perdasAcumuladas += Math.abs(result.profit);
         state.analysis = "RECUPERACAO";
         state.cooldownUntilTs = Date.now() + (config.cooldownLossSeconds * 1000);
+
+        // ✅ V4 Checklist: Ativar MODO PRECISO após 1 PERDA (Modo Recuperação)
+        if (state.consecutiveLosses >= 1 && state.mode !== 'PRECISO') {
+          state.mode = 'PRECISO';
+          state.recoveryLock = true;
+          this.saveLog(userId, 'WARN', 'RISK', `⚠️ PERDA DETECTADA: Ativando MODO PRECISO para maior segurança.`);
+        }
+
+        // ✅ V4 Checklist: Pausa por Sequência de Perdas (Graduated)
+        if (state.consecutiveLosses === 3) {
+          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 5 * 60 * 1000);
+          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (3 Perdas Consecutivas). Pausando por 5 minutos.`);
+        } else if (state.consecutiveLosses === 4) {
+          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 10 * 60 * 1000);
+          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA TÉCNICA (4 Perdas Consecutivas). Pausando por 10 minutos.`);
+        } else if (state.consecutiveLosses >= 5) {
+          state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 20 * 60 * 1000);
+          state.consecutiveLosses = 0;
+          this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por 20 minutos.`);
+        }
       }
       this.updateBlindado(userId, state, config);
 
@@ -1609,9 +1652,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     } catch (criticalError) {
       this.logger.error(`[Falcon][${userId}] ❌ ERRO CRÍTICO no processamento de contrato:`, criticalError);
     } finally {
-      // ✅ COOLDOWN PÓS-TRADE (Executado após cálculos e pausas serem definidos)
       state.isWaitingContract = false;
-      state.waitingContractStartTime = null;
+      state.waitingContractStartTime = undefined;
     }
   }
 
@@ -1623,69 +1665,39 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     const state = this.userStates.get(userId);
     if (!config || !state) return null;
 
-    // Detectar Sub-Modo (Principal vs Recuperação)
     const isRecovery = state.perdasAcumuladas > 0;
-    const modeName = state.mode;
-    const modeConfig = FALCON_MODES[modeName][isRecovery ? 'recovery' : 'principal'];
+    const settings = isRecovery ? FALCON_MODES.RECOVERY : FALCON_MODES[state.mode as 'NORMAL' | 'PRECISO'];
 
-    if (ticks.length < modeConfig.window) return null;
+    if (ticks.length < settings.window) return null;
 
-    // 1. Extrair dígitos da janela solicitada
-    const windowTicks = ticks.slice(-modeConfig.window);
+    // 1. Extração de Dígitos (V3.1)
+    const windowTicks = ticks.slice(-settings.window);
     const symbol = config.symbol || 'R_50';
-    // ✅ AJUSTE DE PRECISÃO: R_50 no Deriv costuma ter 2 dígitos ativos que mudam rápido. 
-    // Usar 4 dígitos estava pegando 'zeros' estáticos que quebravam a densidade.
-    let decimals = 4;
-    if (symbol.includes('100')) decimals = 2;
-    else if (symbol.includes('50')) decimals = 2;
-    else if (symbol.includes('10')) decimals = 3;
-    else if (symbol.includes('25')) decimals = 3;
-    else if (symbol.includes('75')) decimals = 4;
+    const decimals = symbol.includes('50') || symbol.includes('100') ? 2 : (symbol.includes('10') || symbol.includes('25') ? 3 : 4);
 
     const digits = windowTicks.map(t => this.lastDigitFromPrice(t.value, symbol, decimals));
     state.lastDigits = digits;
 
-    // 2. Contar ocorrências dos dígitos alvo
-    const count = digits.filter(d => modeConfig.targets.includes(d)).length;
+    // 2. Cálculo de Densidade
+    const targets = settings.barrier === 2 ? [3, 4, 5, 6, 7, 8, 9] : [5, 6, 7, 8, 9];
+    const hits = digits.filter(d => targets.includes(d)).length;
 
-    // ✅ LOG DE MONITORAMENTO (A cada 3 ticks para não inundar)
-    if (state.ticksSinceLastAnalysis % 3 === 0) {
-      const message = `📊 MONITORANDO DENSIDADE\n` +
-        `• SINAL: Digit Over ${modeConfig.barrier}\n` +
-        `• DENSIDADE: ${count}/${modeConfig.window}\n` +
-        `• ALVO: >= ${modeConfig.limit}\n` +
-        `• ÚLTIMOS: ${digits.slice(-10).join('|')}`;
-      this.saveLog(userId, 'INFO', 'ANALYZER', message);
-    }
-
-    // 3. Verificar Limite (Relaxado para >= conforme nova estratégia de precisão)
-    if (count >= modeConfig.limit) {
-      const contractType = 'DIGITOVER';
-      const barrier = modeConfig.barrier;
-      const payout = isRecovery ? FALCON_CONSTANTS.payoutRecovery : FALCON_CONSTANTS.payoutPrincipal;
-      const probability = isRecovery ? 60.91 : (modeName === 'NORMAL' ? 78.02 : 77.22);
-
+    // 3. Decisão
+    if (hits >= settings.hits) {
       return {
         signal: 'DIGIT',
-        probability,
-        payout,
-        confidence: probability / 100,
+        probability: isRecovery ? 65 : 82,
+        payout: isRecovery ? FALCON_CONSTANTS.payoutRecovery : FALCON_CONSTANTS.payoutPrincipal,
+        confidence: 0.8,
         details: {
-          contractType,
-          barrier,
-          info: isRecovery ? 'Filtro Recuperação' : `Filtro Principal ${modeName}`,
-          mode: modeName,
-          density: `${count}/${modeConfig.window}`,
-          targets: modeConfig.targets.join(','),
+          contractType: 'DIGITOVER',
+          barrier: settings.barrier,
+          info: isRecovery ? 'Falcon Recovery' : `Falcon ${state.mode}`,
+          mode: state.mode,
+          density: `${hits}/${settings.window}`,
           currentPrice: ticks[ticks.length - 1].value
         }
       };
-    } else if (count >= (modeConfig.limit * 0.8)) {
-      // Log de "Força Insuficiente" se estiver próximo (80% do alvo)
-      this.logBlockedEntry(userId, {
-        reason: 'FORÇA INSUFICIENTE',
-        details: `Densidade: ${count}/${modeConfig.window} (Alvo: >= ${modeConfig.limit})`
-      });
     }
 
     return null;
