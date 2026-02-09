@@ -570,10 +570,29 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
 
     async deactivateUser(userId: string): Promise<void> {
+        const config = this.userConfigs.get(userId);
+        const token = config?.derivToken;
+
         this.userConfigs.delete(userId);
         this.userStates.delete(userId);
         this.ticks.delete(userId);
-        this.logger.log(`[Zeus] ✅ Usuário ${userId} desativado`);
+        this.processingLocks.delete(userId);
+
+        // ✅ Se não houver mais usuários com este token, fechar a conexão
+        if (token) {
+            const otherUsersWithSameToken = Array.from(this.userConfigs.values()).some(c => c.derivToken === token);
+            if (!otherUsersWithSameToken) {
+                const conn = this.wsConnections.get(token);
+                if (conn) {
+                    this.logger.log(`[Zeus] 🔌 Fechando conexão WebSocket (Token: ${token.substring(0, 8)}...) - Nenhum usuário ativo.`);
+                    if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval);
+                    conn.ws.close();
+                    this.wsConnections.delete(token);
+                }
+            }
+        }
+
+        this.logger.log(`[Zeus] ✅ Usuário ${userId} desativado e estado limpo`);
     }
 
     /**
@@ -2123,6 +2142,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ Evita duplicação: salva apenas uma vez via LogQueueService
      */
     private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
+        // ✅ [SAFETY] Se o usuário não estiver mais nas configs, ignorar logs (evita ghost logs de retries em background)
+        if (!this.userConfigs.has(userId) && !message.includes('desativado')) {
+            return;
+        }
+
         // ✅ Formatar mensagem sem duplicar prefixo do módulo
         let formattedMessage = message;
         // Remover prefixos duplicados se existirem (ex: [CORE] - mensagem)

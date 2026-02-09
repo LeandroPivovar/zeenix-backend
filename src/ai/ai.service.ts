@@ -983,14 +983,7 @@ export class AiService implements OnModuleInit {
       this.logger.error(`[StrategyManager] Erro ao processar tick (${tickSymbol}):`, error);
     });
 
-    // ✅ Compartilhar tick de R_100 com AutonomousAgentService
-    if (tickSymbol === 'R_100' && this.autonomousAgentService) {
-      try {
-        this.autonomousAgentService.receiveExternalTick(newTick, tickSymbol);
-      } catch (error) {
-        // Ignorar erros silenciosamente (pode não estar inicializado ainda)
-      }
-    }
+
   }
 
   /**

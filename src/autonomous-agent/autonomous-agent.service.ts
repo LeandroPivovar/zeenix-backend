@@ -1204,9 +1204,11 @@ export class AutonomousAgentService implements OnModuleInit {
       sessionStartTime = cached.date;
     } else {
       // Buscar session_date apenas se cache expirou ou não existe
+      // ✅ FIX: Buscar session_date mais recente MESMO se agente está inativo
       const config = await this.dataSource.query(
         `SELECT session_date FROM autonomous_agent_config 
-         WHERE user_id = ? AND is_active = TRUE
+         WHERE user_id = ?
+         ORDER BY updated_at DESC
          LIMIT 1`,
         [userId],
       );

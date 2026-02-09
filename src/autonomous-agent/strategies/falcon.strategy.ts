@@ -530,11 +530,29 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
   }
 
   async deactivateUser(userId: string): Promise<void> {
+    const config = this.userConfigs.get(userId);
+    const token = config?.derivToken;
+
     this.userConfigs.delete(userId);
     this.userStates.delete(userId);
     this.ticks.delete(userId);
     this.processingLocks.delete(userId);
-    this.logger.log(`[Falcon] ✅ Usuário ${userId} desativado`);
+
+    // ✅ Se não houver mais usuários com este token, fechar a conexão
+    if (token) {
+      const otherUsersWithSameToken = Array.from(this.userConfigs.values()).some(c => c.derivToken === token);
+      if (!otherUsersWithSameToken) {
+        const conn = this.wsConnections.get(token);
+        if (conn) {
+          this.logger.log(`[Falcon] 🔌 Fechando conexão WebSocket (Token: ${token.substring(0, 8)}...) - Nenhum usuário ativo.`);
+          if (conn.keepAliveInterval) clearInterval(conn.keepAliveInterval);
+          conn.ws.close();
+          this.wsConnections.delete(token);
+        }
+      }
+    }
+
+    this.logger.log(`[Falcon] ✅ Usuário ${userId} desativado e estado limpo`);
   }
 
   /**
@@ -621,7 +639,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               status: 'ERROR',
               errorMessage: 'Falha na compra',
             }).catch(e => this.logger.error(`[Falcon][${userId}] Erro ao marcar falha no banco:`, e));
-            this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`);
+            this.saveLog(userId, 'ERROR', 'API', `Erro na Corretora ao executar sinal.`).catch(() => { });
             state.cooldownUntilTs = Date.now() + 15000;
           }
           state.isWaitingContract = false;
@@ -918,7 +936,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // 1. SAFEGUARD GLOBAL
     const currentProfitRounded = Math.round(state.profit * 100) / 100;
     if (currentProfitRounded <= -config.stopLoss) {
-      this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
+      await this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
       state.sessionEnded = true;
       state.endReason = 'STOPLOSS';
       this.handleStopCondition(userId, 'STOP_LOSS');
@@ -1904,11 +1922,16 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     }
   }
 
-  private saveLog(userId: string, level: 'INFO' | 'WARN' | 'ERROR', module: string, message: string): void {
+  private async saveLog(userId: string, level: string, module: string, message: string): Promise<void> {
+    // ✅ [SAFETY] Se o usuário não estiver mais nas configs, ignorar logs (evita ghost logs de retries em background)
+    if (!this.userConfigs.has(userId) && !message.includes('desativado')) {
+      return;
+    }
+
     if (this.logQueueService) {
       this.logQueueService.saveLogAsync({
         userId,
-        level,
+        level: level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
         module: module as any,
         message,
         tableName: 'autonomous_agent_logs',
