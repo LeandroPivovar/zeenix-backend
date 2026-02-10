@@ -809,7 +809,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         let stake = config.baseStake;
         const perdas = state.perdasAcumuladas;
-        const payoutLiq = 1.26; // 126% conforme spec V4 (1.26 multiplier for calculation)
+        // ✅ FIX: Use dynamic Payout from config (Recovery) to ensure correct calculation
+        // Fallback to 1.26 (Digit Over 5) if not set.
+        const payoutLiq = (config.payoutRecovery && config.payoutRecovery > 0) ? config.payoutRecovery : 1.26;
 
         switch (config.riskProfile) {
             case 'CONSERVADOR':
@@ -1077,7 +1079,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 if (stake < 0.35) return;
 
                 if (state.perdasAcumuladas > 0 && config.riskProfile !== 'FIXO') {
-                    this.saveLog(userId, 'INFO', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): Recuperando $${state.perdasAcumuladas.toFixed(2)} com Stake $${stake} (Payout 126%)`);
+                    const payoutVal = config.payoutRecovery || 1.26;
+                    this.saveLog(userId, 'INFO', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): Recuperando $${state.perdasAcumuladas.toFixed(2)} com Stake $${stake} (Payout ${(payoutVal * 100).toFixed(0)}%)`);
                 }
 
                 await this.executeTrade(userId, {
