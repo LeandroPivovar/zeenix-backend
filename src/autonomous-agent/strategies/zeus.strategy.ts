@@ -809,7 +809,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         let stake = config.baseStake;
         const perdas = state.perdasAcumuladas;
-        const payoutLiq = 126; // 126% conforme spec V4
+        const payoutLiq = 1.26; // 126% conforme spec V4 (1.26 multiplier for calculation)
 
         switch (config.riskProfile) {
             case 'CONSERVADOR':
@@ -876,9 +876,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // ✅ Log Martingale Calculation for User Awareness
         // "Recuperando $20.00 (Total) com Stake de $18.26 (@126%)..."
         if (state.perdasAcumuladas > 0) {
-            // this.saveLog is not available here easily without instance ref? 
-            // Actually it is a private method of ZeusStrategy class, so yes 'this' works if called from instance.
-            // But logger is safer.
+            this.logger.log(`[Zeus][${config.userId}] 🔄 MARTINGALE (${config.riskProfile}): RECUPERANDO $${state.perdasAcumuladas.toFixed(2)} COM STAKE $${finalStake.toFixed(2)}`);
+            this.saveLog(config.userId, 'WARN', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): RECUPERANDO $${state.perdasAcumuladas.toFixed(2)} COM STAKE $${finalStake.toFixed(2)}`);
         }
 
         // ✅ CYCLE DRAWDOWN PROTECTION: Cap stake to prevent exceeding 60% cycle loss
@@ -1578,7 +1577,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                                 contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
 
                             if (isFinalized) {
-                                const profit = Number(contract.profit || 0);
+                                const buyPrice = Number(contract.buy_price || stake);
+                                const bidPrice = Number(contract.bid_price || 0);
+                                let profit = Number(contract.profit || 0);
+
+                                // ✅ FIX: Se o profit retornado for igual ao bid_price (Payout Total), é porque está vindo Bruto.
+                                // Ajustamos para (Payout - Stake) para ter o Lucro Líquido.
+                                if (profit > 0 && Math.abs(profit - bidPrice) < 0.01) {
+                                    profit = bidPrice - buyPrice;
+                                }
                                 const win = profit > 0;
                                 const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
 
