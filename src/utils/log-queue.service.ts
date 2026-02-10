@@ -255,22 +255,7 @@ export class LogQueueService implements OnModuleInit {
 
       this.logger.debug(`[LogQueue] ✅ ${logs.length} logs de Agent salvos para usuário ${userId}`);
 
-      // ✅ [LIMIT] Manter apenas os últimos 1000 logs por usuário para evitar inchaço do banco
-      // Executa limpeza após inserção
-      await this.dataSource.query(
-        `DELETE FROM autonomous_agent_logs 
-         WHERE user_id = ? 
-         AND id NOT IN (
-           SELECT id FROM (
-             SELECT id 
-             FROM autonomous_agent_logs 
-             WHERE user_id = ? 
-             ORDER BY timestamp DESC 
-             LIMIT 1000
-           ) as t
-         )`,
-        [userId, userId]
-      );
+      // ✅ [UNLIMITED] Removido limite de 1000 logs para salvar histórico completo
     } catch (error) {
       this.logger.error(`[LogQueue] Erro ao salvar logs de Agent para ${userId}:`, error);
     }

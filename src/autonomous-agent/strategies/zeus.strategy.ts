@@ -814,15 +814,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         switch (config.riskProfile) {
             case 'CONSERVADOR':
                 // Recupera 100% das perdas + 2%
-                stake = (perdas * 1.02 * 100) / payoutLiq;
+                stake = (perdas * 1.02) / payoutLiq;
                 break;
             case 'MODERADO':
                 // Recupera 100% + 15%
-                stake = (perdas * 1.15 * 100) / payoutLiq;
+                stake = (perdas * 1.15) / payoutLiq;
                 break;
             case 'AGRESSIVO':
                 // Recupera 100% + 30%
-                stake = (perdas * 1.30 * 100) / payoutLiq;
+                stake = (perdas * 1.30) / payoutLiq;
                 break;
             case 'FIXO':
                 stake = config.baseStake;
