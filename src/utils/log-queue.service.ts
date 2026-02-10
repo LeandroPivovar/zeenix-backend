@@ -43,7 +43,7 @@ export class LogQueueService implements OnModuleInit {
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
-  ) {}
+  ) { }
 
   onModuleInit() {
     this.logger.log('[LogQueueService] ✅ Serviço de fila de logs inicializado');
@@ -57,7 +57,7 @@ export class LogQueueService implements OnModuleInit {
     if (!entry.userId || !entry.message || entry.message.trim() === '') {
       return;
     }
-    
+
     // Validar que tem type (AI) ou level (Agent)
     if (!entry.type && !entry.level) {
       return;
@@ -254,6 +254,23 @@ export class LogQueueService implements OnModuleInit {
       );
 
       this.logger.debug(`[LogQueue] ✅ ${logs.length} logs de Agent salvos para usuário ${userId}`);
+
+      // ✅ [LIMIT] Manter apenas os últimos 1000 logs por usuário para evitar inchaço do banco
+      // Executa limpeza após inserção
+      await this.dataSource.query(
+        `DELETE FROM autonomous_agent_logs 
+         WHERE user_id = ? 
+         AND id NOT IN (
+           SELECT id FROM (
+             SELECT id 
+             FROM autonomous_agent_logs 
+             WHERE user_id = ? 
+             ORDER BY timestamp DESC 
+             LIMIT 1000
+           ) as t
+         )`,
+        [userId, userId]
+      );
     } catch (error) {
       this.logger.error(`[LogQueue] Erro ao salvar logs de Agent para ${userId}:`, error);
     }
