@@ -1505,7 +1505,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           trade.payout * 100, // Converter para percentual
           config.symbol,
           config.derivToken || null, // ✅ Token usado para o trade
-          config.accountType || null, // ✅ Tipo de conta (demo/real)
+          config.currency === 'DEMO' ? 'demo' : 'real', // ✅ Tipo de conta (demo/real) derivado de currency
         ],
       );
 

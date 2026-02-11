@@ -2061,7 +2061,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.payout * 100, // Converter para percentual
                     config.symbol || 'R_100',
                     config.derivToken || null, // ✅ Token usado para o trade
-                    config.accountType || null, // ✅ Tipo de conta (demo/real)
+                    config.currency === 'DEMO' ? 'demo' : 'real', // ✅ Tipo de conta (demo/real) derivado de currency
                 ],
 
             );
