@@ -75,6 +75,14 @@ export class TradesController {
     const contextUserId = targetUserId || req.user.userId;
     return await this.tradesService.getMarkupData(contextUserId, startDate, endDate);
   }
+
+  @Get('markup/daily')
+  async getDailyMarkupData(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return await this.tradesService.getDailyMarkupData(startDate, endDate);
+  }
   @Sse('markup/stream')
   sse(
     @Query('startDate') startDate?: string,

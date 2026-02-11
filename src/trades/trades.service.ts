@@ -419,10 +419,56 @@ export class TradesService {
           to: dateTo
         }
       };
-
     } catch (error) {
       console.error('[TradesService] Erro ao executar query de markup:', error);
       throw new Error('Erro ao calcular dados de markup');
+    }
+  }
+
+  async getDailyMarkupData(startDate?: string, endDate?: string) {
+    let dateFrom = startDate;
+    let dateTo = endDate;
+
+    if (!startDate || !endDate) {
+      const now = new Date();
+      // Default to last 30 days
+      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
+      dateTo = now.toISOString().split('T')[0];
+    }
+
+    const dateFromTime = `${dateFrom} 00:00:00`;
+    const dateToTime = `${dateTo} 23:59:59`;
+
+    console.log(`[TradesService] Buscando markup diário de ${dateFromTime} até ${dateToTime}`);
+
+    const query = `
+      SELECT 
+        DATE(AL.created_at) as date,
+        SUM(AL.returned_value) as totalPayout
+      FROM ai_trade_logs AL
+      JOIN ai_sessions AI ON AI.id = AL.ai_sessions_id
+      JOIN users U ON U.id = AI.user_id
+      WHERE AL.result = 'WON'
+        AND AL.created_at >= ? 
+        AND AL.created_at <= ?
+        AND AI.account_type = 'real'
+        AND U.is_active = 1
+        AND U.real_amount > 0
+      GROUP BY DATE(AL.created_at)
+      ORDER BY date ASC
+    `;
+
+    try {
+      const rawResults = await this.dataSource.query(query, [dateFromTime, dateToTime]);
+
+      return rawResults.map((row: any) => ({
+        date: row.date,
+        markup: parseFloat((parseFloat(row.totalPayout || 0) * 0.03).toFixed(2)) // 3% commission
+      }));
+    } catch (error) {
+      console.error('[TradesService] Erro ao buscar markup diário:', error);
+      throw new Error('Erro ao buscar dados de markup diário');
     }
   }
 
