@@ -151,4 +151,143 @@ export class MarkupService {
             });
         });
     }
+    /**
+     * Obtém detalhes de markup da API da Deriv com suporte a paginação
+     * 
+     * @param token - Token de API da Deriv
+     * @param options - Opções de filtro
+     * @returns Lista completa de transações de markup
+     */
+    async getAppMarkupDetails(
+        token: string,
+        options: MarkupStatisticsOptions,
+    ): Promise<any[]> {
+        if (!token) {
+            throw new UnauthorizedException('Token ausente');
+        }
+
+        const appId = options.app_id || Number(process.env.DERIV_APP_ID || 1089);
+        const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+
+        this.logger.log(
+            `[MarkupService] Buscando detalhes de markup - Período: ${options.date_from} a ${options.date_to}`,
+        );
+
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(url, {
+                headers: { Origin: 'https://app.deriv.com' },
+            });
+
+            const allTransactions: any[] = [];
+            let offset = 0;
+            const limit = 1000;
+            let authorized = false;
+
+            const send = (msg: unknown) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(msg));
+                }
+            };
+
+            // Timeout de segurança (60s pois pode demorar várias páginas)
+            const timeout = setTimeout(() => {
+                ws.close();
+                if (allTransactions.length > 0) {
+                    this.logger.warn(`[MarkupService] Timeout atingido, retornando ${allTransactions.length} transações parciais.`);
+                    resolve(allTransactions);
+                } else {
+                    reject(new Error('Timeout ao obter detalhes de markup'));
+                }
+            }, 60000);
+
+            ws.on('open', () => {
+                this.logger.log('[MarkupService] WebSocket conectado (Details), autorizando...');
+                send({ authorize: token });
+            });
+
+            ws.on('message', (data: WebSocket.RawData) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+
+                    if (msg.error) {
+                        this.logger.error(`[MarkupService] Erro API Markup Details:`, msg.error);
+                        // Se for erro de permissão ou similar, encerra
+                        if (msg.error.code === 'PermissionDenied' || msg.error.code === 'InvalidToken') {
+                            clearTimeout(timeout);
+                            ws.close();
+                            reject(new Error(msg.error.message));
+                            return;
+                        }
+                        // Outros erros, tenta continuar ou resolve com o que tem
+                        clearTimeout(timeout);
+                        ws.close();
+                        resolve(allTransactions);
+                        return;
+                    }
+
+                    if (msg.msg_type === 'authorize') {
+                        authorized = true;
+                        this.logger.log(`[MarkupService] Autorizado. Solicitando primeira página de detalhes...`);
+
+                        const request = {
+                            app_markup_details: 1,
+                            date_from: options.date_from,
+                            date_to: options.date_to,
+                            limit: limit,
+                            offset: offset,
+                            description: 1,
+                            sort: 'ASC',
+                            sort_fields: ['transaction_time']
+                        };
+                        send(request);
+
+                    } else if (msg.msg_type === 'app_markup_details') {
+                        const transactions = msg.app_markup_details || [];
+                        allTransactions.push(...transactions);
+
+                        this.logger.log(`[MarkupService] Recebido lote de ${transactions.length} transações. Total: ${allTransactions.length}`);
+
+                        if (transactions.length < limit) {
+                            // Fim da paginação
+                            clearTimeout(timeout);
+                            this.logger.log(`[MarkupService] Busca concluída. Total de transações: ${allTransactions.length}`);
+                            resolve(allTransactions);
+                            ws.close();
+                        } else {
+                            // Buscar próxima página
+                            offset += limit;
+                            this.logger.log(`[MarkupService] Buscando próxima página. Offset: ${offset}`);
+                            const request = {
+                                app_markup_details: 1,
+                                date_from: options.date_from,
+                                date_to: options.date_to,
+                                limit: limit,
+                                offset: offset,
+                                description: 1,
+                                sort: 'ASC',
+                                sort_fields: ['transaction_time']
+                            };
+                            send(request);
+                        }
+                    }
+
+                } catch (error) {
+                    this.logger.error(`[MarkupService] Erro ao processar mensagem (Details): ${error}`);
+                    clearTimeout(timeout);
+                    ws.close();
+                    reject(error);
+                }
+            });
+
+            ws.on('error', (error) => {
+                this.logger.error(`[MarkupService] Erro WebSocket (Details): ${error}`);
+                clearTimeout(timeout);
+                reject(error);
+            });
+
+            ws.on('close', () => {
+                clearTimeout(timeout);
+            });
+        });
+    }
 }
