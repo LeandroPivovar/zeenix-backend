@@ -124,12 +124,16 @@ export class TradesController {
     const dateFromFormatted = dateFrom.includes(':') ? dateFrom : `${dateFrom} 00:00:00`;
     const dateToFormatted = dateTo.includes(':') ? dateTo : `${dateTo} 23:59:59`;
 
+    console.log(`[TradesController] getMarkupData chamado. Token presente? ${!!token}. Datas: ${dateFromFormatted} - ${dateToFormatted}`);
+
     try {
       // 3. Buscar dados na API da Deriv
+      console.log(`[TradesController] Chamando markupService.getAppMarkupDetails...`);
       const transactions = await this.markupService.getAppMarkupDetails(token, {
         date_from: dateFromFormatted,
         date_to: dateToFormatted
       });
+      console.log(`[TradesController] Retorno de markupService: ${transactions?.length} transações.`);
 
       // 4. Processar/Agrupar dados por usuário (client_loginid)
       const markupByLoginId = new Map<string, {
