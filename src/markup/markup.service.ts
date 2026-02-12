@@ -170,7 +170,7 @@ export class MarkupService {
         const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
         this.logger.log(
-            `[MarkupService] Buscando detalhes de markup - Período: ${options.date_from} a ${options.date_to}`,
+            `[MarkupService] Buscando detalhes de markup - AppID: ${appId} - Período: ${options.date_from} a ${options.date_to}`,
         );
 
         return new Promise((resolve, reject) => {
@@ -246,13 +246,15 @@ export class MarkupService {
 
                         // O debug mostrou que app_markup_details é um objeto { transactions: [...] }
                         if (msg.app_markup_details && Array.isArray(msg.app_markup_details.transactions)) {
+                            this.logger.log(`[MarkupService] Recebido objeto com array de transações (size: ${msg.app_markup_details.transactions.length})`);
                             transactions = msg.app_markup_details.transactions;
                         }
                         // Fallback: caso a API retorne array direto (comportamento antigo ou documentado)
                         else if (Array.isArray(msg.app_markup_details)) {
+                            this.logger.log(`[MarkupService] Recebido array direto de transações (size: ${msg.app_markup_details.length})`);
                             transactions = msg.app_markup_details;
                         } else {
-                            this.logger.warn(`[MarkupService] Formato de app_markup_details inesperado.`, msg.app_markup_details);
+                            this.logger.warn(`[MarkupService] Formato inesperado. Keys: ${Object.keys(msg.app_markup_details || {})}`);
                         }
 
                         allTransactions.push(...transactions);
