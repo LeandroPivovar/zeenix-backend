@@ -1518,13 +1518,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
               if (isFinalized) {
                 const buyPrice = Number(contract.buy_price || roundedStake);
                 const bidPrice = Number(contract.bid_price || 0);
-                let profit = Number(contract.profit || 0);
-
-                // ✅ FIX: Se o profit retornado for igual ao bid_price (Payout Total), é porque está vindo Bruto.
-                // Ajustamos para (Payout - Stake) para ter o Lucro Líquido.
-                if (profit > 0 && Math.abs(profit - bidPrice) < 0.01) {
-                  profit = bidPrice - buyPrice;
-                }
+                const profit = Number(contract.profit || 0);
                 const win = profit > 0;
                 const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
 
