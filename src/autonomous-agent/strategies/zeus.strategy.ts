@@ -130,7 +130,7 @@ import { LogQueueService } from '../../utils/log-queue.service';
  * ⚡ ZEUS Strategy Configuration - Versão 2.3 (Aligned with Doc V4.0)
  */
 // ⚡ ZEUS V2 - TYPES
-export type NegotiationMode = "NORMAL" | "PRECISO";
+export type NegotiationMode = "NORMAL" | "PRECISO" | "MAXIMO";
 export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO" | "FIXO";
 export type AnalysisType = "PRINCIPAL" | "RECUPERACAO";
 export type ContractKind = "DIGITS_OVER3" | "RISE_FALL";
@@ -177,8 +177,8 @@ export const ZEUS_CONSTANTS = {
     cooldownWinSeconds: 2, // Fast re-entry
     cooldownLossSeconds: 2,
     dataCollectionTicks: 5, // Just need 4 for pattern + 1 safety
-    cycles: 4,
-    cyclePercent: 0.25,
+    cycles: 2,
+    cyclePercent: 0.50,
 };
 @Injectable()
 export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
@@ -389,7 +389,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             cycleCurrent: 1,
             cycleTarget: config.profitTarget * ZEUS_CONSTANTS.cyclePercent, // 25% of daily target
             cycleProfit: 0,
-            cycleMaxDrawdown: (config.profitTarget * ZEUS_CONSTANTS.cyclePercent) * 0.60, // 60% of cycle target
+            cycleMaxDrawdown: 999999, // ✅ V4: Removido trava de drawdown fixa (era 60%)
             cyclePeakProfit: 0,
             cycleOps: 0, // ✅ V4: Operations in Current Cycle
 
@@ -882,29 +882,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.saveLog(config.userId, 'WARN', 'RISK', `🔄 MARTINGALE (${config.riskProfile}): RECUPERANDO $${state.perdasAcumuladas.toFixed(2)} COM STAKE $${finalStake.toFixed(2)}`);
         }
 
-        // ✅ CYCLE DRAWDOWN PROTECTION: Cap stake to prevent exceeding 60% cycle loss
-        // If we're already in negative territory for this cycle, ensure the next loss won't exceed the limit
-        if (state.cycleProfit < 0) {
-            const currentCycleLoss = Math.abs(state.cycleProfit);
-            const remainingDrawdownAllowance = state.cycleMaxDrawdown - currentCycleLoss;
-
-            if (remainingDrawdownAllowance > 0) {
-                // Maximum we can afford to lose on this trade
-                const maxAffordableLoss = remainingDrawdownAllowance;
-
-                // Assuming worst case (100% loss of stake), cap the stake
-                if (finalStake > maxAffordableLoss) {
-                    const cappedStake = Math.max(0.35, Math.floor(maxAffordableLoss * 100) / 100);
-                    this.logger.log(`[Zeus][${config.userId}] 🛡️ DRAWDOWN PROTECTION: Capping stake from $${finalStake.toFixed(2)} to $${cappedStake.toFixed(2)} ` +
-                        `(Cycle Loss: $${currentCycleLoss.toFixed(2)}, Max Drawdown: $${state.cycleMaxDrawdown.toFixed(2)})`);
-                    finalStake = cappedStake;
-                }
-            } else {
-                // Already at or past the drawdown limit - should not happen if updateCycleState is working
-                this.logger.error(`[Zeus][${config.userId}] ⚠️ Cycle already exceeded drawdown limit! This should trigger cycle end.`);
-                return 0.35; // Minimum stake as safety
-            }
-        }
+        // ✅ V4: CYCLE DRAWDOWN PROTECTION REMOVED
+        // (A proteção agora é baseada em 3 perdas consecutivas, não em % loss do ciclo)
 
         return finalStake;
     }
@@ -1110,8 +1089,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const prevPrice = ticks[ticks.length - 2].value;
         const isDowntick = currentPrice < prevPrice;
 
-        // No modo PRECISO, rejeitamos qualquer entrada em candle de baixa
-        if (state.mode === 'PRECISO' && isDowntick) {
+        // No modo PRECISO ou MAXIMO, rejeitamos qualquer entrada em candle de baixa
+        if ((state.mode === 'PRECISO' || state.mode === 'MAXIMO') && isDowntick) {
             state.lastRejectionReason = 'Micro-tendência de Baixa (Price Drop)';
             return null;
         }
@@ -1125,7 +1104,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         let signalFound = false;
         let info = '';
 
-        // Logging Throttling para não floodar se não houver mudança
+        // Logging Throttling
         const logAnalysis = (msg: string) => {
             if (!state.lastDeniedLogTime || Date.now() - state.lastDeniedLogTime > 5000) {
                 this.logAnalysisStarted(userId, state.mode, digits.length, msg);
@@ -1135,8 +1114,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Prioridade: Quarteto Perfeito (Mais forte)
         if (qp.passes) {
-            // No modo preciso, exigimos confirmação de lado OU tendência de alta clara
-            if (state.mode === 'PRECISO') {
+            if (state.mode === 'MAXIMO') {
+                // No modo MÁXIMO, exigimos TUDO: QP + Lado Paridade + Sem Downtick
+                if (fl.passes && !isDowntick) {
+                    signalFound = true;
+                    info = 'MÁXIMO: Quarteto + Paridade + Tendência';
+                } else {
+                    logAnalysis(`MODO MÁXIMO: Quarteto detectado, aguardando paridade e tendência positiva.`);
+                }
+            } else if (state.mode === 'PRECISO') {
+                // No modo preciso, exigimos confirmação de lado OU tendência de alta clara
                 if (fl.passes || !isDowntick) {
                     signalFound = true;
                     info = 'Quarteto Perfeito + Tendência';
@@ -1148,15 +1135,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 info = 'Quarteto Perfeito';
             }
         }
-        // Secundário: Onda Alta (Só aceita se não for downtick, mesmo no Normal)
-        else if (oa.passes) {
+        // Secundário: Onda Alta (Ignorado no modo MÁXIMO)
+        else if (oa.passes && state.mode !== 'MAXIMO') {
             if (!isDowntick) {
                 signalFound = true;
                 info = 'Onda Alta';
             } else {
                 logAnalysis(`Onda Alta (3/3) detectada, filtrada por micro-tendência de baixa`);
             }
-        } else {
+        }
+        else {
             // Log de análise com motivo específico
             const qpReason = qp.reason || `Quarteto Perfeito: ${qp.count}/4 dígitos altos`;
             const oaReason = oa.reason || `Onda Alta: ${oa.count}/3 dígitos altos`;
@@ -1702,7 +1690,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // 1. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
         // Se bateu o Stop Loss Global, a sessão morre aqui, independente de ciclo.
-        // Fix: Usar Math.round para evitar erro de float (ex: -19.999999 <= -20)
         const currentProfitRounded = Math.round(state.profit * 100) / 100;
         if (currentProfitRounded <= -config.stopLoss) {
             this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
@@ -1717,19 +1704,38 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.cyclePeakProfit = state.cycleProfit;
         }
 
-        // Checar conclusão do ciclo (Meta do Ciclo atingida)
+        // 3. CONCLUIR CICLO (Meta do Ciclo atingida OU Exaustão de OPS)
         const currentCycleProfitRounded = Math.round(state.cycleProfit * 100) / 100;
-        if (currentCycleProfitRounded >= state.cycleTarget) { // 25% da meta diária
+        const limitCycle = config.limitOpsCycle || 500;
+
+        const cycleTargetHit = currentCycleProfitRounded >= state.cycleTarget;
+        const cycleOpsExhausted = state.cycleOps >= limitCycle;
+
+        if (cycleTargetHit || cycleOpsExhausted) {
+            const reason = cycleTargetHit ? 'META ALCANÇADA' : 'LIMITE DE OPERAÇÕES';
             this.saveLog(userId, 'SUCCESS', 'CYCLE',
-                `🔄 CICLO ${state.cycleCurrent} CONCLUÍDO | Lucro Ciclo: ${state.cycleProfit.toFixed(2)}`);
+                `🔄 CICLO ${state.cycleCurrent} CONCLUÍDO (${reason}) | Lucro Ciclo: ${state.cycleProfit.toFixed(2)}`);
 
             if (state.cycleCurrent < ZEUS_CONSTANTS.cycles) {
+                // AVANÇAR PARA CICLO 2
+                const previousLoss = state.cycleProfit < 0 ? Math.abs(state.cycleProfit) : 0;
+
                 state.cycleCurrent++;
-                // RESETAR métricas do ciclo (V4 Spec: "Ao virar ciclo, reseta ops e lucro do ciclo")
+
+                // ✅ V4 SPEC: Meta Compensatória
+                // Se o ciclo 1 terminou negativo, somamos o prejuízo à meta do Ciclo 2
+                const baseCycleTarget = config.profitTarget * ZEUS_CONSTANTS.cyclePercent;
+                state.cycleTarget = baseCycleTarget + previousLoss;
+
+                if (previousLoss > 0) {
+                    this.saveLog(userId, 'WARN', 'CYCLE', `⚖️ META COMPENSATÓRIA: Adicionando $${previousLoss.toFixed(2)} ao objetivo do Ciclo ${state.cycleCurrent}. Nova meta do ciclo: $${state.cycleTarget.toFixed(2)}`);
+                }
+
+                // RESETAR métricas do ciclo (V4 Spec)
                 state.cycleProfit = 0;
                 state.cycleOps = 0;
                 state.cyclePeakProfit = 0;
-                state.blindadoActive = false; // Reset blindado for new cycle
+                state.blindadoActive = false;
                 state.blindadoFloorProfit = 0;
 
                 // Pausa estratégica entre ciclos (V4 Checklist: 30 minutos)
@@ -1737,71 +1743,17 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de transição de ciclo (30 minutos)...`);
 
             } else {
-                // Ciclo 4 concluído = Meta Diária
-                this.saveLog(userId, 'SUCCESS', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
+                // Todos os ciclos concluídos
+                this.saveLog(userId, 'SUCCESS', 'SESSION', `🏆 SESSÃO FINALIZADA (${state.cycleCurrent} CICLOS COMPLETOS)`);
                 state.sessionEnded = true;
                 state.endReason = 'TARGET';
                 this.handleStopCondition(userId, 'TAKE_PROFIT');
             }
-            return; // Cycle transition processed
-        }
-
-        // meta do ciclo check ends here...
-
-        // 2. GATILHO: Exaustão (Limite de Operações do Ciclo)
-        const limitCycle = config.limitOpsCycle || 500;
-        if (state.cycleOps >= limitCycle) {
-            this.saveLog(userId, 'WARN', 'CYCLE',
-                `⌛ EXAUSTÃO DO CICLO ${state.cycleCurrent} | Entradas: ${state.cycleOps}/${limitCycle}`);
-
-            if (state.cycleCurrent < ZEUS_CONSTANTS.cycles) {
-                state.cycleCurrent++;
-                // RESET SELETIVO (Ops e Lucro)
-                state.cycleProfit = 0;
-                state.cycleOps = 0;
-                state.cyclePeakProfit = 0;
-                state.blindadoActive = false;
-                state.blindadoFloorProfit = 0;
-
-                // Pausa longa de exaustão (V4 Checklist: 1 hora)
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Avançando após exaustão (Pausa 1 hora)...`);
-            } else {
-                state.sessionEnded = true;
-                this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (4 ciclos atingidos/exauridos).`);
-            }
             return;
         }
 
-        // 3. GATILHO: Risco (Drawdown Máximo do Ciclo)
-        const currentCycleLossRounded = Math.round(state.cycleProfit * 100) / 100;
-        if (currentCycleLossRounded <= -state.cycleMaxDrawdown) {
-            this.saveLog(userId, 'ERROR', 'RISK', `🛑 DRAWDOWN MÁXIMO DO CICLO ${state.cycleCurrent} ATINGIDO ($${state.cycleProfit.toFixed(2)}). Encerrando ciclo.`);
-
-            // ✅ V4 Checklist: Memória de Risco - Se o ciclo foi ruim, o próximo começa em PRECISO
-            if (state.mode !== 'PRECISO') {
-                state.mode = 'PRECISO';
-                state.recoveryLock = true;
-                this.saveLog(userId, 'WARN', 'RISK', `⚠️ CICLO NEGATIVO: Ativando MODO PRECISO para o próximo mini-expediente.`);
-            }
-
-            if (state.cycleCurrent < ZEUS_CONSTANTS.cycles) {
-                state.cycleCurrent++;
-                // RESET SELETIVO
-                state.cycleProfit = 0;
-                state.cycleOps = 0;
-                state.cyclePeakProfit = 0;
-                state.blindadoActive = false;
-                state.blindadoFloorProfit = 0;
-
-                // Pausa de drawdown (V4 Checklist: 1 hora)
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + 60 * 60 * 1000);
-                this.saveLog(userId, 'INFO', 'CYCLE', `⏳ Pausa de recuperação de risco (1 hora)...`);
-            } else {
-                state.sessionEnded = true;
-                this.saveLog(userId, 'INFO', 'SESSION', `🏁 Sessão finalizada (Todos ciclos concluídos/stopados).`);
-            }
-        }
+        // ✅ V4: Removido Stop por Drawdown fixo do ciclo (60%). 
+        // Agora o stop é apenas por 3 perdas consecutivas (onContractFinish).
 
         // Atualizar Blindado com os novos valores (chamada pós-update)
         this.updateBlindado(userId, state, config);
@@ -1852,12 +1804,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.perdasAcumuladas = 0;
             state.analysis = "PRINCIPAL"; // ✅ Resetar para principal após vitória
 
-            // ✅ Reset Recovery: Voltar para o modo original se estava em modo de segurança
+            // ✅ Reset Recovery: Voltar para o modo original
             const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
             if (state.mode !== originalMode) {
-                state.mode = originalMode;
+                state.mode = originalMode as NegotiationMode;
                 state.recoveryLock = false; // ✅ V4 RECOVERED
-                this.saveLog(userId, 'INFO', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
+                this.saveLog(userId, 'SUCCESS', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
             }
         } else {
             state.losses++;
@@ -1865,20 +1817,33 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.perdasAcumuladas += Math.abs(result.profit);
             state.analysis = "RECUPERACAO"; // ✅ Marcar como recuperação após perda
 
-            // ✅ V4 Checklist: Ativar MODO PRECISO após 1 PERDA (Modo Recuperação)
-            if (state.consecutiveLosses >= 1 && state.mode !== 'PRECISO') {
-                state.mode = 'PRECISO';
-                state.recoveryLock = true; // ✅ V4 LOCKED
-                this.saveLog(userId, 'WARN', 'RISK', `⚠️ PERDA DETECTADA: Ativando MODO PRECISO para maior segurança.`);
+            // ✅ V4 SPEC: Stop por 3 Perdas Consecutivas
+            if (state.consecutiveLosses >= 3) {
+                this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
+                state.sessionEnded = true;
+                state.endReason = 'STOPLOSS';
+                this.handleStopCondition(userId, 'STOP_LOSS');
+                return;
             }
 
-            // ✅ V4 Checklist: Pausa Estratégica
-            // 5 Losses -> 5 min (300s)
-            if (state.consecutiveLosses >= 5) {
-                const pauseDurationMs = ZEUS_CONSTANTS.strategicPauseSeconds * 1000;
+            // ✅ V4 Checklist: Hierarquia de Filtros
+            if (state.consecutiveLosses === 1) {
+                state.mode = 'PRECISO';
+                state.recoveryLock = true;
+                this.saveLog(userId, 'WARN', 'RISK', `⚠️ 1ª PERDA: Ativando MODO PRECISO para maior assertividade.`);
+            } else if (state.consecutiveLosses === 2) {
+                state.mode = 'MAXIMO';
+                state.recoveryLock = true;
+                this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2ª PERDA: Ativando MODO MÁXIMO (Filtro Cirúrgico). ÚLTIMA TENTATIVA.`);
+            }
+
+            // ✅ V4 Checklist: Pausa Estratégica (Obrigatória em recuperação se necessário)
+            // A spec pede pausa de 5 min se houver perdas persistentes. 
+            // Vamos manter a pausa de 5 min após 2 perdas para esfriar o mercado antes do Máximo.
+            if (state.consecutiveLosses === 2) {
+                const pauseDurationMs = 5 * 60 * 1000;
                 state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                state.consecutiveLosses = 0; // Reset after pause trigger
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA ESTRATÉGICA (5 Perdas Consecutivas). Pausando por ${ZEUS_CONSTANTS.strategicPauseSeconds / 60} minutos.`);
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA (5 min) antes da última tentativa em modo MÁXIMO.`);
             }
         }
 
@@ -2057,7 +2022,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.duration,
                     trade.entryPrice,
                     trade.stakeAmount,
-                    state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // ✅ Fixed lint and mapping
+                    state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // M2 = MAXIMO
                     trade.payout * 100, // Converter para percentual
                     config.symbol || 'R_100',
                     config.derivToken || null, // ✅ Token usado para o trade
@@ -2266,6 +2231,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.cycleProfit = 0;
             state.cyclePeakProfit = 0;
             state.cycleTarget = config.profitTarget * ZEUS_CONSTANTS.cyclePercent;
+            state.cycleMaxDrawdown = 999999; // ✅ V4: Desativado
             state.blindadoActive = false;
             state.blindadoFloorProfit = 0;
             state.recoveryLock = false;
