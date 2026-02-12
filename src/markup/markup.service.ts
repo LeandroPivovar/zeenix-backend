@@ -242,12 +242,17 @@ export class MarkupService {
                         send(request);
 
                     } else if (msg.msg_type === 'app_markup_details') {
-                        let transactions = msg.app_markup_details;
+                        let transactions: any[] = [];
 
-                        // Garante que transactions é um array
-                        if (!Array.isArray(transactions)) {
-                            this.logger.warn(`[MarkupService] app_markup_details não é um array. Tipo recebido: ${typeof transactions}`, transactions);
-                            transactions = [];
+                        // O debug mostrou que app_markup_details é um objeto { transactions: [...] }
+                        if (msg.app_markup_details && Array.isArray(msg.app_markup_details.transactions)) {
+                            transactions = msg.app_markup_details.transactions;
+                        }
+                        // Fallback: caso a API retorne array direto (comportamento antigo ou documentado)
+                        else if (Array.isArray(msg.app_markup_details)) {
+                            transactions = msg.app_markup_details;
+                        } else {
+                            this.logger.warn(`[MarkupService] Formato de app_markup_details inesperado.`, msg.app_markup_details);
                         }
 
                         allTransactions.push(...transactions);
