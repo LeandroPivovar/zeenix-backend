@@ -5,7 +5,7 @@ import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validato
 import { TradesService, CreateTradeDto } from './trades.service';
 import { MarkupService } from '../markup/markup.service';
 import { TradeType } from '../infrastructure/database/entities/trade.entity';
-import { UserRepository } from '../domain/repositories/user.repository';
+import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { Inject } from '@nestjs/common';
 
