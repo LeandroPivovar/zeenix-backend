@@ -7,6 +7,7 @@ import { TradesService } from './trades.service';
 import { TradesController } from './trades.controller';
 import { CopyTradingModule } from '../copy-trading/copy-trading.module';
 import { BrokerModule } from '../broker/broker.module';
+import { MarkupModule } from '../markup/markup.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { BrokerModule } from '../broker/broker.module';
     SettingsModule,
     BrokerModule,
     forwardRef(() => CopyTradingModule),
+    MarkupModule,
   ],
   controllers: [TradesController],
   providers: [TradesService],
