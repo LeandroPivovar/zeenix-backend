@@ -242,7 +242,14 @@ export class MarkupService {
                         send(request);
 
                     } else if (msg.msg_type === 'app_markup_details') {
-                        const transactions = msg.app_markup_details || [];
+                        let transactions = msg.app_markup_details;
+
+                        // Garante que transactions é um array
+                        if (!Array.isArray(transactions)) {
+                            this.logger.warn(`[MarkupService] app_markup_details não é um array. Tipo recebido: ${typeof transactions}`, transactions);
+                            transactions = [];
+                        }
+
                         allTransactions.push(...transactions);
 
                         this.logger.log(`[MarkupService] Recebido lote de ${transactions.length} transações. Total: ${allTransactions.length}`);
