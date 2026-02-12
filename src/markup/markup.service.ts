@@ -259,10 +259,6 @@ export class MarkupService {
 
                         allTransactions.push(...transactions);
 
-                        if (transactions.length > 0) {
-                            this.logger.log(`[MarkupService] Amostra de transação (primeira do lote): ${JSON.stringify(transactions[0])}`);
-                        }
-
                         this.logger.log(`[MarkupService] Recebido lote de ${transactions.length} transações. Total: ${allTransactions.length}`);
 
                         if (transactions.length < limit) {

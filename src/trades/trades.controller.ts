@@ -124,16 +124,12 @@ export class TradesController {
     const dateFromFormatted = dateFrom.includes(':') ? dateFrom : `${dateFrom} 00:00:00`;
     const dateToFormatted = dateTo.includes(':') ? dateTo : `${dateTo} 23:59:59`;
 
-    console.log(`[TradesController] getMarkupData chamado. Token presente? ${!!token}. Datas: ${dateFromFormatted} - ${dateToFormatted}`);
-
     try {
       // 3. Buscar dados na API da Deriv
-      console.log(`[TradesController] Chamando markupService.getAppMarkupDetails...`);
       const transactions = await this.markupService.getAppMarkupDetails(token, {
         date_from: dateFromFormatted,
         date_to: dateToFormatted
       });
-      console.log(`[TradesController] Retorno de markupService: ${transactions?.length} transações.`);
 
       // 4. Processar/Agrupar dados por usuário (client_loginid)
       const markupByLoginId = new Map<string, {
@@ -158,7 +154,8 @@ export class TradesController {
 
       transactions.forEach(tx => {
         const loginid = tx.client_loginid;
-        const amount = parseFloat(tx.markup_amount || 0);
+        // FIX: API returns app_markup_usd or app_markup
+        const amount = parseFloat(tx.app_markup_usd || tx.app_markup || 0);
 
         if (!markupByLoginId.has(loginid)) {
           markupByLoginId.set(loginid, { markup: 0, transactions: 0, loginid });
@@ -283,7 +280,7 @@ export class TradesController {
         dateKey = String(tx.transaction_time).split(' ')[0];
       }
 
-      const amount = parseFloat(tx.markup_amount || 0);
+      const amount = parseFloat(tx.app_markup_usd || tx.app_markup || 0);
       dailyMap.set(dateKey, (dailyMap.get(dateKey) || 0) + amount);
     });
 
