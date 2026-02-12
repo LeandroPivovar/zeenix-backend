@@ -190,6 +190,7 @@ export class TypeOrmUserRepository implements UserRepository {
       entity.plan?.name || null,
       entity.planExpirationDate || null,
       entity.plan?.features || null,
+      entity.derivLoginId ?? null,
     );
   }
 
@@ -213,6 +214,7 @@ export class TypeOrmUserRepository implements UserRepository {
     entity.idDemoAccount = domain.idDemoAccount ?? null;
     entity.isActive = domain.isActive;
     entity.planExpirationDate = domain.planExpirationDate ?? null;
+    entity.derivLoginId = domain.derivLoginId ?? null;
     return entity;
   }
 }

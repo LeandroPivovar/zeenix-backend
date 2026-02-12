@@ -24,6 +24,7 @@ export class User {
     public readonly planName?: string | null,
     public readonly planExpirationDate?: Date | null,
     public readonly planFeatures?: any | null,
+    public readonly derivLoginId?: string | null,
   ) { }
 
   static create(
@@ -35,7 +36,7 @@ export class User {
     firstAccess: boolean = true,
   ): User {
     const now = new Date();
-    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, null, null, 'user', true, null, null, null);
+    return new User(id, name, email, password, now, now, phone, false, true, null, null, null, null, null, null, 0, 0, null, null, 'user', true, null, null, null, null);
   }
 
   update(name?: string, email?: string, phone?: string | null): User {
@@ -64,6 +65,7 @@ export class User {
       this.planName,
       this.planExpirationDate,
       this.planFeatures,
+      this.derivLoginId,
     );
   }
 
@@ -93,6 +95,7 @@ export class User {
       this.planName,
       this.planExpirationDate,
       this.planFeatures,
+      this.derivLoginId,
     );
   }
 }

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent }
 import { Observable } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
+import { DataSource } from 'typeorm'; // Added import
 import { TradesService, CreateTradeDto } from './trades.service';
 import { MarkupService } from '../markup/markup.service';
 import { TradeType } from '../infrastructure/database/entities/trade.entity';
@@ -43,6 +44,7 @@ export class TradesController {
     private readonly tradesService: TradesService,
     private readonly markupService: MarkupService,
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
+    private readonly dataSource: DataSource, // Injected DataSource
   ) { }
 
   @Post()
@@ -77,26 +79,14 @@ export class TradesController {
     @Req() req: any,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Query('targetUserId') targetUserId?: string, // Mantido por compatibilidade, mas não usado na API Deriv diretamente
+    @Query('targetUserId') targetUserId?: string,
   ) {
-    // 1. Obter Token da Deriv (Admin ou Usuário)
-    // Para app_markup_details, idealmente usamos o token da conta que criou o App (Admin/Dono)
-    // Se não tivermos um token global, tentamos usar o token do usuário logado se ele for admin?
-    // ou assumimos que o usuário logado TEM permissão de ler markup do App?
-    // A documentação diz: "sua aplicação precisará de autenticação... API Key... escopo read"
-    // Vamos tentar usar o token do usuário logado.
-
     const userId = req.user.userId;
     const user = await this.userRepository.findById(userId);
 
-    // TODO: Idealmente, teríamos um token de sistema no .env ou banco para ler markup global
-    // Por enquanto, vou tentar usar o token REAL do usuário logado (assumindo que ele é dono do App ou tem permissão)
-    // SE não funcionar, precisaremos configurar um token específico no .env (DERIV_READ_TOKEN)
-
-    let token: string | undefined = process.env.DERIV_READ_TOKEN; // Novo token específico para leitura
+    let token: string | undefined = process.env.DERIV_READ_TOKEN;
 
     if (!token) {
-      // Fallback: tentar token do usuário logado (pode falhar se não for dono do App)
       const derivInfo = await this.userRepository.getDerivInfo(userId);
       token = (derivInfo?.tokenReal || derivInfo?.tokenDemo) || undefined;
     }
@@ -111,70 +101,84 @@ export class TradesController {
 
     if (!startDate || !endDate) {
       const now = new Date();
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Ultimo dia do mês
-      dateFrom = firstDay.toISOString().split('T')[0];
-      dateTo = lastDay.toISOString().split('T')[0];
+      // Default: últimos 30 dias
+      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
+      dateTo = now.toISOString().split('T')[0];
     } else {
       dateFrom = startDate;
       dateTo = endDate;
     }
 
-    // Adicionar hora para formato API (00:00:00 - 23:59:59) se enviado apenas YYYY-MM-DD
+    // Formatar para API e para cálculos
     const dateFromFormatted = dateFrom.includes(':') ? dateFrom : `${dateFrom} 00:00:00`;
     const dateToFormatted = dateTo.includes(':') ? dateTo : `${dateTo} 23:59:59`;
 
+    // 3. Calcular Período Anterior
+    const currentStart = new Date(dateFromFormatted);
+    const currentEnd = new Date(dateToFormatted);
+    const diffTime = Math.abs(currentEnd.getTime() - currentStart.getTime());
+
+    // Previous End = Current Start - 1ms
+    const prevEnd = new Date(currentStart.getTime() - 1);
+    // Previous Start = Previous End - Duration
+    const prevStart = new Date(prevEnd.getTime() - diffTime);
+
+    const prevStartFormatted = prevStart.toISOString().split('T')[0] + ' 00:00:00';
+    const prevEndFormatted = prevEnd.toISOString().split('T')[0] + ' 23:59:59';
+
+    // Helper para calcular porcentagem
+    const calcPct = (current: number, previous: number) => {
+      if (!previous) return current > 0 ? 100 : 0;
+      return parseFloat((((current - previous) / previous) * 100).toFixed(1));
+    };
+
     try {
-      // 3. Buscar dados na API da Deriv
-      const transactions = await this.markupService.getAppMarkupDetails(token, {
-        date_from: dateFromFormatted,
-        date_to: dateToFormatted
-      });
+      // 4. Buscar dados Atuais e Anteriores (Paralelo)
+      const [transactions, prevTransactions, allUsers] = await Promise.all([
+        this.markupService.getAppMarkupDetails(token, { date_from: dateFromFormatted, date_to: dateToFormatted }),
+        this.markupService.getAppMarkupDetails(token, { date_from: prevStartFormatted, date_to: prevEndFormatted }),
+        this.userRepository.findAll()
+      ]);
 
-      // 4. Processar/Agrupar dados por usuário (client_loginid)
-      const markupByLoginId = new Map<string, {
-        markup: number,
-        transactions: number,
-        loginid: string
-      }>();
-
-      // Mapa auxiliar para loginid -> userId/Name (precisamos buscar do banco local)
-      // Isso pode ser custoso se tivermos muitos usuários.
-      // Melhor buscar todos usuários com conta real do banco e fazer map.
-      const allUsers = await this.userRepository.findAll();
+      // 5. Processar Dados
+      // Mapa LoginID -> User
       const loginToUserMap = new Map();
-
       allUsers.forEach(u => {
         if (u.idRealAccount) loginToUserMap.set(u.idRealAccount, u);
-        if (u.idDemoAccount) loginToUserMap.set(u.idDemoAccount, u); // Apenas fallback
+        if (u.idDemoAccount) loginToUserMap.set(u.idDemoAccount, u);
+        if (u.derivLoginId) loginToUserMap.set(u.derivLoginId, u); // Compatibilidade
       });
 
-      let totalCommission = 0;
-      let totalTransactions = 0;
+      const processTx = (txs: any[]) => {
+        let totalComm = 0;
+        const userStats = new Map<string, number>();
+        const markupByLogin = new Map<string, { markup: number, count: number, loginid: string }>();
 
-      transactions.forEach(tx => {
-        const loginid = tx.client_loginid;
-        // FIX: API returns app_markup_usd or app_markup
-        const amount = parseFloat(tx.app_markup_usd || tx.app_markup || 0);
+        txs.forEach(tx => {
+          const login = tx.client_loginid;
+          const amount = parseFloat(tx.app_markup_usd || tx.app_markup || 0);
 
-        if (!markupByLoginId.has(loginid)) {
-          markupByLoginId.set(loginid, { markup: 0, transactions: 0, loginid });
-        }
-        const entry = markupByLoginId.get(loginid)!;
-        entry.markup += amount;
-        entry.transactions += 1;
+          totalComm += amount;
+          userStats.set(login, (userStats.get(login) || 0) + amount);
 
-        totalCommission += amount;
-        totalTransactions += 1;
-      });
+          if (!markupByLogin.has(login)) {
+            markupByLogin.set(login, { markup: 0, count: 0, loginid: login });
+          }
+          const entry = markupByLogin.get(login)!;
+          entry.markup += amount;
+          entry.count += 1;
+        });
+        return { totalComm, userStats, markupByLogin };
+      };
 
-      // 5. Formatar resposta compatível com frontend
-      const formattedUsers = Array.from(markupByLoginId.values()).map(entry => {
+      const currentStats = processTx(transactions);
+      const prevStats = processTx(prevTransactions);
+
+      // 6. Formatar Lista de Usuários (Apenas período atual)
+      const formattedUsers = Array.from(currentStats.markupByLogin.values()).map(entry => {
         const user = loginToUserMap.get(entry.loginid);
         const userMarkup = parseFloat(entry.markup.toFixed(2));
-
-        // Estimar payout e volume baseado no markup (se markup for 3% do payout)
-        // Payout ~= Markup / 0.03
         const estimatedPayout = userMarkup / 0.03;
 
         return {
@@ -182,43 +186,128 @@ export class TradesController {
           name: user?.name || `Usuário Deriv (${entry.loginid})`,
           email: user?.email || 'N/A',
           whatsapp: user?.phone || null,
-          country: 'Brasil', // Não vem na tx, assumir default ou pegar do user
+          country: 'Brasil',
           loginid: entry.loginid,
-          transactionCount: entry.transactions,
+          transactionCount: entry.count,
           commission: userMarkup,
-          realAmount: parseFloat(user?.realAmount || 0), // Saldo atual do banco local
-          totalPayout: parseFloat(estimatedPayout.toFixed(2)), // Estimado
-
-          // Estrutura frontend
-          breakdown: {
-            manual: { payout: 0, count: 0 },
-            ia: { payout: estimatedPayout, count: entry.transactions }, // Atribuir tudo a IA/Geral por enquanto
-            agent: { payout: 0, count: 0 },
-            copy: { payout: 0, count: 0 }
-          },
+          realAmount: parseFloat(user?.realAmount || 0),
+          volumeOperado: parseFloat(estimatedPayout.toFixed(2)),
+          totalPayout: parseFloat(estimatedPayout.toFixed(2)),
           realData: true,
           role: user?.role || 'user',
-          traderMestre: user?.traderMestre || false,
-          isDerivApi: true // Flag para debug
+          isDerivApi: true
         };
       });
 
       // Ordenar por comissão
       formattedUsers.sort((a, b) => b.commission - a.commission);
 
+      // 7. Calcular Métricas de Resumo e Comparação
+
+      // -- Métricas Derivadas do Markup --
+      const curRevenue = currentStats.totalComm;
+      const prevRevenue = prevStats.totalComm;
+
+      const curVolume = curRevenue / 0.03;
+      const prevVolume = prevRevenue / 0.03;
+
+      const curActiveUsers = currentStats.userStats.size;
+      const prevActiveUsers = prevStats.userStats.size;
+
+      const curARPU = curActiveUsers > 0 ? curRevenue / curActiveUsers : 0;
+      const prevARPU = prevActiveUsers > 0 ? prevRevenue / prevActiveUsers : 0;
+
+      const curLTV = allUsers.length > 0 ? curRevenue / allUsers.length : 0;
+      const prevLTV = allUsers.length > 0 ? prevRevenue / allUsers.length : 0; // Usando base total atual como proxy
+
+      // -- Métricas Históricas de Banco (Saldo) --
+      // Helper para query histórica
+      const getHistoricalBalanceStats = async (date: Date) => {
+        // MySQL
+        const dateStr = date.toISOString().slice(0, 19).replace('T', ' '); // YYYY-MM-DD HH:mm:ss
+
+        // Total Balance
+        const balanceQuery = `
+            SELECT SUM(t1.real_balance) as total 
+            FROM user_balances t1 
+            JOIN (
+                SELECT user_id, MAX(created_at) as max_date 
+                FROM user_balances 
+                WHERE created_at <= ? 
+                GROUP BY user_id
+            ) t2 ON t1.user_id = t2.user_id AND t1.created_at = t2.max_date
+          `;
+        const balanceRes = await this.dataSource.query(balanceQuery, [dateStr]);
+        const totalBalance = parseFloat(balanceRes[0]?.total || 0);
+
+        // Users with Balance > 0
+        const countQuery = `
+            SELECT COUNT(DISTINCT t1.user_id) as count 
+            FROM user_balances t1 
+            JOIN (
+                SELECT user_id, MAX(created_at) as max_date 
+                FROM user_balances 
+                WHERE created_at <= ? 
+                GROUP BY user_id
+            ) t2 ON t1.user_id = t2.user_id AND t1.created_at = t2.max_date
+            WHERE t1.real_balance > 0
+          `;
+        const countRes = await this.dataSource.query(countQuery, [dateStr]);
+        const usersWithBalance = parseInt(countRes[0]?.count || 0);
+
+        return { totalBalance, usersWithBalance };
+      };
+
+      const curHist = await getHistoricalBalanceStats(currentEnd);
+      const prevHist = await getHistoricalBalanceStats(prevEnd);
+
+      const curAvgDeposit = curHist.usersWithBalance > 0 ? curHist.totalBalance / curHist.usersWithBalance : 0;
+      const prevAvgDeposit = prevHist.usersWithBalance > 0 ? prevHist.totalBalance / prevHist.usersWithBalance : 0;
+
+
       return {
         users: formattedUsers,
         summary: {
-          totalCommission: parseFloat(totalCommission.toFixed(2)),
-          totalPayout: parseFloat((totalCommission / 0.03).toFixed(2)), // Estimado
-          totalTransactions: totalTransactions,
+          // Receita (Markup)
+          totalCommission: parseFloat(curRevenue.toFixed(2)),
+          totalCommissionPct: calcPct(curRevenue, prevRevenue),
+
+          // Volume
+          totalVolume: parseFloat(curVolume.toFixed(2)),
+          totalVolumePct: calcPct(curVolume, prevVolume),
+          totalPayout: parseFloat(curVolume.toFixed(2)), // Compatibilidade
+
+          // Saldo Real (Histórico)
+          totalRealAmount: parseFloat(curHist.totalBalance.toFixed(2)),
+          totalRealAmountPct: calcPct(curHist.totalBalance, prevHist.totalBalance),
+
+          // Depósito Médio (Saldo / Users com Saldo)
+          avgDeposit: parseFloat(curAvgDeposit.toFixed(2)),
+          avgDepositPct: calcPct(curAvgDeposit, prevAvgDeposit),
+
+          // Receita Média (ARPU)
+          avgRevenue: parseFloat(curARPU.toFixed(2)),
+          avgRevenuePct: calcPct(curARPU, prevARPU),
+
+          // Usuários com Saldo (Sem percentual no frontend, mas enviado)
+          usersWithBalance: curHist.usersWithBalance,
+          usersWithBalancePct: calcPct(curHist.usersWithBalance, prevHist.usersWithBalance),
+
+          // LTV Médio
+          ltvAvg: parseFloat(curLTV.toFixed(2)),
+          ltvAvgPct: calcPct(curLTV, prevLTV),
+
+          // Outros
+          totalTransactions: transactions.length,
           totalUsers: formattedUsers.length,
           usersWithMarkup: formattedUsers.filter(u => u.commission > 0).length,
-          usersWithoutMarkup: 0, // Difícil saber sem cruzar todos usuários
+          usersWithoutMarkup: 0,
         },
         period: {
           from: dateFrom,
-          to: dateTo
+          to: dateTo,
+          prevFrom: prevStartFormatted,
+          prevTo: prevEndFormatted
         }
       };
 
