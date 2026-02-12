@@ -5,7 +5,7 @@ import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validato
 import { TradesService, CreateTradeDto } from './trades.service';
 import { MarkupService } from '../markup/markup.service';
 import { TradeType } from '../infrastructure/database/entities/trade.entity';
-import type { UserRepository } from '../domain/repositories/user.repository';
+import { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { Inject } from '@nestjs/common';
 
@@ -93,12 +93,12 @@ export class TradesController {
     // Por enquanto, vou tentar usar o token REAL do usuário logado (assumindo que ele é dono do App ou tem permissão)
     // SE não funcionar, precisaremos configurar um token específico no .env (DERIV_READ_TOKEN)
 
-    let token = process.env.DERIV_READ_TOKEN; // Novo token específico para leitura
+    let token: string | undefined = process.env.DERIV_READ_TOKEN; // Novo token específico para leitura
 
     if (!token) {
       // Fallback: tentar token do usuário logado (pode falhar se não for dono do App)
       const derivInfo = await this.userRepository.getDerivInfo(userId);
-      token = derivInfo?.tokenReal || derivInfo?.tokenDemo;
+      token = (derivInfo?.tokenReal || derivInfo?.tokenDemo) || undefined;
     }
 
     if (!token) {
@@ -106,8 +106,8 @@ export class TradesController {
     }
 
     // 2. Definir datas
-    let dateFrom = startDate;
-    let dateTo = endDate;
+    let dateFrom: string;
+    let dateTo: string;
 
     if (!startDate || !endDate) {
       const now = new Date();
@@ -115,6 +115,9 @@ export class TradesController {
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Ultimo dia do mês
       dateFrom = firstDay.toISOString().split('T')[0];
       dateTo = lastDay.toISOString().split('T')[0];
+    } else {
+      dateFrom = startDate;
+      dateTo = endDate;
     }
 
     // Adicionar hora para formato API (00:00:00 - 23:59:59) se enviado apenas YYYY-MM-DD
@@ -156,7 +159,7 @@ export class TradesController {
         if (!markupByLoginId.has(loginid)) {
           markupByLoginId.set(loginid, { markup: 0, transactions: 0, loginid });
         }
-        const entry = markupByLoginId.get(loginid);
+        const entry = markupByLoginId.get(loginid)!;
         entry.markup += amount;
         entry.transactions += 1;
 
@@ -231,24 +234,27 @@ export class TradesController {
     @Query('endDate') endDate?: string,
   ) {
     const userId = req.user.userId;
-    let token = process.env.DERIV_READ_TOKEN;
+    let token: string | undefined = process.env.DERIV_READ_TOKEN;
 
     if (!token) {
       const derivInfo = await this.userRepository.getDerivInfo(userId);
-      token = derivInfo?.tokenReal || derivInfo?.tokenDemo;
+      token = (derivInfo?.tokenReal || derivInfo?.tokenDemo) || undefined;
     }
 
     if (!token) throw new Error('Token de leitura ausente');
 
     // Datas default: últimos 30 dias
-    let dateFrom = startDate;
-    let dateTo = endDate;
+    let dateFrom: string;
+    let dateTo: string;
 
     if (!startDate || !endDate) {
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
       dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
       dateTo = now.toISOString().split('T')[0];
+    } else {
+      dateFrom = startDate;
+      dateTo = endDate;
     }
 
     const dateFromFormatted = dateFrom.includes(':') ? dateFrom : `${dateFrom} 00:00:00`;
@@ -288,6 +294,7 @@ export class TradesController {
 
     return dailyData;
   }
+
   @Sse('markup/stream')
   sse(
     @Query('startDate') startDate?: string,
@@ -297,6 +304,3 @@ export class TradesController {
     return this.tradesService.getMarkupDataStream(startDate, endDate);
   }
 }
-
-
-
