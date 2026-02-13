@@ -59,7 +59,12 @@ interface ZeusUserState extends AutonomousAgentState {
     balance: number;
     profit: number;        // Global Session Net Profit
     peakProfit: number;    // Highest Session Profit
-
+    // ✅ V4.0 - Task List
+    // - [x] Refine Zeus Martingale Logic (Sum previous losses)
+    // - [x] Clean up Zeus logs (Net Profit only)
+    // - [x] Fix frontend "Retorno" column (Net Profit only, include negatives)
+    // - [x] Build and verify changes
+    // - [ ] Push to GitHub
     // Cycle Management (V4)
     cycleCurrent: number;      // 1 to 4
     cycleTarget: number;       // 25% of Daily Target
@@ -2763,9 +2768,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         exitDigit?: number;
     }) {
         const investment = result.stake;
-        const returnAmount = result.status === 'WIN' ? (result.stake + result.profit) : 0;
         const resultSign = result.status === 'WIN' ? '+' : '-';
-        const resultVal = result.status === 'WIN' ? result.profit : result.stake;
+        const resultVal = Math.abs(result.profit);
         const digitsStr = result.entryDigit !== undefined && result.exitDigit !== undefined
             ? `\n• Dígitos: [Entrada: ${result.entryDigit} | Saída: ${result.exitDigit}]`
             : '';
@@ -2773,7 +2777,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const message = `🎯 RESULTADO DA ENTRADA\n` +
             `• Status: ${result.status}\n` +
             `• Investimento: $${investment.toFixed(2)}\n` +
-            `• Retorno: $${returnAmount.toFixed(2)}\n` +
             `• Resultado: ${resultSign}$${resultVal.toFixed(2)}${digitsStr}\n` +
             `• Saldo Atual: $${result.balance.toFixed(2)}`;
 
