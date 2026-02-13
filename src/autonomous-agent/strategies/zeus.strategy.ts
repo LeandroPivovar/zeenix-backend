@@ -1792,11 +1792,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.balance += result.profit;
         state.lastOpProfit = result.profit;
 
+        // [ZENIX v2.5] Garantir que lucroAtual seja atualizado ANTES de qualquer verificação de stop
+        state.lucroAtual = state.profit;
+        state.currentProfit = state.profit;
+
         if (state.profit > state.peakProfit) state.peakProfit = state.profit;
 
         // Atualizar Financeiro CICLO
         state.cycleProfit += result.profit;
-        state.cycleOps++; // Fix missing ops count increment for cycle
+        state.cycleOps++;
         if (state.cycleProfit > state.cyclePeakProfit) state.cyclePeakProfit = state.cycleProfit;
 
         if (result.win) {
@@ -1829,6 +1833,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
                 state.sessionEnded = true;
                 state.endReason = 'STOPLOSS';
+
+                // [ZENIX v2.5] Persistir antes do return
+                state.currentLoss = state.perdasAcumuladas;
+                await this.updateUserStateInDb(userId, state);
+
                 this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
                 return;
             }
@@ -1854,11 +1863,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
         }
 
-        // Compatibilidade Infra & V4 Counters
-        state.lucroAtual = state.profit;
-        state.currentProfit = state.profit;
+        // [ZENIX v2.5] Já atualizados no topo para evitar race conditions nos canais de log
         state.currentLoss = state.perdasAcumuladas;
-        // Já incrementado acima se houve perda, mas se houve vitória precisa incrementar aqui
+
         if (result.win) {
             state.opsCount++;
             state.opsTotal++;
@@ -1961,7 +1968,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 break;
             case 'CONSECUTIVE_LOSS':
                 status = 'stopped_loss';
-                message = `🛑 STOP POR PERDAS CONSECUTIVAS! Mercado Instável. Operações encerradas para proteção do capital. | cycle=${state.cycleCurrent}.`;
+                message = `🛑 STOP POR PERDAS CONSECUTIVAS! Mercado Instável. Operações encerradas para proteção do capital. | Resultado: ${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)} | cycle=${state.cycleCurrent}.`;
                 break;
             case 'BLINDADO':
                 status = 'stopped_blindado';
