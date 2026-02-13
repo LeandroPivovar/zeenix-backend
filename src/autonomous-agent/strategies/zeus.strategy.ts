@@ -1811,12 +1811,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.perdasAcumuladas += Math.abs(result.profit);
             state.analysis = "RECUPERACAO"; // ✅ Marcar como recuperação após perda
 
+            // ✅ Incrementar contadores ANTES do stop para garantir que a trade seja contada
+            state.opsCount++;
+            state.opsTotal++;
+            state.operationsCount++;
+            state.cycleOps++; // Incrementar ops de ciclo também
+
             // ✅ V4 SPEC: Stop por 3 Perdas Consecutivas
             if (state.consecutiveLosses >= 3) {
                 this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
                 state.sessionEnded = true;
                 state.endReason = 'STOPLOSS';
-                this.handleStopCondition(userId, 'STOP_LOSS');
+                this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
                 return;
             }
 
@@ -1845,9 +1851,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.lucroAtual = state.profit;
         state.currentProfit = state.profit;
         state.currentLoss = state.perdasAcumuladas;
-        state.opsCount++;
-        state.opsTotal++;
-        state.operationsCount++;
+        // Já incrementado acima se houve perda, mas se houve vitória precisa incrementar aqui
+        if (result.win) {
+            state.opsCount++;
+            state.opsTotal++;
+            state.operationsCount++;
+        }
 
         // ✅ Log Trade Result (Orion Format with Digits)
         this.logTradeResultV2(userId, {
@@ -1942,6 +1951,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             case 'STOP_LOSS':
                 status = 'stopped_loss';
                 message = `STOP LOSS ATINGIDO! resultado_total=${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
+                break;
+            case 'CONSECUTIVE_LOSS':
+                status = 'stopped_loss';
+                message = `🛑 STOP POR PERDAS CONSECUTIVAS! Mercado Instável. Operações encerradas para proteção do capital. | cycle=${state.cycleCurrent}.`;
                 break;
             case 'BLINDADO':
                 status = 'stopped_blindado';
