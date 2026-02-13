@@ -1574,8 +1574,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                             if (isFinalized) {
                                 const buyPrice = Number(contract.buy_price || stake);
-                                const bidPrice = Number(contract.bid_price || 0);
-                                const profit = Number(contract.profit || 0);
+                                const sellPrice = Number(contract.sell_price || contract.bid_price || 0);
+                                // ✅ [ZENIX v2.4] Forçar lucro líquido real (Net Profit = Sell - Buy)
+                                // Isso evita que o retorno bruto seja exibido como lucro
+                                const profit = sellPrice - buyPrice;
                                 const win = profit > 0;
                                 const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
 
@@ -2774,9 +2776,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             ? `\n• Dígitos: [Entrada: ${result.entryDigit} | Saída: ${result.exitDigit}]`
             : '';
 
+        const returnAmount = result.status === 'WIN' ? (result.stake + result.profit) : 0;
         const message = `🎯 RESULTADO DA ENTRADA\n` +
             `• Status: ${result.status}\n` +
             `• Investimento: $${investment.toFixed(2)}\n` +
+            `• Retorno: $${returnAmount.toFixed(2)}\n` +
             `• Resultado: ${resultSign}$${resultVal.toFixed(2)}${digitsStr}\n` +
             `• Saldo Atual: $${result.balance.toFixed(2)}`;
 
