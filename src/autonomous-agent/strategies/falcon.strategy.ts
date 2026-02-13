@@ -1102,7 +1102,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         break;
       case 'STOP_LOSS':
         status = 'stopped_loss';
-        message = `STOP LOSS ATINGIDO! daily_loss=${Math.abs(Math.min(0, state.profit)).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
+        message = `STOP LOSS ATINGIDO! resultado_total=${state.profit >= 0 ? '+' : ''}${state.profit.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
         break;
       case 'BLINDADO':
         status = 'stopped_blindado';

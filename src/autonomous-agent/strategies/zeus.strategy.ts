@@ -1941,7 +1941,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 break;
             case 'STOP_LOSS':
                 status = 'stopped_loss';
-                message = `STOP LOSS ATINGIDO! daily_loss=${Math.abs(Math.min(0, state.lucroAtual)).toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
+                message = `STOP LOSS ATINGIDO! resultado_total=${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
                 break;
             case 'BLINDADO':
                 status = 'stopped_blindado';
@@ -2749,14 +2749,19 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         entryDigit?: number;
         exitDigit?: number;
     }) {
-        const profitStr = result.status === 'WIN' ? `+$${result.profit.toFixed(2)}` : `-$${result.stake.toFixed(2)}`;
+        const investment = result.stake;
+        const returnAmount = result.status === 'WIN' ? (result.stake + result.profit) : 0;
+        const resultSign = result.status === 'WIN' ? '+' : '-';
+        const resultVal = result.status === 'WIN' ? result.profit : result.stake;
         const digitsStr = result.entryDigit !== undefined && result.exitDigit !== undefined
             ? `\n• Dígitos: [Entrada: ${result.entryDigit} | Saída: ${result.exitDigit}]`
             : '';
 
         const message = `🎯 RESULTADO DA ENTRADA\n` +
             `• Status: ${result.status}\n` +
-            `• Lucro/Prejuízo: ${profitStr}${digitsStr}\n` +
+            `• Investimento: $${investment.toFixed(2)}\n` +
+            `• Retorno: $${returnAmount.toFixed(2)}\n` +
+            `• Resultado: ${resultSign}$${resultVal.toFixed(2)}${digitsStr}\n` +
             `• Saldo Atual: $${result.balance.toFixed(2)}`;
 
         this.logger.log(`[Zeus][${userId}] ${message.replace(/\n/g, ' | ')}`);
