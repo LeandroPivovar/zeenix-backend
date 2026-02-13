@@ -553,11 +553,10 @@ export class AutonomousAgentService implements OnModuleInit {
       // 1. Resetar agentes que bateram stop ontem ( stopped_profit, stopped_loss, stopped_blindado )
       // ✅ CORREÇÃO: Remover filtro de agent_type = 'orion' para suportar todos (Falcon, Sentinel, etc)
       const agentsToReset = await this.dataSource.query(
-        `SELECT user_id, session_status, session_date
-         FROM autonomous_agent_config 
+        `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
-           AND (session_date IS NULL OR DATE(session_date) < ?)`,
+           AND (session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss') 
+                OR session_date < DATE_SUB(NOW(), INTERVAL 1 HOUR))`,
         [todayStr],
       );
 

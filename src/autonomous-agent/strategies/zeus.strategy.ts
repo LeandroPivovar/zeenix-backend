@@ -1866,21 +1866,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // [ZENIX v2.5] Já atualizados no topo para evitar race conditions nos canais de log
         state.currentLoss = state.perdasAcumuladas;
 
-        if (result.win) {
-            state.opsCount++;
-            state.opsTotal++;
-            state.operationsCount++;
-        }
-
-        // ✅ Log Trade Result (Orion Format with Digits)
-        this.logTradeResultV2(userId, {
-            status: result.win ? 'WIN' : 'LOSS',
-            profit: result.profit,
-            stake: result.stake,
-            balance: state.balance,
-            entryDigit: result.entryTick !== undefined ? this.lastDigitFromPrice(result.entryTick, config.symbol) : undefined,
-            exitDigit: result.exitTick !== undefined ? this.lastDigitFromPrice(result.exitTick, config.symbol) : undefined
-        });
+        // The opsCount, opsTotal, operationsCount, cycleOps increments were moved before logTradeResultV2.
+        // The original code had them duplicated for 'win' case, which is now removed.
 
         // ✅ Atualizar DB (Trade)
         if (tradeId) {
@@ -1967,7 +1954,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 message = `STOP LOSS ATINGIDO! resultado_total=${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
                 break;
             case 'CONSECUTIVE_LOSS':
-                status = 'stopped_loss';
+                status = 'stopped_consecutive_loss';
                 message = `🛑 STOP POR PERDAS CONSECUTIVAS! Mercado Instável. Operações encerradas para proteção do capital. | Resultado: ${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)} | cycle=${state.cycleCurrent}.`;
                 break;
             case 'BLINDADO':
