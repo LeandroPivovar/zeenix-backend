@@ -50,7 +50,11 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
     // Operation Mode
     mode?: 'NORMAL' | 'PRECISO';
     operationMode?: 'NORMAL' | 'PRECISO';
+
+    // ✅ Sync V4.1: Profit persistent from DB
+    dailyProfit?: number;
 }
+
 
 interface ZeusUserState extends AutonomousAgentState {
     timestamp?: number; // Para logging/debug
@@ -240,6 +244,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
+            c.daily_profit,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -248,6 +253,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'zeus'
            AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+
             );
 
             for (const user of activeUsers) {
@@ -346,8 +352,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
                     // ✅ V4 Limits
                     limitOpsDay: 2000,
-                    limitOpsCycle: 500
+                    limitOpsCycle: 500,
+
+                    // ✅ V4.1 Profit Sync
+                    dailyProfit: parseFloat(user.daily_profit) || 0
                 };
+
 
                 this.userConfigs.set(userId, zeusConfig);
 
@@ -387,8 +397,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             userId,
             isActive: true, // System
             balance: config.initialCapital,
-            profit: 0,
-            peakProfit: 0,
+            profit: config.dailyProfit || 0,
+            peakProfit: config.dailyProfit || 0,
+
 
             // Cycle Management (V4)
             cycleCurrent: 1,
@@ -424,11 +435,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             losses: 0,
 
             // Compatibility fields (infra)
-            lucroAtual: 0,
+            lucroAtual: config.dailyProfit || 0,
             opsCount: 0,
-            currentProfit: 0,   // ✅ Inherited from AutonomousAgentState
+            currentProfit: config.dailyProfit || 0,   // ✅ Inherited from AutonomousAgentState
             currentLoss: 0,     // ✅ Inherited from AutonomousAgentState
             operationsCount: 0, // ✅ Inherited from AutonomousAgentState
+
             currentContractId: null,
             currentTradeId: null,
             isWaitingContract: false,
@@ -482,8 +494,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // Normal: 2000/500 | Preciso: 400/100
             // Normal: 2000/500 | Preciso: 400/100 (Auto-infer from Risk if mode not set)
             limitOpsDay: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 400 : 2000,
-            limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500
+            limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500,
+
+            // ✅ V4.1 Profit Sync
+            dailyProfit: (config as any).dailyProfit || 0
         };
+
         // Actually, we should probably set them based on a default assumption or fetch mode?
         // For now, setting safe defaults.
 
@@ -1687,6 +1703,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.endReason = 'TARGET';
             this.handleStopCondition(userId, 'TAKE_PROFIT');
             return;
+        }
+
+        // ✅ V4.1: Sincronização de Ciclo Baseada em Lucro (Para reinícios)
+        // Se o lucro já for maior que a meta do Ciclo 1, avançamos para o Ciclo 2
+        const baseCycleTarget = config.profitTarget * ZEUS_CONSTANTS.cyclePercent;
+        if (state.cycleCurrent === 1 && currentProfitTotal >= baseCycleTarget) {
+            this.logger.log(`[Zeus][${userId}] 🔄 SINCRONIZAÇÃO DE CICLO: Lucro $${currentProfitTotal.toFixed(2)} >= Meta Ciclo 1 ($${baseCycleTarget.toFixed(2)}). Pulando para Ciclo 2.`);
+            state.cycleCurrent = 2;
+            state.cycleTarget = baseCycleTarget; // Meta base para o C2 (sem compensação de perda pois o C1 foi lucrativo)
+            state.cycleProfit = currentProfitTotal - baseCycleTarget; // O que sobrou do lucro anterior vira lucro do C2
         }
 
         // 1. SAFEGUARD GLOBAL: Checar Stop Loss GLOBAL antes de qualquer lógica de ciclo
