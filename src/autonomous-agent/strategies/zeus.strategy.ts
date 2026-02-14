@@ -1783,7 +1783,18 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (!config || !state) return;
 
         // Priorizar tradeId que veio do closure do buyContract
-        const tradeId = tradeIdFromCallback || state.currentTradeId;
+        let tradeId = tradeIdFromCallback || state.currentTradeId;
+
+        // ✅ [ZENIX v2.7] Race condition safety: Aguardar registro do tradeId se o contrato foi muito rápido
+        if (!tradeId && state.isWaitingContract) {
+            this.logger.debug(`[Zeus][${userId}] ⏱️ Trade finalizado muito rápido. Aguardando tradeId...`);
+            for (let i = 0; i < 20; i++) {
+                await new Promise(r => setTimeout(r, 50));
+                tradeId = state.currentTradeId;
+                if (tradeId) break;
+            }
+        }
+
         state.currentContractId = null;
         if (state.currentTradeId === tradeId) state.currentTradeId = null;
 
