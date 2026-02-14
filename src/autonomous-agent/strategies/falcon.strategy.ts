@@ -467,7 +467,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.userConfigs.set(userId, falconConfig);
 
       const state = this.userStates.get(userId);
-      if (state && !state.isActive) {
+      if (state && !state.isActive && !state.sessionEnded) {
         state.isActive = true;
       }
 
@@ -789,7 +789,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // V4 Limits
     const limitDay = config.limitOpsDay || 2000;
     if (state.opsTotal >= limitDay) {
-      this.handleStopCondition(userId, 'DAILY_LIMIT');
+      await this.handleStopCondition(userId, 'DAILY_LIMIT');
       return { action: 'STOP', reason: 'DAILY_LIMIT' };
     }
 
@@ -938,7 +938,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.saveLog(userId, 'INFO', 'SESSION', `🏆 META DE LUCRO ATINGIDA ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
       state.sessionEnded = true;
       state.endReason = 'TARGET';
-      this.handleStopCondition(userId, 'TAKE_PROFIT');
+      await this.handleStopCondition(userId, 'TAKE_PROFIT');
       return;
     }
 
@@ -948,7 +948,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       await this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS GLOBAL ATINGIDO ($${state.profit.toFixed(2)}). Encerrando Sessão.`);
       state.sessionEnded = true;
       state.endReason = 'STOPLOSS';
-      this.handleStopCondition(userId, 'STOP_LOSS');
+      await this.handleStopCondition(userId, 'STOP_LOSS');
       return;
     }
 
@@ -978,7 +978,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
         state.sessionEnded = true;
         state.endReason = 'TARGET';
-        this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'TAKE_PROFIT');
       }
       return;
     }
@@ -1054,7 +1054,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.sessionEnded = true;
         state.endReason = 'BLINDADO';
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA POR BLINDADO NO ÚLTIMO CICLO.`);
-        this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'TAKE_PROFIT');
       }
     }
   }
@@ -1672,7 +1672,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
       // Update DB and check cycles/stops
       await this.updateUserStateInDb(userId, state);
-      this.updateCycleState(userId);
+      await this.updateCycleState(userId);
 
     } catch (criticalError) {
       this.logger.error(`[Falcon][${userId}] ❌ ERRO CRÍTICO no processamento de contrato:`, criticalError);

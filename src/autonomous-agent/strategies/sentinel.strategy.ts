@@ -167,6 +167,20 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       initialBalance: config.initialBalance || 0,
     };
 
+    if (this.userConfigs.has(userId)) {
+      // ✅ [FIX] SÓ REATIVAR se não estiver parado
+      const state = this.userStates.get(userId);
+      if (state && !state.isActive) {
+        // Se já está nas configs mas está inativo, só reativar se não for stop
+        // Sentinel usa isActive=false para parar no dia.
+        // A query do sync já deve filtrar session_status, mas garantimos aqui via isUserActive interno ou similar se necessário.
+        // Como o state é resetado no midnight, aqui apenas evitamos o override do sync de 5min.
+        return;
+      }
+      this.userConfigs.set(userId, sentinelConfig);
+      return;
+    }
+
     this.userConfigs.set(userId, sentinelConfig);
     this.initializeUserState(userId, sentinelConfig);
 

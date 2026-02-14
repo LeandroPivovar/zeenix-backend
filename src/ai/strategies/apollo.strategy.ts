@@ -1167,6 +1167,14 @@ Ação: IA DESATIVADA`
 
     if (['R_10', 'R_25', 'R_100', '1HZ10V'].includes(config.symbol)) selectedSymbol = config.symbol;
 
+    // ✅ Proteção contra reset de estado pelo Sync (5min)
+    if (this.users.has(userId)) {
+      const existing = this.users.get(userId);
+      if (existing && existing.isStopped) {
+        return;
+      }
+    }
+
     const initialState: ApolloUserState = {
       userId,
       derivToken: config.derivToken,

@@ -523,9 +523,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             this.logger.log(`[Zeus][${userId}] 🔄 Atualizando configuração (Usuário já ativo - Mudança detectada).`);
             this.userConfigs.set(userId, zeusConfig);
 
-            // Apenas garantir que está ativo (se não estiver pausado por stop)
+            // ✅ [FIX] SÓ REATIVAR se não estiver parado (session_status check)
             const state = this.userStates.get(userId);
-            if (state && !state.isActive) {
+            if (state && !state.isActive && !state.sessionEnded) {
                 state.isActive = true;
             }
 
@@ -912,7 +912,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     /**
      * ✅ LOGIC HELPER: Verificar se pode operar (V4 Limits)
      */
-    private canOperate(userId: string, config: ZeusUserConfig, state: ZeusUserState): boolean {
+    private async canOperate(userId: string, config: ZeusUserConfig, state: ZeusUserState): Promise<boolean> {
         const nowTs = Date.now();
 
         if (state.sessionEnded) return false;
@@ -932,7 +932,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.sessionEnded = true;
             state.endReason = "TARGET"; // Technically "LIMIT_REACHED" but treating as target/done
             this.logger.log(`[Zeus][${userId}] 🛑 Limite Diário de Operações atingido (${state.opsTotal}/${limitDay})`);
-            this.handleStopCondition(userId, 'DAILY_LIMIT');
+            await this.handleStopCondition(userId, 'DAILY_LIMIT');
             return false;
         }
 
@@ -951,7 +951,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (roundedDrawdown >= config.stopLoss) {
             state.sessionEnded = true;
             state.endReason = "STOPLOSS";
-            this.handleStopCondition(userId, 'STOP_LOSS_LIMIT');
+            await this.handleStopCondition(userId, 'STOP_LOSS_LIMIT');
             return false;
         }
 
@@ -961,7 +961,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             if (currentCycleProfit < state.blindadoFloorProfit) {
                 state.sessionEnded = true;
                 state.endReason = "BLINDADO";
-                this.handleStopCondition(userId, 'BLINDADO');
+                await this.handleStopCondition(userId, 'BLINDADO');
                 return false;
             }
         }
@@ -1057,7 +1057,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
 
             // 3. Verificação de limites de operação
-            if (!this.canOperate(userId, config, state)) return;
+            if (!await this.canOperate(userId, config, state)) return;
 
             // 4. Aguardar ticks suficientes para análise
             if (userTicks.length < config.dataCollectionTicks) {
@@ -1774,7 +1774,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'SUCCESS', 'SESSION', `🏆 SESSÃO FINALIZADA (${state.cycleCurrent} CICLOS COMPLETOS)`);
                 state.sessionEnded = true;
                 state.endReason = 'TARGET';
-                this.handleStopCondition(userId, 'TAKE_PROFIT');
+                await this.handleStopCondition(userId, 'TAKE_PROFIT');
             }
             return;
         }
@@ -1912,7 +1912,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.currentLoss = state.perdasAcumuladas;
                 await this.updateUserStateInDb(userId, state);
 
-                this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
+                await this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
                 return;
             }
 
