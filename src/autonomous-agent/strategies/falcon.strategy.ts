@@ -236,7 +236,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'falcon'
-           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
       );
 
       for (const user of activeUsers) {

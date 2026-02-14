@@ -247,7 +247,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'zeus'
-           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
             );
 
             for (const user of activeUsers) {
@@ -1573,15 +1573,15 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                                 contract.status === 'won' || contract.status === 'lost' || contract.status === 'sold';
 
                             if (isFinalized) {
-                                const buyPrice = Number(contract.buy_price || stake);
-                                const sellPrice = Number(contract.sell_price || contract.bid_price || 0);
-                                // ✅ [ZENIX v2.4] Forçar lucro líquido real (Net Profit = Sell - Buy)
-                                // Isso evita que o retorno bruto seja exibido como lucro
-                                const profit = sellPrice - buyPrice;
+                                // ✅ [ZENIX v2.6] Usar lucro da Deriv se disponível, senão calcular
+                                const profit = contract.profit !== undefined ? Number(contract.profit) : (Number(contract.sell_price || contract.bid_price || 0) - Number(contract.buy_price || stake));
                                 const win = profit > 0;
+                                const draw = profit === 0;
                                 const exitPrice = Number(contract.exit_spot || contract.current_spot || 0);
 
-                                this.logger.log(`[Zeus][${userId}] ✅ Contrato ${contractId} finalizado: ${win ? 'WIN' : 'LOSS'} | P&L: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} | Exit: ${exitPrice}`);
+                                const sign = profit > 0 ? '+' : (profit < 0 ? '-' : '');
+                                const statusText = win ? 'WIN' : (draw ? 'DRAW' : 'LOSS');
+                                this.logger.log(`[Zeus][${userId}] ✅ Contrato ${contractId} finalizado: ${statusText} | P&L: ${sign}$${Math.abs(profit).toFixed(2)} | Exit: ${exitPrice}`);
 
                                 // Processar resultado - PASSANDO tradeId DO CLOSURE
                                 this.onContractFinish(
@@ -1803,6 +1803,32 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.cycleOps++;
         if (state.cycleProfit > state.cyclePeakProfit) state.cyclePeakProfit = state.cycleProfit;
 
+        // ✅ [ZENIX v2.6] ATUALIZAR REGISTRO E LOGAR IMEDIATAMENTE
+        // Garantir que o trade seja gravado ANTES de qualquer early return (stop conditions)
+        if (tradeId) {
+            try {
+                await this.updateTradeRecord(tradeId, {
+                    status: result.win ? 'WON' : (result.profit === 0 ? 'DRAW' : 'LOST'),
+                    exitPrice: result.exitPrice || 0,
+                    profitLoss: result.profit,
+                    closedAt: new Date(),
+                });
+            } catch (error) {
+                this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
+            }
+        }
+
+        // ✅ [ZENIX v2.6] Log Result V2
+        const resultStatus: 'WIN' | 'LOSS' | 'DRAW' = result.win ? 'WIN' : (result.profit === 0 ? 'DRAW' : 'LOSS');
+        this.logTradeResultV2(userId, {
+            status: resultStatus,
+            profit: result.profit,
+            stake: result.stake,
+            balance: (config.initialBalance || 0) + state.profit,
+            entryDigit: result.entryTick !== undefined ? Number(String(result.entryTick).slice(-1)) : undefined,
+            exitDigit: result.exitTick !== undefined ? Number(String(result.exitTick).slice(-1)) : undefined
+        });
+
         if (result.win) {
             state.wins++;
             state.consecutiveLosses = 0;
@@ -1816,6 +1842,17 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 state.recoveryLock = false; // ✅ V4 RECOVERED
                 this.saveLog(userId, 'SUCCESS', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
             }
+        } else if (result.profit === 0) {
+            // ✅ [ZENIX v2.6] TRATAR EMPATE (DRAW/VOID)
+            // Não incrementa consecutivas, não reseta. Apenas loga e permite continuar na mesma stake.
+            this.saveLog(userId, 'INFO', 'TRADER', `🤝 EMPATE (DRAW/VOID): Resultado $0.00. Mantendo estratégia.`);
+            state.analysis = state.perdasAcumuladas > 0 ? "RECUPERACAO" : "PRINCIPAL";
+
+            // Incrementar contadores de operações mesmo em empate
+            state.opsCount++;
+            state.opsTotal++;
+            state.operationsCount++;
+            state.cycleOps++;
         } else {
             state.losses++;
             state.consecutiveLosses++;
@@ -1868,20 +1905,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // The opsCount, opsTotal, operationsCount, cycleOps increments were moved before logTradeResultV2.
         // The original code had them duplicated for 'win' case, which is now removed.
-
-        // ✅ Atualizar DB (Trade)
-        if (tradeId) {
-            try {
-                await this.updateTradeRecord(tradeId, {
-                    status: result.win ? 'WON' : 'LOST',
-                    exitPrice: result.exitPrice || 0,
-                    profitLoss: result.profit,
-                    closedAt: new Date(),
-                });
-            } catch (error) {
-                this.logger.error(`[Zeus][${userId}] ❌ Erro ao atualizar trade ${tradeId} no banco:`, error);
-            }
-        }
 
         // ✅ Lógica Core: Check Blindado, Cycles
         await this.updateCycleState(userId, state, config);
@@ -2756,7 +2779,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     // --- CATEGORIA 3: EXECUÇÃO E RESULTADO ---
 
     private logTradeResultV2(userId: string, result: {
-        status: 'WIN' | 'LOSS';
+        status: 'WIN' | 'LOSS' | 'DRAW';
         profit: number;
         stake: number;
         balance: number;
@@ -2764,13 +2787,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         exitDigit?: number;
     }) {
         const investment = result.stake;
-        const resultSign = result.status === 'WIN' ? '+' : '-';
+        const resultSign = result.profit > 0 ? '+' : (result.profit < 0 ? '-' : '');
         const resultVal = Math.abs(result.profit);
         const digitsStr = result.entryDigit !== undefined && result.exitDigit !== undefined
             ? `\n• Dígitos: [Entrada: ${result.entryDigit} | Saída: ${result.exitDigit}]`
             : '';
 
-        const returnAmount = result.status === 'WIN' ? (result.stake + result.profit) : 0;
+        const returnAmount = result.profit >= 0 ? (result.stake + result.profit) : 0;
         const message = `🎯 RESULTADO DA ENTRADA\n` +
             `• Status: ${result.status}\n` +
             `• Investimento: $${investment.toFixed(2)}\n` +

@@ -94,7 +94,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'sentinel'
-           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
+           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
       );
 
       for (const user of activeUsers) {

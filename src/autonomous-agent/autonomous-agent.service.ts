@@ -499,7 +499,7 @@ export class AutonomousAgentService implements OnModuleInit {
            SELECT user_id, MAX(updated_at) as max_updated
            FROM autonomous_agent_config
            WHERE is_active = TRUE 
-             AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')
+             AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')
            GROUP BY user_id
          ) latest ON c.user_id = latest.user_id AND c.updated_at = latest.max_updated
          WHERE c.is_active = TRUE`,
