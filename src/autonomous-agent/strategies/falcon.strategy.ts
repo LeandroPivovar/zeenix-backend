@@ -2194,8 +2194,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         passthrough: {
           ...payload.passthrough,
           req_id: requestId,
+          origin: 'autonomous_agent',
         },
       };
+
 
       conn.ws.send(JSON.stringify(enrichedPayload));
     });

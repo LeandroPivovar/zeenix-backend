@@ -1912,9 +1912,11 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
         ...payload,
         passthrough: {
           ...payload.passthrough,
-          req_id: requestId
+          req_id: requestId,
+          origin: 'autonomous_agent'
         }
       };
+
 
       conn.ws.send(JSON.stringify(enrichedPayload));
     });
