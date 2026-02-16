@@ -1856,6 +1856,8 @@ export class AutonomousAgentService implements OnModuleInit {
       const trades = await this.dataSource.query(query, params);
 
       return trades.map((t: any) => ({
+        id: t.id,
+        session_id: t.session_id,
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
         createdAt: t.created_at,
         market: t.symbol,
@@ -1865,7 +1867,8 @@ export class AutonomousAgentService implements OnModuleInit {
         result: (parseFloat(t.profit_loss) >= 0 ? '+' : '') + parseFloat(t.profit_loss).toFixed(2),
         entry: t.entry_price,
         exit: t.exit_price,
-        status: t.status
+        status: t.status,
+        strategy: t.strategy
       }));
     } catch (error) {
       Logger.error(`[GetDailyTrades] Error returning empty:`, error);
