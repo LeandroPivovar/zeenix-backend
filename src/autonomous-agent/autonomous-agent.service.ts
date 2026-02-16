@@ -1407,6 +1407,7 @@ export class AutonomousAgentService implements OnModuleInit {
         fullDate: new Date(day.date).toISOString().split('T')[0],
         profit: Number(netProfit.toFixed(2)),
         ops,
+        wins,
         winRate: Number(winRate.toFixed(2)),
         capital: Number(cumulativeProfit.toFixed(2)),
         avgTime,
@@ -1838,6 +1839,8 @@ export class AutonomousAgentService implements OnModuleInit {
            ${dateCondition}
            AND status IN ('WON', 'LOST')
            ${strategyFilter}
+         ORDER BY created_at DESC
+         LIMIT 500
       `;
 
       // REMOVIDO: Filtro de sessão para HOJE
