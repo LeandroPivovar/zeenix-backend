@@ -1822,6 +1822,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
       let query = `
          SELECT 
+           id,
+           session_id,
            created_at,
            symbol,
            contract_type,
