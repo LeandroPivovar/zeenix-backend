@@ -1808,8 +1808,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       let dateCondition = '';
       if (isRange) {
-        // Adjust for timezone if necessary or just use raw UTC if strings are UTC
-        // Assuming incoming strings are ISO
+        // Adjust ISO strings to MySQL format (YYYY-MM-DD HH:MM:SS)
+        startRange = startRange.replace('T', ' ').replace('Z', '').split('.')[0];
+        endRange = endRange.replace('T', ' ').replace('Z', '').split('.')[0];
         dateCondition = `AND created_at BETWEEN ? AND ?`;
         params.push(startRange, endRange);
       } else {
@@ -1823,7 +1824,6 @@ export class AutonomousAgentService implements OnModuleInit {
       let query = `
          SELECT 
            id,
-           session_id,
            created_at,
            symbol,
            contract_type,
@@ -1857,7 +1857,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       return trades.map((t: any) => ({
         id: t.id,
-        session_id: t.session_id,
+        session_id: t.session_id || null, // Mantém compatibilidade mas busca do campo se existir futuramente
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
         createdAt: t.created_at,
         market: t.symbol,
@@ -1871,7 +1871,7 @@ export class AutonomousAgentService implements OnModuleInit {
         strategy: t.strategy
       }));
     } catch (error) {
-      Logger.error(`[GetDailyTrades] Error returning empty:`, error);
+      Logger.error(`[GetDailyTrades] Error fetching trades for user ${userId}:`, error);
       return [];
     }
   }
