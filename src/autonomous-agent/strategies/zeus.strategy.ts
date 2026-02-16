@@ -1498,6 +1498,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     {
                         buy: proposalId,
                         price: askPrice,
+                        passthrough: { origin: 'autonomous_agent' },
                     },
                     60000,
                 );

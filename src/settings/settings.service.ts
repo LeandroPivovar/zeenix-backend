@@ -242,7 +242,10 @@ export class SettingsService {
     ) {
       changes.push(`Alterou moeda padrão para ${normalizedUpdates.tradeCurrency}`);
 
+      /*
       // ✅ Desativar serviços de forma condicional (igual ao updateDerivToken)
+      // [ZENIX v3.6] CHANGE: Disabled automatic deactivation here too.
+      /*
       try {
         this.logger.log(`[SettingsService] Gerenciando desativação de serviços para ${userId} (Contexto: ${activeContext || 'ALL'})`);
 
@@ -273,6 +276,7 @@ export class SettingsService {
       } catch (e) {
         this.logger.error(`[SettingsService] Erro ao desativar serviços: ${e.message}`);
       }
+      */
 
       // Atualizar também a coluna deriv_currency na tabela users
       // Se for DEMO, manter a moeda base (USD) na deriv_currency
@@ -507,6 +511,9 @@ export class SettingsService {
     }
 
     // ✅ Desativar serviços de forma condicional
+    // [ZENIX v3.6] CHANGE: Disabled automatic deactivation to allow Agent/AI to keep running
+    // even if the user switches the "active" account/currency in the frontend.
+    /*
     try {
       this.logger.log(`[SettingsService] Gerenciando desativação de serviços para ${userId} (Contexto: ${activeContext || 'ALL'})`);
 
@@ -537,10 +544,10 @@ export class SettingsService {
     } catch (e) {
       this.logger.error(`[SettingsService] Erro ao desativar serviços: ${e.message}`);
     }
+    */
 
     await this.logActivity(userId, 'UPDATE_DERIV_TOKEN', `Atualizou token Deriv para ${tradeCurrency}`, ipAddress, userAgent);
 
     return { success: true, message: 'Token Deriv atualizado com sucesso' };
   }
 }
-
