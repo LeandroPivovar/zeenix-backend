@@ -1775,7 +1775,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string, agent?: string): Promise<any[]> {
+  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string): Promise<any[]> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
@@ -1785,20 +1785,40 @@ export class AutonomousAgentService implements OnModuleInit {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
       let targetDateStr = date;
+      let startRange = '';
+      let endRange = '';
+      let isRange = false;
 
-      if (date === 'today' || !dateRegex.test(date)) {
-        targetDateStr = new Date().toISOString().split('T')[0];
+      if (startDate && endDate) {
+        isRange = true;
+        startRange = startDate;
+        endRange = endDate;
+        // Ensure full timestamps if only dates provided
+        if (startRange.length === 10) startRange += 'T00:00:00.000Z';
+        if (endRange.length === 10) endRange += 'T23:59:59.999Z';
+      } else {
+        if (date === 'today' || !dateRegex.test(date)) {
+          targetDateStr = new Date().toISOString().split('T')[0];
+        }
       }
 
       // Filter logic
       const strategyFilter = agent && agent !== 'all' ? 'AND strategy = ?' : '';
-      const params: any[] = [userId, targetDateStr];
+      let params: any[] = [userId];
+
+      let dateCondition = '';
+      if (isRange) {
+        // Adjust for timezone if necessary or just use raw UTC if strings are UTC
+        // Assuming incoming strings are ISO
+        dateCondition = `AND created_at BETWEEN ? AND ?`;
+        params.push(startRange, endRange);
+      } else {
+        dateCondition = `AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?`;
+        params.push(targetDateStr);
+      }
+
       if (strategyFilter && agent) params.push(agent);
 
-      // Definir início e fim do dia para compatibilidade com qualquer DB (SQLite, Postgres, etc)
-      // Assumindo UTC strings
-      // const startOfDayStr = `${targetDateStr}T00:00:00.000Z`; // Unused
-      // const endOfDayStr = `${targetDateStr}T23:59:59.999Z`; // Unused
 
       let query = `
          SELECT 
@@ -1813,7 +1833,7 @@ export class AutonomousAgentService implements OnModuleInit {
            strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
-           AND DATE(CONVERT_TZ(created_at, '+00:00', '-03:00')) = ?
+           ${dateCondition}
            AND status IN ('WON', 'LOST')
            ${strategyFilter}
       `;

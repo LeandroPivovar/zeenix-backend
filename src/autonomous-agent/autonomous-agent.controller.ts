@@ -543,9 +543,15 @@ export class AutonomousAgentController {
   }
   @Get('daily-trades/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async getDailyTrades(@Param('userId') userId: string, @Query('date') date: string, @Query('agent') agent?: string) {
+  async getDailyTrades(
+    @Param('userId') userId: string,
+    @Query('date') date: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('agent') agent?: string
+  ) {
     try {
-      const trades = await this.agentService.getDailyTrades(userId, date || 'today', agent);
+      const trades = await this.agentService.getDailyTrades(userId, date || 'today', agent, startDate, endDate);
       return {
         success: true,
         data: trades,
