@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, Between } from 'typeorm';
 import { TradeEntity, TradeType, TradeStatus } from '../infrastructure/database/entities/trade.entity';
@@ -25,6 +25,7 @@ import { MarkupService } from '../markup/markup.service';
 
 @Injectable()
 export class TradesService {
+  private readonly logger = new Logger(TradesService.name);
   private markupCache = new Map<string, { timestamp: number, data: any[] }>();
 
   constructor(
@@ -460,18 +461,24 @@ export class TradesService {
 
     const results: any = {};
 
-    await Promise.all(periods.map(async (p) => {
+    // Buscamos sequencialmente para evitar rate limits do Deriv e usamos Details
+    // que já provamos ser mais confiável que Statistics neste ambiente.
+    for (const p of periods) {
       try {
-        const stats = await this.markupService.getAppMarkupStatistics(token!, {
+        const details = await this.markupService.getAppMarkupDetails(token!, {
           date_from: `${p.start} 00:00:00`,
           date_to: `${p.end} 23:59:59`
         });
-        results[p.key] = parseFloat((stats.total_app_markup_usd || 0).toFixed(2));
+
+        const totalMarkup = details.reduce((sum, tx) => sum + parseFloat(tx.app_markup_usd || 0), 0);
+        results[p.key] = parseFloat(totalMarkup.toFixed(2));
+
+        this.logger.log(`[TradesService] Agregado ${p.key} calculado: ${results[p.key]} (${details.length} transações)`);
       } catch (error) {
-        console.warn(`[TradesService] Erro ao buscar markup Deriv para período ${p.key}:`, error.message);
+        this.logger.warn(`[TradesService] Erro ao buscar markup Deriv para período ${p.key}:`, error.message);
         results[p.key] = 0;
       }
-    }));
+    }
 
     return results;
   }

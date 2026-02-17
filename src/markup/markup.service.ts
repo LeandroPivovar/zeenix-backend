@@ -116,12 +116,16 @@ export class MarkupService {
                             app_id: appId,
                         };
 
+                        this.logger.log(`[MarkupService] Enviando request de estatísticas: ${JSON.stringify(request)}`);
                         send(request);
                     } else if (msg.msg_type === 'app_markup_statistics') {
                         clearTimeout(timeout);
                         this.logger.log(
-                            `[MarkupService] Estatísticas recebidas - Total USD: ${msg.app_markup_statistics?.total_app_markup_usd || 0}, Transações: ${msg.app_markup_statistics?.total_transactions_count || 0}`,
+                            `[MarkupService] Estatísticas recebidas para AppID ${appId} - Total USD: ${msg.app_markup_statistics?.total_app_markup_usd || 0}, Transações: ${msg.app_markup_statistics?.total_transactions_count || 0}`,
                         );
+                        if (msg.app_markup_statistics?.total_app_markup_usd === 0 && msg.app_markup_statistics?.total_transactions_count === 0) {
+                            this.logger.warn(`[MarkupService] API retornou ZERO para AppID ${appId} no período ${options.date_from} a ${options.date_to}`);
+                        }
 
                         const result: MarkupStatisticsResult = {
                             total_app_markup_usd:
