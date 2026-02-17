@@ -21,6 +21,7 @@ export interface CreateTradeDto {
 }
 
 import { DerivService } from '../broker/deriv.service';
+import { MarkupService } from '../markup/markup.service';
 
 @Injectable()
 export class TradesService {
@@ -33,6 +34,7 @@ export class TradesService {
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
     private readonly derivService: DerivService,
+    private readonly markupService: MarkupService,
     @Inject(forwardRef(() => CopyTradingService))
     private readonly copyTradingService?: CopyTradingService,
   ) { }
@@ -456,26 +458,16 @@ export class TradesService {
     const results: any = {};
 
     await Promise.all(periods.map(async (p) => {
-      // Usando a query SQL otimizada para consistência com o que o admin vê na tabela
-      const query = `
-        SELECT SUM(AL.returned_value) as totalPayout
-        FROM ai_trade_logs AL
-        JOIN ai_sessions AI ON AI.id = AL.ai_sessions_id
-        JOIN users U ON U.id = AI.user_id
-        WHERE AL.result = 'WON'
-          AND AL.created_at >= ? 
-          AND AL.created_at <= ?
-          AND AI.account_type = 'real'
-          AND U.is_active = 1
-          AND U.real_amount > 0
-          AND AL.created_at > '2026-02-08 17:42:03'
-      `;
-      const dateFromTime = `${p.start} 00:00:00`;
-      const dateToTime = `${p.end} 23:59:59`;
-
-      const res = await this.dataSource.query(query, [dateFromTime, dateToTime]);
-      const payout = parseFloat(res[0]?.totalPayout || 0);
-      results[p.key] = parseFloat((payout * 0.03).toFixed(2));
+      try {
+        const stats = await this.markupService.getAppMarkupStatistics(token!, {
+          date_from: `${p.start} 00:00:00`,
+          date_to: `${p.end} 23:59:59`
+        });
+        results[p.key] = parseFloat((stats.total_app_markup_usd || 0).toFixed(2));
+      } catch (error) {
+        console.warn(`[TradesService] Erro ao buscar markup Deriv para período ${p.key}:`, error.message);
+        results[p.key] = 0;
+      }
     }));
 
     return results;
@@ -527,8 +519,6 @@ export class TradesService {
       throw new Error('Erro ao buscar dados de markup diário');
     }
   }
-
-
 
   getMarkupDataStream(startDate?: string, endDate?: string): Observable<MessageEvent> {
     const subject = new Subject<MessageEvent>();
@@ -716,4 +706,3 @@ export class TradesService {
     return subject.asObservable();
   }
 }
-

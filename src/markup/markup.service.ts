@@ -110,6 +110,7 @@ export class MarkupService {
                             app_markup_statistics: 1,
                             date_from: options.date_from,
                             date_to: options.date_to,
+                            app_id: appId,
                         };
 
                         send(request);
@@ -237,7 +238,8 @@ export class MarkupService {
                             offset: offset,
                             description: 1,
                             sort: 'ASC',
-                            sort_fields: ['transaction_time']
+                            sort_fields: ['transaction_time'],
+                            app_id: appId,
                         };
                         send(request);
 
