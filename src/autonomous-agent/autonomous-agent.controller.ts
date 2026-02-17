@@ -548,10 +548,12 @@ export class AutonomousAgentController {
     @Query('date') date: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Query('agent') agent?: string
+    @Query('agent') agent?: string,
+    @Query('limit') limit?: string
   ) {
     try {
-      const trades = await this.agentService.getDailyTrades(userId, date || 'today', agent, startDate, endDate);
+      const limitNum = limit ? parseInt(limit, 10) : 20000;
+      const trades = await this.agentService.getDailyTrades(userId, date || 'today', agent, startDate, endDate, limitNum);
       return {
         success: true,
         data: trades,

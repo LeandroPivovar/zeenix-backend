@@ -1776,7 +1776,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string): Promise<any> {
+  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string, limit: number = 20000): Promise<any> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
@@ -1821,6 +1821,8 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (strategyFilter && agent) params.push(agent);
 
+      // Add limit to params
+      params.push(limit);
 
       let query = `
          SELECT 
@@ -1840,7 +1842,7 @@ export class AutonomousAgentService implements OnModuleInit {
            AND status IN ('WON', 'LOST')
            ${strategyFilter}
          ORDER BY created_at DESC
-         LIMIT 500
+         LIMIT ?
       `;
 
       // REMOVIDO: Filtro de sessão para HOJE
@@ -1854,9 +1856,12 @@ export class AutonomousAgentService implements OnModuleInit {
       }
       */
 
-      query += ` ORDER BY created_at DESC`;
+      // query += ` ORDER BY created_at DESC`; // Already in query above
 
       // Execute both queries: one for summary and one for limited trades
+      // Logica de params para summary é diferente (não tem limit)
+      const summaryParams = params.slice(0, params.length - 1); // Remove limit
+
       const summaryQuery = `
       SELECT 
         COUNT(*) as totalTrades,
@@ -1871,7 +1876,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       const [trades, summaryData] = await Promise.all([
         this.dataSource.query(query, params),
-        this.dataSource.query(summaryQuery, params)
+        this.dataSource.query(summaryQuery, summaryParams)
       ]);
 
       const summary = {
