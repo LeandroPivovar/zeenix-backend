@@ -578,6 +578,19 @@ export class AutonomousAgentService implements OnModuleInit {
           `[ResetDailySession] Resetando sessão diária para usuário ${agent.user_id} (status anterior: ${agent.session_status})`,
         );
 
+        // ✅ [ZENIX v3.3] Registrar Log de Fechamento Diário para o Relatório
+        if (this.logQueueService) {
+          this.logQueueService.saveLogAsync({
+            userId: agent.user_id.toString(),
+            level: 'INFO',
+            module: 'CORE',
+            message: 'Sessão finalizada por FECHAMENTO DIÁRIO às 00:00 (Reset Automático)',
+            icon: 'ℹ️',
+            details: { resetType: 'midnight' },
+            tableName: 'autonomous_agent_logs',
+          });
+        }
+
         // Resetar sessão diária no banco
         await this.dataSource.query(
           `UPDATE autonomous_agent_config 
