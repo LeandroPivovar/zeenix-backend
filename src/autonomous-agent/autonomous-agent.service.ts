@@ -1776,7 +1776,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string): Promise<any[]> {
+  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string): Promise<any> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
@@ -1856,9 +1856,34 @@ export class AutonomousAgentService implements OnModuleInit {
 
       query += ` ORDER BY created_at DESC`;
 
-      const trades = await this.dataSource.query(query, params);
+      // Execute both queries: one for summary and one for limited trades
+      const summaryQuery = `
+      SELECT 
+        COUNT(*) as totalTrades,
+        SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as totalWins,
+        SUM(profit_loss) as totalProfit
+      FROM autonomous_agent_trades 
+      WHERE user_id = ? 
+        ${dateCondition}
+        AND status IN ('WON', 'LOST')
+        ${strategyFilter}
+    `;
 
-      return trades.map((t: any) => ({
+      const [trades, summaryData] = await Promise.all([
+        this.dataSource.query(query, params),
+        this.dataSource.query(summaryQuery, params)
+      ]);
+
+      const summary = {
+        totalTrades: parseInt(summaryData[0]?.totalTrades) || 0,
+        totalWins: parseInt(summaryData[0]?.totalWins) || 0,
+        totalProfit: parseFloat(summaryData[0]?.totalProfit) || 0,
+        winRate: (parseInt(summaryData[0]?.totalTrades) || 0) > 0
+          ? (parseInt(summaryData[0]?.totalWins) || 0) / (parseInt(summaryData[0]?.totalTrades) || 0) * 100
+          : 0
+      };
+
+      const formattedTrades = trades.map((t: any) => ({
         id: t.id,
         session_id: t.session_id || null, // Mantém compatibilidade mas busca do campo se existir futuramente
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
@@ -1873,9 +1898,14 @@ export class AutonomousAgentService implements OnModuleInit {
         status: t.status,
         strategy: t.strategy
       }));
+
+      return {
+        trades: formattedTrades,
+        summary
+      };
     } catch (error) {
       Logger.error(`[GetDailyTrades] Error fetching trades for user ${userId}:`, error);
-      return [];
+      return { trades: [], summary: { totalTrades: 0, totalWins: 0, totalProfit: 0, winRate: 0 } };
     }
   }
 
