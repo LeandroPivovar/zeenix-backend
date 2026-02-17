@@ -312,9 +312,14 @@ export class TradesController {
       };
 
     } catch (error) {
-      console.error('[TradesController] Erro ao buscar markup da API Deriv:', error);
       throw error;
     }
+  }
+
+  @Get('markup/aggregates')
+  async getMarkupAggregates(@Req() req: any) {
+    const userId = req.user.userId;
+    return await this.tradesService.getMarkupAggregates(userId);
   }
 
   @Get('markup/daily')

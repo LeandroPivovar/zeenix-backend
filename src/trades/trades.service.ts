@@ -425,6 +425,62 @@ export class TradesService {
     }
   }
 
+  async getMarkupAggregates(userId: string) {
+    let token: string | undefined = process.env.DERIV_READ_TOKEN;
+
+    if (!token) {
+      const derivInfo = await this.userRepository.getDerivInfo(userId);
+      token = (derivInfo?.tokenReal || derivInfo?.tokenDemo) || undefined;
+    }
+
+    if (!token) throw new Error('Token de leitura ausente');
+
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+
+    // Period ranges
+    const firstDayMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+    const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+    const firstDayYear = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
+    const beginningOfTime = '2020-01-01'; // Or some early date
+
+    const periods = [
+      { key: 'today', start: today, end: today },
+      { key: 'currentMonth', start: firstDayMonth, end: today },
+      { key: 'lastMonth', start: firstDayLastMonth, end: lastDayLastMonth },
+      { key: 'currentYear', start: firstDayYear, end: today },
+      { key: 'total', start: beginningOfTime, end: today },
+    ];
+
+    const results: any = {};
+
+    await Promise.all(periods.map(async (p) => {
+      // Usando a query SQL otimizada para consistência com o que o admin vê na tabela
+      const query = `
+        SELECT SUM(AL.returned_value) as totalPayout
+        FROM ai_trade_logs AL
+        JOIN ai_sessions AI ON AI.id = AL.ai_sessions_id
+        JOIN users U ON U.id = AI.user_id
+        WHERE AL.result = 'WON'
+          AND AL.created_at >= ? 
+          AND AL.created_at <= ?
+          AND AI.account_type = 'real'
+          AND U.is_active = 1
+          AND U.real_amount > 0
+          AND AL.created_at > '2026-02-08 17:42:03'
+      `;
+      const dateFromTime = `${p.start} 00:00:00`;
+      const dateToTime = `${p.end} 23:59:59`;
+
+      const res = await this.dataSource.query(query, [dateFromTime, dateToTime]);
+      const payout = parseFloat(res[0]?.totalPayout || 0);
+      results[p.key] = parseFloat((payout * 0.03).toFixed(2));
+    }));
+
+    return results;
+  }
+
   async getDailyMarkupData(startDate?: string, endDate?: string) {
     let dateFrom = startDate;
     let dateTo = endDate;
