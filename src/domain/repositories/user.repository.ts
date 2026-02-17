@@ -6,6 +6,7 @@ export interface UserRepository {
   findByEmail(email: string): Promise<User | null>;
   findByPhone(phone: string): Promise<User | null>;
   findAll(): Promise<User[]>;
+  findAllActiveWithRealAccount(): Promise<User[]>;
   update(user: User): Promise<User>;
   delete(id: string): Promise<void>;
   updateDerivInfo(userId: string, info: { loginId?: string; currency?: string; balance?: number; raw?: any; tokenDemo?: string; tokenReal?: string; tokenRealCurrency?: string; tokenDemoCurrency?: string; realAmount?: number; demoAmount?: number; idRealAccount?: string; idDemoAccount?: string }): Promise<void>;

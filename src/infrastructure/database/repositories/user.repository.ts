@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 import { UserRepository } from '../../../domain/repositories/user.repository';
 import { User } from '../../../domain/entities/user.entity';
 import { UserEntity } from '../entities/user.entity';
@@ -55,6 +55,21 @@ export class TypeOrmUserRepository implements UserRepository {
   async findAll(): Promise<User[]> {
     const userEntities = await this.userRepository.find();
     return userEntities.map(entity => this.toDomain(entity));
+  }
+
+  async findAllActiveWithRealAccount(): Promise<User[]> {
+    const userEntities = await this.userRepository.find({
+      where: {
+        isActive: true,
+        realAmount: IsNull() ? undefined : Not(0), // Simplified check
+      },
+      select: ['id', 'name', 'email', 'phone', 'derivLoginId', 'realAmount', 'role', 'traderMestre']
+    });
+
+    // Filtro adicional manual caso realAmount seja null mas derivLoginId exista
+    const filtered = userEntities.filter(u => u.isActive && (u.realAmount > 0 || u.derivLoginId));
+
+    return filtered.map(entity => this.toDomain(entity));
   }
 
   async update(user: User): Promise<User> {

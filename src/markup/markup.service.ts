@@ -1,4 +1,5 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import WebSocket from 'ws';
 
 export interface MarkupStatisticsOptions {
@@ -23,6 +24,8 @@ export interface MarkupStatisticsResult {
 export class MarkupService {
     private readonly logger = new Logger(MarkupService.name);
 
+    constructor(private readonly configService: ConfigService) { }
+
     /**
      * Obtém estatísticas de markup da API da Deriv
      * Utiliza o endpoint app_markup_statistics via WebSocket
@@ -39,7 +42,7 @@ export class MarkupService {
             throw new UnauthorizedException('Token ausente');
         }
 
-        const appId = options.app_id || Number(process.env.DERIV_APP_ID || 1089);
+        const appId = options.app_id || Number(this.configService.get('DERIV_APP_ID') || 111346);
         const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
         this.logger.log(
@@ -167,7 +170,7 @@ export class MarkupService {
             throw new UnauthorizedException('Token ausente');
         }
 
-        const appId = options.app_id || Number(process.env.DERIV_APP_ID || 1089);
+        const appId = options.app_id || Number(this.configService.get('DERIV_APP_ID') || 111346);
         const url = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
 
         this.logger.log(
@@ -281,7 +284,8 @@ export class MarkupService {
                                 offset: offset,
                                 description: 1,
                                 sort: 'ASC',
-                                sort_fields: ['transaction_time']
+                                sort_fields: ['transaction_time'],
+                                app_id: appId,
                             };
                             send(request);
                         }

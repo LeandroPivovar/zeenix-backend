@@ -332,77 +332,80 @@ export class TradesService {
       dateTo = lastDay.toISOString().split('T')[0];
     }
 
-    // Ajustar datas para incluir o dia inteiro no filtro SQL
-    const dateFromTime = `${dateFrom} 00:00:00`;
-    const dateToTime = `${dateTo} 23:59:59`;
+    const dateFromFormatted = `${dateFrom} 00:00:00`;
+    const dateToFormatted = `${dateTo} 23:59:59`;
 
-    console.log(`[TradesService] Buscando markup (SQL Otimizado) de ${dateFromTime} até ${dateToTime}`);
-
-    const query = `
-      SELECT 
-        U.id as userId,
-        U.name,
-        U.email,
-        U.phone,
-        U.id_real_account as loginid,
-        U.real_amount as realAmount,
-        U.role,
-        U.trader_mestre as traderMestre,
-        COUNT(AL.id) as transactionCount,
-        SUM(AL.returned_value) as totalPayout
-      FROM users U
-      LEFT JOIN ai_sessions AI ON AI.user_id = U.id AND AI.account_type = 'real'
-      LEFT JOIN ai_trade_logs AL ON AL.ai_sessions_id = AI.id 
-        AND AL.result = 'WON'
-        AND AL.created_at >= ? 
-        AND AL.created_at <= ?
-        AND AL.created_at > '2026-02-08 17:42:03'
-      WHERE U.is_active = 1 AND U.real_amount > 0
-      GROUP BY U.id, U.name, U.email, U.phone, U.id_real_account, U.real_amount, U.role, U.trader_mestre
-      ORDER BY totalPayout DESC
-    `;
+    console.log(`[TradesService] Buscando markup via API Deriv de ${dateFromFormatted} até ${dateToFormatted}`);
 
     try {
-      const rawResults = await this.dataSource.query(query, [dateFromTime, dateToTime]);
+      // 1. Obter token
+      let token: string | undefined = process.env.DERIV_READ_TOKEN;
+      if (!token) {
+        const derivInfo = await this.userRepository.getDerivInfo(userId);
+        token = (derivInfo?.tokenReal || derivInfo?.tokenDemo) || undefined;
+      }
+      if (!token) throw new Error('Token de leitura ausente');
+
+      // 2. Buscar detalhes da API
+      const details = await this.markupService.getAppMarkupDetails(token, {
+        date_from: dateFromFormatted,
+        date_to: dateToFormatted
+      });
+
+      // 3. Agrupar por loginid
+      const markupByLoginId: Record<string, { count: number, markup: number }> = {};
+      details.forEach(tx => {
+        const loginid = tx.client_loginid;
+        if (!markupByLoginId[loginid]) {
+          markupByLoginId[loginid] = { count: 0, markup: 0 };
+        }
+        markupByLoginId[loginid].count++;
+        markupByLoginId[loginid].markup += parseFloat(tx.app_markup_usd || 0);
+      });
+
+      // 4. Buscar usuários do banco para enriquecer dados
+      const users = await this.userRepository.findAllActiveWithRealAccount();
 
       let totalCommission = 0;
-      let totalPayout = 0;
       let totalTransactions = 0;
       let usersWithMarkup = 0;
 
-      const formattedResults = rawResults.map((row: any) => {
-        const totalPayoutVal = parseFloat(row.totalPayout || 0);
-        // Comissão de 3% sobre o payout (valor retornado pela corretora)
-        const commission = totalPayoutVal * 0.03;
+      const formattedResults = users.map(user => {
+        const loginid = user.derivLoginId;
+        const stats = loginid ? markupByLoginId[loginid] : null;
 
-        if (commission > 0) usersWithMarkup++;
-        totalCommission += commission;
-        totalPayout += totalPayoutVal;
-        totalTransactions += parseInt(row.transactionCount || 0);
+        const commission = stats ? stats.markup : 0;
+        const txCount = stats ? stats.count : 0;
+
+        if (commission > 0) {
+          usersWithMarkup++;
+          totalCommission += commission;
+          totalTransactions += txCount;
+        }
 
         return {
-          userId: row.userId,
-          name: row.name,
-          email: row.email,
-          whatsapp: row.phone,
-          country: 'Brasil', // Default, já que não temos coluna country na tabela users ainda
-          loginid: row.loginid || 'N/A',
-          transactionCount: parseInt(row.transactionCount || 0),
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          whatsapp: user.phone,
+          country: 'Brasil',
+          loginid: loginid || 'N/A',
+          transactionCount: txCount,
           commission: parseFloat(commission.toFixed(2)),
-          realAmount: parseFloat(row.realAmount || 0),
-          totalPayout: parseFloat(totalPayoutVal.toFixed(2)),
-          // Structure expected by frontend
+          realAmount: user.realAmount || 0,
+          totalPayout: 0, // Não temos o payout total aqui, apenas o markup
           breakdown: {
             manual: { payout: 0, count: 0 },
-            ia: { payout: totalPayoutVal, count: parseInt(row.transactionCount || 0) }, // All attributed to IA for now
+            ia: { payout: 0, count: txCount },
             agent: { payout: 0, count: 0 },
             copy: { payout: 0, count: 0 }
           },
           realData: true,
-          role: row.role,
-          traderMestre: row.traderMestre === 1 || row.traderMestre === true,
+          role: user.role,
+          traderMestre: user.traderMestre,
         };
-      });
+      }).filter(u => u.commission > 0 || u.realAmount > 0) // Mostrar apenas quem tem conta ou markup
+        .sort((a, b) => b.commission - a.commission);
 
       console.log(`[TradesService] Markup calculado para ${formattedResults.length} usuários.`);
 
@@ -410,7 +413,7 @@ export class TradesService {
         users: formattedResults,
         summary: {
           totalCommission: parseFloat(totalCommission.toFixed(2)),
-          totalPayout: parseFloat(totalPayout.toFixed(2)),
+          totalPayout: parseFloat(totalCommission.toFixed(2)), // Representando markup como payout total no resumo
           totalTransactions: totalTransactions,
           totalUsers: formattedResults.length,
           usersWithMarkup: usersWithMarkup,
@@ -422,8 +425,8 @@ export class TradesService {
         }
       };
     } catch (error) {
-      console.error('[TradesService] Erro ao executar query de markup:', error);
-      throw new Error('Erro ao calcular dados de markup');
+      console.error('[TradesService] Erro ao buscar markup da API:', error);
+      throw new Error('Erro ao calcular dados de markup via API');
     }
   }
 
