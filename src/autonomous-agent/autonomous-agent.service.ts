@@ -1905,7 +1905,7 @@ export class AutonomousAgentService implements OnModuleInit {
         id: t.id,
         session_id: t.session_id || null, // Mantém compatibilidade mas busca do campo se existir futuramente
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
-        createdAt: t.created_at,
+        createdAt: t.created_at ? new Date(t.created_at).toISOString() : new Date().toISOString(),
         market: t.symbol,
         contract: t.contract_type,
         stake: parseFloat(t.stake) || 0,
