@@ -134,12 +134,17 @@ export class TradesController {
     };
 
     try {
+      console.log(`[TradesController] Buscando markup com token: ${token ? 'Token Presente' : 'Token Ausente'}`);
+      console.log(`[TradesController] Período: ${dateFromFormatted} até ${dateToFormatted}`);
+
       // 4. Buscar dados Atuais e Anteriores (Paralelo)
       const [transactions, prevTransactions, allUsers] = await Promise.all([
         this.markupService.getAppMarkupDetails(token, { date_from: dateFromFormatted, date_to: dateToFormatted }),
         this.markupService.getAppMarkupDetails(token, { date_from: prevStartFormatted, date_to: prevEndFormatted }),
         this.userRepository.findAll()
       ]);
+
+      console.log(`[TradesController] Transações atuais: ${transactions.length}, Anteriores: ${prevTransactions.length}, Total Users Locais: ${allUsers.length}`);
 
       // 5. Processar Dados
       // Mapa LoginID -> User
