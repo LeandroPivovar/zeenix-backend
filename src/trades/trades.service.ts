@@ -726,6 +726,13 @@ export class TradesService {
   }
 
   async getUserTransactions(userId: string) {
+    console.log(`[TradesService] Buscando últimas 100 transações para o usuário: ${userId}`);
+
+    // Verificar se as tabelas existem e têm as colunas necessárias (opcional, mas proativo)
+    // Para simplificar e manter a performance, vamos usar uma query robusta.
+    // Se 'symbol' não existir em alguma tabela, o SQL falhará. 
+    // Em sistemas legados, o campo symbol em ai_trades pode estar ausente.
+
     const query = `
       (SELECT 
         id, 
@@ -762,21 +769,82 @@ export class TradesService {
         status 
       FROM autonomous_agent_trades 
       WHERE user_id = ?)
+      UNION ALL
+      (SELECT 
+        l.id, 
+        l.created_at as date, 
+        'IA' as origin, 
+        'N/A' as symbol, 
+        'DIGIT' as type, 
+        l.invested_value as amount, 
+        (l.returned_value - l.invested_value) as profit, 
+        l.result as status 
+      FROM ai_trade_logs l
+      JOIN ai_sessions s ON l.ai_sessions_id = s.id
+      WHERE s.user_id = ?)
+      UNION ALL
+      (SELECT 
+        id, 
+        executed_at as date, 
+        'Copy' as origin, 
+        symbol, 
+        operation_type as type, 
+        stake_amount as amount, 
+        profit as profit, 
+        result as status 
+      FROM copy_trading_operations 
+      WHERE user_id = ?)
       ORDER BY date DESC
       LIMIT 100
     `;
 
-    const rawData = await this.dataSource.query(query, [userId, userId, userId]);
+    try {
+      const rawData = await this.dataSource.query(query, [userId, userId, userId, userId, userId]);
+      console.log(`[TradesService] Encontradas ${rawData.length} transações para o usuário ${userId}`);
 
-    return rawData.map(item => ({
-      id: item.id,
-      date: item.date,
-      origin: item.origin,
-      symbol: item.symbol,
-      type: item.type,
-      amount: parseFloat(item.amount || 0),
-      profit: parseFloat(item.profit || 0),
-      status: item.status?.toUpperCase() || 'PENDING'
-    }));
+      return rawData.map(item => ({
+        id: item.id,
+        date: item.date,
+        origin: item.origin,
+        symbol: item.symbol || 'N/A',
+        type: item.type || 'N/A',
+        amount: parseFloat(item.amount || 0),
+        profit: parseFloat(item.profit || 0),
+        status: (item.status || 'PENDING').toUpperCase()
+      }));
+    } catch (error) {
+      console.error(`[TradesService] Erro ao buscar transações para ${userId}:`, error.message);
+
+      // Se falhar (provavelmente por coluna ausente como 'symbol'), tentar query reduzida sem 'symbol'
+      const fallbackQuery = `
+        (SELECT id, created_at as date, 'Manual' as origin, contract_type as type, entry_value as amount, profit as profit, status FROM trades WHERE user_id = ?)
+        UNION ALL
+        (SELECT id, created_at as date, 'IA' as origin, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM ai_trades WHERE user_id = ?)
+        UNION ALL
+        (SELECT id, created_at as date, 'Agente' as origin, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM autonomous_agent_trades WHERE user_id = ?)
+        UNION ALL
+        (SELECT l.id, l.created_at as date, 'IA' as origin, 'DIGIT' as type, l.invested_value as amount, (l.returned_value - l.invested_value) as profit, l.result as status FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?)
+        UNION ALL
+        (SELECT id, executed_at as date, 'Copy' as origin, operation_type as type, stake_amount as amount, profit as profit, result as status FROM copy_trading_operations WHERE user_id = ?)
+        ORDER BY date DESC LIMIT 100
+      `;
+
+      try {
+        const rawData = await this.dataSource.query(fallbackQuery, [userId, userId, userId, userId, userId]);
+        return rawData.map(item => ({
+          id: item.id,
+          date: item.date,
+          origin: item.origin,
+          symbol: 'N/A',
+          type: item.type || 'N/A',
+          amount: parseFloat(item.amount || 0),
+          profit: parseFloat(item.profit || 0),
+          status: (item.status || 'PENDING').toUpperCase()
+        }));
+      } catch (innerError) {
+        console.error(`[TradesService] Erro crítico na query de transações:`, innerError.message);
+        return [];
+      }
+    }
   }
 }
