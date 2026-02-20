@@ -715,4 +715,68 @@ export class TradesService {
 
     return subject.asObservable();
   }
+
+  async getMarkupProjection(userId: string) {
+    // Mock or implement basic projection for now to satisfy the controller
+    return {
+      projected30Days: 0,
+      currentMonthly: 0,
+      growth: 0
+    };
+  }
+
+  async getUserTransactions(userId: string) {
+    const query = `
+      (SELECT 
+        id, 
+        created_at as date, 
+        'Manual' as origin, 
+        symbol, 
+        contract_type as type, 
+        entry_value as amount, 
+        profit as profit, 
+        status 
+      FROM trades 
+      WHERE user_id = ?)
+      UNION ALL
+      (SELECT 
+        id, 
+        created_at as date, 
+        'IA' as origin, 
+        symbol, 
+        contract_type as type, 
+        stake_amount as amount, 
+        profit_loss as profit, 
+        status 
+      FROM ai_trades 
+      WHERE user_id = ?)
+      UNION ALL
+      (SELECT 
+        id, 
+        created_at as date, 
+        'Agente' as origin, 
+        symbol, 
+        contract_type as type, 
+        stake_amount as amount, 
+        profit_loss as profit, 
+        status 
+      FROM autonomous_agent_trades 
+      WHERE user_id = ?)
+      ORDER BY date DESC
+      LIMIT 100
+    `;
+
+    const rawData = await this.dataSource.query(query, [userId, userId, userId]);
+
+    return rawData.map(item => ({
+      id: item.id,
+      date: item.date,
+      origin: item.origin,
+      symbol: item.symbol,
+      type: item.type,
+      amount: parseFloat(item.amount || 0),
+      profit: parseFloat(item.profit || 0),
+      status: item.status?.toUpperCase() || 'PENDING'
+    }));
+  }
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent, Param } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
@@ -314,6 +314,16 @@ export class TradesController {
     } catch (error) {
       throw error;
     }
+  }
+
+  @Get('markup-projection')
+  async getMarkupProjection(@Req() req: any) {
+    return this.tradesService.getMarkupProjection(req.user.id);
+  }
+
+  @Get('user-transactions/:userId')
+  async getUserTransactions(@Param('userId') userId: string) {
+    return this.tradesService.getUserTransactions(userId);
   }
 
   @Get('markup/aggregates')
