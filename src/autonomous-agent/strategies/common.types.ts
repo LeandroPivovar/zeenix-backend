@@ -12,6 +12,7 @@ export interface AutonomousAgentConfig {
   derivToken: string;
   currency: string;
   symbol: string;
+  sessionId?: number;
   initialBalance?: number;
   // Configurações específicas por agente
   [key: string]: any;

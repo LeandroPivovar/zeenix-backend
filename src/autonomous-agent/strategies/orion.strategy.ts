@@ -67,7 +67,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
     try {
       const activeUsers = await this.dataSource.query(
         `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
-                initial_balance, deriv_token, currency, symbol, agent_type, trading_mode
+                initial_balance, deriv_token, currency, symbol, agent_type, trading_mode, session_id
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'orion'
@@ -86,6 +86,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
           symbol: user.symbol || 'R_100',
           tradingMode: (user.trading_mode || 'normal') as 'veloz' | 'moderado' | 'preciso',
           initialBalance: parseFloat(user.initial_balance) || 0,
+          sessionId: user.session_id ? parseInt(user.session_id) : undefined,
         };
 
         this.userConfigs.set(userId, config);
@@ -184,6 +185,43 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
     if (!config) return;
 
     try {
+      // ✅ [ZENIX v3.4] Registrar trade no banco (estava faltando no Orion!)
+      const analysisData = {
+        strategy: 'orion',
+        tradingMode: config.tradingMode,
+        win: result.win,
+        timestamp: new Date().toISOString()
+      };
+
+      // Tentar criar registro de trade
+      await this.dataSource.query(
+        `INSERT INTO autonomous_agent_trades (
+          user_id, session_id, analysis_data, confidence_score, analysis_reasoning,
+          contract_type, contract_duration, entry_price, stake_amount,
+          martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, contract_id, profit_loss, closed_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [
+          userId,
+          config.sessionId || null,
+          JSON.stringify(analysisData),
+          80, // Confidence default para Orion AI
+          'Análise processada pela IA Orion',
+          'DIGITOVER', // Orion usa sobre/sob por padrão
+          1, // 1 tick
+          0, // Entry price (disponível apenas após fechamento se não capturado antes)
+          0, // Stake amount (Orion gerencia internamente, precisaríamos buscar se quiséssemos precisão)
+          'M0',
+          result.profit > 0 ? (result.profit / 0.35) * 100 : 90, // Payout aproximado
+          config.symbol || 'R_100',
+          result.win ? 'WON' : 'LOST',
+          'orion',
+          config.derivToken || null,
+          config.currency === 'DEMO' ? 'demo' : 'real',
+          result.contractId,
+          result.profit
+        ]
+      ).catch(err => this.logger.error(`[Orion][${userId}] Erro ao inserir trade: ${err.message}`));
+
       // Atualizar lucro/perda diária no banco
       const currentStats = await this.dataSource.query(
         `SELECT daily_profit, daily_loss, session_status
