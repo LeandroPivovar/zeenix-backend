@@ -743,19 +743,7 @@ export class TradesService {
     }
 
     const query = `
-      (SELECT 
-        id, 
-        created_at as date, 
-        'IA' as origin, 
-        symbol, 
-        contract_type as type, 
-        stake_amount as amount, 
-        profit_loss as profit, 
-        status 
-      FROM ai_trades 
-      WHERE user_id = ?)
-      UNION ALL
-      (SELECT 
+      SELECT 
         l.id, 
         l.created_at as date, 
         'IA' as origin, 
@@ -764,16 +752,16 @@ export class TradesService {
         l.invested_value as amount, 
         (l.returned_value - l.invested_value) as profit, 
         l.result as status 
-      FROM ai_trade_logs l
-      JOIN ai_sessions s ON l.ai_sessions_id = s.id
-      WHERE s.user_id = ?)
-      ORDER BY date DESC
+      FROM ai_sessions s
+      INNER JOIN ai_trade_logs l ON s.id = l.ai_sessions_id
+      WHERE s.user_id = ?
+      ORDER BY l.created_at DESC
       LIMIT 100
     `;
 
     try {
-      const rawData = await this.dataSource.query(query, [userId, userId]);
-      console.log(`[TradesService] Encontradas ${rawData.length} transações IA para o usuário ${userId}`);
+      const rawData = await this.dataSource.query(query, [userId]);
+      console.log(`[TradesService] Encontradas ${rawData.length} transações IA (Logs/Sessions) para o usuário ${userId}`);
 
       return rawData.map(item => ({
         id: item.id,
@@ -786,32 +774,8 @@ export class TradesService {
         status: (item.status || 'PENDING').toUpperCase()
       }));
     } catch (error) {
-      console.error(`[TradesService] Erro ao buscar transações para ${userId}:`, error.message);
-
-      // Fallback sem symbol
-      const fallbackQuery = `
-        (SELECT id, created_at as date, 'IA' as origin, 'N/A' as symbol, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM ai_trades WHERE user_id = ?)
-        UNION ALL
-        (SELECT l.id, l.created_at as date, 'IA' as origin, 'N/A' as symbol, 'DIGIT' as type, l.invested_value as amount, (l.returned_value - l.invested_value) as profit, l.result as status FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?)
-        ORDER BY date DESC LIMIT 100
-      `;
-
-      try {
-        const rawData = await this.dataSource.query(fallbackQuery, [userId, userId]);
-        return rawData.map(item => ({
-          id: item.id,
-          date: item.date,
-          origin: item.origin,
-          symbol: 'N/A',
-          type: item.type || 'N/A',
-          amount: parseFloat(item.amount || 0),
-          profit: parseFloat(item.profit || 0),
-          status: (item.status || 'PENDING').toUpperCase()
-        }));
-      } catch (innerError) {
-        console.error(`[TradesService] Erro no fallback IA:`, innerError.message);
-        return [];
-      }
+      console.error(`[TradesService] Erro ao buscar transações IA:`, error.message);
+      return [];
     }
   }
 }
