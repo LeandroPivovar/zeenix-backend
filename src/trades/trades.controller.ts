@@ -193,12 +193,18 @@ export class TradesController {
         const userMarkup = parseFloat(entry.markup.toFixed(2));
         const estimatedPayout = userMarkup / 0.03;
 
+        // Simulação de Origem (Campanha) para fins de filtro visual
+        const origins = ['Google', 'YouTube', 'Facebook', 'Instagram', 'TikTok', 'Outros'];
+        const originIndex = (user?.id || entry.loginid).charCodeAt(0) % origins.length;
+        const simulatedOrigin = origins[originIndex];
+
         return {
           userId: user?.id || `unknown-${entry.loginid}`,
           name: user?.name || `Usuário Deriv (${entry.loginid})`,
           email: user?.email || 'N/A',
           whatsapp: user?.phone || null,
           country: 'Brasil',
+          origin: simulatedOrigin,
           loginid: entry.loginid,
           transactionCount: entry.count,
           commission: userMarkup,
