@@ -1870,14 +1870,25 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (result.win) {
             state.wins++;
             state.consecutiveLosses = 0;
-            state.perdasAcumuladas = 0;
             state.analysis = "PRINCIPAL"; // ✅ Resetar para principal após vitória
 
-            // ✅ Reset Recovery: Voltar para o modo original
+            // ✅ [FIX MAXIMO] Reset Recovery: Voltar para o modo original
+            // Só resetar modo/perdas acumuladas QUANDO a vitória encerrar a recuperação.
+            // Se recoveryLock estava ativo, esta vitória é a recuperação bem-sucedida.
+            // Após a vitória, podemos resetar modo + perdas.
+            // Antes desta vitória, o modo era MAXIMO/PRECISO e a operação já executou — reset agora é seguro.
             const originalMode = config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
-            if (state.mode !== originalMode) {
+            if (state.recoveryLock) {
+                // ✅ Vitória em modo de recuperação: agora podemos resetar tudo
+                const recoveryMode = state.mode; // Capturar modo ANTES de resetar (para o log)
+                state.perdasAcumuladas = 0;
                 state.mode = originalMode as NegotiationMode;
-                state.recoveryLock = false; // ✅ V4 RECOVERED
+                state.recoveryLock = false;
+                this.saveLog(userId, 'SUCCESS', 'RISK', `✅ RECUPERADO em modo ${recoveryMode}: Retornando ao modo original (${originalMode}).`);
+            } else if (state.mode !== originalMode) {
+                // Modo diferente do original sem lock (situação inesperada) — resetar para segurança
+                state.mode = originalMode as NegotiationMode;
+                state.recoveryLock = false;
                 this.saveLog(userId, 'SUCCESS', 'RISK', `✅ RECUPERADO: Retornando ao modo original (${state.mode}).`);
             }
         } else if (result.profit === 0) {

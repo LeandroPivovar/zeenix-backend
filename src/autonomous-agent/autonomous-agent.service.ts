@@ -1706,7 +1706,7 @@ export class AutonomousAgentService implements OnModuleInit {
         dayMap.set(dateKey, (dayMap.get(dateKey) || 0) + profit);
       }
 
-      // Converter map para pontos do gráfico com lucros INDIVIDUAIS por dia
+      // Converter map para pontos do gráfico com lucros CUMULATIVOS por dia
       const dailyPoints: { time: number, value: number }[] = [];
       const sortedKeys = Array.from(dayMap.keys()).sort();
 
@@ -1716,12 +1716,14 @@ export class AutonomousAgentService implements OnModuleInit {
         value: Number(startingValue.toFixed(2))
       });
 
+      let rollingProfit = startingValue;
       for (const key of sortedKeys) {
         const d = new Date(key + 'T12:00:00'); // Meio do dia para evitar problemas de fuso
         const dailyProfit = dayMap.get(key)!;
+        rollingProfit += dailyProfit;
         dailyPoints.push({
           time: d.getTime() / 1000,
-          value: Number(dailyProfit.toFixed(2))
+          value: Number(rollingProfit.toFixed(2))
         });
       }
 
