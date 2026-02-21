@@ -726,35 +726,23 @@ export class TradesService {
   }
 
   async getUserTransactions(userId: string) {
-    console.log(`[TradesService] Buscando últimas 100 transações para o usuário: ${userId}`);
+    console.log(`[TradesService] Buscando transações IA para o usuário: ${userId}`);
 
-    // DIAGNÓSTICO TEMPORÁRIO
+    // DIAGNÓSTICO
     try {
-      const userCheck = await this.dataSource.query(`SELECT id, email, derivLoginId FROM users WHERE id = ?`, [userId]);
-      console.log(`[TradesService][DIAGNOSTIC] User check for ${userId}:`, userCheck);
+      const userCheck = await this.dataSource.query(`SELECT id, email, deriv_loginid FROM users WHERE id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] User found: ${userCheck.length > 0}`);
 
       const sessionCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_sessions WHERE user_id = ?`, [userId]);
-      console.log(`[TradesService][DIAGNOSTIC] AI Sessions for this user ID:`, sessionCount);
+      console.log(`[TradesService][DIAGNOSTIC] AI Sessions:`, sessionCount[0]?.count);
 
       const logCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?`, [userId]);
-      console.log(`[TradesService][DIAGNOSTIC] AI Trade Logs for this user ID:`, logCount);
+      console.log(`[TradesService][DIAGNOSTIC] AI Trade Logs:`, logCount[0]?.count);
     } catch (diagError) {
       console.warn(`[TradesService] Erro no diagnóstico:`, diagError.message);
     }
 
     const query = `
-      (SELECT 
-        id, 
-        created_at as date, 
-        'Manual' as origin, 
-        symbol, 
-        contract_type as type, 
-        entry_value as amount, 
-        profit as profit, 
-        status 
-      FROM trades 
-      WHERE user_id = ?)
-      UNION ALL
       (SELECT 
         id, 
         created_at as date, 
@@ -765,18 +753,6 @@ export class TradesService {
         profit_loss as profit, 
         status 
       FROM ai_trades 
-      WHERE user_id = ?)
-      UNION ALL
-      (SELECT 
-        id, 
-        created_at as date, 
-        'Agente' as origin, 
-        symbol, 
-        contract_type as type, 
-        stake_amount as amount, 
-        profit_loss as profit, 
-        status 
-      FROM autonomous_agent_trades 
       WHERE user_id = ?)
       UNION ALL
       (SELECT 
@@ -791,25 +767,13 @@ export class TradesService {
       FROM ai_trade_logs l
       JOIN ai_sessions s ON l.ai_sessions_id = s.id
       WHERE s.user_id = ?)
-      UNION ALL
-      (SELECT 
-        id, 
-        executed_at as date, 
-        'Copy' as origin, 
-        symbol, 
-        operation_type as type, 
-        stake_amount as amount, 
-        profit as profit, 
-        result as status 
-      FROM copy_trading_operations 
-      WHERE user_id = ?)
       ORDER BY date DESC
       LIMIT 100
     `;
 
     try {
-      const rawData = await this.dataSource.query(query, [userId, userId, userId, userId, userId]);
-      console.log(`[TradesService] Encontradas ${rawData.length} transações para o usuário ${userId}`);
+      const rawData = await this.dataSource.query(query, [userId, userId]);
+      console.log(`[TradesService] Encontradas ${rawData.length} transações IA para o usuário ${userId}`);
 
       return rawData.map(item => ({
         id: item.id,
@@ -824,22 +788,16 @@ export class TradesService {
     } catch (error) {
       console.error(`[TradesService] Erro ao buscar transações para ${userId}:`, error.message);
 
-      // Se falhar (provavelmente por coluna ausente como 'symbol'), tentar query reduzida sem 'symbol'
+      // Fallback sem symbol
       const fallbackQuery = `
-        (SELECT id, created_at as date, 'Manual' as origin, contract_type as type, entry_value as amount, profit as profit, status FROM trades WHERE user_id = ?)
+        (SELECT id, created_at as date, 'IA' as origin, 'N/A' as symbol, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM ai_trades WHERE user_id = ?)
         UNION ALL
-        (SELECT id, created_at as date, 'IA' as origin, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM ai_trades WHERE user_id = ?)
-        UNION ALL
-        (SELECT id, created_at as date, 'Agente' as origin, contract_type as type, stake_amount as amount, profit_loss as profit, status FROM autonomous_agent_trades WHERE user_id = ?)
-        UNION ALL
-        (SELECT l.id, l.created_at as date, 'IA' as origin, 'DIGIT' as type, l.invested_value as amount, (l.returned_value - l.invested_value) as profit, l.result as status FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?)
-        UNION ALL
-        (SELECT id, executed_at as date, 'Copy' as origin, operation_type as type, stake_amount as amount, profit as profit, result as status FROM copy_trading_operations WHERE user_id = ?)
+        (SELECT l.id, l.created_at as date, 'IA' as origin, 'N/A' as symbol, 'DIGIT' as type, l.invested_value as amount, (l.returned_value - l.invested_value) as profit, l.result as status FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?)
         ORDER BY date DESC LIMIT 100
       `;
 
       try {
-        const rawData = await this.dataSource.query(fallbackQuery, [userId, userId, userId, userId, userId]);
+        const rawData = await this.dataSource.query(fallbackQuery, [userId, userId]);
         return rawData.map(item => ({
           id: item.id,
           date: item.date,
@@ -851,7 +809,7 @@ export class TradesService {
           status: (item.status || 'PENDING').toUpperCase()
         }));
       } catch (innerError) {
-        console.error(`[TradesService] Erro crítico na query de transações:`, innerError.message);
+        console.error(`[TradesService] Erro no fallback IA:`, innerError.message);
         return [];
       }
     }
