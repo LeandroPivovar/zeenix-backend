@@ -44,7 +44,7 @@ export class AutonomousAgentService implements OnModuleInit {
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
   ) {
-    this.appId = process.env.DERIV_APP_ID || '111346';
+    this.appId = process.env.DERIV_APP_ID || '1089';
   }
 
   async onModuleInit() {
@@ -280,7 +280,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private handleMessage(msg: any): void {
     if (msg.error) {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
-      this.logger.error('❌ Erro da API:', errorMsg);
+      const reqDetails = msg.echo_req ? JSON.stringify(msg.echo_req) : 'Sem detalhes';
+      this.logger.error(`❌ Erro da API: ${errorMsg} | Req: ${reqDetails}`);
       return;
     }
 
@@ -326,7 +327,7 @@ export class AutonomousAgentService implements OnModuleInit {
         if (msg.tick) {
           // ✅ Identificar símbolo pelo subscription ID ou usar R_100 como fallback
           const tickSubId = msg.subscription?.id;
-          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || 'R_100';
+          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || this.symbol;
 
           if (tickSubId && (this.subscriptionId !== tickSubId || !this.subscriptions.has(symbolForTick))) {
             this.subscriptionId = tickSubId;
@@ -529,7 +530,8 @@ export class AutonomousAgentService implements OnModuleInit {
             dailyLossLimit: parseFloat(agent.daily_loss_limit),
             derivToken: agent.token_deriv || agent.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback para deriv_token
             currency: agent.currency,
-            symbol: agent.symbol || 'R_100',
+            status: agent.status,
+            symbol: strategyName === 'zeus' ? '1HZ100V' : (agent.symbol || 'R_100'),
             tradingMode: agent.trading_mode || 'normal',
             initialBalance: parseFloat(agent.initial_balance) || 0,
             // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
@@ -917,7 +919,7 @@ export class AutonomousAgentService implements OnModuleInit {
             tokenDeriv,
             amountDeriv,
             config.currency || 'USD',
-            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
+            normalizedAgentType === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100'),
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
@@ -946,8 +948,8 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // ✅ Todos os agentes autônomos usam R_100
-      const agentSymbol = config.symbol || 'R_100';
+      // ✅ Zeus usa exclusivamente 1HZ100V
+      const agentSymbol = strategy === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100');
 
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {

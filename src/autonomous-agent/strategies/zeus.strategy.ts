@@ -633,7 +633,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      */
     async processTick(tick: Tick, symbol?: string): Promise<void> {
         const promises: Promise<void>[] = [];
-        const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
+        const tickSymbol = symbol || ZEUS_CONSTANTS.symbol; // ✅ Agora estrito ao símbolo do Zeus (1HZ100V)
 
         // ✅ Log de debug para verificar se está recebendo ticks
         // this.logger.debug(`[Zeus] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
@@ -673,7 +673,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ LOGIC HELPER: Extrair último dígito
      */
     private lastDigitFromPrice(price: number, symbol: string = '1HZ100V'): number {
-        let precision = 2; // Default 1HZ100V / R_100
+        let precision = 2; // Default 1HZ100V (2 decimals)
 
         // Ajuste de precisão por ativo
         if (symbol.includes('R_10') || symbol.includes('1HZ10V')) precision = 3;
@@ -1977,12 +1977,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Mapeamento de sinônimos (Deriv API vs Interno Zenix)
         const synonyms: Record<string, string[]> = {
-            'R_100': ['1HZ100V', 'VOLATILITY 100 INDEX'],
+            'R_100': ['VOLATILITY 100 INDEX'],
             'R_50': ['1HZ50V', 'VOLATILITY 50 INDEX'],
             'R_10': ['1HZ10V', 'VOLATILITY 10 INDEX'],
             'R_25': ['1HZ25V', 'VOLATILITY 25 INDEX'],
             'R_75': ['1HZ75V', 'VOLATILITY 75 INDEX'],
-            '1HZ100V': ['R_100'],
+            '1HZ100V': ['VOLATILITY 100 (1S) INDEX'],
             '1HZ50V': ['R_50'],
             '1HZ10V': ['R_10'],
             '1HZ25V': ['R_25'],
@@ -2098,7 +2098,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.stakeAmount,
                     state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // M2 = MAXIMO
                     trade.payout * 100, // Converter para percentual
-                    config.symbol || 'R_100',
+                    config.symbol || ZEUS_CONSTANTS.symbol,
                     config.derivToken || null, // ✅ Token usado para o trade
                     config.currency === 'DEMO' ? 'demo' : 'real', // ✅ Tipo de conta (demo/real) derivado de currency
                 ],
@@ -2256,7 +2256,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 module: normalizedModule,
                 message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
                 icon: this.getLogIcon(level),
-                details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_100' },
+                details: { symbol: this.userConfigs.get(userId)?.symbol || ZEUS_CONSTANTS.symbol },
                 tableName: 'autonomous_agent_logs',
             });
         }

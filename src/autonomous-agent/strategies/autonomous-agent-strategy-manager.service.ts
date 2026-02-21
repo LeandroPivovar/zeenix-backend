@@ -97,8 +97,8 @@ export class AutonomousAgentStrategyManagerService implements OnModuleInit {
     // ✅ ZEUS: Processa R_100, R_50 e 1HZ100V
     const zeusStrategy = this.strategies.get('zeus');
     if (zeusStrategy && typeof (zeusStrategy as any).processTick === 'function') {
-      // Zeus agora suporta R_100 e R_50
-      if (tickSymbol === 'R_100' || tickSymbol === 'R_50' || tickSymbol === '1HZ100V' || tickSymbol === '1HZ50V') {
+      // Zeus agora suporta todos os major volatility indices via mapeamento interno
+      if (['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'].includes(tickSymbol)) {
         promises.push(
           (zeusStrategy as any).processTick(tick, tickSymbol).catch((error: any) => {
             this.logger.error('[AutonomousAgentStrategyManager][Zeus] Erro:', error);
