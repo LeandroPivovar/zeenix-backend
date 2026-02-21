@@ -1888,7 +1888,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string, limit: number = 20000): Promise<any> {
+  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string, limit: number = 20000, sessionId?: string): Promise<any> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
@@ -1933,6 +1933,11 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (strategyFilter && agent) params.push(agent);
 
+      // ✅ [SESSION FIX] Filtro por session_id apenas quando explicitamente pedido (período 'sessão')
+      // Outros períodos (hoje, 7d, 30d) continuam filtrando só por data, sem filtro de sessão
+      const sessionFilter = sessionId ? 'AND session_id = ?' : '';
+      if (sessionId) params.push(sessionId);
+
       // Add limit to params
       params.push(limit);
 
@@ -1947,12 +1952,14 @@ export class AutonomousAgentService implements OnModuleInit {
            status,
            entry_price,
            exit_price,
-           strategy
+           strategy,
+           session_id
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            ${dateCondition}
            AND status IN ('WON', 'LOST')
            ${strategyFilter}
+           ${sessionFilter}
          ORDER BY created_at DESC
          LIMIT ?
       `;
@@ -1970,9 +1977,19 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // query += ` ORDER BY created_at DESC`; // Already in query above
 
-      // Execute both queries: one for summary and one for limited trades
-      // Logica de params para summary é diferente (não tem limit)
-      const summaryParams = params.slice(0, params.length - 1); // Remove limit
+      // Params for summary: remove limit, but keep sessionId if present
+      let summaryParams = params.slice(0, params.length - 1); // Remove limit
+      // If sessionId was added AFTER strategy filter, we need to recalculate
+      // summaryParams correctly: userId + dateParams + (agent?) + (sessionId?)
+      // Rebuild summaryParams without limit
+      const summaryParamsBase: any[] = [userId];
+      if (isRange) {
+        summaryParamsBase.push(startRange, endRange);
+      } else {
+        summaryParamsBase.push(targetDateStr);
+      }
+      if (strategyFilter && agent) summaryParamsBase.push(agent);
+      if (sessionId) summaryParamsBase.push(sessionId);
 
       const summaryQuery = `
       SELECT 
@@ -1984,11 +2001,12 @@ export class AutonomousAgentService implements OnModuleInit {
         ${dateCondition}
         AND status IN ('WON', 'LOST')
         ${strategyFilter}
+        ${sessionFilter}
     `;
 
       const [trades, summaryData] = await Promise.all([
         this.dataSource.query(query, params),
-        this.dataSource.query(summaryQuery, summaryParams)
+        this.dataSource.query(summaryQuery, summaryParamsBase)
       ]);
 
       const summary = {
