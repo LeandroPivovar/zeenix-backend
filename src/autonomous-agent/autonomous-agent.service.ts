@@ -137,6 +137,8 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
+
+
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
       // Não lançar erro para não parar a inicialização
@@ -1377,18 +1379,19 @@ export class AutonomousAgentService implements OnModuleInit {
       }
     }
 
-    // ✅ Filtrar logs por session_id (prioridade) ou session_date
+    // ✅ Filtrar logs apenas por session_date (timestamp >= session_start)
+    // NOTA: autonomous_agent_logs NÃO tem coluna session_id — filtrar por ela causaria erro SQL
     let whereClause = '';
     let params: any[] = [userId];
 
-    if (sessionId) {
-      whereClause = `WHERE user_id = ? AND session_id = ?`;
-      params.push(sessionId);
-    } else if (sessionStartTime) {
+    if (sessionStartTime) {
       whereClause = `WHERE user_id = ? AND timestamp >= ?`;
       params.push(sessionStartTime);
     } else {
-      whereClause = `WHERE user_id = ?`;
+      // Sem session_date: mostrar logs das últimas 24h
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      whereClause = `WHERE user_id = ? AND timestamp >= ?`;
+      params.push(yesterday.toISOString().slice(0, 19).replace('T', ' '));
     }
 
     const logs = await this.dataSource.query(
