@@ -44,7 +44,7 @@ export class AutonomousAgentService implements OnModuleInit {
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
   ) {
-    this.appId = process.env.DERIV_APP_ID || '111346';
+    this.appId = process.env.DERIV_APP_ID || '1089';
   }
 
   async onModuleInit() {
@@ -280,7 +280,8 @@ export class AutonomousAgentService implements OnModuleInit {
   private handleMessage(msg: any): void {
     if (msg.error) {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
-      this.logger.error('❌ Erro da API:', errorMsg);
+      const reqDetails = msg.echo_req ? JSON.stringify(msg.echo_req) : 'Sem detalhes';
+      this.logger.error(`❌ Erro da API: ${errorMsg} | Req: ${reqDetails}`);
       return;
     }
 
