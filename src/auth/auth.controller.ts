@@ -93,6 +93,7 @@ export class AuthController {
           const userAgent = req.headers['user-agent'] || 'unknown';
 
           await this.settingsService.createSession(user.id, token, device, userAgent, ipAddress);
+          await this.authService.updateLastLoginAt(user.id);
           await this.settingsService.logActivity(
             user.id,
             'LOGIN',
