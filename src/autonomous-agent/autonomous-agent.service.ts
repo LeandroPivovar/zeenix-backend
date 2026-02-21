@@ -845,10 +845,10 @@ export class AutonomousAgentService implements OnModuleInit {
                risk_level = ?,
                session_status = 'active',
                -- ✅ [ZENIX v3.4] Só resetar stats se NÃO estava ativo (Nova Sessão)
-               session_date = IF(is_active = FALSE, NOW(), session_date),
-               daily_profit = IF(is_active = FALSE, 0, daily_profit),
-               daily_loss = IF(is_active = FALSE, 0, daily_loss),
-               consecutive_losses = IF(is_active = FALSE, 0, consecutive_losses),
+               session_date = IF(? = FALSE, NOW(), session_date),
+               daily_profit = IF(? = FALSE, 0, daily_profit),
+               daily_loss = IF(? = FALSE, 0, daily_loss),
+               consecutive_losses = IF(? = FALSE, 0, consecutive_losses),
                updated_at = NOW()
            WHERE user_id = ?`,
           [
@@ -865,6 +865,10 @@ export class AutonomousAgentService implements OnModuleInit {
             config.stopLossType || 'normal',
             config.initialBalance || 0,
             config.riskProfile || 'balanced',
+            isAlreadyActive,
+            isAlreadyActive,
+            isAlreadyActive,
+            isAlreadyActive,
             userId,
           ],
         );
