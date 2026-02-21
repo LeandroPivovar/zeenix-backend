@@ -90,7 +90,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     try {
       const activeUsers = await this.dataSource.query(
         `SELECT user_id, initial_stake, daily_profit_target, daily_loss_limit, 
-                initial_balance, deriv_token, currency, symbol, agent_type, trading_mode
+                initial_balance, deriv_token, currency, symbol, agent_type, trading_mode, session_id
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'sentinel'
@@ -111,6 +111,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           managementMode: 'moderado', // Default, pode ser configurado
           stopLossType: 'normal', // Default, pode ser configurado
           initialBalance: parseFloat(user.initial_balance) || 0,
+          sessionId: user.session_id ? parseInt(user.session_id) : undefined,
         };
 
         this.userConfigs.set(userId, config);
@@ -165,6 +166,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       managementMode: ((config as any).managementMode || 'moderado').toLowerCase() as 'conservador' | 'moderado' | 'agressivo',
       stopLossType: ((config as any).stopLossType || 'normal').toLowerCase() as 'normal' | 'blindado',
       initialBalance: config.initialBalance || 0,
+      sessionId: config.sessionId,
     };
 
     if (this.userConfigs.has(userId)) {
@@ -1502,12 +1504,13 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     try {
       const result = await this.dataSource.query(
         `INSERT INTO autonomous_agent_trades (
-          user_id, analysis_data, confidence_score, analysis_reasoning,
+          user_id, session_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
           martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'sentinel', ?, ?, NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'sentinel', ?, ?, NOW())`,
         [
           userId,
+          config.sessionId || null,
           JSON.stringify(analysisData),
           trade.analysis.score,
           analysisReasoning,

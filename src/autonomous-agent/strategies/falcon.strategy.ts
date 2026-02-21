@@ -229,6 +229,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
+            c.session_id,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -316,7 +317,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           limitOpsCycle: 500,
 
           initialBalance: parseFloat(user.initial_balance) || 0,
-          stopLossType: user.stop_loss_type === 'blindado' ? 'blindado' : 'normal'
+          stopLossType: user.stop_loss_type === 'blindado' ? 'blindado' : 'normal',
+          sessionId: user.session_id ? parseInt(user.session_id) : undefined,
         };
 
         this.userConfigs.set(userId, config);
@@ -445,7 +447,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500,
 
       initialBalance: config.initialBalance || 0,
-      stopLossType: (config as any).stopLossType || 'normal'
+      stopLossType: (config as any).stopLossType || 'normal',
+      sessionId: config.sessionId,
     };
 
     if (this.userConfigs.has(userId)) {
@@ -1797,12 +1800,13 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     try {
       const result = await this.dataSource.query(
         `INSERT INTO autonomous_agent_trades (
-          user_id, analysis_data, confidence_score, analysis_reasoning,
+          user_id, session_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
           martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'falcon', ?, ?, NOW())`,
         [
           userId,
+          config.sessionId || null,
           JSON.stringify(analysisData),
           trade.marketAnalysis.probability,
           analysisReasoning,
