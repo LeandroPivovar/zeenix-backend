@@ -510,6 +510,34 @@ export class AiController {
     }
   }
 
+  @Get('stats-aggregated')
+  async getAggregatedStats(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('accountType') accountType?: string,
+  ) {
+    try {
+      const result = await this.aiService.getAggregatedStats({
+        startDate,
+        endDate,
+        accountType,
+      });
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Erro ao buscar estatísticas agregadas',
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Get('trading-params')
   async getTradingParams() {
     try {

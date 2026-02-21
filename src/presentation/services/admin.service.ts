@@ -422,6 +422,8 @@ export class AdminService {
         'name',
         'email',
         'role',
+        'planId',
+        'traderMestre',
         'isActive',
         'lastLoginAt',
         'createdAt',
@@ -435,11 +437,15 @@ export class AdminService {
       id: admin.id,
       name: admin.name,
       email: admin.email,
+      role: admin.role,
+      planId: admin.planId,
+      traderMestre: admin.traderMestre,
       permission: this.formatPermissionName(admin.role),
       lastLogin: admin.lastLoginAt
         ? this.formatDateTime(admin.lastLoginAt)
         : 'Nunca',
       status: admin.isActive ? 'Ativo' : 'Inativo',
+      isActive: admin.isActive,
       createdAt: admin.createdAt,
     }));
   }
@@ -605,13 +611,11 @@ export class AdminService {
    */
   private mapPermissionToRole(permission: string): string {
     const roleMap: Record<string, string> = {
-      'Super Admin': 'super_admin',
-      'Editor': 'editor',
-      'Suporte': 'suporte',
-      'Visualizador': 'visualizador',
+      'Administrador': 'admin',
+      'Usuário': 'user',
     };
 
-    return roleMap[permission] || 'editor';
+    return roleMap[permission] || 'user';
   }
 
   /**
@@ -619,14 +623,15 @@ export class AdminService {
    */
   private formatPermissionName(role: string): string {
     const permissionMap: Record<string, string> = {
-      super_admin: 'Super Admin',
-      admin: 'Admin',
-      editor: 'Editor',
-      suporte: 'Suporte',
-      visualizador: 'Visualizador',
+      admin: 'Administrador',
+      user: 'Usuário',
+      super_admin: 'Administrador',
+      editor: 'Administrador',
+      suporte: 'Administrador',
+      visualizador: 'Administrador',
     };
 
-    return permissionMap[role] || 'Editor';
+    return permissionMap[role] || 'Usuário';
   }
 
   /**
@@ -643,7 +648,7 @@ export class AdminService {
     const minutes = String(d.getMinutes()).padStart(2, '0');
     const seconds = String(d.getSeconds()).padStart(2, '0');
 
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
   }
 
   /**

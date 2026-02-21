@@ -248,6 +248,17 @@ export class AuthService {
     return { message: 'Conta confirmada com sucesso! Você já pode fazer login.' };
   }
 
+  async updateLastLoginAt(userId: string): Promise<void> {
+    try {
+      await this.dataSource.query(
+        'UPDATE users SET last_login_at = ? WHERE id = ?',
+        [new Date(), userId]
+      );
+    } catch (error) {
+      this.logger.error(`[AuthService] Erro ao atualizar último login: ${error.message}`);
+    }
+  }
+
   private async signToken(sub: string, email: string, name: string, role: string = 'user'): Promise<string> {
     return await this.jwtService.signAsync({ sub, email, name, role });
   }

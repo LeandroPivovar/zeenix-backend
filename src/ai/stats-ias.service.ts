@@ -26,6 +26,95 @@ export class StatsIAsService {
   private readonly CACHE_TTL = 60000; // 1 minuto
 
   /**
+   * Obtém estatísticas reais agregadas da tabela ai_sessions (ZENIX v2.0)
+   */
+  async getAiSessionsStats(dataSource: any, filters: { startDate?: string; endDate?: string; accountType?: string }) {
+    try {
+      let query = `
+        SELECT 
+          ai_name as name,
+          COUNT(*) as totalSessions,
+          SUM(total_trades) as totalTrades,
+          SUM(total_wins) as wins,
+          SUM(total_losses) as losses,
+          SUM(total_profit) as profit
+        FROM ai_sessions
+        WHERE 1=1
+      `;
+
+      const queryParams: any[] = [];
+
+      if (filters.startDate) {
+        query += ` AND start_time >= ?`;
+        queryParams.push(`${filters.startDate} 00:00:00`);
+      }
+
+      if (filters.endDate) {
+        query += ` AND start_time <= ?`;
+        queryParams.push(`${filters.endDate} 23:59:59`);
+      }
+
+      if (filters.accountType && filters.accountType !== 'all') {
+        query += ` AND account_type = ?`;
+        queryParams.push(filters.accountType);
+      }
+
+      query += ` GROUP BY ai_name ORDER BY profit DESC`;
+
+      const botsStats = await dataSource.query(query, queryParams);
+
+      // Calcular agregados globais
+      let totalTrades = 0;
+      let totalWins = 0;
+      let totalLosses = 0;
+      let totalProfit = 0;
+      let activeBotsSet = new Set();
+
+      const processedStats = botsStats.map((bot: any) => {
+        const trades = parseInt(bot.totalTrades) || 0;
+        const wins = parseInt(bot.wins) || 0;
+        const profit = parseFloat(bot.profit) || 0;
+
+        totalTrades += trades;
+        totalWins += wins;
+        totalLosses += (parseInt(bot.losses) || 0);
+        totalProfit += profit;
+        activeBotsSet.add(bot.name);
+
+        return {
+          ...bot,
+          totalTrades: trades,
+          wins: wins,
+          losses: parseInt(bot.losses) || 0,
+          profit: profit,
+          winRate: trades > 0 ? Number(((wins / trades) * 100).toFixed(2)) : 0,
+          status: 'active' // Simplified status
+        };
+      });
+
+      const globalAccuracy = totalTrades > 0
+        ? Number(((totalWins / totalTrades) * 100).toFixed(2))
+        : 0;
+
+      return {
+        bots: processedStats,
+        summary: {
+          totalActiveIAs: activeBotsSet.size,
+          combinedProfit: totalProfit,
+          globalAccuracy: globalAccuracy,
+          topProfitIA: processedStats.length > 0 ? processedStats[0].name : 'N/A',
+          totalTrades,
+          totalWins,
+          totalLosses
+        }
+      };
+    } catch (error) {
+      this.logger.error('Erro ao buscar estatísticas de sessões de IA:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Busca estatísticas da API do StatsIAs
    */
   async fetchStats(): Promise<StatsIAsData | null> {
