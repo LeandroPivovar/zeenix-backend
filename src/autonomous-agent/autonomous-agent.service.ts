@@ -529,7 +529,8 @@ export class AutonomousAgentService implements OnModuleInit {
             dailyLossLimit: parseFloat(agent.daily_loss_limit),
             derivToken: agent.token_deriv || agent.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback para deriv_token
             currency: agent.currency,
-            symbol: agent.symbol || (strategyName === 'zeus' ? '1HZ100V' : 'R_100'),
+            status: agent.status,
+            symbol: strategyName === 'zeus' ? '1HZ100V' : (agent.symbol || 'R_100'),
             tradingMode: agent.trading_mode || 'normal',
             initialBalance: parseFloat(agent.initial_balance) || 0,
             // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
@@ -917,7 +918,7 @@ export class AutonomousAgentService implements OnModuleInit {
             tokenDeriv,
             amountDeriv,
             config.currency || 'USD',
-            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
+            normalizedAgentType === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100'),
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
@@ -946,8 +947,8 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // ✅ Todos os agentes autônomos usam R_100
-      const agentSymbol = config.symbol || 'R_100';
+      // ✅ Zeus usa exclusivamente 1HZ100V
+      const agentSymbol = strategy === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100');
 
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
