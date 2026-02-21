@@ -226,10 +226,13 @@ export class MarkupService {
                             reject(new Error(msg.error.message));
                             return;
                         }
-                        // Outros erros, tenta continuar ou resolve com o que tem
                         clearTimeout(timeout);
                         ws.close();
-                        resolve(allTransactions);
+                        if (allTransactions.length > 0) {
+                            resolve(allTransactions);
+                        } else {
+                            reject(new Error(msg.error.message || 'Erro desconhecido na API da Deriv'));
+                        }
                         return;
                     }
 

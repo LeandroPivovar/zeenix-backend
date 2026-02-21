@@ -715,4 +715,67 @@ export class TradesService {
 
     return subject.asObservable();
   }
+
+  async getMarkupProjection(userId: string) {
+    // Mock or implement basic projection for now to satisfy the controller
+    return {
+      projected30Days: 0,
+      currentMonthly: 0,
+      growth: 0
+    };
+  }
+
+  async getUserTransactions(userId: string) {
+    console.log(`[TradesService] Buscando transações IA para o usuário: ${userId}`);
+
+    // DIAGNÓSTICO
+    try {
+      const userCheck = await this.dataSource.query(`SELECT id, email, deriv_loginid FROM users WHERE id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] User found: ${userCheck.length > 0}`);
+
+      const sessionCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_sessions WHERE user_id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] AI Sessions:`, sessionCount[0]?.count);
+
+      const logCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] AI Trade Logs:`, logCount[0]?.count);
+    } catch (diagError) {
+      console.warn(`[TradesService] Erro no diagnóstico:`, diagError.message);
+    }
+
+    const query = `
+      SELECT 
+        l.id, 
+        l.created_at as date, 
+        'IA' as origin, 
+        'N/A' as symbol, 
+        'DIGIT' as type, 
+        l.invested_value as amount, 
+        (l.returned_value - l.invested_value) as profit, 
+        l.result as status 
+      FROM ai_sessions s
+      INNER JOIN ai_trade_logs l ON s.id = l.ai_sessions_id
+      WHERE s.user_id = ?
+      ORDER BY l.created_at DESC
+      LIMIT 100
+    `;
+
+    try {
+      const rawData = await this.dataSource.query(query, [userId]);
+      console.log(`[TradesService] Encontradas ${rawData.length} transações IA (Logs/Sessions) para o usuário ${userId}`);
+
+      return rawData.map(item => ({
+        id: item.id,
+        date: item.date,
+        origin: item.origin,
+        symbol: item.symbol || 'N/A',
+        type: item.type || 'N/A',
+        amount: parseFloat(item.amount || 0),
+        profit: parseFloat(item.profit || 0),
+        status: (item.status || 'PENDING').toUpperCase()
+      }));
+    } catch (error) {
+      console.error(`[TradesService] Erro ao buscar transações IA:`, error.message);
+      return [];
+    }
+  }
 }

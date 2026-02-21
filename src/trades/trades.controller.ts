@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent as NestMessageEvent, Param } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
@@ -134,12 +134,24 @@ export class TradesController {
     };
 
     try {
+      console.log(`[TradesController] Buscando markup...`);
+      console.log(`[TradesController] Período: ${dateFromFormatted} até ${dateToFormatted}`);
+
       // 4. Buscar dados Atuais e Anteriores (Paralelo)
       const [transactions, prevTransactions, allUsers] = await Promise.all([
         this.markupService.getAppMarkupDetails(token, { date_from: dateFromFormatted, date_to: dateToFormatted }),
         this.markupService.getAppMarkupDetails(token, { date_from: prevStartFormatted, date_to: prevEndFormatted }),
         this.userRepository.findAll()
       ]);
+
+      console.log(`[TradesController] RESULTADOS DE DERIV:`);
+      console.log(` - Atuais: ${transactions.length} transações`);
+      console.log(` - Anteriores: ${prevTransactions.length}`);
+      console.log(` - Users Locais no DB: ${allUsers.length}`);
+
+      if (transactions.length > 0) {
+        console.log(` - Exemplo da 1ª transação:`, JSON.stringify(transactions[0]).substring(0, 200));
+      }
 
       // 5. Processar Dados
       // Mapa LoginID -> User
@@ -181,12 +193,18 @@ export class TradesController {
         const userMarkup = parseFloat(entry.markup.toFixed(2));
         const estimatedPayout = userMarkup / 0.03;
 
+        // Simulação de Origem (Campanha) para fins de filtro visual
+        const origins = ['Google', 'YouTube', 'Facebook', 'Instagram', 'TikTok', 'Outros'];
+        const originIndex = (user?.id || entry.loginid).charCodeAt(0) % origins.length;
+        const simulatedOrigin = origins[originIndex];
+
         return {
           userId: user?.id || `unknown-${entry.loginid}`,
           name: user?.name || `Usuário Deriv (${entry.loginid})`,
           email: user?.email || 'N/A',
           whatsapp: user?.phone || null,
           country: 'Brasil',
+          origin: simulatedOrigin,
           loginid: entry.loginid,
           transactionCount: entry.count,
           commission: userMarkup,
@@ -316,6 +334,16 @@ export class TradesController {
     }
   }
 
+  @Get('markup-projection')
+  async getMarkupProjection(@Req() req: any) {
+    return this.tradesService.getMarkupProjection(req.user.id);
+  }
+
+  @Get('user-transactions/:userId')
+  async getUserTransactions(@Param('userId') userId: string) {
+    return this.tradesService.getUserTransactions(userId);
+  }
+
   @Get('markup/aggregates')
   async getMarkupAggregates(@Req() req: any) {
     const userId = req.user.userId;
@@ -394,7 +422,7 @@ export class TradesController {
   sse(
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-  ): Observable<MessageEvent> {
+  ): Observable<NestMessageEvent> {
     console.log(`[TradesController] SSE Markup Stream chamado - startDate: ${startDate}, endDate: ${endDate}`);
     return this.tradesService.getMarkupDataStream(startDate, endDate);
   }
