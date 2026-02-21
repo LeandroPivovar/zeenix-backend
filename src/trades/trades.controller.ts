@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Query, Sse, MessageEvent as NestMessageEvent, Param } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsEnum, IsNumber, Min, Max, IsOptional } from 'class-validator';
@@ -134,7 +134,7 @@ export class TradesController {
     };
 
     try {
-      console.log(`[TradesController] Buscando markup com token: ${token ? 'Token Presente' : 'Token Ausente'}`);
+      console.log(`[TradesController] Buscando markup...`);
       console.log(`[TradesController] Período: ${dateFromFormatted} até ${dateToFormatted}`);
 
       // 4. Buscar dados Atuais e Anteriores (Paralelo)
@@ -144,7 +144,14 @@ export class TradesController {
         this.userRepository.findAll()
       ]);
 
-      console.log(`[TradesController] Transações atuais: ${transactions.length}, Anteriores: ${prevTransactions.length}, Total Users Locais: ${allUsers.length}`);
+      console.log(`[TradesController] RESULTADOS DE DERIV:`);
+      console.log(` - Atuais: ${transactions.length} transações`);
+      console.log(` - Anteriores: ${prevTransactions.length}`);
+      console.log(` - Users Locais no DB: ${allUsers.length}`);
+
+      if (transactions.length > 0) {
+        console.log(` - Exemplo da 1ª transação:`, JSON.stringify(transactions[0]).substring(0, 200));
+      }
 
       // 5. Processar Dados
       // Mapa LoginID -> User
@@ -409,7 +416,7 @@ export class TradesController {
   sse(
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-  ): Observable<MessageEvent> {
+  ): Observable<NestMessageEvent> {
     console.log(`[TradesController] SSE Markup Stream chamado - startDate: ${startDate}, endDate: ${endDate}`);
     return this.tradesService.getMarkupDataStream(startDate, endDate);
   }

@@ -728,10 +728,19 @@ export class TradesService {
   async getUserTransactions(userId: string) {
     console.log(`[TradesService] Buscando últimas 100 transações para o usuário: ${userId}`);
 
-    // Verificar se as tabelas existem e têm as colunas necessárias (opcional, mas proativo)
-    // Para simplificar e manter a performance, vamos usar uma query robusta.
-    // Se 'symbol' não existir em alguma tabela, o SQL falhará. 
-    // Em sistemas legados, o campo symbol em ai_trades pode estar ausente.
+    // DIAGNÓSTICO TEMPORÁRIO
+    try {
+      const userCheck = await this.dataSource.query(`SELECT id, email, derivLoginId FROM users WHERE id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] User check for ${userId}:`, userCheck);
+
+      const sessionCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_sessions WHERE user_id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] AI Sessions for this user ID:`, sessionCount);
+
+      const logCount = await this.dataSource.query(`SELECT COUNT(*) as count FROM ai_trade_logs l JOIN ai_sessions s ON l.ai_sessions_id = s.id WHERE s.user_id = ?`, [userId]);
+      console.log(`[TradesService][DIAGNOSTIC] AI Trade Logs for this user ID:`, logCount);
+    } catch (diagError) {
+      console.warn(`[TradesService] Erro no diagnóstico:`, diagError.message);
+    }
 
     const query = `
       (SELECT 
