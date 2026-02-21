@@ -135,6 +135,17 @@ export class AutonomousAgentService implements OnModuleInit {
         // Ignorar se já existe
       }
 
+      // 5. Adicionar coluna consecutive_losses
+      try {
+        await this.dataSource.query(`
+          ALTER TABLE autonomous_agent_config 
+          ADD COLUMN consecutive_losses INT DEFAULT 0
+        `);
+        this.logger.log('[CreateStatsIndexes] ✅ Coluna consecutive_losses adicionada em autonomous_agent_config');
+      } catch (error) {
+        // Ignorar se já existe
+      }
+
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
@@ -597,7 +608,9 @@ export class AutonomousAgentService implements OnModuleInit {
            SET session_status = 'active',
                session_date = NOW(),
                daily_profit = 0,
-               daily_loss = 0
+               daily_loss = 0,
+               consecutive_losses = 0,
+               trading_mode = 'NORMAL'
            WHERE user_id = ? AND is_active = TRUE`,
           [agent.user_id],
         );
@@ -771,69 +784,48 @@ export class AutonomousAgentService implements OnModuleInit {
         );
       }
 
-      // ✅ [ZENIX v2.0] GARANTIR EXCLUSIVIDADE: Desativar qualquer estratégia anterior antes de iniciar a nova
-      // Isso resolve o problema de múltiplos agentes rodando simultaneamente (ex: Sentinel e Falcon juntos)
-      try {
-        await this.strategyManager.deactivateUser(userId);
-        this.logger.log(`[ActivateAgent] 🔄 Estratégias anteriores desativadas para usuário ${userId}`);
-      } catch (deactivateError) {
-        this.logger.warn(`[ActivateAgent] ⚠️ Erro ao desativar estratégias anteriores (não crítico):`, deactivateError);
-      }
-
-      // ✅ [ORION] PRIMEIRA AÇÃO: Deletar logs anteriores ao iniciar nova sessão
-      // (mantém apenas as transações/trades)
-      try {
-        await this.dataSource.query(
-          `DELETE FROM autonomous_agent_logs 
-           WHERE user_id = ?`,
-          [userId],
-        );
-        this.logger.log(`[ActivateAgent] 🗑️ Logs anteriores deletados para usuário ${userId}`);
-      } catch (error) {
-        this.logger.error(`[ActivateAgent] ⚠️ Erro ao deletar logs do usuário ${userId}:`, error);
-        // Não bloquear a ativação se houver erro ao deletar logs
-      }
-
-      // ✅ [FIX] Desativar TODAS as outras estratégias ativas do usuário no banco
-      // Isso garante que apenas UMA estratégia esteja ativa por vez
-      try {
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config 
-           SET is_active = FALSE, updated_at = NOW() 
-           WHERE user_id = ? AND is_active = TRUE`,
-          [userId]
-        );
-        this.logger.log(`[ActivateAgent] ✅ Estratégias anteriores desativadas no banco para usuário ${userId}`);
-      } catch (dbError) {
-        this.logger.error(`[ActivateAgent] Erro ao desativar estratégias anteriores:`, dbError);
-        // Não bloquear - continuar com a ativação
-      }
-
-      // ✅ Limpar histórico de ticks para este usuário (começar do zero)
-      // Os ticks serão coletados novamente a partir da nova sessão
-      // Nota: ticks são globais, mas podemos filtrar por timestamp da sessão no frontend
-
-      // ✅ Limpar histórico de ticks para este usuário (começar do zero)
-      // Os ticks serão coletados novamente a partir da nova sessão
-      // Nota: ticks são globais, mas podemos filtrar por timestamp da sessão no frontend
-
-      // Verificar se já existe configuração (independente de is_active)
-      // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
+      // 0. ✅ [ZENIX v3.4] Verificar se já existe configuração e se está ativa
       const existing = await this.dataSource.query(
-        `SELECT id, is_active FROM autonomous_agent_config 
+        `SELECT id, is_active, agent_type FROM autonomous_agent_config 
          WHERE user_id = ?
          LIMIT 1`,
         [userId],
       );
 
+      const isAlreadyActive = existing && existing.length > 0 && existing[0].is_active;
+      const currentAgentType = existing && existing.length > 0 ? existing[0].agent_type : null;
+
+      const requestedAgentType = (config.agentType || config.strategy || 'orion').toLowerCase();
+      const normalizedAgentType = requestedAgentType === 'arion' ? 'orion' : requestedAgentType;
+
+      const isStrategyChange = isAlreadyActive && currentAgentType !== normalizedAgentType;
+
+      // ✅ [ZENIX v2.0] GARANTIR EXCLUSIVIDADE: Só desativar se houver mudança de estratégia ou se estava inativo
+      if (isStrategyChange || !isAlreadyActive) {
+        try {
+          await this.strategyManager.deactivateUser(userId);
+          this.logger.log(`[ActivateAgent] 🔄 Estratégia anterior (${currentAgentType}) desativada para usuário ${userId}`);
+        } catch (deactivateError) {
+          this.logger.warn(`[ActivateAgent] ⚠️ Erro ao desativar estratégias anteriores (não crítico):`, deactivateError);
+        }
+
+        // ✅ [ORION] Só deletar logs se for uma NOVA SESSÃO de fato
+        try {
+          await this.dataSource.query(
+            `DELETE FROM autonomous_agent_logs WHERE user_id = ?`,
+            [userId],
+          );
+          this.logger.log(`[ActivateAgent] 🗑️ Logs anteriores deletados (Nova Sessão) para usuário ${userId}`);
+        } catch (error) {
+          this.logger.error(`[ActivateAgent] ⚠️ Erro ao deletar logs:`, error);
+        }
+      }
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
       if (existing && existing.length > 0) {
-        // Atualizar configuração existente (reativar se estava desativada)
-        // ✅ Determinar agent_type baseado na estratégia
-        const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
-        const normalizedAgentType = agentType === 'arion' ? 'orion' : agentType;
+        // Atualizar configuração existente
 
         await this.dataSource.query(
           `UPDATE autonomous_agent_config 
@@ -852,9 +844,11 @@ export class AutonomousAgentService implements OnModuleInit {
                initial_balance = ?,
                risk_level = ?,
                session_status = 'active',
-               session_date = NOW(),
-               daily_profit = 0,
-               daily_loss = 0,
+               -- ✅ [ZENIX v3.4] Só resetar stats se NÃO estava ativo (Nova Sessão)
+               session_date = IF(is_active = FALSE, NOW(), session_date),
+               daily_profit = IF(is_active = FALSE, 0, daily_profit),
+               daily_loss = IF(is_active = FALSE, 0, daily_loss),
+               consecutive_losses = IF(is_active = FALSE, 0, consecutive_losses),
                updated_at = NOW()
            WHERE user_id = ?`,
           [
@@ -865,7 +859,7 @@ export class AutonomousAgentService implements OnModuleInit {
             tokenDeriv,
             amountDeriv,
             config.currency || 'USD',
-            config.symbol || 'R_100', // Default fallback, but respects V2 symbols if provided
+            config.symbol || 'R_100',
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',

@@ -48,8 +48,8 @@ interface ZeusUserConfig extends AutonomousAgentConfig {
     limitOpsCycle?: number;  // 500 (Normal) / 100 (Preciso)
 
     // Operation Mode
-    mode?: 'NORMAL' | 'PRECISO';
-    operationMode?: 'NORMAL' | 'PRECISO';
+    mode?: NegotiationMode;
+    operationMode?: NegotiationMode;
 
     // ✅ Sync V4.1: Profit persistent from DB
     dailyProfit?: number;
@@ -244,7 +244,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
-            c.daily_profit,
+            c.daily_profit, c.trading_mode, c.consecutive_losses,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -355,7 +355,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     limitOpsCycle: 500,
 
                     // ✅ V4.1 Profit Sync
-                    dailyProfit: parseFloat(user.daily_profit) || 0
+                    dailyProfit: parseFloat(user.daily_profit) || 0,
+                    operationMode: (user.trading_mode || 'NORMAL').toUpperCase() as NegotiationMode,
+                    consecutiveLosses: parseInt(user.consecutive_losses || 0)
                 };
 
 
@@ -417,12 +419,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             sessionEnded: false,
 
             // Automático
-            // Automático: Se não vier no config, infere pelo perfil de Risco
-            mode: config.mode || config.operationMode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL'),
+            // Automático: Prioridade do Modo da Configuração (Salvo no Banco)
+            mode: config.operationMode || config.mode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL'),
             analysis: "PRINCIPAL",
 
             // Perdas
-            consecutiveLosses: 0,
+            consecutiveLosses: (config as any).consecutiveLosses || 0,
             perdasAcumuladas: 0,
 
             // Controle
@@ -1944,7 +1946,8 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // Vamos manter a pausa de 5 min após 2 perdas para esfriar o mercado antes do Máximo.
             if (state.consecutiveLosses === 2) {
                 const pauseDurationMs = 5 * 60 * 1000;
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
+                state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
+                this.logger.log(`[Zeus][${userId}] 🛑 PAUSA DE SEGURANÇA (5 min) ativada antes do modo MÁXIMO.`);
                 this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA (5 min) antes da última tentativa em modo MÁXIMO.`);
             }
         }
@@ -2217,12 +2220,16 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          SET daily_profit = ?, 
              daily_loss = ?,
              total_trades = ?,
+             trading_mode = ?,
+             consecutive_losses = ?,
              updated_at = NOW()
          WHERE user_id = ? AND agent_type = 'zeus'`,
                 [
                     Math.max(0, state.lucroAtual),
                     Math.abs(Math.min(0, state.lucroAtual)),
                     state.opsCount,
+                    state.mode || 'NORMAL',
+                    state.consecutiveLosses,
                     userId,
                 ],
             );
@@ -2323,7 +2330,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.isWaitingContract = false;
             state.sessionEnded = false;
             state.endReason = undefined;
-            state.mode = 'NORMAL';
+            state.mode = config.operationMode || config.mode || (config.riskProfile === 'CONSERVADOR' ? 'PRECISO' : 'NORMAL');
         }
     }
 
