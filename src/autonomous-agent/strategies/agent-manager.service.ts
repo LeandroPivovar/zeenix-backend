@@ -11,7 +11,7 @@ export class AgentManagerService implements OnModuleInit {
   constructor(
     private readonly sentinelStrategy: SentinelStrategy,
     private readonly falconStrategy: FalconStrategy,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     // ✅ REATIVADO: Sentinel e Falcon
@@ -95,5 +95,4 @@ export class AgentManagerService implements OnModuleInit {
     await agent.onContractFinish(userId, result);
   }
 }
-
 

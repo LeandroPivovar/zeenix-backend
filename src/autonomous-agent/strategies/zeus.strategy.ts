@@ -250,7 +250,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          FROM autonomous_agent_config c
          JOIN users u ON c.user_id = u.id
          LEFT JOIN user_settings s ON c.user_id = s.user_id
-         WHERE c.is_active = TRUE
+         WHERE c.is_active = TRUE 
            AND c.agent_type = 'zeus'
            AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
 
@@ -323,7 +323,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     dailyLossLimit: parseFloat(user.daily_loss_limit),
                     derivToken: resolvedToken,
                     currency: user.currency,
-                    sessionId: user.session_id ? parseInt(user.session_id) : undefined,
 
                     // Zeus V2 defaults
                     strategyName: "ZEUS",
@@ -400,7 +399,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             balance: config.initialCapital,
             profit: config.dailyProfit || 0,
             peakProfit: config.dailyProfit || 0,
-            sessionId: config.sessionId,
 
 
             // Cycle Management (V4)
@@ -463,7 +461,6 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Coletar token resolvido anteriormente ou do config
         const derivToken = config.derivToken; // Já resolvido na syncActiveUsersFromDb
-        const sessionId = config.sessionId;
 
         const zeusConfig: ZeusUserConfig = {
             ...config, // Mantém compatibilidade com infra (userId, etc)
@@ -500,8 +497,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             limitOpsCycle: ((config as any).mode === 'PRECISO' || (config as any).operationMode === 'PRECISO' || risk === 'CONSERVADOR') ? 100 : 500,
 
             // ✅ V4.1 Profit Sync
-            dailyProfit: (config as any).dailyProfit || 0,
-            sessionId: sessionId
+            dailyProfit: (config as any).dailyProfit || 0
         };
 
         // Actually, we should probably set them based on a default assumption or fetch mode?
@@ -633,7 +629,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      */
     async processTick(tick: Tick, symbol?: string): Promise<void> {
         const promises: Promise<void>[] = [];
-        const tickSymbol = symbol || ZEUS_CONSTANTS.symbol; // ✅ Agora estrito ao símbolo do Zeus (1HZ100V)
+        const tickSymbol = symbol || 'R_100'; // ✅ Todos os agentes autônomos usam R_100
 
         // ✅ Log de debug para verificar se está recebendo ticks
         // this.logger.debug(`[Zeus] 📥 Tick recebido: symbol=${tickSymbol}, value=${tick.value}, users=${this.userConfigs.size}`);
@@ -673,7 +669,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
      * ✅ LOGIC HELPER: Extrair último dígito
      */
     private lastDigitFromPrice(price: number, symbol: string = '1HZ100V'): number {
-        let precision = 2; // Default 1HZ100V (2 decimals)
+        let precision = 2; // Default 1HZ100V / R_100
 
         // Ajuste de precisão por ativo
         if (symbol.includes('R_10') || symbol.includes('1HZ10V')) precision = 3;
@@ -1686,7 +1682,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
         } else {
             // Trailing Stop logic: Se o lucro do pico subir significativamente, podemos subir o floor?
-            // A spec diz "Cadeado" e "Sair se começar a devolver".
+            // A spec diz "Cadeado" e "Sair se começar a devolver". 
             // Vamos manter o floor em 50% do target ou seguir o pico se o pico for muito alto.
             const potentialNewFloor = state.cyclePeakProfit * 0.5; // 50% do pico atual
             if (potentialNewFloor > state.blindadoFloorProfit) {
@@ -1784,7 +1780,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             return;
         }
 
-        // ✅ V4: Removido Stop por Drawdown fixo do ciclo (60%).
+        // ✅ V4: Removido Stop por Drawdown fixo do ciclo (60%). 
         // Agora o stop é apenas por 3 perdas consecutivas (onContractFinish).
 
         // Atualizar Blindado com os novos valores (chamada pós-update)
@@ -1933,7 +1929,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
 
             // ✅ V4 Checklist: Pausa Estratégica (Obrigatória em recuperação se necessário)
-            // A spec pede pausa de 5 min se houver perdas persistentes.
+            // A spec pede pausa de 5 min se houver perdas persistentes. 
             // Vamos manter a pausa de 5 min após 2 perdas para esfriar o mercado antes do Máximo.
             if (state.consecutiveLosses === 2) {
                 const pauseDurationMs = 5 * 60 * 1000;
@@ -1977,12 +1973,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         // Mapeamento de sinônimos (Deriv API vs Interno Zenix)
         const synonyms: Record<string, string[]> = {
-            'R_100': ['VOLATILITY 100 INDEX'],
+            'R_100': ['1HZ100V', 'VOLATILITY 100 INDEX'],
             'R_50': ['1HZ50V', 'VOLATILITY 50 INDEX'],
             'R_10': ['1HZ10V', 'VOLATILITY 10 INDEX'],
             'R_25': ['1HZ25V', 'VOLATILITY 25 INDEX'],
             'R_75': ['1HZ75V', 'VOLATILITY 75 INDEX'],
-            '1HZ100V': ['VOLATILITY 100 (1S) INDEX'],
+            '1HZ100V': ['R_100'],
             '1HZ50V': ['R_50'],
             '1HZ10V': ['R_10'],
             '1HZ25V': ['R_25'],
@@ -2082,13 +2078,12 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         try {
             const result = await this.dataSource.query(
                 `INSERT INTO autonomous_agent_trades (
-          user_id, session_id, analysis_data, confidence_score, analysis_reasoning,
+          user_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
           martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', ?, ?, NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', ?, ?, NOW())`,
                 [
                     userId,
-                    config.sessionId || null,
                     JSON.stringify(analysisData),
                     trade.marketAnalysis.probability,
                     analysisReasoning,
@@ -2098,7 +2093,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     trade.stakeAmount,
                     state.mode === 'NORMAL' ? 'M0' : (state.mode === 'PRECISO' ? 'M1' : 'M2'), // M2 = MAXIMO
                     trade.payout * 100, // Converter para percentual
-                    config.symbol || ZEUS_CONSTANTS.symbol,
+                    config.symbol || 'R_100',
                     config.derivToken || null, // ✅ Token usado para o trade
                     config.currency === 'DEMO' ? 'demo' : 'real', // ✅ Tipo de conta (demo/real) derivado de currency
                 ],
@@ -2256,7 +2251,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 module: normalizedModule,
                 message: formattedMessage, // Usar mensagem formatada sem duplicar prefixo
                 icon: this.getLogIcon(level),
-                details: { symbol: this.userConfigs.get(userId)?.symbol || ZEUS_CONSTANTS.symbol },
+                details: { symbol: this.userConfigs.get(userId)?.symbol || 'R_100' },
                 tableName: 'autonomous_agent_logs',
             });
         }
@@ -3053,4 +3048,3 @@ export interface ZeusState {
 
 // Alias para manter compatibilidade com nome antigo se necessário, mas preferimos usar ZeusState
 interface ZeusUserState extends ZeusState, AutonomousAgentState { }
-
