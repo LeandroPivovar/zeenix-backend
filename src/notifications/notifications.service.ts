@@ -373,97 +373,12 @@ export class NotificationsService {
 
     // Notificações do Agente Autônomo
     if (agent) {
-      if (agent.isActive) {
-        // Agente ativo sempre mostra
-        notifications.push({
-          type: 'info',
-          title: '🤖 Agente Autônomo Ativo',
-          message: `O agente está rodando. Resultado atual: ${agent.netResult >= 0 ? '+' : ''}$${agent.netResult.toFixed(2)}`,
-          source: 'agent',
-          timestamp: now,
-        });
-      } else if (agent.sessionStatus === 'stopped_profit' && isNew(agent.lastTradeAt || now)) {
-        notifications.push({
-          type: 'success',
-          title: '🎉 Agente Autônomo - Meta Atingida!',
-          message: `O agente parou por atingir a meta diária. Lucro: +$${agent.dailyProfit.toFixed(2)}`,
-          source: 'agent',
-          timestamp: now,
-        });
-      } else if (agent.sessionStatus === 'stopped_loss' && isNew(agent.lastTradeAt || now)) {
-        notifications.push({
-          type: 'warning',
-          title: '⚠️ Agente Autônomo - Stop Loss',
-          message: `O agente parou por atingir o stop loss. Perda: -$${agent.dailyLoss.toFixed(2)}`,
-          source: 'agent',
-          timestamp: now,
-        });
-      } else if (agent.sessionStatus === 'stopped_blindado' && isNew(agent.lastTradeAt || now)) {
-        notifications.push({
-          type: 'warning',
-          title: '🛡️ Agente Autônomo - Stop Blindado',
-          message: `O agente parou pelo stop blindado. Resultado: ${agent.netResult >= 0 ? '+' : ''}$${agent.netResult.toFixed(2)}`,
-          source: 'agent',
-          timestamp: now,
-        });
-      } else if (agent.totalTrades > 0 && isNew(agent.lastTradeAt || now)) {
-        // Tem histórico mas não está ativo
-        notifications.push({
-          type: 'info',
-          title: '🤖 Agente Autônomo Parado',
-          message: `Último resultado: ${agent.netResult >= 0 ? '+' : ''}$${agent.netResult.toFixed(2)} (${agent.totalWins}V/${agent.totalLosses}D)`,
-          source: 'agent',
-          timestamp: now,
-        });
-      }
+      // Notificações de operações desativadas a pedido do usuário
     }
 
     // Notificações da IA de Trading
     if (ai) {
-      if (ai.isActive) {
-        const strategyName = 'Orion';
-        notifications.push({
-          type: 'info',
-          title: `🧠 IA ${strategyName} Ativa`,
-          message: `A IA está rodando no modo ${ai.mode?.toUpperCase() || 'N/A'}. Saldo da sessão: ${ai.sessionBalance >= 0 ? '+' : ''}$${ai.sessionBalance.toFixed(2)}`,
-          source: 'ai',
-          timestamp: now,
-        });
-      } else if (ai.sessionStatus === 'stopped_profit' && isNew(ai.lastTradeAt || now)) {
-        notifications.push({
-          type: 'success',
-          title: '🎉 IA de Trading - Meta Atingida!',
-          message: `A IA parou por atingir a meta. Lucro da sessão: +$${ai.sessionBalance.toFixed(2)}`,
-          source: 'ai',
-          timestamp: now,
-        });
-      } else if (ai.sessionStatus === 'stopped_loss' && isNew(ai.lastTradeAt || now)) {
-        notifications.push({
-          type: 'warning',
-          title: '⚠️ IA de Trading - Stop Loss',
-          message: `A IA parou por atingir o stop loss. Resultado: $${ai.sessionBalance.toFixed(2)}`,
-          source: 'ai',
-          timestamp: now,
-        });
-      } else if (ai.sessionStatus === 'stopped_blindado' && isNew(ai.lastTradeAt || now)) {
-        notifications.push({
-          type: 'warning',
-          title: '🛡️ IA de Trading - Stop Blindado',
-          message: `A IA parou pelo stop blindado. Resultado: ${ai.sessionBalance >= 0 ? '+' : ''}$${ai.sessionBalance.toFixed(2)}`,
-          source: 'ai',
-          timestamp: now,
-        });
-      } else if (ai.sessionBalance !== 0 && isNew(ai.lastTradeAt || now)) {
-        // Tem histórico mas não está ativa
-        const strategyName = 'Orion';
-        notifications.push({
-          type: 'info',
-          title: `🧠 IA ${strategyName} Parada`,
-          message: `Último resultado da sessão: ${ai.sessionBalance >= 0 ? '+' : ''}$${ai.sessionBalance.toFixed(2)}`,
-          source: 'ai',
-          timestamp: now,
-        });
-      }
+      // Notificações de operações desativadas a pedido do usuário
     }
 
     return notifications;
