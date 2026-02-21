@@ -5345,6 +5345,13 @@ export class AiService implements OnModuleInit {
   }
 
   /**
+   * Obtém estatísticas agregadas de sessões da IA (ZENIX v2.0)
+   */
+  async getAggregatedStats(filters: { startDate?: string; endDate?: string; accountType?: string }) {
+    return this.statsIAsService.getAiSessionsStats(this.dataSource, filters);
+  }
+
+  /**
    * Busca saldo da conta Deriv via WebSocket
    */
   async getDerivBalance(derivToken: string): Promise<any> {
