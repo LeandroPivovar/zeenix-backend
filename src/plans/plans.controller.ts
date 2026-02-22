@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, UseGuards, Req, Param, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, IsObject } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, IsObject, IsArray } from 'class-validator';
 import { PlansService } from './plans.service';
 
 class ActivatePlanDto {
@@ -45,7 +45,7 @@ class CreatePlanDto {
   @IsOptional()
   isActive?: boolean;
 
-  @IsObject()
+  @IsArray()
   @IsOptional()
   benefits?: any;
 
@@ -95,7 +95,7 @@ class UpdatePlanDto {
   @IsOptional()
   isActive?: boolean;
 
-  @IsObject()
+  @IsArray()
   @IsOptional()
   benefits?: any;
 
