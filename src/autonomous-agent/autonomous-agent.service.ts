@@ -499,7 +499,7 @@ export class AutonomousAgentService implements OnModuleInit {
            SELECT user_id, MAX(updated_at) as max_updated
            FROM autonomous_agent_config
            WHERE is_active = TRUE 
-             AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')
+             AND session_status NOT IN ('profit', 'loss', 'blindado', 'closs')
            GROUP BY user_id
          ) latest ON c.user_id = latest.user_id AND c.updated_at = latest.max_updated
          WHERE c.is_active = TRUE`,
@@ -552,7 +552,7 @@ export class AutonomousAgentService implements OnModuleInit {
       const agentsToReset = await this.dataSource.query(
         `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss', 'stopped_manual', 'stopped_cycle') 
+           AND session_status IN ('profit', 'loss', 'blindado', 'closs', 'manual', 'cycle') 
            AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
@@ -850,7 +850,7 @@ export class AutonomousAgentService implements OnModuleInit {
                session_date = CASE 
                  WHEN session_date IS NULL THEN NOW()
                  WHEN DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)) THEN NOW()
-                 WHEN session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss', 'stopped_manual', 'stopped_cycle') THEN NOW()
+                 WHEN session_status IN ('profit', 'loss', 'blindado', 'closs', 'manual', 'cycle') THEN NOW()
                  ELSE session_date 
                END,
                daily_profit = 0,
@@ -987,14 +987,27 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async deactivateAgent(userId: string): Promise<void> {
     try {
+      // ✅ [ZENIX v4.3] Buscar agent_type antes de desativar para passar para o strategyManager com a assinatura correta (agentName, userId)
+      const config = await this.dataSource.query(
+        `SELECT agent_type FROM autonomous_agent_config WHERE user_id = ?`,
+        [userId]
+      );
+
+      const agentType = config && config.length > 0 ? config[0].agent_type : null;
+
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
-         SET is_active = FALSE, session_status = 'stopped_manual', updated_at = NOW()
+         SET is_active = FALSE, session_status = 'manual', updated_at = NOW()
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
 
-      await this.strategyManager.deactivateUser(userId);
+      if (agentType) {
+        await this.strategyManager.deactivateUser(userId);
+      } else {
+        this.logger.warn(`[DeactivateAgent] ⚠️ Agent type não encontrado para usuário ${userId}. Notificando strategyManager para desativar todas as estratégias do usuário.`);
+        await this.strategyManager.deactivateUser(userId);
+      }
 
       this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`);
     } catch (error) {

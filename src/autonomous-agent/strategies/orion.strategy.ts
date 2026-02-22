@@ -71,7 +71,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'orion'
-           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+           AND session_status NOT IN ('profit', 'loss', 'blindado', 'closs')`,
       );
 
       for (const user of activeUsers) {
@@ -249,11 +249,11 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
 
         // Verificar stop loss/win/blindado e parar no dia se necessário
         if (newLoss >= config.dailyLossLimit && sessionStatus === 'active') {
-          sessionStatus = 'stopped_loss';
+          sessionStatus = 'loss';
           this.logger.warn(`[Orion][${userId}] 🛑 STOP LOSS ATINGIDO! Perda: $${newLoss.toFixed(2)} >= Limite: $${config.dailyLossLimit.toFixed(2)}`);
           this.saveLog(userId, 'WARN', 'RISK', `Stop Loss atingido. Perda: $${newLoss.toFixed(2)} | Limite: $${config.dailyLossLimit.toFixed(2)} - Parando no dia`);
         } else if (newProfit >= config.dailyProfitTarget && sessionStatus === 'active') {
-          sessionStatus = 'stopped_profit';
+          sessionStatus = 'profit';
           this.logger.log(`[Orion][${userId}] 🎯 STOP WIN ATINGIDO! Lucro: $${newProfit.toFixed(2)} >= Meta: $${config.dailyProfitTarget.toFixed(2)}`);
           this.saveLog(userId, 'INFO', 'RISK', `Stop Win atingido. Lucro: $${newProfit.toFixed(2)} | Meta: $${config.dailyProfitTarget.toFixed(2)} - Parando no dia`);
         }

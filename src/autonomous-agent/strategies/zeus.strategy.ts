@@ -257,7 +257,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'zeus'
-           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+           AND c.session_status NOT IN ('profit', 'loss', 'blindado', 'closs')`,
 
             );
 
@@ -2147,23 +2147,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         switch (reason) {
             case 'TAKE_PROFIT':
-                status = 'stopped_profit';
+                status = 'profit';
                 message = `META DE LUCRO ATINGIDA! daily_profit=${state.lucroAtual.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
                 break;
             case 'STOP_LOSS':
-                status = 'stopped_loss';
+                status = 'loss';
                 message = `STOP LOSS ATINGIDO! resultado_total=${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
                 break;
             case 'CONSECUTIVE_LOSS':
-                status = 'stopped_consecutive_loss';
+                status = 'closs';
                 message = `🛑 STOP POR PERDAS CONSECUTIVAS! Mercado Instável. Operações encerradas para proteção do capital. | Resultado: ${state.lucroAtual >= 0 ? '+' : ''}${state.lucroAtual.toFixed(2)} | cycle=${state.cycleCurrent}.`;
                 break;
             case 'BLINDADO':
-                status = 'stopped_blindado';
+                status = 'blindado';
                 message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${((config.initialBalance || 0) + state.lucroAtual).toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações do dia.`;
                 break;
             case 'CYCLE_COMPLETE':
-                status = 'stopped_cycle';
+                status = 'cycle';
                 message = `SESSÃO FINALIZADA: Todos os ${ZEUS_CONSTANTS.cycles} ciclos foram concluídos com sucesso! Lucro Total: $${state.profit.toFixed(2)}.`;
                 break;
 
