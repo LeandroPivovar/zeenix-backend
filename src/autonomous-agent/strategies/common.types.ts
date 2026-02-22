@@ -13,6 +13,7 @@ export interface AutonomousAgentConfig {
   currency: string;
   symbol: string;
   initialBalance?: number;
+  sessionDate?: Date | string;
   // Configurações específicas por agente
   [key: string]: any;
 }

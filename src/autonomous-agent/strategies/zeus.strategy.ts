@@ -463,16 +463,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         if (!state || !config) return;
 
         try {
-            // Buscar os últimos 5 trades do usuário HOJE para a estratégia Zeus
+            // ✅ [ZENIX v3.0] Limitar reconstrução ao início da sessão atual
+            // Se sessionDate for recente (ativação manual), não encontrará trades antigos.
+            // Se for do passado (sync/servidor reiniciou), recupera o estado da sessão ativa.
+            const sessionDate = config.sessionDate ? new Date(config.sessionDate) : new Date();
+
+            // Buscar os últimos 5 trades do usuário NESTA SESSÃO para a estratégia Zeus
             const trades = await this.dataSource.query(
                 `SELECT status, profit_loss, created_at 
                  FROM autonomous_agent_trades 
                  WHERE user_id = ? 
                    AND strategy = 'zeus' 
-                   AND DATE(DATE_SUB(created_at, INTERVAL 3 HOUR)) = DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR))
+                   AND created_at >= ?
                  ORDER BY created_at DESC 
                  LIMIT 5`,
-                [userId]
+                [userId, sessionDate]
             );
 
             if (!trades || trades.length === 0) {

@@ -525,7 +525,8 @@ export class AutonomousAgentService implements OnModuleInit {
             // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
             stopLossType: agent.stop_loss_type,
             riskProfile: agent.risk_level || agent.risk_profile,
-            agentType: agent.agent_type
+            agentType: agent.agent_type,
+            sessionDate: agent.session_date
           });
         } catch (err) {
           this.logger.error(`[SyncActiveAgents] Erro ao ativar usuário ${agent.user_id}: ${err.message}`);
@@ -637,7 +638,8 @@ export class AutonomousAgentService implements OnModuleInit {
             initialBalance: parseFloat(agentConfig.initial_balance) || 0,
             stopLossType: agentConfig.stop_loss_type,
             riskProfile: agentConfig.risk_level || agentConfig.risk_profile,
-            agentType: agentConfig.agent_type
+            agentType: agentConfig.agent_type,
+            sessionDate: new Date()
           });
         }
       }
@@ -959,7 +961,8 @@ export class AutonomousAgentService implements OnModuleInit {
           // ✅ Parâmetros extras necessários para logic de proteção/gestão
           stopLossType: config.stopLossType,
           riskProfile: this.normalizeRiskProfile(config.riskProfile),
-          agentType: strategy
+          agentType: strategy,
+          sessionDate: new Date()
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
