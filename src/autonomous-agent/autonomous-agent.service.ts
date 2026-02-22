@@ -1,10 +1,14 @@
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import WebSocket from 'ws';
 import { Tick } from '../ai/ai.service';
 import { AutonomousAgentStrategyManagerService } from './strategies/autonomous-agent-strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlanPermissionsService } from '../plans/plan-permissions.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 /**
  * ✅ Serviço Principal do Agente Autônomo
@@ -42,6 +46,9 @@ export class AutonomousAgentService implements OnModuleInit {
     private readonly strategyManager: AutonomousAgentStrategyManagerService,
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
+    @InjectRepository(UserEntity)
+    private readonly userRepository?: Repository<UserEntity>,
+    private readonly planPermissionsService?: PlanPermissionsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -657,6 +664,24 @@ export class AutonomousAgentService implements OnModuleInit {
    * Ativa um agente autônomo
    */
   async activateAgent(userId: string, config: any): Promise<void> {
+    // ✅ PASSO 0: VERIFICAR PERMISSÕES DO PLANO
+    if (this.userRepository && this.planPermissionsService) {
+      const user = await this.userRepository.findOne({
+        where: { id: userId },
+        relations: ['plan'],
+      });
+
+      if (!user) {
+        throw new NotFoundException('Usuário não encontrado');
+      }
+
+      const agentId = config.agentType || config.strategy;
+      if (!this.planPermissionsService.canActivateAgent(user, agentId)) {
+        this.logger.warn(`[ActivateAgent] 🚫 Usuário ${userId} tentou ativar agente restrito: ${agentId}`);
+        throw new ForbiddenException(`Seu plano atual não inclui o agente ${agentId}.`);
+      }
+    }
+
     try {
       // ✅ [ORION] Resolução de Token Baseada em Preferência (Feature Solicitada)
       // Buscar configurações de moeda e tokens salvos

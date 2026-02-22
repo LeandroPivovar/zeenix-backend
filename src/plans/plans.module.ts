@@ -6,6 +6,7 @@ import { PlanEntity } from '../infrastructure/database/entities/plan.entity';
 import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { PlansService } from './plans.service';
 import { PlansController } from './plans.controller';
+import { PlanPermissionsService } from './plan-permissions.service';
 
 @Module({
   imports: [
@@ -14,10 +15,10 @@ import { PlansController } from './plans.controller';
     SettingsModule,
   ],
   controllers: [PlansController],
-  providers: [PlansService],
-  exports: [PlansService],
+  providers: [PlansService, PlanPermissionsService],
+  exports: [PlansService, PlanPermissionsService],
 })
-export class PlansModule {}
+export class PlansModule { }
 
 
 

@@ -1,5 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
+import { PlansModule } from '../plans/plans.module';
 import { AutonomousAgentController } from './autonomous-agent.controller';
 import { AutonomousAgentService } from './autonomous-agent.service';
 import { AutonomousAgentScheduler } from './autonomous-agent.scheduler';
@@ -15,10 +17,11 @@ import { ZeusStrategy } from './strategies/zeus.strategy';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([]),
+    TypeOrmModule.forFeature([UserEntity]),
     forwardRef(() => SettingsModule),
     BrokerModule,
     forwardRef(() => AiModule), // ✅ Importar AiModule para usar OrionStrategy
+    PlansModule, // ✅ Importar PlansModule para usar PlanPermissionsService
     // ✅ UtilsModule é global, não precisa importar
   ],
   controllers: [AutonomousAgentController],

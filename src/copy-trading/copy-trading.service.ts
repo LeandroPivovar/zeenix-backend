@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { ExpertEntity } from '../infrastructure/database/entities/expert.entity';
@@ -6,6 +6,7 @@ import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DerivWebSocketManagerService } from '../broker/deriv-websocket-manager.service';
+import { PlanPermissionsService } from '../plans/plan-permissions.service';
 
 interface CopyTradingConfigData {
   traderId: string;
@@ -32,12 +33,30 @@ export class CopyTradingService {
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
     private readonly wsManager: DerivWebSocketManagerService,
+    private readonly planPermissionsService: PlanPermissionsService,
   ) { }
 
   async activateCopyTrading(
     userId: string,
     configData: CopyTradingConfigData,
   ) {
+    // ✅ PASSO 0: VERIFICAR PERMISSÕES DO PLANO
+    if (this.planPermissionsService) {
+      const user = await this.userRepository.findOne({
+        where: { id: userId },
+        relations: ['plan'],
+      });
+
+      if (!user) {
+        throw new NotFoundException('Usuário não encontrado');
+      }
+
+      if (!this.planPermissionsService.canActivateTrader(user, configData.traderId)) {
+        this.logger.warn(`[ActivateCopyTrading] 🚫 Usuário ${userId} tentou copiar trader restrito: ${configData.traderId}`);
+        throw new ForbiddenException(`Seu plano atual não inclui o copy trading com este trader.`);
+      }
+    }
+
     this.logger.log(`[ActivateCopyTrading] Ativando copy trading para usuário ${userId}`);
     this.logger.log(`[ActivateCopyTrading] Tipo de alocação: ${configData.allocationType}, Value: ${configData.allocationValue}, Percentage: ${configData.allocationPercentage}`);
     this.logger.log(`[ActivateCopyTrading] Stop Loss: ${configData.stopLoss}, Take Profit: ${configData.takeProfit}, Blind Stop Loss: ${configData.blindStopLoss}`);

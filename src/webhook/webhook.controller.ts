@@ -1,5 +1,8 @@
-import { Body, Controller, Logger, Post, Inject } from '@nestjs/common';
+import { Body, Controller, Logger, Post, Inject, Get, Query } from '@nestjs/common';
 import { KiwifyWebhookDto } from './dto/kiwify-webhook.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { WebhookLogEntity } from '../infrastructure/database/entities/webhook-log.entity';
 import type { UserRepository } from '../domain/repositories/user.repository';
 import { USER_REPOSITORY_TOKEN } from '../constants/tokens';
 import { EmailService } from '../auth/email.service';
@@ -14,11 +17,29 @@ export class WebhookController {
 
   constructor(
     @Inject(USER_REPOSITORY_TOKEN) private readonly userRepository: UserRepository,
+    @InjectRepository(WebhookLogEntity) private readonly webhookLogRepository: Repository<WebhookLogEntity>,
     private readonly emailService: EmailService,
   ) { }
 
   @Post()
   async handleWebhook(@Body() payload: any) {
+    const logEntry = new WebhookLogEntity();
+    logEntry.payload = JSON.stringify(payload);
+    logEntry.status = 'received';
+
+    // Extrair informações básicas do payload (Kiwify pattern)
+    if (payload) {
+      const actualPayload = Array.isArray(payload) ? payload[0] : payload;
+      logEntry.eventType = actualPayload.webhook_event_type;
+      logEntry.email = actualPayload.Customer?.email;
+    }
+
+    try {
+      await this.webhookLogRepository.save(logEntry);
+    } catch (dbError) {
+      this.logger.error(`❌ Erro ao salvar log do webhook: ${dbError.message}`);
+    }
+
     this.logger.log('=== INÍCIO DO PROCESSAMENTO DO WEBHOOK ===');
     this.logger.log(`Tipo do payload: ${typeof payload}`);
     this.logger.log(`Payload é array: ${Array.isArray(payload)}`);
@@ -198,6 +219,31 @@ export class WebhookController {
       }
       return acc;
     }, {} as Record<string, any>);
+  }
+
+  @Get('logs')
+  async fetchLogs(@Query('limit') limit = 50) {
+    try {
+      const logs = await this.webhookLogRepository.find({
+        order: { createdAt: 'DESC' },
+        take: limit,
+      });
+      return { success: true, data: logs };
+    } catch (error) {
+      this.logger.error(`❌ Erro ao buscar logs do webhook: ${error.message}`);
+      return { success: false, message: 'Internal server error' };
+    }
+  }
+
+  @Post('clear-logs')
+  async clearLogs() {
+    try {
+      await this.webhookLogRepository.clear();
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ Erro ao limpar logs do webhook: ${error.message}`);
+      return { success: false, message: 'Internal server error' };
+    }
   }
 }
 

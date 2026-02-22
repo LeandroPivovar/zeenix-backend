@@ -1,14 +1,16 @@
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef, ForbiddenException, NotFoundException } from '@nestjs/common';
 import WebSocket from 'ws';
 import { DataSource, Repository } from 'typeorm';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { AiTradeLogEntity } from '../infrastructure/database/entities/ai-trade-log.entity';
+import { UserEntity } from '../infrastructure/database/entities/user.entity';
 import { CreateAiTradeLogDto } from './dto/create-ai-trade-log.dto';
 import { StatsIAsService } from './stats-ias.service';
 
 import { StrategyManagerService } from './strategies/strategy-manager.service';
 import { LogQueueService } from '../utils/log-queue.service';
 import { AutonomousAgentService } from '../autonomous-agent/autonomous-agent.service';
+import { PlanPermissionsService } from '../plans/plan-permissions.service';
 import { getMinStakeByCurrency, formatCurrency } from '../utils/currency.utils';
 
 export type DigitParity = 'PAR' | 'IMPAR';
@@ -537,6 +539,9 @@ export class AiService implements OnModuleInit {
     private readonly logQueueService?: LogQueueService, // ✅ Serviço centralizado de logs
     @InjectRepository(AiTradeLogEntity)
     private readonly aiTradeLogRepository?: Repository<AiTradeLogEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository?: Repository<UserEntity>,
+    private readonly planPermissionsService?: PlanPermissionsService,
   ) {
     this.appId = process.env.DERIV_APP_ID || '111346';
   }
@@ -4041,6 +4046,22 @@ export class AiService implements OnModuleInit {
     stopLossBlindado?: boolean, // ✅ ZENIX v2.0: Stop-Loss Blindado (true = ativado com 50%, false/null = desativado)
     symbol?: string, // ✅ ZENIX v2.0: Símbolo/Ativo (opcional)
   ): Promise<void> {
+    // ✅ PASSO -1: VERIFICAR PERMISSÕES DO PLANO
+    if (this.userRepository && this.planPermissionsService) {
+      const user = await this.userRepository.findOne({
+        where: { id: userId },
+        relations: ['plan'],
+      });
+
+      if (!user) {
+        throw new NotFoundException('Usuário não encontrado');
+      }
+
+      if (!this.planPermissionsService.canActivateStrategy(user, strategy)) {
+        this.logger.warn(`[ActivateAI] 🚫 Usuário ${userId} tentou ativar estratégia restrita: ${strategy}`);
+        throw new ForbiddenException(`Seu plano atual não inclui a estratégia ${strategy}.`);
+      }
+    }
 
     // ✅ PASSO 0: RESOLVER CONTA (Evitar Insufficient Balance)
     const resolvedAccount = await this.resolveDerivAccount(userId, derivToken, currency);
