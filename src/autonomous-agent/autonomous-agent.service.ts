@@ -815,7 +815,7 @@ export class AutonomousAgentService implements OnModuleInit {
       // Verificar se já existe configuração (independente de is_active)
       // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
       const existing = await this.dataSource.query(
-        `SELECT id, is_active FROM autonomous_agent_config 
+        `SELECT id, is_active, session_date, session_status FROM autonomous_agent_config 
          WHERE user_id = ?
          LIMIT 1`,
         [userId],
@@ -847,7 +847,12 @@ export class AutonomousAgentService implements OnModuleInit {
                initial_balance = ?,
                risk_level = ?,
                session_status = 'active',
-               session_date = NOW(),
+               session_date = CASE 
+                 WHEN session_date IS NULL THEN NOW()
+                 WHEN DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)) THEN NOW()
+                 WHEN session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss', 'stopped_manual', 'stopped_cycle') THEN NOW()
+                 ELSE session_date 
+               END,
                daily_profit = 0,
                daily_loss = 0,
                updated_at = NOW()

@@ -2206,6 +2206,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         const analysisData = {
             strategy: 'zeus',
             mode: state.mode,
+            sessionId: config.sessionId, // ✅ [ZENIX v4.2] Associar trade à sessão
             probability: trade.marketAnalysis.probability,
             signal: trade.marketAnalysis.signal,
             volatility: trade.marketAnalysis.details?.volatility,
@@ -2222,12 +2223,13 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         try {
             const result = await this.dataSource.query(
                 `INSERT INTO autonomous_agent_trades (
-          user_id, analysis_data, confidence_score, analysis_reasoning,
+          user_id, session_id, analysis_data, confidence_score, analysis_reasoning,
           contract_type, contract_duration, entry_price, stake_amount,
           martingale_level, payout, symbol, status, strategy, deriv_token, deriv_account_type, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', ?, ?, NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'zeus', ?, ?, NOW())`,
                 [
                     userId,
+                    config.sessionId || null, // ✅ [ZENIX v4.2] Salvar session_id do config
                     JSON.stringify(analysisData),
                     trade.marketAnalysis.probability,
                     analysisReasoning,
