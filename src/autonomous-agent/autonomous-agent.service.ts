@@ -997,7 +997,7 @@ export class AutonomousAgentService implements OnModuleInit {
 
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
-         SET is_active = FALSE, session_status = 'manual', updated_at = NOW()
+         SET is_active = FALSE, session_status = 'paused', updated_at = NOW()
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );

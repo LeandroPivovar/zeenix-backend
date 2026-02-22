@@ -237,7 +237,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'falcon'
-           AND c.session_status NOT IN ('profit', 'loss', 'blindado', 'closs')`,
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
@@ -1100,23 +1100,23 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
     switch (reason) {
       case 'TAKE_PROFIT':
-        status = 'profit';
+        status = 'stopped_profit';
         message = `META DE LUCRO ATINGIDA! daily_profit=${state.profit.toFixed(2)}, target=${config.dailyProfitTarget.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
         break;
       case 'STOP_LOSS':
-        status = 'loss';
+        status = 'stopped_loss';
         message = `STOP LOSS ATINGIDO! resultado_total=${state.profit >= 0 ? '+' : ''}${state.profit.toFixed(2)}, limite=${config.dailyLossLimit.toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações.`;
         break;
       case 'BLINDADO':
-        status = 'blindado';
+        status = 'stopped_blindado';
         message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${(config.initialCapital + state.profit).toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações do dia.`;
         break;
       case 'DAILY_LIMIT':
-        status = 'profit';
+        status = 'stopped_profit';
         message = `LIMITE DIÁRIO DE OPERAÇÕES! ops=${state.opsTotal}. Encerrando operações.`;
         break;
       case 'CYCLE_COMPLETE':
-        status = 'cycle';
+        status = 'stopped_profit';
         message = `SESSÃO FINALIZADA: Todos os ${FALCON_CONSTANTS.cycles} ciclos foram concluídos com sucesso! Lucro Total: $${state.profit.toFixed(2)}.`;
         break;
     }

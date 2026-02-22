@@ -94,7 +94,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'sentinel'
-           AND session_status NOT IN ('profit', 'loss', 'blindado', 'closs')`,
+           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
@@ -840,7 +840,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           // Mantém is_active = TRUE para permitir reset automático no dia seguinte
           state.isActive = false; // Pausa em memória
           await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET session_status = 'blindado', is_active = TRUE WHERE user_id = ?`,
+            `UPDATE autonomous_agent_config SET session_status = 'stopped_blindado', is_active = TRUE WHERE user_id = ?`,
             [userId],
           );
 
@@ -1385,7 +1385,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       // Mantém is_active = TRUE para permitir reset automático no dia seguinte
       try {
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'profit', is_active = TRUE WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_profit', is_active = TRUE WHERE user_id = ?`,
           [userId],
         );
       } catch (error) {
@@ -1402,7 +1402,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
       // Mantém is_active = TRUE para permitir reset automático no dia seguinte
       try {
         await this.dataSource.query(
-          `UPDATE autonomous_agent_config SET session_status = 'loss', is_active = TRUE WHERE user_id = ?`,
+          `UPDATE autonomous_agent_config SET session_status = 'stopped_loss', is_active = TRUE WHERE user_id = ?`,
           [userId],
         );
       } catch (error) {
