@@ -453,6 +453,70 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.ticks.set(userId, []);
     }
 
+    /**
+     * ✅ [ZENIX v2.7] Reconstrói o estado interno a partir do histórico de trades
+     * Evita que o agente resete para NORMAL após reinícios ou sincronizações de 5min.
+     */
+    private async reconstructStateFromHistory(userId: string): Promise<void> {
+        const state = this.userStates.get(userId);
+        const config = this.userConfigs.get(userId);
+        if (!state || !config) return;
+
+        try {
+            // Buscar os últimos 5 trades do usuário HOJE para a estratégia Zeus
+            const trades = await this.dataSource.query(
+                `SELECT status, profit_loss, created_at 
+                 FROM autonomous_agent_trades 
+                 WHERE user_id = ? 
+                   AND strategy = 'zeus' 
+                   AND DATE(DATE_SUB(created_at, INTERVAL 3 HOUR)) = DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR))
+                 ORDER BY created_at DESC 
+                 LIMIT 5`,
+                [userId]
+            );
+
+            if (!trades || trades.length === 0) {
+                this.logger.debug(`[Zeus][${userId}] Histórico vazio hoje. Iniciando em MODO NORMAL.`);
+                return;
+            }
+
+            let consecutiveLosses = 0;
+            let perdasAcumuladas = 0;
+
+            // Analisar trades de trás para frente (do mais recente para o mais antigo)
+            for (const trade of trades) {
+                if (trade.status === 'LOST') {
+                    consecutiveLosses++;
+                    perdasAcumuladas += Math.abs(parseFloat(trade.profit_loss || 0));
+                } else if (trade.status === 'WON') {
+                    // Se encontrou uma vitória, a sequência de perdas acabou aqui
+                    break;
+                }
+                // DRAW/PENDING ignorados na contagem de streak negativa
+            }
+
+            if (consecutiveLosses > 0) {
+                state.consecutiveLosses = consecutiveLosses;
+                state.perdasAcumuladas = perdasAcumuladas;
+                state.currentLoss = perdasAcumuladas;
+
+                // Reconstruir modo baseado na hierarquia Zeus V4
+                if (consecutiveLosses === 1) {
+                    state.mode = 'PRECISO';
+                    state.recoveryLock = true;
+                } else if (consecutiveLosses >= 2) {
+                    state.mode = 'MAXIMO';
+                    state.recoveryLock = true;
+                }
+
+                this.logger.log(`[Zeus][${userId}] 🔄 ESTADO RECONSTRUÍDO: ${consecutiveLosses} perdas seguidas. Modo atual: ${state.mode}. Perda acumulada: $${perdasAcumuladas.toFixed(2)}`);
+                this.saveLog(userId, 'INFO', 'CORE', `🔄 ESTADO RECUPERADO: Retomando em modo ${state.mode} com ${consecutiveLosses} perdas consecutivas.`);
+            }
+        } catch (error) {
+            this.logger.error(`[Zeus][${userId}] ❌ Erro ao reconstruir estado do histórico:`, error);
+        }
+    }
+
     async activateUser(userId: string, config: AutonomousAgentConfig): Promise<void> {
         // Mapear AutonomousAgentConfig (DB) para ZeusConfig (Spec)
         // Valores default do Spec `buildDefaultConfig`
@@ -554,6 +618,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         this.userConfigs.set(userId, zeusConfig);
         this.initializeUserState(userId, zeusConfig);
+
+        // ✅ [ZENIX v2.7] RECONSTRUÇÃO DE ESTADO (Anti-Reset)
+        // Recuperar perdas consecutivas e modo de operação a partir do histórico de hoje
+        await this.reconstructStateFromHistory(userId);
 
         // ✅ PRÉ-AQUECER conexão WebSocket para evitar erro "Conexão não está pronta"
         try {

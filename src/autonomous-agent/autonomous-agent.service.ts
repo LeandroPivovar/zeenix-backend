@@ -552,7 +552,7 @@ export class AutonomousAgentService implements OnModuleInit {
         `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss') 
-           AND (session_date IS NULL OR DATE(CONVERT_TZ(session_date, '+00:00', '-03:00')) < DATE(CONVERT_TZ(NOW(), '+00:00', '-03:00')))`
+           AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
       // 2. Resetar lucro diário de agentes que ficaram ATIVOS mas mudou o dia
@@ -561,7 +561,7 @@ export class AutonomousAgentService implements OnModuleInit {
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND session_status = 'active'
-           AND (session_date IS NULL OR DATE(CONVERT_TZ(session_date, '+00:00', '-03:00')) < DATE(CONVERT_TZ(NOW(), '+00:00', '-03:00')))`
+           AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
       const allAgentsToReset = [...agentsToReset, ...activeAgentsToReset];
