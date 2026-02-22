@@ -953,6 +953,13 @@ export class AutonomousAgentService implements OnModuleInit {
           `[ActivateAgent] 🔑 Token a ser usado: ${tokenDeriv ? 'token_deriv (conta padrão)' : 'deriv_token (fornecido)'} | Token: ${tokenToUse ? tokenToUse.substring(0, 8) + '...' : 'N/A'}`
         );
 
+        // ✅ Buscar a session_date recém atualizada/inserida no banco para evitar problemas de timezone
+        const updatedConfig = await this.dataSource.query(
+          `SELECT session_date FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE LIMIT 1`,
+          [userId]
+        );
+        const actualSessionDate = updatedConfig && updatedConfig.length > 0 ? updatedConfig[0].session_date : new Date();
+
         await this.strategyManager.activateUser(strategy, userId, {
           userId: userId,
           initialStake: config.initialStake,
@@ -967,7 +974,7 @@ export class AutonomousAgentService implements OnModuleInit {
           stopLossType: config.stopLossType,
           riskProfile: this.normalizeRiskProfile(config.riskProfile),
           agentType: strategy,
-          sessionDate: new Date()
+          sessionDate: actualSessionDate
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
