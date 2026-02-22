@@ -1857,16 +1857,17 @@ export class AutonomousAgentService implements OnModuleInit {
 
       let query = `
          SELECT 
-           id,
-           created_at,
-           symbol,
-           contract_type,
-           stake_amount as stake,
-           profit_loss,
-           status,
-           entry_price,
-           exit_price,
-           strategy
+         id,
+         session_id,
+         created_at,
+         symbol,
+         contract_type,
+         stake_amount as stake,
+         profit_loss,
+         status,
+         entry_price,
+         exit_price,
+         strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            ${dateCondition}
