@@ -25,7 +25,7 @@ import { PlansModule } from '../plans/plans.module';
     forwardRef(() => AutonomousAgentModule), // ✅ Importar para compartilhar ticks
     BrokerModule,
     CopyTradingModule, // ✅ Importar para usar CopyTradingService
-    PlansModule, // ✅ Importar para usar PlanPermissionsService
+    forwardRef(() => PlansModule), // ✅ Importar para usar PlanPermissionsService
   ],
   controllers: [AiController],
   providers: [

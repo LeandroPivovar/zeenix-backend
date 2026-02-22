@@ -21,7 +21,7 @@ import { ZeusStrategy } from './strategies/zeus.strategy';
     forwardRef(() => SettingsModule),
     BrokerModule,
     forwardRef(() => AiModule), // ✅ Importar AiModule para usar OrionStrategy
-    PlansModule, // ✅ Importar PlansModule para usar PlanPermissionsService
+    forwardRef(() => PlansModule), // ✅ Importar PlansModule para usar PlanPermissionsService
     // ✅ UtilsModule é global, não precisa importar
   ],
   controllers: [AutonomousAgentController],

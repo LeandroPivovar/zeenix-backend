@@ -11,7 +11,7 @@ import { PlansModule } from '../plans/plans.module';
   imports: [
     TypeOrmModule.forFeature([ExpertEntity, UserEntity]),
     forwardRef(() => BrokerModule),
-    PlansModule,
+    forwardRef(() => PlansModule),
   ],
   controllers: [CopyTradingController],
   providers: [CopyTradingService],
