@@ -1036,30 +1036,19 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém histórico de trades da sessão atual (após session_date)
    */
   async getTradeHistory(userId: string, limit: number = 50): Promise<any[]> {
-    // ✅ Buscar session_date da configuração do agente
-    const config = await this.dataSource.query(
-      `SELECT session_date 
-       FROM autonomous_agent_config 
-       WHERE user_id = ? AND is_active = TRUE
-       LIMIT 1`,
-      [userId],
-    );
-
-    // ✅ Se não houver configuração ou session_date, retornar vazio
-    if (!config || config.length === 0 || !config[0].session_date) {
-      return [];
-    }
-
-    const sessionDate = config[0].session_date;
-
-    // ✅ Filtrar apenas operações criadas após o início da sessão atual
+    // ✅ [ZENIX v4.3] Usar subconsulta para obter session_date e filtrar trades.
+    // Isso evita duplicação se houver mais de um registro "is_active" na config.
     return await this.dataSource.query(
       `SELECT * FROM autonomous_agent_trades 
        WHERE user_id = ? 
-         AND created_at >= ?
+         AND created_at >= (
+           SELECT session_date FROM autonomous_agent_config 
+           WHERE user_id = ? AND is_active = TRUE 
+           LIMIT 1
+         )
        ORDER BY COALESCE(closed_at, created_at) DESC 
        LIMIT ?`,
-      [userId, sessionDate, limit],
+      [userId, userId, limit],
     );
   }
 
@@ -1132,6 +1121,7 @@ export class AutonomousAgentService implements OnModuleInit {
     }
 
     // ✅ Filtrar apenas operações criadas após o início da sessão atual
+    // ✅ [ZENIX v4.3] Subquery robusto contra duplicação por JOIN
     const sessionTrades = await this.dataSource.query(
       `SELECT 
          status,
@@ -1142,9 +1132,13 @@ export class AutonomousAgentService implements OnModuleInit {
        WHERE user_id = ? 
          AND status IN ('WON', 'LOST')
          AND profit_loss IS NOT NULL
-         AND created_at >= ?
+         AND created_at >= (
+           SELECT session_date FROM autonomous_agent_config 
+           WHERE user_id = ? AND is_active = TRUE 
+           LIMIT 1
+         )
        ORDER BY COALESCE(closed_at, created_at) DESC`,
-      [userId, sessionDate],
+      [userId, userId],
     );
 
     // ✅ Calcular lucro/perda do dia baseado nas operações
