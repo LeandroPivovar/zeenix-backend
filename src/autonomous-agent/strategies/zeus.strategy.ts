@@ -249,7 +249,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
-            c.daily_profit,
+            c.daily_profit, c.session_date,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -359,7 +359,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                     limitOpsCycle: 500,
 
                     // ✅ V4.1 Profit Sync
-                    dailyProfit: parseFloat(user.daily_profit) || 0
+                    dailyProfit: parseFloat(user.daily_profit) || 0,
+
+                    // ✅ Puxar sessionDate para reconstrução de estado correta
+                    sessionDate: user.session_date
                 };
 
 

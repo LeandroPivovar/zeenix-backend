@@ -229,7 +229,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
-            c.session_id,
+            c.session_id, c.session_date,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -319,6 +319,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           initialBalance: parseFloat(user.initial_balance) || 0,
           stopLossType: user.stop_loss_type === 'blindado' ? 'blindado' : 'normal',
           sessionId: user.session_id ? parseInt(user.session_id) : undefined,
+          sessionDate: user.session_date,
         };
 
         this.userConfigs.set(userId, config);
