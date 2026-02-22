@@ -847,12 +847,7 @@ export class AutonomousAgentService implements OnModuleInit {
                initial_balance = ?,
                risk_level = ?,
                session_status = 'active',
-               session_date = CASE 
-                 WHEN session_date IS NULL THEN NOW()
-                 WHEN DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)) THEN NOW()
-                 WHEN session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'paused') THEN NOW()
-                 ELSE session_date 
-               END,
+               session_date = NOW(),
                daily_profit = 0,
                daily_loss = 0,
                updated_at = NOW()
