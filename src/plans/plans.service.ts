@@ -172,6 +172,7 @@ export class PlansService {
     isActive?: boolean;
     displayOrder?: number;
     externalId?: string;
+    purchaseLink?: string;
   }) {
     // Verificar se slug já existe
     const existingSlug = await this.planRepository.findOne({
@@ -234,6 +235,7 @@ export class PlansService {
     isActive?: boolean;
     displayOrder?: number;
     externalId?: string;
+    purchaseLink?: string;
   }) {
     const plan = await this.planRepository.findOne({ where: { id } });
 
