@@ -459,7 +459,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         existingConfig.dailyProfitTarget !== falconConfig.dailyProfitTarget ||
         existingConfig.dailyLossLimit !== falconConfig.dailyLossLimit ||
         existingConfig.initialStake !== falconConfig.initialStake ||
-        existingConfig.symbol !== falconConfig.symbol
+        existingConfig.symbol !== falconConfig.symbol ||
+        String(existingConfig.sessionDate) !== String(falconConfig.sessionDate) // ✅ [ZENIX v4.3] Detectar mudança de sessão
       );
 
       if (!hasSignificantChange) {
@@ -471,8 +472,26 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.userConfigs.set(userId, falconConfig);
 
       const state = this.userStates.get(userId);
-      if (state && !state.isActive && !state.sessionEnded) {
-        state.isActive = true;
+      if (state) {
+        // ✅ [ZENIX v4.3] Resetar flags se a sessão mudou or if manual restart detected
+        const sessionDateChanged = existingConfig && String(existingConfig.sessionDate) !== String(falconConfig.sessionDate);
+        const manualRestart = (falconConfig as any).sessionStatus === 'active';
+
+        if (sessionDateChanged || manualRestart) {
+          if (manualRestart && !sessionDateChanged) {
+            this.logger.log(`[Falcon][${userId}] 🚀 Re-inicialização manual detectada (Status: active). Resetando flags.`);
+          } else if (sessionDateChanged) {
+            this.logger.log(`[Falcon][${userId}] 📅 Nova sessão detectada (${falconConfig.sessionDate}). Resetando flags.`);
+          }
+
+          state.sessionEnded = false;
+          state.isActive = true;
+          state.endReason = undefined;
+          state.profit = (falconConfig as any).dailyProfit || 0;
+          state.lucroAtual = state.profit;
+        } else if (!state.isActive && !state.sessionEnded) {
+          state.isActive = true;
+        }
       }
 
       const mode = state?.mode || 'PRECISO';

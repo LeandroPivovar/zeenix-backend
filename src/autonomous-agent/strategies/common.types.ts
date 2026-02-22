@@ -14,6 +14,7 @@ export interface AutonomousAgentConfig {
   symbol: string;
   initialBalance?: number;
   sessionDate?: Date | string;
+  sessionStatus?: string;
   // Configurações específicas por agente
   [key: string]: any;
 }

@@ -670,9 +670,28 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             // Se mudou algo significativo, preservamos o que der do estado mas revalidamos
             const state = this.userStates.get(userId);
             if (state) {
-                if (!state.isActive && !state.sessionEnded) {
+                // ✅ [ZENIX v4.3] Se a mudança for de DATA DE SESSÃO ou se o status vindo do banco for 'active' (start manual), resetar flags de parada
+                const sessionDateChanged = existingConfig && String(existingConfig.sessionDate) !== String(zeusConfig.sessionDate);
+                const manualRestart = zeusConfig.sessionStatus === 'active';
+
+                if (sessionDateChanged || manualRestart) {
+                    if (manualRestart && !sessionDateChanged) {
+                        this.logger.log(`[Zeus][${userId}] 🚀 Re-inicialização manual detectada (Status: active). Resetando flags de parada.`);
+                    } else if (sessionDateChanged) {
+                        this.logger.log(`[Zeus][${userId}] 📅 Nova sessão detectada (${zeusConfig.sessionDate}). Resetando flags de parada.`);
+                    }
+
+                    state.sessionEnded = false;
+                    state.isActive = true;
+                    state.endReason = undefined;
+                    state.profit = zeusConfig.dailyProfit || 0;
+                    state.lucroAtual = state.profit;
+                    state.currentProfit = state.profit;
+                    state.inStrategicPauseUntilTs = 0;
+                } else if (!state.isActive && !state.sessionEnded) {
                     state.isActive = true;
                 }
+
                 // Re-logar para confirmar as novas bases
                 const mode = state.mode || 'NORMAL';
                 this.logInitialConfigV2(userId, {

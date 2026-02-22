@@ -526,7 +526,8 @@ export class AutonomousAgentService implements OnModuleInit {
             stopLossType: agent.stop_loss_type,
             riskProfile: agent.risk_level || agent.risk_profile,
             agentType: agent.agent_type,
-            sessionDate: agent.session_date
+            sessionDate: agent.session_date,
+            sessionStatus: agent.session_status
           });
         } catch (err) {
           this.logger.error(`[SyncActiveAgents] Erro ao ativar usuário ${agent.user_id}: ${err.message}`);
@@ -977,7 +978,8 @@ export class AutonomousAgentService implements OnModuleInit {
           riskProfile: this.normalizeRiskProfile(config.riskProfile),
           agentType: strategy,
           sessionDate: actualSessionDate,
-          sessionId: newSessionId
+          sessionId: newSessionId,
+          sessionStatus: 'active'
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
