@@ -56,6 +56,10 @@ class CreatePlanDto {
   @IsString()
   @IsOptional()
   externalId?: string;
+
+  @IsString()
+  @IsOptional()
+  purchaseLink?: string;
 }
 
 class UpdatePlanDto {
@@ -106,6 +110,10 @@ class UpdatePlanDto {
   @IsString()
   @IsOptional()
   externalId?: string;
+
+  @IsString()
+  @IsOptional()
+  purchaseLink?: string;
 }
 
 @Controller('plans')
