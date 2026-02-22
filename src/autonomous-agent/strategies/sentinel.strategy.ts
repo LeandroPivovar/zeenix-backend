@@ -94,7 +94,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'sentinel'
-           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
@@ -170,16 +170,27 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
     };
 
     if (this.userConfigs.has(userId)) {
-      // ✅ [FIX] SÓ REATIVAR se não estiver parado
-      const state = this.userStates.get(userId);
-      if (state && !state.isActive) {
-        // Se já está nas configs mas está inativo, só reativar se não for stop
-        // Sentinel usa isActive=false para parar no dia.
-        // A query do sync já deve filtrar session_status, mas garantimos aqui via isUserActive interno ou similar se necessário.
-        // Como o state é resetado no midnight, aqui apenas evitamos o override do sync de 5min.
-        return;
+      const existingConfig = this.userConfigs.get(userId);
+      const sessionDateChanged = existingConfig && String(existingConfig.sessionDate) !== String(sentinelConfig.sessionDate);
+      const manualRestart = (config as any).sessionStatus === 'active';
+
+      // ✅ [ZENIX v4.3] Se a sessão mudou ou reinício manual detectado, resetar tudo
+      if (sessionDateChanged || manualRestart) {
+        if (manualRestart && !sessionDateChanged) {
+          this.logger.log(`[Sentinel][${userId}] 🚀 Re-inicialização manual detectada (Status: active). Resetando flags.`);
+        } else if (sessionDateChanged) {
+          this.logger.log(`[Sentinel][${userId}] 📅 Nova sessão detectada (${sentinelConfig.sessionDate}). Resetando flags.`);
+        }
+        this.userConfigs.set(userId, sentinelConfig);
+        this.initializeUserState(userId, sentinelConfig);
+      } else {
+        // ✅ [FIX] SÓ REATIVAR se não estiver parado
+        const state = this.userStates.get(userId);
+        if (state && !state.isActive && !state.sessionEnded) {
+          state.isActive = true;
+        }
+        this.userConfigs.set(userId, sentinelConfig);
       }
-      this.userConfigs.set(userId, sentinelConfig);
       return;
     }
 
@@ -1389,7 +1400,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           [userId],
         );
       } catch (error) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_profit:`, error);
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para profit:`, error);
       }
     }
 
@@ -1406,7 +1417,7 @@ export class SentinelStrategy implements IAutonomousAgentStrategy, OnModuleInit 
           [userId],
         );
       } catch (error) {
-        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para stopped_loss:`, error);
+        this.logger.error(`[Sentinel][${userId}] ❌ Erro ao atualizar status para loss:`, error);
       }
     }
   }

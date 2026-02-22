@@ -12,8 +12,9 @@ export interface AutonomousAgentConfig {
   derivToken: string;
   currency: string;
   symbol: string;
-  sessionId?: number;
   initialBalance?: number;
+  sessionDate?: Date | string;
+  sessionStatus?: string;
   // Configurações específicas por agente
   [key: string]: any;
 }
@@ -58,4 +59,3 @@ export interface IAutonomousAgentStrategy {
   resetDailySession(userId: string): Promise<void>;
   isUserActive(userId: string): boolean;
 }
-

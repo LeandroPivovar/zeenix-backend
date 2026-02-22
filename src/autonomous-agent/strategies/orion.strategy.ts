@@ -71,7 +71,7 @@ export class OrionAutonomousStrategy implements IAutonomousAgentStrategy, OnModu
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND agent_type = 'orion'
-           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+           AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {

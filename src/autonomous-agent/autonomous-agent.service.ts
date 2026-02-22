@@ -35,7 +35,6 @@ export class AutonomousAgentService implements OnModuleInit {
   private subscriptionId: string | null = null;
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private lastTickReceivedTime: number = 0;
-  private userSessionIds = new Map<string, number>(); // ✅ Mapeia userId -> current session ID (ai_sessions.id)
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -44,7 +43,7 @@ export class AutonomousAgentService implements OnModuleInit {
     @Inject(forwardRef(() => LogQueueService))
     private readonly logQueueService?: LogQueueService,
   ) {
-    this.appId = process.env.DERIV_APP_ID || '1089';
+    this.appId = process.env.DERIV_APP_ID || '111346';
   }
 
   async onModuleInit() {
@@ -137,8 +136,6 @@ export class AutonomousAgentService implements OnModuleInit {
       }
 
       this.logger.log('[CreateStatsIndexes] ✅ Verificação de esquema concluída');
-
-
     } catch (error) {
       this.logger.error('[CreateStatsIndexes] Erro fatal na verificação de esquema:', error);
       // Não lançar erro para não parar a inicialização
@@ -280,8 +277,7 @@ export class AutonomousAgentService implements OnModuleInit {
   private handleMessage(msg: any): void {
     if (msg.error) {
       const errorMsg = msg.error.message || JSON.stringify(msg.error);
-      const reqDetails = msg.echo_req ? JSON.stringify(msg.echo_req) : 'Sem detalhes';
-      this.logger.error(`❌ Erro da API: ${errorMsg} | Req: ${reqDetails}`);
+      this.logger.error('❌ Erro da API:', errorMsg);
       return;
     }
 
@@ -327,7 +323,7 @@ export class AutonomousAgentService implements OnModuleInit {
         if (msg.tick) {
           // ✅ Identificar símbolo pelo subscription ID ou usar R_100 como fallback
           const tickSubId = msg.subscription?.id;
-          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || this.symbol;
+          const symbolForTick = msg.tick.symbol || this.getSymbolForSubscription(tickSubId) || 'R_100';
 
           if (tickSubId && (this.subscriptionId !== tickSubId || !this.subscriptions.has(symbolForTick))) {
             this.subscriptionId = tickSubId;
@@ -503,7 +499,7 @@ export class AutonomousAgentService implements OnModuleInit {
            SELECT user_id, MAX(updated_at) as max_updated
            FROM autonomous_agent_config
            WHERE is_active = TRUE 
-             AND session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')
+             AND session_status NOT IN ('profit', 'loss', 'blindado', 'closs')
            GROUP BY user_id
          ) latest ON c.user_id = latest.user_id AND c.updated_at = latest.max_updated
          WHERE c.is_active = TRUE`,
@@ -516,28 +512,22 @@ export class AutonomousAgentService implements OnModuleInit {
           const strategyName = agent.agent_type || 'orion';
           const userId = agent.user_id.toString();
 
-          // ✅ [ZENIX v3.4] Restaurar sessionId em memória se presente no banco
-          const sessionId = agent.session_id ? parseInt(agent.session_id) : null;
-          if (sessionId) {
-            this.userSessionIds.set(userId, sessionId);
-          }
-
           await this.strategyManager.activateUser(strategyName, userId, {
             userId: userId,
-            sessionId: sessionId, // Restaurar sessionId
             initialStake: parseFloat(agent.initial_stake),
             dailyProfitTarget: parseFloat(agent.daily_profit_target),
             dailyLossLimit: parseFloat(agent.daily_loss_limit),
             derivToken: agent.token_deriv || agent.deriv_token, // ✅ Usar token_deriv (conta padrão) com fallback para deriv_token
             currency: agent.currency,
-            status: agent.status,
-            symbol: strategyName === 'zeus' ? '1HZ100V' : (agent.symbol || 'R_100'),
+            symbol: agent.symbol || 'R_100',
             tradingMode: agent.trading_mode || 'normal',
             initialBalance: parseFloat(agent.initial_balance) || 0,
             // Passar type explicitamente para strategies que precisam (Sentinel/Falcon)
             stopLossType: agent.stop_loss_type,
             riskProfile: agent.risk_level || agent.risk_profile,
-            agentType: agent.agent_type
+            agentType: agent.agent_type,
+            sessionDate: agent.session_date,
+            sessionStatus: agent.session_status
           });
         } catch (err) {
           this.logger.error(`[SyncActiveAgents] Erro ao ativar usuário ${agent.user_id}: ${err.message}`);
@@ -558,29 +548,22 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async checkAndResetDailySessions(): Promise<void> {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString().split('T')[0];
-
       // 1. Resetar agentes que bateram stop em DIAS ANTERIORES
-      // ✅ CORREÇÃO: Usar todayStr para garantir que só reseta se mudou o dia.
-      // Removido o filtro de 1 hora que causava resets prematuros.
+      // ✅ CORREÇÃO: Usar hora convertida do próprio banco para evitar bugs de fuso horário (UTC vs Local)
       const agentsToReset = await this.dataSource.query(
-        `SELECT id, user_id, agent_type, session_status, trading_mode, session_source FROM autonomous_agent_config 
+        `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss') 
-           AND (session_date IS NULL OR DATE(session_date) < ?)`,
-        [todayStr],
+           AND session_status IN ('profit', 'loss', 'blindado', 'closs', 'manual', 'cycle') 
+           AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
       // 2. Resetar lucro diário de agentes que ficaram ATIVOS mas mudou o dia
       const activeAgentsToReset = await this.dataSource.query(
-        `SELECT id, user_id, session_status, session_date, agent_type, trading_mode, session_source
+        `SELECT id, user_id, session_status, session_date
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND session_status = 'active'
-           AND (session_date IS NULL OR DATE(session_date) < ?)`,
-        [todayStr],
+           AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
       const allAgentsToReset = [...agentsToReset, ...activeAgentsToReset];
@@ -618,7 +601,7 @@ export class AutonomousAgentService implements OnModuleInit {
         const config = await this.dataSource.query(
           `SELECT initial_stake, daily_profit_target, daily_loss_limit, 
                   deriv_token, currency, symbol, trading_mode, initial_balance, agent_type,
-                  stop_loss_type, risk_level, token_deriv, session_source
+                  stop_loss_type, risk_level, token_deriv
            FROM autonomous_agent_config 
            WHERE user_id = ? AND is_active = TRUE
            LIMIT 1`,
@@ -644,19 +627,8 @@ export class AutonomousAgentService implements OnModuleInit {
           // Para garantir que o lucro zere à meia noite:
           await this.strategyManager.deactivateUser(userId);
 
-          // ✅ [ZENIX v3.4] Iniciar NOVA SESSÃO para o novo dia
-          const sessionSource = agentConfig.session_source || 'ALUNO';
-          const newSessionId = await this.createNewSession(userId, strategyName, agentConfig.trading_mode || 'normal', sessionSource);
-
-          // Atualizar config com o novo session_id
-          await this.dataSource.query(
-            `UPDATE autonomous_agent_config SET session_id = ? WHERE user_id = ?`,
-            [newSessionId, userId]
-          );
-
           await this.strategyManager.activateUser(strategyName, userId, {
             userId: userId,
-            sessionId: newSessionId, // Nova sessão
             initialStake: parseFloat(agentConfig.initial_stake),
             dailyProfitTarget: parseFloat(agentConfig.daily_profit_target),
             dailyLossLimit: parseFloat(agentConfig.daily_loss_limit),
@@ -667,7 +639,8 @@ export class AutonomousAgentService implements OnModuleInit {
             initialBalance: parseFloat(agentConfig.initial_balance) || 0,
             stopLossType: agentConfig.stop_loss_type,
             riskProfile: agentConfig.risk_level || agentConfig.risk_profile,
-            agentType: agentConfig.agent_type
+            agentType: agentConfig.agent_type,
+            sessionDate: new Date()
           });
         }
       }
@@ -843,11 +816,15 @@ export class AutonomousAgentService implements OnModuleInit {
       // Verificar se já existe configuração (independente de is_active)
       // O índice idx_user_id é UNIQUE, então só pode haver um registro por user_id
       const existing = await this.dataSource.query(
-        `SELECT id, is_active FROM autonomous_agent_config 
+        `SELECT id, is_active, session_date, session_status FROM autonomous_agent_config 
          WHERE user_id = ?
          LIMIT 1`,
         [userId],
       );
+
+      // ✅ [ZENIX v4.0] Generate a new session ID for this activation
+      const crypto = require('crypto');
+      const newSessionId = crypto.randomUUID();
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -876,6 +853,7 @@ export class AutonomousAgentService implements OnModuleInit {
                risk_level = ?,
                session_status = 'active',
                session_date = NOW(),
+               session_id = ?,
                daily_profit = 0,
                daily_loss = 0,
                updated_at = NOW()
@@ -894,10 +872,11 @@ export class AutonomousAgentService implements OnModuleInit {
             config.stopLossType || 'normal',
             config.initialBalance || 0,
             config.riskProfile || 'balanced',
+            newSessionId,
             userId,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`);
+        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId} com sessão ${newSessionId}`);
       } else {
         // ✅ Determinar agent_type baseado na estratégia
         const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
@@ -908,8 +887,8 @@ export class AutonomousAgentService implements OnModuleInit {
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
             deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance, risk_level,
-            session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+            session_status, session_date, session_id, daily_profit, daily_loss, created_at, updated_at)
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?, 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -919,15 +898,16 @@ export class AutonomousAgentService implements OnModuleInit {
             tokenDeriv,
             amountDeriv,
             config.currency || 'USD',
-            normalizedAgentType === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100'),
+            config.symbol || 'R_100', // ✅ Todos os agentes autônomos usam R_100
             normalizedAgentType,
             config.tradingMode || 'normal',
             config.stopLossType || 'normal',
             config.initialBalance || 0,
             config.riskProfile || 'balanced',
+            newSessionId,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
+        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId} com sessão ${newSessionId}`);
       }
 
       // ✅ Determinar estratégia baseado no agentType
@@ -948,8 +928,8 @@ export class AutonomousAgentService implements OnModuleInit {
         throw new Error('StrategyManager não está disponível. Verifique se o módulo foi inicializado corretamente.');
       }
 
-      // ✅ Zeus usa exclusivamente 1HZ100V
-      const agentSymbol = strategy === 'zeus' ? '1HZ100V' : (config.symbol || 'R_100');
+      // ✅ Todos os agentes autônomos usam R_100
+      const agentSymbol = config.symbol || 'R_100';
 
       // ✅ Garantir que estamos inscritos no símbolo necessário
       if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -976,21 +956,15 @@ export class AutonomousAgentService implements OnModuleInit {
           `[ActivateAgent] 🔑 Token a ser usado: ${tokenDeriv ? 'token_deriv (conta padrão)' : 'deriv_token (fornecido)'} | Token: ${tokenToUse ? tokenToUse.substring(0, 8) + '...' : 'N/A'}`
         );
 
-        // ✅ [ZENIX v3.4] Iniciar nova sessão no ai_sessions para tracking
-        const sessionSource = config.session_source || config.sessionSource || 'ALUNO';
-        const sessionId = await this.createNewSession(userId, strategy, config.tradingMode || 'normal', sessionSource);
-
-        // Atualizar config com o novo session_id e session_source
-        await this.dataSource.query(
-          `UPDATE autonomous_agent_config 
-           SET session_id = ?, session_source = ? 
-           WHERE user_id = ?`,
-          [sessionId, sessionSource, userId]
+        // ✅ Buscar a session_date recém atualizada/inserida no banco para evitar problemas de timezone
+        const updatedConfig = await this.dataSource.query(
+          `SELECT session_date FROM autonomous_agent_config WHERE user_id = ? AND is_active = TRUE LIMIT 1`,
+          [userId]
         );
+        const actualSessionDate = updatedConfig && updatedConfig.length > 0 ? updatedConfig[0].session_date : new Date();
 
         await this.strategyManager.activateUser(strategy, userId, {
           userId: userId,
-          sessionId: sessionId, // Passar sessionId para a estratégia
           initialStake: config.initialStake,
           dailyProfitTarget: config.dailyProfitTarget,
           dailyLossLimit: config.dailyLossLimit,
@@ -1002,9 +976,12 @@ export class AutonomousAgentService implements OnModuleInit {
           // ✅ Parâmetros extras necessários para logic de proteção/gestão
           stopLossType: config.stopLossType,
           riskProfile: this.normalizeRiskProfile(config.riskProfile),
-          agentType: strategy
+          agentType: strategy,
+          sessionDate: actualSessionDate,
+          sessionId: newSessionId,
+          sessionStatus: 'active'
         });
-        this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy} (Session ID: ${sessionId})`);
+        this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
         this.logger.error(`[ActivateAgent] Erro ao ativar usuário na estratégia ${strategy}:`, strategyError);
         throw new Error(`Erro ao ativar agente na estratégia ${strategy}: ${strategyError.message}`);
@@ -1018,60 +995,30 @@ export class AutonomousAgentService implements OnModuleInit {
   }
 
   /**
-   * ✅ [ZENIX v3.4] Cria uma nova sessão no banco ai_sessions
-   */
-  private async createNewSession(userId: string, agentType: string, tradingMode: string, sessionSource: string = 'ALUNO'): Promise<number> {
-    try {
-      // 1. Fechar sessões anteriores do usuário (se houver)
-      await this.dataSource.query(
-        `UPDATE ai_sessions SET status = 'closed', end_time = NOW() WHERE user_id = ? AND status = 'active'`,
-        [userId]
-      );
-
-      // 2. Criar nova sessão
-      const aiName = `AGENT_${agentType.toUpperCase()}_${sessionSource.toUpperCase()}`;
-      const accountType = tradingMode === 'real' ? 'real' : 'demo';
-
-      const result = await this.dataSource.query(
-        `INSERT INTO ai_sessions (user_id, ai_name, status, account_type, start_time, total_trades, total_wins, total_losses, total_profit) 
-         VALUES (?, ?, 'active', ?, NOW(), 0, 0, 0, 0)`,
-        [userId, aiName, accountType]
-      );
-
-      const sessionId = result.insertId;
-      this.userSessionIds.set(userId, sessionId);
-      this.logger.log(`[CreateNewSession] ✅ Nova sessão criada para user ${userId}: ${aiName} (ID: ${sessionId})`);
-
-      return sessionId;
-    } catch (error) {
-      this.logger.error(`[CreateNewSession] ❌ Erro ao criar nova sessão para user ${userId}:`, error);
-      return 0;
-    }
-  }
-
-  /**
    * Desativa um agente autônomo
    */
   async deactivateAgent(userId: string): Promise<void> {
     try {
+      // ✅ [ZENIX v4.3] Buscar agent_type antes de desativar para passar para o strategyManager com a assinatura correta (agentName, userId)
+      const config = await this.dataSource.query(
+        `SELECT agent_type FROM autonomous_agent_config WHERE user_id = ?`,
+        [userId]
+      );
+
+      const agentType = config && config.length > 0 ? config[0].agent_type : null;
+
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
-         SET is_active = FALSE, updated_at = NOW()
+         SET is_active = FALSE, session_status = 'paused', updated_at = NOW()
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );
 
-      await this.strategyManager.deactivateUser(userId);
-
-      // ✅ [ZENIX v3.4] Fechar sessão no ai_sessions
-      const sessionId = this.userSessionIds.get(userId);
-      if (sessionId) {
-        await this.dataSource.query(
-          `UPDATE ai_sessions SET status = 'inactive', end_time = NOW() WHERE id = ?`,
-          [sessionId]
-        );
-        this.userSessionIds.delete(userId);
-        this.logger.log(`[DeactivateAgent] ✅ Sessão ${sessionId} encerrada para usuário ${userId}`);
+      if (agentType) {
+        await this.strategyManager.deactivateUser(userId);
+      } else {
+        this.logger.warn(`[DeactivateAgent] ⚠️ Agent type não encontrado para usuário ${userId}. Notificando strategyManager para desativar todas as estratégias do usuário.`);
+        await this.strategyManager.deactivateUser(userId);
       }
 
       this.logger.log(`[DeactivateAgent] ✅ Agente autônomo desativado para usuário ${userId}`);
@@ -1099,35 +1046,19 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém histórico de trades da sessão atual (após session_date)
    */
   async getTradeHistory(userId: string, limit: number = 50): Promise<any[]> {
-    // ✅ Buscar session_date da configuração do agente
-    const configResults = await this.dataSource.query(
-      `SELECT session_date, session_id
-        FROM autonomous_agent_config
-        WHERE user_id = ? AND is_active = TRUE
-        LIMIT 1`,
-      [userId],
-    );
-
-    // ✅ Se não houver configuração, retornar vazio
-    if (!configResults || configResults.length === 0) {
-      return [];
-    }
-
-    const sessionDate = configResults[0].session_date;
-    const sessionId = configResults[0].session_id;
-
-    // ✅ Filtrar por session_id (prioridade) ou session_date
-    const whereClause = sessionId
-      ? `WHERE user_id = ? AND session_id = ?`
-      : (sessionDate ? `WHERE user_id = ? AND created_at >= ?` : `WHERE user_id = ?`);
-    const queryParams = sessionId ? [userId, sessionId] : (sessionDate ? [userId, sessionDate] : [userId]);
-
+    // ✅ [ZENIX v4.3] Usar subconsulta para obter session_date e filtrar trades.
+    // Isso evita duplicação se houver mais de um registro "is_active" na config.
     return await this.dataSource.query(
-      `SELECT * FROM autonomous_agent_trades
-        ${whereClause}
-        ORDER BY COALESCE(closed_at, created_at) DESC
-        LIMIT ?`,
-      [...queryParams, limit],
+      `SELECT * FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND created_at >= (
+           SELECT session_date FROM autonomous_agent_config 
+           WHERE user_id = ? 
+           LIMIT 1
+         )
+       ORDER BY COALESCE(closed_at, created_at) DESC 
+       LIMIT ?`,
+      [userId, userId, limit],
     );
   }
 
@@ -1144,14 +1075,13 @@ export class AutonomousAgentService implements OnModuleInit {
          total_trades,
          total_wins,
          total_losses,
-        session_id,
-        session_status,
-        session_date,
-        initial_stake as totalCapital,
-        initial_balance
-      FROM autonomous_agent_config 
-      WHERE user_id = ? AND is_active = TRUE
-      LIMIT 1`,
+         session_status,
+         session_date,
+         initial_stake as totalCapital,
+         initial_balance
+       FROM autonomous_agent_config 
+       WHERE user_id = ?
+       LIMIT 1`,
       [userId],
     );
 
@@ -1179,10 +1109,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
     // ✅ Buscar operações finalizadas da sessão atual (após session_date)
     const sessionDate = configData.session_date;
-    const sessionId = configData.session_id;
 
-    // ✅ Se não houver session_date nem session_id, retornar valores zerados
-    if (!sessionDate && !sessionId) {
+    // ✅ Se não houver session_date, retornar valores zerados
+    if (!sessionDate) {
       return {
         daily_profit: 0,
         daily_loss: 0,
@@ -1201,24 +1130,25 @@ export class AutonomousAgentService implements OnModuleInit {
       };
     }
 
-    // ✅ Filtrar por session_id (prioridade) ou session_date
-    const whereClause = sessionId
-      ? `WHERE user_id = ? AND session_id = ?`
-      : `WHERE user_id = ? AND created_at >= ?`;
-    const params = sessionId ? [userId, sessionId] : [userId, sessionDate];
-
+    // ✅ Filtrar apenas operações criadas após o início da sessão atual
+    // ✅ [ZENIX v4.3] Subquery robusto contra duplicação por JOIN
     const sessionTrades = await this.dataSource.query(
       `SELECT 
-          status,
-          profit_loss,
-          created_at,
-          closed_at
-        FROM autonomous_agent_trades 
-        ${whereClause}
-          AND status IN ('WON', 'LOST')
-          AND profit_loss IS NOT NULL
-        ORDER BY COALESCE(closed_at, created_at) DESC`,
-      params,
+         status,
+         profit_loss,
+         created_at,
+         closed_at
+       FROM autonomous_agent_trades 
+       WHERE user_id = ? 
+         AND status IN ('WON', 'LOST')
+         AND profit_loss IS NOT NULL
+         AND created_at >= (
+           SELECT session_date FROM autonomous_agent_config 
+           WHERE user_id = ? AND is_active = TRUE 
+           LIMIT 1
+         )
+       ORDER BY COALESCE(closed_at, created_at) DESC`,
+      [userId, userId],
     );
 
     // ✅ Calcular lucro/perda do dia baseado nas operações
@@ -1342,59 +1272,48 @@ export class AutonomousAgentService implements OnModuleInit {
   async getLogs(userId: string, limit: number = 50000): Promise<any[]> {
     const limitClause = `LIMIT ${limit}`;
 
-    // ✅ Usar cache para session_info (evita query desnecessária a cada 2 segundos)
+    // ✅ Usar cache para session_date (evita query desnecessária a cada 2 segundos)
     let sessionStartTime: Date | string | null = null;
-    let sessionId: string | null = null;
-    const cached = this.sessionDateCache.get(userId) as any;
+    const cached = this.sessionDateCache.get(userId);
     const now = Date.now();
 
     if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
       // Usar cache se ainda válido (menos de 30 segundos)
       sessionStartTime = cached.date;
-      sessionId = cached.sessionId;
     } else {
-      // Buscar session_date e session_id apenas se cache expirou ou não existe
+      // Buscar session_date apenas se cache expirou ou não existe
+      // ✅ FIX: Buscar session_date mais recente MESMO se agente está inativo
       const config = await this.dataSource.query(
-        `SELECT session_date, session_id FROM autonomous_agent_config 
-          WHERE user_id = ?
-          ORDER BY updated_at DESC
-          LIMIT 1`,
+        `SELECT session_date FROM autonomous_agent_config 
+         WHERE user_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 1`,
         [userId],
       );
 
-      if (config && config.length > 0) {
+      if (config && config.length > 0 && config[0].session_date) {
         sessionStartTime = config[0].session_date;
-        sessionId = config[0].session_id;
         // Atualizar cache
         this.sessionDateCache.set(userId, {
           date: sessionStartTime,
-          sessionId: sessionId,
           timestamp: now,
-        } as any);
+        });
       } else {
         // Cachear null também para evitar queries repetidas
         this.sessionDateCache.set(userId, {
           date: null,
-          sessionId: null,
           timestamp: now,
-        } as any);
+        });
       }
     }
 
-    // ✅ Filtrar logs apenas por session_date (timestamp >= session_start)
-    // NOTA: autonomous_agent_logs NÃO tem coluna session_id — filtrar por ela causaria erro SQL
-    let whereClause = '';
-    let params: any[] = [userId];
-
-    if (sessionStartTime) {
-      whereClause = `WHERE user_id = ? AND timestamp >= ?`;
-      params.push(sessionStartTime);
-    } else {
-      // Sem session_date: mostrar logs das últimas 24h
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      whereClause = `WHERE user_id = ? AND timestamp >= ?`;
-      params.push(yesterday.toISOString().slice(0, 19).replace('T', ' '));
-    }
+    // ✅ Filtrar logs apenas da sessão atual (se houver session_date)
+    const whereClause = sessionStartTime
+      ? `WHERE user_id = ? AND timestamp >= ?`
+      : `WHERE user_id = ?`;
+    const params = sessionStartTime
+      ? [userId, sessionStartTime]
+      : [userId];
 
     const logs = await this.dataSource.query(
       `SELECT 
@@ -1890,7 +1809,7 @@ export class AutonomousAgentService implements OnModuleInit {
    * Obtém trades detalhados de um dia específico
    */
 
-  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string, limit: number = 20000, sessionId?: string): Promise<any> {
+  async getDailyTrades(userId: string, date: string, agent?: string, startDate?: string, endDate?: string, limit: number = 20000): Promise<any> {
     try {
       // Buscar config para obter DATA DA SESSÃO
       const config = await this.getAgentConfig(userId);
@@ -1935,33 +1854,27 @@ export class AutonomousAgentService implements OnModuleInit {
 
       if (strategyFilter && agent) params.push(agent);
 
-      // ✅ [SESSION FIX] Filtro por session_id apenas quando explicitamente pedido (período 'sessão')
-      // Outros períodos (hoje, 7d, 30d) continuam filtrando só por data, sem filtro de sessão
-      const sessionFilter = sessionId ? 'AND session_id = ?' : '';
-      if (sessionId) params.push(sessionId);
-
       // Add limit to params
       params.push(limit);
 
       let query = `
          SELECT 
-           id,
-           created_at,
-           symbol,
-           contract_type,
-           stake_amount as stake,
-           profit_loss,
-           status,
-           entry_price,
-           exit_price,
-           strategy,
-           session_id
+         id,
+         session_id,
+         created_at,
+         symbol,
+         contract_type,
+         stake_amount as stake,
+         profit_loss,
+         status,
+         entry_price,
+         exit_price,
+         strategy
          FROM autonomous_agent_trades 
          WHERE user_id = ? 
            ${dateCondition}
            AND status IN ('WON', 'LOST')
            ${strategyFilter}
-           ${sessionFilter}
          ORDER BY created_at DESC
          LIMIT ?
       `;
@@ -1979,19 +1892,9 @@ export class AutonomousAgentService implements OnModuleInit {
 
       // query += ` ORDER BY created_at DESC`; // Already in query above
 
-      // Params for summary: remove limit, but keep sessionId if present
-      let summaryParams = params.slice(0, params.length - 1); // Remove limit
-      // If sessionId was added AFTER strategy filter, we need to recalculate
-      // summaryParams correctly: userId + dateParams + (agent?) + (sessionId?)
-      // Rebuild summaryParams without limit
-      const summaryParamsBase: any[] = [userId];
-      if (isRange) {
-        summaryParamsBase.push(startRange, endRange);
-      } else {
-        summaryParamsBase.push(targetDateStr);
-      }
-      if (strategyFilter && agent) summaryParamsBase.push(agent);
-      if (sessionId) summaryParamsBase.push(sessionId);
+      // Execute both queries: one for summary and one for limited trades
+      // Logica de params para summary é diferente (não tem limit)
+      const summaryParams = params.slice(0, params.length - 1); // Remove limit
 
       const summaryQuery = `
       SELECT 
@@ -2003,12 +1906,11 @@ export class AutonomousAgentService implements OnModuleInit {
         ${dateCondition}
         AND status IN ('WON', 'LOST')
         ${strategyFilter}
-        ${sessionFilter}
     `;
 
       const [trades, summaryData] = await Promise.all([
         this.dataSource.query(query, params),
-        this.dataSource.query(summaryQuery, summaryParamsBase)
+        this.dataSource.query(summaryQuery, summaryParams)
       ]);
 
       const summary = {
@@ -2024,7 +1926,7 @@ export class AutonomousAgentService implements OnModuleInit {
         id: t.id,
         session_id: t.session_id || null, // Mantém compatibilidade mas busca do campo se existir futuramente
         time: new Date(t.created_at).toLocaleTimeString('pt-BR', { hour12: false }),
-        createdAt: t.created_at ? new Date(t.created_at).toISOString() : new Date().toISOString(),
+        createdAt: t.created_at,
         market: t.symbol,
         contract: t.contract_type,
         stake: parseFloat(t.stake) || 0,

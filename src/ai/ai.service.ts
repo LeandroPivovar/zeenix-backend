@@ -552,7 +552,7 @@ export class AiService implements OnModuleInit {
       // 1. Desativar IAs que estavam marcadas como ativas
       await this.dataSource.query(
         `UPDATE ai_user_config 
-         SET is_active = 0, session_status = 'stopped_server_restart', deactivated_at = NOW(), deactivation_reason = 'Server Restart'
+         SET is_active = 0, deactivated_at = NOW(), deactivation_reason = 'Server Restart'
          WHERE is_active = 1`
       );
 

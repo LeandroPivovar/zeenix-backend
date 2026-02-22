@@ -229,7 +229,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         `SELECT 
             c.user_id, c.initial_stake, c.daily_profit_target, c.daily_loss_limit, 
             c.initial_balance, c.deriv_token as config_token, c.currency, c.symbol, c.agent_type, c.stop_loss_type, c.risk_level,
-            c.session_id,
+            c.session_id, c.session_date,
             u.token_demo, u.token_real, u.deriv_raw,
             s.trade_currency
          FROM autonomous_agent_config c
@@ -237,7 +237,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
          LEFT JOIN user_settings s ON c.user_id = s.user_id
          WHERE c.is_active = TRUE 
            AND c.agent_type = 'falcon'
-           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss')`,
+           AND c.session_status NOT IN ('stopped_profit', 'stopped_loss', 'stopped_blindado')`,
       );
 
       for (const user of activeUsers) {
@@ -319,6 +319,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
           initialBalance: parseFloat(user.initial_balance) || 0,
           stopLossType: user.stop_loss_type === 'blindado' ? 'blindado' : 'normal',
           sessionId: user.session_id ? parseInt(user.session_id) : undefined,
+          sessionDate: user.session_date,
         };
 
         this.userConfigs.set(userId, config);
@@ -458,7 +459,8 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         existingConfig.dailyProfitTarget !== falconConfig.dailyProfitTarget ||
         existingConfig.dailyLossLimit !== falconConfig.dailyLossLimit ||
         existingConfig.initialStake !== falconConfig.initialStake ||
-        existingConfig.symbol !== falconConfig.symbol
+        existingConfig.symbol !== falconConfig.symbol ||
+        String(existingConfig.sessionDate) !== String(falconConfig.sessionDate) // ✅ [ZENIX v4.3] Detectar mudança de sessão
       );
 
       if (!hasSignificantChange) {
@@ -470,8 +472,26 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       this.userConfigs.set(userId, falconConfig);
 
       const state = this.userStates.get(userId);
-      if (state && !state.isActive && !state.sessionEnded) {
-        state.isActive = true;
+      if (state) {
+        // ✅ [ZENIX v4.3] Resetar flags se a sessão mudou or if manual restart detected
+        const sessionDateChanged = existingConfig && String(existingConfig.sessionDate) !== String(falconConfig.sessionDate);
+        const manualRestart = (falconConfig as any).sessionStatus === 'active';
+
+        if (sessionDateChanged || manualRestart) {
+          if (manualRestart && !sessionDateChanged) {
+            this.logger.log(`[Falcon][${userId}] 🚀 Re-inicialização manual detectada (Status: active). Resetando flags.`);
+          } else if (sessionDateChanged) {
+            this.logger.log(`[Falcon][${userId}] 📅 Nova sessão detectada (${falconConfig.sessionDate}). Resetando flags.`);
+          }
+
+          state.sessionEnded = false;
+          state.isActive = true;
+          state.endReason = undefined;
+          state.profit = (falconConfig as any).dailyProfit || 0;
+          state.lucroAtual = state.profit;
+        } else if (!state.isActive && !state.sessionEnded) {
+          state.isActive = true;
+        }
       }
 
       const mode = state?.mode || 'PRECISO';
@@ -981,7 +1001,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
         state.sessionEnded = true;
         state.endReason = 'TARGET';
-        await this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'CYCLE_COMPLETE');
       }
       return;
     }
@@ -1057,7 +1077,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.sessionEnded = true;
         state.endReason = 'BLINDADO';
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA POR BLINDADO NO ÚLTIMO CICLO.`);
-        await this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'BLINDADO');
       }
     }
   }
@@ -1114,6 +1134,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       case 'DAILY_LIMIT':
         status = 'stopped_profit';
         message = `LIMITE DIÁRIO DE OPERAÇÕES! ops=${state.opsTotal}. Encerrando operações.`;
+        break;
+      case 'CYCLE_COMPLETE':
+        status = 'stopped_profit';
+        message = `SESSÃO FINALIZADA: Todos os ${FALCON_CONSTANTS.cycles} ciclos foram concluídos com sucesso! Lucro Total: $${state.profit.toFixed(2)}.`;
         break;
     }
 

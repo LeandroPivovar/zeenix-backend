@@ -410,9 +410,9 @@ export class NotificationsService {
     if (summary.agent) {
       const statusIcon = summary.agent.isActive ? '🟢' : '🔴';
       const statusText = summary.agent.isActive ? 'RODANDO' :
-        summary.agent.sessionStatus === 'stopped_profit' ? 'PAROU (META)' :
-          summary.agent.sessionStatus === 'stopped_loss' ? 'PAROU (STOP LOSS)' :
-            summary.agent.sessionStatus === 'stopped_blindado' ? 'PAROU (BLINDADO)' : 'PARADO';
+        (summary.agent.sessionStatus === 'stopped_profit' || summary.agent.sessionStatus === 'profit') ? 'PAROU (META)' :
+          (summary.agent.sessionStatus === 'stopped_loss' || summary.agent.sessionStatus === 'loss') ? 'PAROU (STOP LOSS)' :
+            (summary.agent.sessionStatus === 'stopped_blindado' || summary.agent.sessionStatus === 'blindado') ? 'PAROU (BLINDADO)' : 'PARADO';
       const resultIcon = summary.agent.netResult >= 0 ? '📈' : '📉';
       const resultColor = summary.agent.netResult >= 0 ? '\x1b[32m' : '\x1b[31m';
       const reset = '\x1b[0m';

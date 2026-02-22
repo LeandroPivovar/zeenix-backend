@@ -1,4 +1,4 @@
- import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AutonomousAgentService } from './autonomous-agent.service';
 
@@ -58,4 +58,3 @@ export class AutonomousAgentScheduler {
     }
   }
 }
-
