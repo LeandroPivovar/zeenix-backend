@@ -49,6 +49,7 @@ export class PlansService {
       isActive: plan.isActive,
       displayOrder: plan.displayOrder,
       externalId: plan.externalId,
+      purchaseLink: plan.purchaseLink,
     }));
   }
 
@@ -68,6 +69,7 @@ export class PlansService {
       benefits: plan.benefits || [],
       isPopular: plan.isPopular,
       isRecommended: plan.isRecommended,
+      purchaseLink: plan.purchaseLink,
     };
   }
 
@@ -94,6 +96,7 @@ export class PlansService {
       billingPeriod: user.plan.billingPeriod,
       features: user.plan.features || {},
       benefits: user.plan.benefits || [],
+      purchaseLink: user.plan.purchaseLink,
       activatedAt: user.planActivatedAt,
     };
   }
@@ -150,6 +153,7 @@ export class PlansService {
       externalId: plan.externalId,
       features: plan.features || {},
       benefits: plan.benefits || [],
+      purchaseLink: plan.purchaseLink,
       createdAt: plan.createdAt,
       updatedAt: plan.updatedAt,
     }));
@@ -192,6 +196,7 @@ export class PlansService {
       isActive: data.isActive !== undefined ? data.isActive : true,
       displayOrder: data.displayOrder || 0,
       externalId: data.externalId,
+      purchaseLink: data.purchaseLink,
     });
 
     const savedPlan = await this.planRepository.save(plan);
@@ -210,6 +215,7 @@ export class PlansService {
       isActive: savedPlan.isActive,
       displayOrder: savedPlan.displayOrder,
       externalId: savedPlan.externalId,
+      purchaseLink: savedPlan.purchaseLink,
       createdAt: savedPlan.createdAt,
       updatedAt: savedPlan.updatedAt,
     };
@@ -259,6 +265,7 @@ export class PlansService {
     if (data.isActive !== undefined) plan.isActive = data.isActive;
     if (data.displayOrder !== undefined) plan.displayOrder = data.displayOrder;
     if (data.externalId !== undefined) plan.externalId = data.externalId;
+    if (data.purchaseLink !== undefined) plan.purchaseLink = data.purchaseLink;
 
     const updatedPlan = await this.planRepository.save(plan);
 
@@ -276,6 +283,7 @@ export class PlansService {
       isActive: updatedPlan.isActive,
       displayOrder: updatedPlan.displayOrder,
       externalId: updatedPlan.externalId,
+      purchaseLink: updatedPlan.purchaseLink,
       createdAt: updatedPlan.createdAt,
       updatedAt: updatedPlan.updatedAt,
     };

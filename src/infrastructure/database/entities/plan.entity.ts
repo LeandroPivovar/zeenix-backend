@@ -30,6 +30,9 @@ export class PlanEntity {
   @Column({ type: 'json', nullable: true })
   benefits?: any;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, name: 'purchase_link' })
+  purchaseLink?: string;
+
   @Column({ type: 'boolean', default: false, name: 'is_popular' })
   isPopular: boolean;
 

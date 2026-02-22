@@ -45,6 +45,10 @@ class CreatePlanDto {
   @IsOptional()
   isActive?: boolean;
 
+  @IsObject()
+  @IsOptional()
+  benefits?: any;
+
   @IsNumber()
   @IsOptional()
   displayOrder?: number;
@@ -90,6 +94,10 @@ class UpdatePlanDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @IsObject()
+  @IsOptional()
+  benefits?: any;
 
   @IsNumber()
   @IsOptional()
