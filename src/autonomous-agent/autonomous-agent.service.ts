@@ -552,7 +552,7 @@ export class AutonomousAgentService implements OnModuleInit {
       const agentsToReset = await this.dataSource.query(
         `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
-           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss') 
+           AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss', 'stopped_manual', 'stopped_cycle') 
            AND (session_date IS NULL OR DATE(DATE_SUB(session_date, INTERVAL 3 HOUR)) < DATE(DATE_SUB(NOW(), INTERVAL 3 HOUR)))`
       );
 
@@ -984,7 +984,7 @@ export class AutonomousAgentService implements OnModuleInit {
     try {
       await this.dataSource.query(
         `UPDATE autonomous_agent_config 
-         SET is_active = FALSE, updated_at = NOW()
+         SET is_active = FALSE, session_status = 'stopped_manual', updated_at = NOW()
          WHERE user_id = ? AND is_active = TRUE`,
         [userId],
       );

@@ -981,7 +981,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA (4 CICLOS COMPLETOS)`);
         state.sessionEnded = true;
         state.endReason = 'TARGET';
-        await this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'CYCLE_COMPLETE');
       }
       return;
     }
@@ -1057,7 +1057,7 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         state.sessionEnded = true;
         state.endReason = 'BLINDADO';
         this.saveLog(userId, 'INFO', 'SESSION', `🏆 SESSÃO FINALIZADA POR BLINDADO NO ÚLTIMO CICLO.`);
-        await this.handleStopCondition(userId, 'TAKE_PROFIT');
+        await this.handleStopCondition(userId, 'BLINDADO');
       }
     }
   }
@@ -1114,6 +1114,10 @@ export class FalconStrategy implements IAutonomousAgentStrategy, OnModuleInit {
       case 'DAILY_LIMIT':
         status = 'stopped_profit';
         message = `LIMITE DIÁRIO DE OPERAÇÕES! ops=${state.opsTotal}. Encerrando operações.`;
+        break;
+      case 'CYCLE_COMPLETE':
+        status = 'stopped_cycle';
+        message = `SESSÃO FINALIZADA: Todos os ${FALCON_CONSTANTS.cycles} ciclos foram concluídos com sucesso! Lucro Total: $${state.profit.toFixed(2)}.`;
         break;
     }
 

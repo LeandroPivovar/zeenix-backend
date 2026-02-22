@@ -1898,7 +1898,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 this.saveLog(userId, 'SUCCESS', 'SESSION', `🏆 SESSÃO FINALIZADA (${state.cycleCurrent} CICLOS COMPLETOS)`);
                 state.sessionEnded = true;
                 state.endReason = 'TARGET';
-                await this.handleStopCondition(userId, 'TAKE_PROFIT');
+                await this.handleStopCondition(userId, 'CYCLE_COMPLETE');
             }
             return;
         }
@@ -2161,6 +2161,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             case 'BLINDADO':
                 status = 'stopped_blindado';
                 message = `STOP LOSS BLINDADO ATINGIDO! Saldo caiu para $${((config.initialBalance || 0) + state.lucroAtual).toFixed(2)} | cycle=${state.cycleCurrent}. Encerrando operações do dia.`;
+                break;
+            case 'CYCLE_COMPLETE':
+                status = 'stopped_cycle';
+                message = `SESSÃO FINALIZADA: Todos os ${ZEUS_CONSTANTS.cycles} ciclos foram concluídos com sucesso! Lucro Total: $${state.profit.toFixed(2)}.`;
                 break;
 
         }
