@@ -821,6 +821,10 @@ export class AutonomousAgentService implements OnModuleInit {
         [userId],
       );
 
+      // ✅ [ZENIX v4.0] Generate a new session ID for this activation
+      const crypto = require('crypto');
+      const newSessionId = crypto.randomUUID();
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
@@ -848,6 +852,7 @@ export class AutonomousAgentService implements OnModuleInit {
                risk_level = ?,
                session_status = 'active',
                session_date = NOW(),
+               session_id = ?,
                daily_profit = 0,
                daily_loss = 0,
                updated_at = NOW()
@@ -866,10 +871,11 @@ export class AutonomousAgentService implements OnModuleInit {
             config.stopLossType || 'normal',
             config.initialBalance || 0,
             config.riskProfile || 'balanced',
+            newSessionId,
             userId,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId}`);
+        this.logger.log(`[ActivateAgent] ✅ Configuração existente atualizada para usuário ${userId} com sessão ${newSessionId}`);
       } else {
         // ✅ Determinar agent_type baseado na estratégia
         const agentType = (config.agentType || config.strategy || 'orion').toLowerCase();
@@ -880,8 +886,8 @@ export class AutonomousAgentService implements OnModuleInit {
           `INSERT INTO autonomous_agent_config 
            (user_id, is_active, initial_stake, daily_profit_target, daily_loss_limit,
             deriv_token, token_deriv, amount_deriv, currency, symbol, agent_type, trading_mode, stop_loss_type, initial_balance, risk_level,
-            session_status, session_date, daily_profit, daily_loss, created_at, updated_at)
-           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 0, 0, NOW(), NOW())`,
+            session_status, session_date, session_id, daily_profit, daily_loss, created_at, updated_at)
+           VALUES (?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?, 0, 0, NOW(), NOW())`,
           [
             userId,
             config.initialStake,
@@ -897,9 +903,10 @@ export class AutonomousAgentService implements OnModuleInit {
             config.stopLossType || 'normal',
             config.initialBalance || 0,
             config.riskProfile || 'balanced',
+            newSessionId,
           ],
         );
-        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId}`);
+        this.logger.log(`[ActivateAgent] ✅ Nova configuração criada para usuário ${userId} com sessão ${newSessionId}`);
       }
 
       // ✅ Determinar estratégia baseado no agentType
@@ -969,7 +976,8 @@ export class AutonomousAgentService implements OnModuleInit {
           stopLossType: config.stopLossType,
           riskProfile: this.normalizeRiskProfile(config.riskProfile),
           agentType: strategy,
-          sessionDate: actualSessionDate
+          sessionDate: actualSessionDate,
+          sessionId: newSessionId
         });
         this.logger.log(`[ActivateAgent] ✅ Usuário ${userId} ativado na estratégia ${strategy}`);
       } catch (strategyError) {
@@ -1043,7 +1051,7 @@ export class AutonomousAgentService implements OnModuleInit {
        WHERE user_id = ? 
          AND created_at >= (
            SELECT session_date FROM autonomous_agent_config 
-           WHERE user_id = ? AND is_active = TRUE 
+           WHERE user_id = ? 
            LIMIT 1
          )
        ORDER BY COALESCE(closed_at, created_at) DESC 
@@ -1070,7 +1078,7 @@ export class AutonomousAgentService implements OnModuleInit {
          initial_stake as totalCapital,
          initial_balance
        FROM autonomous_agent_config 
-       WHERE user_id = ? AND is_active = TRUE
+       WHERE user_id = ?
        LIMIT 1`,
       [userId],
     );
