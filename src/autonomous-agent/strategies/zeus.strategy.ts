@@ -2044,15 +2044,26 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.operationsCount++;
             state.cycleOps++; // Incrementar ops de ciclo também
 
-            // ✅ V4 SPEC ADAPTADO: Parar 5 minutos e continuar no MÁXIMO até recuperar
-            if (state.consecutiveLosses === 1) {
+            // ✅ V4 SPEC ADAPTADO: Parar 5 minutos na 2º e STOP na 3º
+            if (state.consecutiveLosses >= 3) {
+                this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
+                state.sessionEnded = true;
+                state.endReason = 'STOPLOSS';
+
+                // [ZENIX v2.5] Persistir antes do return
+                state.currentLoss = state.perdasAcumuladas;
+                await this.updateUserStateInDb(userId, state);
+
+                await this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
+                return;
+            } else if (state.consecutiveLosses === 1) {
                 state.mode = 'PRECISO';
                 state.recoveryLock = true;
                 this.saveLog(userId, 'WARN', 'RISK', `⚠️ 1ª PERDA: Ativando MODO PRECISO para maior assertividade.`);
-            } else if (state.consecutiveLosses >= 2) {
+            } else if (state.consecutiveLosses === 2) {
                 state.mode = 'MAXIMO';
                 state.recoveryLock = true;
-                this.saveLog(userId, 'WARN', 'RISK', `⚠️ ${state.consecutiveLosses}ª PERDA: MODO MÁXIMO ativado (Filtro Cirúrgico). Retentando até recuperar.`);
+                this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2ª PERDA: MODO MÁXIMO ativado (Filtro Cirúrgico). TENTATIVA FINAL.`);
 
                 // Pausa de 5 minutos forçada a cada nova perda no modo máximo
                 const pauseDurationMs = 5 * 60 * 1000;
