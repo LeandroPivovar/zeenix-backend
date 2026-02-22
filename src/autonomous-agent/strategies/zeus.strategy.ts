@@ -571,6 +571,21 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             }
 
             this.logger.log(`[Zeus][${userId}] ✅ ESTADO RECONSTRUÍDO: Modo = ${state.mode}, Lucro = $${state.profit.toFixed(2)}, Perdas = ${state.consecutiveLosses} `);
+
+            // ✅ [ZENIX v4.3] Check for Hard Stops during reconstruction
+            const isStopLossReached = Math.round(state.profit * 100) / 100 <= -config.stopLoss;
+            const isConsecutiveStop = state.consecutiveLosses >= 3;
+
+            if (isStopLossReached || isConsecutiveStop) {
+                state.sessionEnded = true;
+                state.isActive = false;
+                state.endReason = 'STOPLOSS';
+                const reasonStr = isStopLossReached ? 'STOP LOSS' : 'PERDAS CONSECUTIVAS';
+                this.logger.warn(`[Zeus][${userId}] 🛑 SESSÃO ENCERRADA RECONHECIDA: ${reasonStr} atingido anteriormente.`);
+                this.saveLog(userId, 'WARN', 'CORE', `🛑 SESSÃO ENCERRADA RECONHECIDA: ${reasonStr} atingido nesta data (${state.profit.toFixed(2)}). O agente permanecerá parado.`);
+                return;
+            }
+
             this.saveLog(userId, 'INFO', 'CORE', `🔄 ESTADO RECUPERADO: Lucro $${state.profit.toFixed(2)} | Retomando em modo ${state.mode} com ${consecutiveLosses} perdas consecutivas.`);
         } catch (error) {
             this.logger.error(`[Zeus][${userId}] ❌ Erro ao reconstruir estado: `, error);
@@ -2047,17 +2062,26 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.operationsCount++;
             state.cycleOps++; // Incrementar ops de ciclo também
 
-            // ✅ V4 SPEC ADAPTADO: Parar 5 minutos na 2º e STOP na 3º
-            if (state.consecutiveLosses >= 3) {
-                this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
+            // ✅ [ZENIX v4.3] V4 SPEC ADAPTADO: Parar 5 minutos na 2º e STOP na 3º
+            // Prioridade: Stop Loss Global em relação às consecutivas
+            const isStopLossReached = Math.round(state.profit * 100) / 100 <= -config.stopLoss;
+
+            if (isStopLossReached || state.consecutiveLosses >= 3) {
+                const stopReason = isStopLossReached ? 'STOP_LOSS' : 'CONSECUTIVE_LOSS';
+
+                if (isStopLossReached) {
+                    this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP LOSS ATINGIDO: Limite de $${config.stopLoss.toFixed(2)} alcançado. Encerrando operações.`);
+                } else {
+                    this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
+                }
+
                 state.sessionEnded = true;
                 state.endReason = 'STOPLOSS';
 
                 // [ZENIX v2.5] Persistir antes do return
                 state.currentLoss = state.perdasAcumuladas;
                 await this.updateUserStateInDb(userId, state);
-
-                await this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
+                await this.handleStopCondition(userId, stopReason);
                 return;
             } else if (state.consecutiveLosses === 1) {
                 state.mode = 'PRECISO';
