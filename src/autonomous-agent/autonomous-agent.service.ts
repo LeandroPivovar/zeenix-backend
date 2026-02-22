@@ -546,19 +546,13 @@ export class AutonomousAgentService implements OnModuleInit {
    */
   async checkAndResetDailySessions(): Promise<void> {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString().split('T')[0];
-
       // 1. Resetar agentes que bateram stop em DIAS ANTERIORES
-      // ✅ CORREÇÃO: Usar todayStr para garantir que só reseta se mudou o dia.
-      // Removido o filtro de 1 hora que causava resets prematuros.
+      // ✅ CORREÇÃO: Usar hora convertida do próprio banco para evitar bugs de fuso horário (UTC vs Local)
       const agentsToReset = await this.dataSource.query(
         `SELECT id, user_id, agent_type FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND session_status IN ('stopped_profit', 'stopped_loss', 'stopped_blindado', 'stopped_consecutive_loss') 
-           AND (session_date IS NULL OR DATE(session_date) < ?)`,
-        [todayStr],
+           AND (session_date IS NULL OR DATE(CONVERT_TZ(session_date, '+00:00', '-03:00')) < DATE(CONVERT_TZ(NOW(), '+00:00', '-03:00')))`
       );
 
       // 2. Resetar lucro diário de agentes que ficaram ATIVOS mas mudou o dia
@@ -567,8 +561,7 @@ export class AutonomousAgentService implements OnModuleInit {
          FROM autonomous_agent_config 
          WHERE is_active = TRUE 
            AND session_status = 'active'
-           AND (session_date IS NULL OR DATE(session_date) < ?)`,
-        [todayStr],
+           AND (session_date IS NULL OR DATE(CONVERT_TZ(session_date, '+00:00', '-03:00')) < DATE(CONVERT_TZ(NOW(), '+00:00', '-03:00')))`
       );
 
       const allAgentsToReset = [...agentsToReset, ...activeAgentsToReset];
