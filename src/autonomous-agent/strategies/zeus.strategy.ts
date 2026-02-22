@@ -2044,38 +2044,20 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
             state.operationsCount++;
             state.cycleOps++; // Incrementar ops de ciclo também
 
-            // ✅ V4 SPEC: Stop por 3 Perdas Consecutivas
-            if (state.consecutiveLosses >= 3) {
-                this.saveLog(userId, 'ERROR', 'RISK', `🛑 STOP POR PERDAS CONSECUTIVAS: 3 falhas seguidas (Normal -> Preciso -> Máximo). Encerrando sessão.`);
-                state.sessionEnded = true;
-                state.endReason = 'STOPLOSS';
-
-                // [ZENIX v2.5] Persistir antes do return
-                state.currentLoss = state.perdasAcumuladas;
-                await this.updateUserStateInDb(userId, state);
-
-                await this.handleStopCondition(userId, 'CONSECUTIVE_LOSS');
-                return;
-            }
-
-            // ✅ V4 Checklist: Hierarquia de Filtros
+            // ✅ V4 SPEC ADAPTADO: Parar 5 minutos e continuar no MÁXIMO até recuperar
             if (state.consecutiveLosses === 1) {
                 state.mode = 'PRECISO';
                 state.recoveryLock = true;
                 this.saveLog(userId, 'WARN', 'RISK', `⚠️ 1ª PERDA: Ativando MODO PRECISO para maior assertividade.`);
-            } else if (state.consecutiveLosses === 2) {
+            } else if (state.consecutiveLosses >= 2) {
                 state.mode = 'MAXIMO';
                 state.recoveryLock = true;
-                this.saveLog(userId, 'WARN', 'RISK', `⚠️ 2ª PERDA: Ativando MODO MÁXIMO (Filtro Cirúrgico). ÚLTIMA TENTATIVA.`);
-            }
+                this.saveLog(userId, 'WARN', 'RISK', `⚠️ ${state.consecutiveLosses}ª PERDA: MODO MÁXIMO ativado (Filtro Cirúrgico). Retentando até recuperar.`);
 
-            // ✅ V4 Checklist: Pausa Estratégica (Obrigatória em recuperação se necessário)
-            // A spec pede pausa de 5 min se houver perdas persistentes. 
-            // Vamos manter a pausa de 5 min após 2 perdas para esfriar o mercado antes do Máximo.
-            if (state.consecutiveLosses === 2) {
+                // Pausa de 5 minutos forçada a cada nova perda no modo máximo
                 const pauseDurationMs = 5 * 60 * 1000;
-                state.inStrategicPauseUntilTs = Math.max(state.inStrategicPauseUntilTs || 0, Date.now() + pauseDurationMs);
-                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA (5 min) antes da última tentativa em modo MÁXIMO.`);
+                state.inStrategicPauseUntilTs = Date.now() + pauseDurationMs;
+                this.saveLog(userId, 'WARN', 'RISK', `🛑 PAUSA DE SEGURANÇA (5 min) ativada. Retornando no modo MÁXIMO após esfriamento.`);
             }
         }
 
