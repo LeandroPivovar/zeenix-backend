@@ -144,6 +144,10 @@ export type RiskProfile = "CONSERVADOR" | "MODERADO" | "AGRESSIVO" | "FIXO";
 export type AnalysisType = "PRINCIPAL" | "RECUPERACAO";
 export type ContractKind = "DIGITS_OVER3" | "RISE_FALL";
 
+// Aliases for compatibility with method signatures
+export type ZeusConfig = ZeusUserConfig;
+export type ZeusState = ZeusUserState;
+
 export type LogColor = "green" | "red" | "blue" | "yellow" | "neutral";
 
 export type ZenixLogId =
@@ -202,6 +206,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
     private readonly maxTicks = 200;
     private readonly comissaoPlataforma = 0.03; // 3%
     private readonly processingLocks = new Map<string, boolean>(); // ✅ Lock para evitar processamento simultâneo
+    private readonly processedContractIds = new Map<string, Set<string>>(); // ✅ [ZENIX v4.2] Evita duplicidade de processamento de contrato
     private readonly appId: string;
 
     // ✅ Pool de conexões WebSocket por token (reutilização - uma conexão por token)
@@ -364,6 +369,10 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                 // ✅ Verificar se já tem estado inicializado
                 if (!this.userStates.has(userId)) {
                     this.initializeUserState(userId, zeusConfig);
+                    // ✅ [ZENIX v4.2] RECONSTRUÇÃO AUTOMÁTICA EM REINÍCIOS
+                    this.reconstructStateFromHistory(userId).catch(e => {
+                        this.logger.error(`[Zeus][${userId}] Erro na reconstrução automática: ${e.message}`);
+                    });
                 }
 
                 // ✅ Log de sucesso (apenas na primeira vez/reconexão)
@@ -451,6 +460,11 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         this.userStates.set(userId, state);
         this.ticks.set(userId, []);
+
+        // ✅ [ZENIX v4.2] Pool de duplicidade
+        if (!this.processedContractIds.has(userId)) {
+            this.processedContractIds.set(userId, new Set<string>());
+        }
     }
 
     /**
@@ -464,11 +478,9 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         try {
             // ✅ [ZENIX v3.0] Limitar reconstrução ao início da sessão atual
-            // Se sessionDate for recente (ativação manual), não encontrará trades antigos.
-            // Se for do passado (sync/servidor reiniciou), recupera o estado da sessão ativa.
             const sessionDate = config.sessionDate ? new Date(config.sessionDate) : new Date();
 
-            // Buscar os últimos 5 trades do usuário NESTA SESSÃO para a estratégia Zeus
+            // ✅ [ZENIX v4.2] Buscar mais trades para reconstrução completa do lucro diário e métricas
             const trades = await this.dataSource.query(
                 `SELECT status, profit_loss, created_at 
                  FROM autonomous_agent_trades 
@@ -476,49 +488,90 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
                    AND strategy = 'zeus' 
                    AND created_at >= ?
                  ORDER BY created_at DESC 
-                 LIMIT 5`,
+                 LIMIT 100`,
                 [userId, sessionDate]
             );
 
             if (!trades || trades.length === 0) {
-                this.logger.debug(`[Zeus][${userId}] Histórico vazio hoje. Iniciando em MODO NORMAL.`);
+                this.logger.debug(`[Zeus][${userId}] 🔍 Histórico vazio para esta sessão (${sessionDate.toISOString()}).`);
+                state.mode = 'NORMAL';
+                state.consecutiveLosses = 0;
+                state.profit = config.dailyProfit || 0;
+                state.lucroAtual = state.profit;
                 return;
             }
 
+            this.logger.debug(`[Zeus][${userId}] 🔍 Reconstruindo estado a partir de ${trades.length} trades encontrados.`);
+
             let consecutiveLosses = 0;
             let perdasAcumuladas = 0;
+            let lastLossTime: Date | null = null;
+            let totalProfit = 0;
+            let wins = 0;
+            let losses = 0;
+            let streakBroken = false;
 
-            // Analisar trades de trás para frente (do mais recente para o mais antigo)
-            for (const trade of trades) {
-                if (trade.status === 'LOST') {
-                    consecutiveLosses++;
-                    perdasAcumuladas += Math.abs(parseFloat(trade.profit_loss || 0));
-                } else if (trade.status === 'WON') {
-                    // Se encontrou uma vitória, a sequência de perdas acabou aqui
-                    break;
+            // Analisar trades para recuperar lucro total e streak
+            for (let i = 0; i < trades.length; i++) {
+                const trade = trades[i];
+
+                // ✅ [ZENIX v4.2] Ignorar trades pendentes/nulos na reconstrução de streak e lucro
+                if (!trade.status || trade.status === 'PENDING') continue;
+
+                const pnl = parseFloat(trade.profit_loss || 0);
+                totalProfit += pnl;
+
+                if (trade.status === 'WON' || trade.status === 'WIN') {
+                    wins++;
+                    streakBroken = true; // A partir daqui não contamos mais perdas para o streak atual
+                } else if (trade.status === 'LOST' || trade.status === 'LOSS') {
+                    losses++;
+                    if (!streakBroken) {
+                        consecutiveLosses++;
+                        perdasAcumuladas += Math.abs(pnl);
+                        if (!lastLossTime) lastLossTime = new Date(trade.created_at);
+                    }
                 }
-                // DRAW/PENDING ignorados na contagem de streak negativa
             }
 
-            if (consecutiveLosses > 0) {
-                state.consecutiveLosses = consecutiveLosses;
-                state.perdasAcumuladas = perdasAcumuladas;
-                state.currentLoss = perdasAcumuladas;
+            // ✅ RESTAURAR MÉTRICAS COMPLETAS
+            state.profit = totalProfit;
+            state.lucroAtual = totalProfit;
+            state.currentProfit = totalProfit;
+            state.opsTotal = trades.length;
+            state.operationsCount = trades.length;
+            state.wins = wins;
+            state.losses = losses;
+            state.consecutiveLosses = consecutiveLosses;
+            state.perdasAcumuladas = perdasAcumuladas;
+            state.analysis = consecutiveLosses > 0 ? "RECUPERACAO" : "PRINCIPAL";
 
-                // Reconstruir modo baseado na hierarquia Zeus V4
-                if (consecutiveLosses === 1) {
-                    state.mode = 'PRECISO';
-                    state.recoveryLock = true;
-                } else if (consecutiveLosses >= 2) {
-                    state.mode = 'MAXIMO';
-                    state.recoveryLock = true;
+            // Determinar modo baseado na sequência
+            if (consecutiveLosses === 1) {
+                state.mode = 'PRECISO';
+                state.recoveryLock = true;
+            } else if (consecutiveLosses >= 2) {
+                state.mode = 'MAXIMO';
+                state.recoveryLock = true;
+
+                // ✅ [ZENIX v3.6/4.2] RECOMPOR PAUSA ESTRATÉGICA (5 min) se houver 2 perdas recentes
+                if (lastLossTime) {
+                    const pauseEnd = lastLossTime.getTime() + (5 * 60 * 1000);
+                    if (Date.now() < pauseEnd) {
+                        state.inStrategicPauseUntilTs = pauseEnd;
+                        const remaining = Math.ceil((pauseEnd - Date.now()) / 1000);
+                        this.logger.log(`[Zeus][${userId}] 🛡️ PAUSA RECOBERTA: Restam ${remaining}s de pausa.`);
+                    }
                 }
-
-                this.logger.log(`[Zeus][${userId}] 🔄 ESTADO RECONSTRUÍDO: ${consecutiveLosses} perdas seguidas. Modo atual: ${state.mode}. Perda acumulada: $${perdasAcumuladas.toFixed(2)}`);
-                this.saveLog(userId, 'INFO', 'CORE', `🔄 ESTADO RECUPERADO: Retomando em modo ${state.mode} com ${consecutiveLosses} perdas consecutivas.`);
+            } else {
+                state.mode = 'NORMAL';
+                state.recoveryLock = false;
             }
+
+            this.logger.log(`[Zeus][${userId}] ✅ ESTADO RECONSTRUÍDO: Modo=${state.mode}, Lucro=$${state.profit.toFixed(2)}, Perdas=${state.consecutiveLosses}`);
+            this.saveLog(userId, 'INFO', 'CORE', `🔄 ESTADO RECUPERADO: Lucro $${state.profit.toFixed(2)} | Retomando em modo ${state.mode} com ${consecutiveLosses} perdas consecutivas.`);
         } catch (error) {
-            this.logger.error(`[Zeus][${userId}] ❌ Erro ao reconstruir estado do histórico:`, error);
+            this.logger.error(`[Zeus][${userId}] ❌ Erro ao reconstruir estado:`, error);
         }
     }
 
@@ -576,49 +629,45 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         // ✅ Proteção contra reset de estado pelo Sync (5min)
         if (this.userConfigs.has(userId)) {
             const existingConfig = this.userConfigs.get(userId);
+
+            // Comparação rigorosa para evitar resets desnecessários
             const hasSignificantChange = existingConfig && (
-                existingConfig.riskProfile !== zeusConfig.riskProfile ||
-                existingConfig.dailyProfitTarget !== zeusConfig.dailyProfitTarget ||
-                existingConfig.dailyLossLimit !== zeusConfig.dailyLossLimit ||
-                existingConfig.initialStake !== zeusConfig.initialStake
+                String(existingConfig.riskProfile) !== String(zeusConfig.riskProfile) ||
+                Number(existingConfig.dailyProfitTarget) !== Number(zeusConfig.dailyProfitTarget) ||
+                Number(existingConfig.dailyLossLimit) !== Number(zeusConfig.dailyLossLimit) ||
+                Number(existingConfig.initialStake) !== Number(zeusConfig.initialStake) ||
+                existingConfig.symbol !== zeusConfig.symbol ||
+                String(existingConfig.sessionDate) !== String(zeusConfig.sessionDate) // ✅ [ZENIX v4.2] Detectar mudança de sessão (Manual START/STOP ou Midnight)
             );
 
             if (!hasSignificantChange) {
-                // Se não mudou nada importante, apenas mantém e retorna sem logar sessão de novo
+                // Se não mudou nada importante, apenas mantém o config e o estado atual
                 this.userConfigs.set(userId, zeusConfig);
+                this.logger.debug(`[Zeus][${userId}] 🔄 Sync: Configurações inalteradas. Mantendo estado de memória.`);
                 return;
             }
 
-            this.logger.log(`[Zeus][${userId}] 🔄 Atualizando configuração (Usuário já ativo - Mudança detectada).`);
+            this.logger.log(`[Zeus][${userId}] 🔄 Mudança de configuração detectada. Atualizando...`);
             this.userConfigs.set(userId, zeusConfig);
 
-            // ✅ [FIX] SÓ REATIVAR se não estiver parado (session_status check)
+            // Se mudou algo significativo, preservamos o que der do estado mas revalidamos
             const state = this.userStates.get(userId);
-            if (state && !state.isActive && !state.sessionEnded) {
-                state.isActive = true;
+            if (state) {
+                if (!state.isActive && !state.sessionEnded) {
+                    state.isActive = true;
+                }
+                // Re-logar para confirmar as novas bases
+                const mode = state.mode || 'NORMAL';
+                this.logInitialConfigV2(userId, {
+                    agentName: 'Zeus',
+                    operationMode: mode,
+                    riskProfile: zeusConfig.riskProfile || 'MODERADO',
+                    profitTarget: zeusConfig.dailyProfitTarget,
+                    stopLoss: zeusConfig.dailyLossLimit,
+                    stopBlindadoEnabled: zeusConfig.stopLossType === 'blindado'
+                });
+                return;
             }
-
-            // ✅ Log de reativação com configs atualizadas
-            const mode = state?.mode || 'PRECISO';
-            this.logInitialConfigV2(userId, {
-                agentName: 'Zeus',
-                operationMode: mode,
-                riskProfile: zeusConfig.riskProfile || 'MODERADO',
-                profitTarget: zeusConfig.dailyProfitTarget,
-                stopLoss: zeusConfig.dailyLossLimit,
-                stopBlindadoEnabled: zeusConfig.stopLossType === 'blindado'
-            });
-
-            this.logSessionStart(userId, {
-                date: new Date(),
-                initialBalance: zeusConfig.initialBalance || 0,
-                profitTarget: zeusConfig.dailyProfitTarget,
-                stopLoss: zeusConfig.dailyLossLimit,
-                mode: mode,
-                agentName: 'Zeus'
-            });
-
-            return;
         }
 
         this.userConfigs.set(userId, zeusConfig);
@@ -672,6 +721,7 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
         this.userStates.delete(userId);
         this.ticks.delete(userId);
         this.processingLocks.delete(userId);
+        this.processedContractIds.delete(userId); // ✅ [ZENIX v4.2] Limpar duplicidade
 
         // ✅ Se não houver mais usuários com este token, fechar a conexão
         if (token) {
@@ -1882,6 +1932,23 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
         if (!config || !state) return;
 
+        // ✅ [ZENIX v4.2] Race Condition / Duplicity Protection
+        // Se o contrato já foi processado (Deriv envia múltiplas mensagens de finalização), abortar.
+        if (result.contractId) {
+            const processedSet = this.processedContractIds.get(userId);
+            if (processedSet?.has(result.contractId)) {
+                this.logger.debug(`[Zeus][${userId}] 🛡️ Contrato ${result.contractId} já processado anteriormente. Ignorando duplicata.`);
+                return;
+            }
+            processedSet?.add(result.contractId);
+
+            // Manter apenas os últimos 50 IDs para não crescer infinitamente
+            if (processedSet && processedSet.size > 50) {
+                const firstId = processedSet.values().next().value;
+                if (firstId) processedSet.delete(firstId);
+            }
+        }
+
         // Priorizar tradeId que veio do closure do buyContract
         let tradeId = tradeIdFromCallback || state.currentTradeId;
 
@@ -3017,107 +3084,3 @@ export class ZeusStrategy implements IAutonomousAgentStrategy, OnModuleInit {
 
 }
 
-/**
- * ⚡ ZEUS V2 CONFIG (New Spec)
- * Mantém compatibilidade com AutonomousAgentConfig para a infra.
- */
-export interface ZeusConfig {
-    strategyName: "ZEUS";
-    subtitle: string;
-
-    // Mercado
-    symbol: string; // ex: "1HZ100V"
-    is24x7: boolean;
-
-    // Usuário
-    initialCapital: number;
-    profitTarget: number;
-    stopLoss: number;
-    baseStake: number;
-
-    // Usuário escolhe só risco
-    riskProfile: RiskProfile;
-
-    // Blindado
-    enableStopLossBlindado: boolean;
-    blindadoTriggerPctOfTarget: number; // 0.40 (40% meta)
-    blindadoProtectPctOfPeak: number; // 0.50 (50% do pico)
-
-    // Payouts líquidos (Fixo em 1.26 na V4)
-    payoutPrimary: number;
-    payoutRecovery: number;
-
-    // Pausa estratégica
-    strategicPauseEnabled: boolean;
-    strategicPauseSeconds: number; // 300s
-
-    // Cooldown
-    cooldownWinSeconds: number;
-    cooldownLossSeconds: number;
-
-    // Coleta
-    dataCollectionTicks: number; // 4+
-}
-
-/**
- * Interface combinada para uso na classe Strategy
- */
-interface ZeusUserConfig extends AutonomousAgentConfig, ZeusConfig { }
-
-/**
- * ⚡ ZEUS V2 STATE (New Spec)
- */
-export interface ZeusState {
-    // sessão
-    balance: number;
-    profit: number; // Overall profit
-    peakProfit: number; // Overall peak
-
-    // Cycles Management (V4)
-    cycleCurrent: number; // 1 to 4
-    cycleProfit: number;
-    cycleTarget: number;
-    cycleMaxDrawdown: number; // 60% of cycle target
-    cyclePeakProfit: number; // For Blindado intra-cycle? Spec says "Meta Fracionada (4 Ciclos)... Stop Blindado: atinge 40% da meta do ciclo".
-    // So Blindado is per cycle.
-
-    blindadoActive: boolean;
-    blindadoFloorProfit: number; // Absolute value relative to cycle start? Or session?
-    // Spec: "Stop Blindado... Encerra ciclo se lucro cair..." -> Per Cycle.
-
-    inStrategicPauseUntilTs: number;
-    sessionEnded: boolean;
-    endReason?: "TARGET" | "STOPLOSS" | "BLINDADO";
-
-    // automático
-    mode: NegotiationMode; // NORMAL or PRECISO
-    analysis: AnalysisType; // PRINCIPAL (Legacy prop name, kept for compatibility)
-
-    // perdas
-    consecutiveLosses: number; // For Pause logic (5 losses)
-
-    // martingale
-    perdasAcumuladas: number; // V4 Formula: stake = perdasAcumuladas * Factor...
-
-    // controle
-    lastOpTs: number;
-    cooldownUntilTs: number;
-
-    // métricas
-    opsTotal: number;
-    wins: number;
-    losses: number;
-
-    // System fields (infra)
-    isActive: boolean;
-    currentContractId: string | null;
-    currentTradeId: number | null;
-    isWaitingContract: boolean;
-    ticksSinceLastAnalysis: number;
-    lastDigits: number[];
-    lastRejectionReason?: string;
-    lastDeniedLogTime?: number; // ✅ Added for log throttling
-}
-
-// Alias para manter compatibilidade com nome antigo se necessário, mas preferimos usar ZeusState
-interface ZeusUserState extends ZeusState, AutonomousAgentState { }
